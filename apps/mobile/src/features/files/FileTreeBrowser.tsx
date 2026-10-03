@@ -15,6 +15,11 @@ import {
   type FileTreeNode,
   type VisibleFileTreeNode,
 } from "./fileTree";
+import {
+  loadPersistedExpandedPaths,
+  readCachedExpandedPaths,
+  savePersistedExpandedPaths,
+} from "./fileTreeExpansionPersistence";
 
 const fileTreeCache = new WeakMap<ReadonlyArray<ProjectEntry>, ReadonlyArray<FileTreeNode>>();
 const FILE_TREE_INITIAL_RENDER_COUNT = 20;
@@ -118,8 +123,33 @@ export function FileTreeBrowser(props: {
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
+  /** Workspace-scoped persistence key; null keeps expansion session-only. */
+  readonly expansionStorageKey: string | null;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(
+    () => new Set(readCachedExpandedPaths(props.expansionStorageKey) ?? []),
+  );
+  // Remounts read the memory cache synchronously above; an app restart merges
+  // the SecureStore copy here. Every toggle writes back below, so the tree
+  // comes back the way it was left.
+  useEffect(() => {
+    if (props.expansionStorageKey === null) return;
+    const storageKey = props.expansionStorageKey;
+    let cancelled = false;
+    void loadPersistedExpandedPaths(storageKey).then((stored) => {
+      if (cancelled || stored.length === 0) return;
+      setExpandedPaths((current) => {
+        if (stored.every((path) => current.has(path))) return current;
+        return new Set([...current, ...stored]);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.expansionStorageKey]);
+  useEffect(() => {
+    savePersistedExpandedPaths(props.expansionStorageKey, expandedPaths);
+  }, [props.expansionStorageKey, expandedPaths]);
   const [pendingSelection, setPendingSelection] = useState<{
     readonly path: string;
     readonly selectedPathAtPress: string | null;

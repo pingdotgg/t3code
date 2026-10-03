@@ -24,6 +24,14 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  expandedPathAncestors,
+  fileTreeExpansionStorageKey,
+  pruneExpandedPaths,
+  readPersistedExpandedPaths,
+  sortExpandedPathsParentFirst,
+  writePersistedExpandedPaths,
+} from "./fileTreeExpansionPersistence";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -299,30 +307,109 @@ export default function FileBrowserPanel({
     setQuery("");
     search.close();
   };
-  const expandedPathsRef = useRef(new Set<string>());
+  const expansionStorageKey = useMemo(
+    () => fileTreeExpansionStorageKey(environmentId, cwd),
+    [cwd, environmentId],
+  );
+  // The panel remounts per workspace (keyed by environmentId + cwd at the call
+  // site), so seeding the shadow set from storage once per mount restores the
+  // previous session instead of starting collapsed.
+  const [initialExpandedPaths] = useState(() => readPersistedExpandedPaths(expansionStorageKey));
+  const expandedPathsRef = useRef(new Set(initialExpandedPaths));
+  // Stored folders that still owe their first expand(). Rows only exist once
+  // their ancestors load, so restore drains this queue as rows appear; a folder
+  // leaves the queue the moment it is expanded, which is what makes a later
+  // collapse by the user stick instead of being undone by the next replay.
+  const pendingRestoreRef = useRef(new Set(initialExpandedPaths));
+  const [restoreLoadsSettled, setRestoreLoadsSettled] = useState(initialExpandedPaths.length === 0);
   useEffect(() => {
-    const currentPaths = new Set(directoryPaths);
-    for (const path of expandedPathsRef.current) {
-      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    const persisted = sortExpandedPathsParentFirst(readPersistedExpandedPaths(expansionStorageKey));
+    // The settled flag initialises correctly per mount (see useState above);
+    // only the async completion below flips it, keeping setState out of the
+    // synchronous effect body.
+    if (persisted.length === 0) {
+      return;
     }
+    let cancelled = false;
+    const toLoad: string[] = [""];
+    for (const path of persisted) {
+      for (const ancestor of expandedPathAncestors(path)) {
+        const directory = ancestor.replace(/\/$/, "");
+        if (!toLoad.includes(directory)) toLoad.push(directory);
+      }
+    }
+    void (async () => {
+      for (const directory of toLoad) {
+        await load(directory);
+        if (cancelled) return;
+      }
+      if (!cancelled) setRestoreLoadsSettled(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [expansionStorageKey, load]);
+  useEffect(() => {
+    const pendingRestore = pendingRestoreRef.current;
+    let cancelled = false;
+    // Rows register in the path-sync effect below this one, so expand stored
+    // folders in a microtask: by then this commit's rows exist. Draining the
+    // queue (rather than replaying storage) is what makes a collapse the user
+    // makes during restore stick: the path has left the queue, so no later
+    // pass reopens it.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      for (const path of sortExpandedPathsParentFirst([...pendingRestore])) {
+        const item = model.getItem(path);
+        if (!item || !("expand" in item)) continue;
+        item.expand();
+        pendingRestore.delete(path);
+      }
+      if (!restoreLoadsSettled || error !== null) return;
+      // Every ancestor load resolved without a reported error, so anything
+      // still queued never became a row: that folder is gone, and restoring it
+      // on every later mount would keep it in storage forever. A folder that
+      // really was deleted fails to load as an unreachable path, which the
+      // hook does not report, so it still prunes; a reachable folder that
+      // failed to read is reported here and keeps its stored state instead.
+      const droppedQueuedPaths = pendingRestore.size;
+      pendingRestore.clear();
+      const pruned = pruneExpandedPaths([...expandedPathsRef.current], new Set(directoryPaths));
+      if (droppedQueuedPaths === 0 && pruned.length === expandedPathsRef.current.size) return;
+      expandedPathsRef.current = new Set(pruned);
+      writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
+    });
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
+      let changed = false;
       for (const path of directoryPaths) {
         const item = model.getItem(path);
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
           if (!expandedPathsRef.current.has(path)) {
             expandedPathsRef.current.add(path);
+            changed = true;
             void load(path.replace(/\/$/, ""));
           }
-        } else {
-          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
-          expandedPathsRef.current.delete(path);
+        } else if (item?.isDirectory()) {
+          // The row exists and is collapsed, so this is the user closing a
+          // folder. Honour it and stop restoring it.
+          pendingRestore.delete(path);
+          if (expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.delete(path);
+            setExpandAll(false);
+            changed = true;
+          }
         }
       }
+      if (changed) writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
     };
     loadExpanded();
-    return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
+    const unsubscribe = model.subscribe(loadExpanded);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [directoryPaths, error, expansionStorageKey, load, model, restoreLoadsSettled]);
   useEffect(() => {
     model.setGitStatus(
       entries

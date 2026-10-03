@@ -40,6 +40,7 @@ import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { fileTreeExpansionKey } from "./fileTreeExpansionPersistence";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
@@ -547,6 +548,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
           onPreviewFile={handlePreviewFile}
           onRefresh={entriesQuery.refresh}
           onSelectFile={handleSelectFile}
+          expansionStorageKey={fileTreeExpansionKey(environmentId, cwd)}
         />
         <FilesToolbarBottomFade />
       </MaterialScreenContent>

@@ -17,6 +17,7 @@ import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { fileTreeExpansionKey } from "./fileTreeExpansionPersistence";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -83,6 +84,7 @@ export function ThreadFileNavigatorPane(props: {
       onPreviewFile={handlePreviewFile}
       onRefresh={entriesQuery.refresh}
       onSelectFile={props.onSelectFile}
+      expansionStorageKey={fileTreeExpansionKey(props.environmentId, props.cwd)}
     />
   );
 
