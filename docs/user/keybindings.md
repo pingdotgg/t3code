@@ -43,6 +43,12 @@ to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
 Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
 
+## Mark a thread unread
+
+Assign `thread.markUnread` in **Settings → Keybindings** on web or desktop; it has no default.
+It marks the active thread unread after a completed turn. Use `!terminalFocus` to exclude terminals.
+Unread stays set while typing; reopening the thread or new activity marks it read.
+
 ## iPad
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine

@@ -852,14 +852,14 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
-  it("resolves a custom stop-thread shortcut", () => {
-    const keybindings = compile([{ shortcut: modShortcut("escape"), command: "thread.stop" }]);
+  it.each(["thread.stop", "thread.markUnread"] as const)("resolves %s", (command) => {
+    const keybindings = compile([{ shortcut: modShortcut("escape"), command }]);
 
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "Escape", metaKey: true }), keybindings, {
         platform: "MacIntel",
       }),
-      "thread.stop",
+      command,
     );
   });
 
