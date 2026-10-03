@@ -37,8 +37,10 @@ interface Interpreter {
   readonly scriptFileOptions?: ReadonlySet<string>;
   /** "always" for SQL shells, which read statements from stdin next to their database argument. */
   readonly stdin: "always" | "without-script-file" | "never";
-  /** The positional argument holding the script, as in `sqlite3 app.db "select 1"`. */
+  /** The first positional argument holding a script, as in `sqlite3 app.db "select 1"`. */
   readonly positionalScript?: number;
+  /** SQL shells run every `-c` and every statement argument, in order. */
+  readonly repeatable?: boolean;
   readonly subcommand?: string;
   /** PowerShell matches parameters case-insensitively; the lists above are lowercase. */
   readonly ignoreCase?: boolean;
@@ -84,6 +86,7 @@ const SQL_SHELL: Interpreter = {
   ]),
   scriptFileOptions: new Set(["-f", "--file"]),
   stdin: "always",
+  repeatable: true,
 };
 
 const INTERPRETERS: Record<string, Interpreter> = {
@@ -290,13 +293,15 @@ function commandScripts(
 
   let readsStdinScript = false;
   if (interpreter) {
-    const { script, scriptFromFile } = interpreterArgs(interpreter, args);
-    const mapped = script && wordText(script.word, source);
-    if (mapped) {
+    const found = interpreterArgs(interpreter, args);
+    for (const script of found.scripts) {
+      const mapped = wordText(script.word, source);
+      if (!mapped) continue;
       const start = script.inValue ? mapped.text.indexOf("=") + 1 : 0;
       scripts.push({ language: interpreter.language, mapped: sliceMapped(mapped, start) });
     }
-    readsStdinScript = interpreter.stdin !== "never" && !script && !scriptFromFile;
+    readsStdinScript =
+      interpreter.stdin !== "never" && found.scripts.length === 0 && !found.scriptFromFile;
   }
 
   const stdinLanguage = readsStdinScript ? interpreter?.language : undefined;
@@ -326,14 +331,14 @@ interface ScriptArgument {
   readonly inValue: boolean;
 }
 
-/** The inline script argument, and whether the script comes from a file instead. */
+/** The script arguments, and whether the script comes from a file instead. */
 function interpreterArgs(
   interpreter: Interpreter,
   args: ReadonlyArray<Word>,
-): { script: ScriptArgument | undefined; scriptFromFile: boolean } {
+): { scripts: ScriptArgument[]; scriptFromFile: boolean } {
   const positionals: Word[] = [];
-  const asScript = (word: Word | undefined) =>
-    word && { script: { word, inValue: false }, scriptFromFile: false };
+  const scripts: ScriptArgument[] = [];
+  const whole = (word: Word): ScriptArgument => ({ word, inValue: false });
   let optionsEnded = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -345,12 +350,14 @@ function interpreterArgs(
     if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
       // `--eval=code` and `--file=path` carry their value in the same word.
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
-      if (interpreter.scriptFileOptions?.has(name)) {
-        return { script: undefined, scriptFromFile: true };
-      }
+      if (interpreter.scriptFileOptions?.has(name)) return { scripts, scriptFromFile: true };
       if (interpreter.inline(name)) {
-        if (value === undefined) return asScript(args[index + 1]) ?? noScript;
-        return { script: { word: arg, inValue: true }, scriptFromFile: false };
+        const next = args[index + 1];
+        if (value !== undefined) scripts.push({ word: arg, inValue: true });
+        else if (next) scripts.push(whole(next));
+        if (!interpreter.repeatable) return { scripts, scriptFromFile: false };
+        if (value === undefined) index += 1;
+        continue;
       }
       if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
       continue;
@@ -361,20 +368,17 @@ function interpreterArgs(
   }
 
   if (interpreter.subcommand) {
-    return positionals[0]?.value === interpreter.subcommand
-      ? (asScript(positionals[1]) ?? noScript)
-      : { script: undefined, scriptFromFile: true };
+    if (positionals[0]?.value !== interpreter.subcommand) return { scripts, scriptFromFile: true };
+    return { scripts: positionals.slice(1, 2).map(whole), scriptFromFile: false };
   }
   if (interpreter.positionalScript !== undefined) {
-    return asScript(positionals[interpreter.positionalScript]) ?? noScript;
+    scripts.push(...positionals.slice(interpreter.positionalScript).map(whole));
   }
   // SQL shells take databases as positional arguments, not script files.
-  if (interpreter.stdin === "always") return noScript;
+  if (interpreter.stdin === "always") return { scripts, scriptFromFile: false };
   const first = positionals[0];
-  return { script: undefined, scriptFromFile: first !== undefined && first.value !== "-" };
+  return { scripts, scriptFromFile: first !== undefined && first.value !== "-" };
 }
-
-const noScript = { script: undefined, scriptFromFile: false };
 
 function sliceMapped(mapped: MappedText, start: number): MappedText {
   if (start === 0) return mapped;

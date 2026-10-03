@@ -73,6 +73,16 @@ describe("embeddedScripts", () => {
     expect(scriptsOf(command)).toEqual([[language, script, expect.any(String)]]);
   });
 
+  it.each([[`psql -c 'select 1' -c 'select 2'`], [`sqlite3 app.db "select 1" "select 2"`]])(
+    "finds every statement a SQL shell runs: %s",
+    (command) => {
+      expect(scriptsOf(command).map(([language, text]) => [language, text])).toEqual([
+        ["sql", "select 1"],
+        ["sql", "select 2"],
+      ]);
+    },
+  );
+
   it.each([
     ["the file `cat` writes", `cat > src/app.ts <<'EOF'\nconst a = 1;\nEOF`, "typescript"],
     ["the file `tee` writes", `tee -a config.json <<EOF\n{}\nEOF`, "json"],
