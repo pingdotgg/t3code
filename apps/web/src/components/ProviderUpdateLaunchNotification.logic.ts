@@ -448,12 +448,31 @@ function latestFinishedAtForProviders(providers: ReadonlyArray<ServerProvider>):
   }, null);
 }
 
+/**
+ * Collapses terminal update states to the most recently finished instance per
+ * driver, so an update on a non-default instance is not hidden behind an
+ * older outcome on the driver's default instance.
+ */
+function latestTerminalProvidersByDriver(providers: ReadonlyArray<ServerProvider>) {
+  const latestProviderByDriver = new Map<ProviderDriverKind, ServerProvider>();
+
+  for (const provider of providers) {
+    const current = latestProviderByDriver.get(provider.driver);
+    if (!current || (getUpdateFinishedAt(provider) ?? "") >= (getUpdateFinishedAt(current) ?? "")) {
+      latestProviderByDriver.set(provider.driver, provider);
+    }
+  }
+
+  return [...latestProviderByDriver.values()];
+}
+
 export function getProviderUpdateSidebarPillView(
   providers: ReadonlyArray<ServerProvider>,
   options?: ProviderUpdateSidebarPillOptions,
 ): ProviderUpdateSidebarPillView | null {
-  const dedupedProviders = dedupeProvidersByDriver(providers);
-  const activeProviders = dedupedProviders.filter(isProviderUpdateActive);
+  // Update state is recorded per instance, so pick the instances with an
+  // update before collapsing to one entry per driver.
+  const activeProviders = dedupeProvidersByDriver(providers.filter(isProviderUpdateActive));
   if (activeProviders.length > 0) {
     const activeProvider = activeProviders[0]!;
     const activeProviderName =
@@ -475,8 +494,8 @@ export function getProviderUpdateSidebarPillView(
     };
   }
 
-  const recentTerminalProviders = dedupedProviders.filter((provider) =>
-    isRecentTerminalProvider(provider, options?.visibleAfterIso),
+  const recentTerminalProviders = latestTerminalProvidersByDriver(
+    providers.filter((provider) => isRecentTerminalProvider(provider, options?.visibleAfterIso)),
   );
   const terminalCandidates: ProviderUpdateSidebarPillView[] = [];
 
