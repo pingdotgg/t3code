@@ -695,6 +695,9 @@ importers:
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5)
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       hast-util-to-html:
         specifier: ^9.0.5
         version: 9.0.5

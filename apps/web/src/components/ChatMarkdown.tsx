@@ -84,6 +84,7 @@ import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import GithubSlugger from "github-slugger";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
@@ -233,6 +234,8 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Generate GitHub-style heading targets when rendering a Markdown file. */
+  headingIds?: boolean | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -393,6 +396,7 @@ function orderedListGutterStyle(
 type MarkdownImageHastNode = {
   type?: string;
   tagName?: string;
+  value?: string;
   properties?: Record<string, unknown>;
   children?: MarkdownImageHastNode[];
 };
@@ -464,6 +468,38 @@ function rehypePreserveImageSourceMeta() {
 
     visit(tree);
     markStandaloneImages(tree);
+  };
+}
+
+function rehypeMarkdownHeadingIds() {
+  return (tree: MarkdownImageHastNode) => {
+    const slugger = new GithubSlugger();
+    const reservedIds = new Set<string>();
+    const textContent = (node: MarkdownImageHastNode): string =>
+      node.type === "text" && typeof node.value === "string"
+        ? node.value
+        : (node.children ?? []).map(textContent).join("");
+    const reserveAuthoredIds = (node: MarkdownImageHastNode) => {
+      if (typeof node.properties?.id === "string") {
+        reservedIds.add(normalizeSanitizedFragmentId(node.properties.id));
+      }
+      node.children?.forEach(reserveAuthoredIds);
+    };
+    const addHeadingIds = (node: MarkdownImageHastNode) => {
+      if (/^h[1-6]$/.test(node.tagName ?? "") && typeof node.properties?.id !== "string") {
+        const headingText = textContent(node);
+        let id = slugger.slug(headingText);
+        while (reservedIds.has(id)) id = slugger.slug(headingText);
+        reservedIds.add(id);
+        node.properties = {
+          ...node.properties,
+          id: `${SANITIZED_FRAGMENT_PREFIX}${id}`,
+        };
+      }
+      node.children?.forEach(addHeadingIds);
+    };
+    reserveAuthoredIds(tree);
+    addHeadingIds(tree);
   };
 }
 
@@ -1876,8 +1912,7 @@ function findMarkdownFragmentTarget(anchor: HTMLAnchorElement, href: string): HT
   const markdownRoot = anchor.closest<HTMLElement>(".chat-markdown");
   if (markdownRoot) {
     const localTargets = Array.from(markdownRoot.querySelectorAll<HTMLElement>("[id]"));
-    const localTarget = localTargets.find(matchesFragment);
-    if (localTarget) return localTarget;
+    return localTargets.find(matchesFragment) ?? null;
   }
 
   return (
@@ -1899,14 +1934,10 @@ function handleMarkdownFragmentClick(event: ReactMouseEvent<HTMLAnchorElement>, 
     return;
   }
 
+  event.preventDefault();
   const target = findMarkdownFragmentTarget(event.currentTarget, href);
   if (!target) return;
-
-  event.preventDefault();
-  const nextUrl = new URL(window.location.href);
-  nextUrl.hash = href.slice(1);
-  window.history.pushState(window.history.state, "", nextUrl);
-  target.scrollIntoView({ block: "nearest" });
+  target.scrollIntoView({ block: "start" });
 }
 
 function MarkdownExternalLinkContent({
@@ -3355,6 +3386,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  headingIds = false,
   ...props
 }: ChatMarkdownProps) {
   const {
@@ -3377,6 +3409,13 @@ function ChatMarkdown({
     ],
     [extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
+  const rehypePlugins = useMemo(
+    () => [
+      ...(parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : []),
+      ...(headingIds ? [rehypeMarkdownHeadingIds] : []),
+    ],
+    [headingIds, parseRawHtml],
+  );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
@@ -3395,7 +3434,7 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={rehypePlugins}
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
