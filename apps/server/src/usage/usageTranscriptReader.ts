@@ -108,6 +108,7 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
       id: true,
       session_id: true,
       model: true,
+      thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
       info: { last_token_usage: true },
@@ -245,9 +246,10 @@ async function guardMatches(
  * still match, so only appended lines are read; otherwise the whole file is
  * re-parsed from the start and `resumed` reports `false`.
  *
- * Codex carries the active model on `turn_context` lines that hold no usage of
- * their own, so those still have to pass through the reducer to keep model
- * attribution correct.
+ * Codex carries the active model on `turn_context` lines and the service tier
+ * on `thread_settings_applied` lines. Neither holds usage of its own, but both
+ * still have to pass through the reducer to keep attribution and pricing
+ * correct.
  */
 export async function readTranscriptRecords(
   filePath: string,
@@ -283,6 +285,7 @@ export async function readTranscriptRecords(
         if (
           !mightCarryUsage(line, provider) &&
           !line.includes('"turn_context"') &&
+          !line.includes('"thread_settings_applied"') &&
           !line.includes('"session_meta"')
         ) {
           return;
