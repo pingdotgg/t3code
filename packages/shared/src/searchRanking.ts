@@ -4,6 +4,38 @@ export type RankedSearchResult<T> = {
   tieBreaker: string;
 };
 
+/**
+ * Folds text to a form where matching ignores the differences a reader should
+ * not have to care about: case, accents, and Turkish dotted/dotless I.
+ *
+ * The Turkish fold is the reason this is not `toLowerCase`. Turkish and
+ * Azerbaijani added a dotless `ı`, and no normalization maps it to `i`, so a
+ * developer who types "yapilandirma" never finds "Yapılandırma" and a label
+ * reading "İptal" is unreachable by typing "iptal". Turkish developers type
+ * ASCII by reflex even when the UI is Turkish, and the command palette indexes
+ * English keywords, so the search box has to meet them in the middle.
+ *
+ * The fold is deliberately locale-independent. Callers include the server, which
+ * has no locale of its own, and it must reach the same answer for the same
+ * input. Collapsing `i` and `ı` into one form costs exactly one extra match —
+ * typing `i` also finds `ı` — and removes a whole class of dead searches.
+ *
+ * Combining marks are dropped only when they sit on a Latin letter. Stripping
+ * every `\p{M}` would also erase the marks that *carry* meaning in other
+ * scripts, collapsing Arabic "بَ" onto "ب" and Hebrew "שָׁלוֹם" onto "שלום".
+ * Those scripts are written without case, so the fold has no business touching
+ * them; leaving their marks intact keeps distinct spellings distinct.
+ */
+export function foldForSearch(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/(\p{Script=Latin})\p{M}+/gu, "$1")
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function normalizeSearchQuery(
   input: string,
   options?: {
@@ -14,10 +46,27 @@ export function normalizeSearchQuery(
   if (!trimmed) {
     return "";
   }
+  // Deliberately not folded. Callers hand the result of this function to
+  // `scoreQueryMatch` alongside candidate terms that were only lowercased, so
+  // folding here would compare a folded query against an unfolded candidate and
+  // lose matches that used to work: searching "café" would stop finding "Café".
+  // The fold belongs on both sides at once, so `scoreQueryMatch` applies it as a
+  // fallback after the plain comparison has already failed.
   return options?.trimLeadingPattern
     ? trimmed.replace(options.trimLeadingPattern, "").toLowerCase()
     : trimmed.toLowerCase();
 }
+
+type ScoreQueryMatchInput = {
+  value: string;
+  query: string;
+  exactBase: number;
+  prefixBase?: number;
+  boundaryBase?: number;
+  includesBase?: number;
+  fuzzyBase?: number;
+  boundaryMarkers?: readonly string[];
+};
 
 export function scoreSubsequenceMatch(value: string, query: string): number | null {
   if (!query) return 0;
@@ -82,17 +131,47 @@ function findBoundaryMatchIndex(
  *
  * **Expects pre-normalized inputs**: both `value` and `query` must already be
  * trimmed and lowercased (e.g. via {@link normalizeSearchQuery}).
+ *
+ * Three passes, strongest tier first:
+ *
+ * 1. The plain comparison, without the subsequence tier. These are the matches
+ *    that keep the exact score they have always returned.
+ * 2. The same comparison with both sides run through {@link foldForSearch}, which
+ *    is what lets "iptal" find "İptal" and "cafe" find "Café". The fold has to
+ *    reach the candidate as well as the query: folding only the query would
+ *    compare `cafe` against `Café` and lose the match.
+ * 3. The plain comparison's subsequence tier, for queries that were never a
+ *    substring in the first place.
+ *
+ * The order matters more than it looks. `"İptal"` lowercases to `i̇ptal` (i plus
+ * U+0307), which an ASCII query can only subsequence-match, so pass 3 alone
+ * would rank it as a loose guess while pass 2 finds an exact match. Folding
+ * before the strong tiers instead would be wrong in the other direction: the
+ * fold trims whitespace, so taking the best of both passes would silently
+ * promote every candidate with a trailing space from 103 to 0.
  */
-export function scoreQueryMatch(input: {
-  value: string;
-  query: string;
-  exactBase: number;
-  prefixBase?: number;
-  boundaryBase?: number;
-  includesBase?: number;
-  fuzzyBase?: number;
-  boundaryMarkers?: readonly string[];
-}): number | null {
+export function scoreQueryMatch(input: ScoreQueryMatchInput): number | null {
+  const direct = scoreNormalizedMatch(input, { skipFuzzy: true });
+  if (direct !== null) {
+    return direct;
+  }
+
+  const value = foldForSearch(input.value);
+  const query = foldForSearch(input.query);
+  if (value !== input.value || query !== input.query) {
+    const folded = scoreNormalizedMatch({ ...input, value, query });
+    if (folded !== null) {
+      return folded;
+    }
+  }
+
+  return scoreNormalizedMatch(input);
+}
+
+function scoreNormalizedMatch(
+  input: ScoreQueryMatchInput,
+  options?: { skipFuzzy?: boolean },
+): number | null {
   const { value, query } = input;
 
   if (!value || !query) {
@@ -125,7 +204,7 @@ export function scoreQueryMatch(input: {
     }
   }
 
-  if (input.fuzzyBase !== undefined) {
+  if (input.fuzzyBase !== undefined && !options?.skipFuzzy) {
     const fuzzyScore = scoreSubsequenceMatch(value, query);
     if (fuzzyScore !== null) {
       return input.fuzzyBase + fuzzyScore;
