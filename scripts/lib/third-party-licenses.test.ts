@@ -202,6 +202,90 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
+  it("leaves type-only packages out of the notices but still walks their dependencies", async () => {
+    const fixture = await createFixture();
+    const modules = NodePath.join(fixture.root, "node_modules");
+    const write = async (name: string, packageJson: Record<string, unknown>) => {
+      await writeJson(NodePath.join(modules, name, "package.json"), {
+        name,
+        version: "1.0.0",
+        license: "MIT",
+        ...packageJson,
+      });
+      await NodeFSP.writeFile(NodePath.join(modules, name, "LICENSE"), `${name} license\n`, "utf8");
+    };
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-dependency": "1.2.3", "@types/demo": "1.0.0" },
+    });
+    // The DefinitelyTyped shape, and the csstype / undici-types one it pulls in.
+    await write("@types/demo", {
+      main: "",
+      types: "index.d.ts",
+      exports: {
+        ".": { types: { import: "./index.d.mts", default: "./index.d.ts" } },
+        "./package.json": "./package.json",
+      },
+      dependencies: { "demo-css-types": "1.0.0", "demo-runtime": "1.0.0" },
+    });
+    await write("demo-css-types", { main: "", types: "index.d.ts" });
+    await write("demo-runtime", { main: "index.js" });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    const names = manifest.entries.map((entry) => entry.name);
+    expect(names).toContain("demo-dependency");
+    expect(names).toContain("demo-runtime");
+    expect(names).not.toContain("@types/demo");
+    expect(names).not.toContain("demo-css-types");
+  });
+
+  it.each([
+    {
+      shape: "a JS entry next to its declarations",
+      // The @shikijs/types shape: a types condition next to a real JS entry.
+      entry: {
+        main: "./dist/index.mjs",
+        exports: { ".": { types: "./dist/index.d.mts", import: "./dist/index.mjs" } },
+      },
+      indexFile: null,
+    },
+    { shape: "only a stylesheet", entry: { main: "", style: "dist/theme.css" }, indexFile: null },
+    {
+      shape: "only a react-native entry",
+      entry: { main: "", "react-native": "lib/index.native.js" },
+      indexFile: null,
+    },
+    { shape: "an index.js behind an empty main", entry: { main: "" }, indexFile: "index.js" },
+    { shape: "an index.node addon and no main", entry: {}, indexFile: "index.node" },
+  ])("keeps a package that declares types but ships $shape", async ({ entry, indexFile }) => {
+    const fixture = await createFixture();
+    await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
+      name: "demo-dependency",
+      version: "1.2.3",
+      license: "MIT",
+      types: "./dist/index.d.mts",
+      ...entry,
+      repository: "example/demo-dependency",
+    });
+    if (indexFile !== "index.js") {
+      await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "index.js"));
+    }
+    if (indexFile !== null) {
+      await NodeFSP.writeFile(NodePath.join(fixture.dependencyRoot, indexFile), "", "utf8");
+    }
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
+  });
+
   it("includes custom notices selected by the dev server bundle", async () => {
     const fixture = await createFixture();
     await writeJson(fixture.configFile, {
