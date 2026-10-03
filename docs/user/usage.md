@@ -13,6 +13,10 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
+On web and desktop, the date fields beside the presets accept a custom range of up to 90 days.
+Drag across a daily chart to zoom to that range, and double-click the chart to return to the range
+you had before zooming.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
