@@ -33,6 +33,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import {
   makeProviderEventRoutingState,
@@ -54,8 +55,16 @@ const TestLayer = Layer.mergeAll(
   TestStoresLayer,
   TestEventSinkLayer,
   IdAllocator.layer,
+  ThreadCommandExecutor.layer,
   ProviderEventIngestor.layer.pipe(
-    Layer.provide(Layer.mergeAll(TestStoresLayer, TestEventSinkLayer, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        TestStoresLayer,
+        TestEventSinkLayer,
+        IdAllocator.layer,
+        ThreadCommandExecutor.layer,
+      ),
+    ),
   ),
 );
 const modelSelection = {
