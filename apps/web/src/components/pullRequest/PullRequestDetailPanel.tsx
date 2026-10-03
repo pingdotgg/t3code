@@ -125,7 +125,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
-import { DiffPanelLoadingState } from "../DiffPanelShell";
+import { DiffPanelLoadingState } from "../diffs/DiffLoadingState";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
