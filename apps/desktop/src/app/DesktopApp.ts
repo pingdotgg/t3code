@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import * as ElectronLegacyLocalStorage from "../electron/ElectronLegacyLocalStorage.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
@@ -316,6 +317,14 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  if (!environment.isDevelopment) {
+    yield* ElectronLegacyLocalStorage.importLegacyProfile(environment.appDataDirectory).pipe(
+      Effect.timeout(Duration.seconds(10)),
+      Effect.catch((error) =>
+        Effect.logWarning("V1 Local Storage import will retry next launch", error),
+      ),
+    );
+  }
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
