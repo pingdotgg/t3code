@@ -2,6 +2,7 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  foldViewedFilesOnce,
   isFileDiffCollapsed,
   isLineInFileDiff,
   toggleFileDiffFoldForViewed,
@@ -81,6 +82,57 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("foldViewedFilesOnce", () => {
+  const none: ReadonlySet<string> = new Set();
+  const file = (name: string, viewed: boolean, keySuffix = "") => ({
+    fileKey: `${name}${keySuffix}`,
+    path: name,
+    viewed,
+  });
+
+  it("folds the files already ticked off, and only them, when the tab comes up expanded", () => {
+    const result = foldViewedFilesOnce(
+      [file("a", true), file("b", false), file("c", true)],
+      none,
+      "expanded",
+      none,
+    );
+    expect([...result.toggledFileKeys].sort()).toEqual(["a", "c"]);
+    expect([...result.seenPaths].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("changes no fold when the tab comes up folded", () => {
+    const result = foldViewedFilesOnce([file("a", true)], none, "folded", none);
+    expect(result.toggledFileKeys).toBe(none);
+    expect([...result.seenPaths]).toEqual(["a"]);
+  });
+
+  it("leaves a file it has already seen to the reader, even when it is ticked now", () => {
+    const seen: ReadonlySet<string> = new Set(["a"]);
+    const result = foldViewedFilesOnce([file("a", true)], seen, "expanded", none);
+    expect(result.toggledFileKeys).toBe(none);
+    expect(result.seenPaths).toBe(seen);
+  });
+
+  it("recognises a file by its path when a whitespace toggle re-keys the diff", () => {
+    const first = foldViewedFilesOnce([file("a", true)], none, "expanded", none);
+    // The reader expanded it by hand (toggle cleared), then flipped ignore-whitespace.
+    const second = foldViewedFilesOnce([file("a", true, "#ws")], first.seenPaths, "expanded", none);
+    expect(second.toggledFileKeys).toBe(none);
+  });
+
+  it("folds only the files that arrived since the last pass", () => {
+    const first = foldViewedFilesOnce([file("a", true)], none, "expanded", none);
+    const second = foldViewedFilesOnce(
+      [file("a", false), file("b", true)],
+      first.seenPaths,
+      "expanded",
+      first.toggledFileKeys,
+    );
+    expect([...second.toggledFileKeys].sort()).toEqual(["a", "b"]);
   });
 });
 

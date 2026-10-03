@@ -62,3 +62,36 @@ export function toggleFileDiffFoldForViewed(
   else next.add(fileKey);
   return next;
 }
+
+/**
+ * Folds, once, the files the reader had already ticked off before this mount of the Code tab,
+ * the way their ticks would have. The fold set is local to the tab and starts empty on every
+ * mount, while the ticks live on the host; without this a ticked file comes back open each time
+ * the reader returns to Code. Every file seen is remembered, so a file ticked or unfolded later
+ * is left to the reader's own choices; both sets come back unchanged when there is nothing to do.
+ */
+export function foldViewedFilesOnce(
+  files: ReadonlyArray<{
+    readonly fileKey: string;
+    /** Survives what `fileKey` does not, such as a whitespace toggle re-keying every diff. */
+    readonly path: string;
+    readonly viewed: boolean;
+  }>,
+  seenPaths: ReadonlySet<string>,
+  foldOverride: DiffFoldOverride,
+  toggledFileKeys: ReadonlySet<string>,
+): {
+  readonly seenPaths: ReadonlySet<string>;
+  readonly toggledFileKeys: ReadonlySet<string>;
+} {
+  const unseen = files.filter((file) => !seenPaths.has(file.path));
+  if (unseen.length === 0) return { seenPaths, toggledFileKeys };
+  const seen = new Set(seenPaths);
+  let toggled = toggledFileKeys;
+  for (const file of unseen) {
+    seen.add(file.path);
+    if (file.viewed)
+      toggled = toggleFileDiffFoldForViewed(file.fileKey, true, foldOverride, toggled);
+  }
+  return { seenPaths: seen, toggledFileKeys: toggled };
+}

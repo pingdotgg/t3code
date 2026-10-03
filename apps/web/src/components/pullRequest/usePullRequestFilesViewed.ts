@@ -39,6 +39,8 @@ export interface PullRequestFilesViewedView {
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
   readonly truncated: boolean;
+  /** The host has answered at least once, so `isViewed` reflects its marks and not their absence. */
+  readonly ready: boolean;
   /**
    * Why the marks could not be read, when they could not. The boxes fall back to the last answer
    * there was, or to empty when there has not been one, and neither of those says so on its own:
@@ -203,6 +205,7 @@ export function usePullRequestFilesViewed(options: {
       setViewed,
       viewedCount,
       truncated,
+      ready: states !== null,
       error,
       refresh: refreshFromHost,
     }),
