@@ -5,6 +5,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -129,6 +130,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
         nativeId: providerSessionId,
         strength: "strong",
       },
+      nativeMetadata: { nativeThreadOrigin: "imported" },
     });
     expect(
       writes[0]
@@ -143,5 +145,136 @@ it.effect("imports messages once and preserves the provider native resume bindin
       }),
     ]);
     expect(recorded).toHaveLength(2);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("stamps the import origin on provider threads imported before it existed", () => {
+  const originProjectId = ProjectId.make("project-import-origin");
+  const originInstanceId = ProviderInstanceId.make("codex");
+  const originSessionId = "native-codex-thread-origin";
+  const originThreadId = ThreadId.make(`import:${originInstanceId}:${originSessionId}`);
+  const writes: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
+  let imported = false;
+  let stamped = false;
+  const legacyProviderThread = {
+    id: `provider-thread:${originSessionId}`,
+    driver: "codex",
+    providerInstanceId: originInstanceId,
+    providerSessionId: "provider-session-1",
+    appThreadId: originThreadId,
+    ownerNodeId: null,
+    nativeThreadRef: { driver: "codex", nativeId: originSessionId, strength: "strong" },
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: DateTime.makeUnsafe("2026-09-01T10:00:00.000Z"),
+    updatedAt: DateTime.makeUnsafe("2026-09-01T10:01:00.000Z"),
+  };
+  const scanner = AgentSessionScanner.AgentSessionScanner.of({
+    scan: Effect.die("unused"),
+    recentThreads: () =>
+      Stream.succeed({
+        _tag: "Importable",
+        source: {
+          provider: "codex",
+          providerInstanceId: originInstanceId,
+          providerSessionId: originSessionId,
+          filePath: "/tmp/native-codex-thread-origin.jsonl",
+          size: 100,
+          mtimeMs: 2,
+          device: 3,
+          inode: 4,
+          birthtimeMs: 1,
+        },
+        thread: {
+          source: "codex",
+          providerInstanceId: originInstanceId,
+          providerSessionId: originSessionId,
+          title: "Imported thread",
+          model: "gpt-5.4",
+          createdAt: "2026-09-01T10:00:00.000Z",
+          updatedAt: "2026-09-01T10:01:00.000Z",
+          messages: [{ role: "user", text: "Fix it", createdAt: "2026-09-01T10:00:00.000Z" }],
+        },
+      }),
+  });
+  const testLayer = AgentSessionImporter.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(AgentSessionScanner.AgentSessionScanner, scanner),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({ id: originProjectId, workspaceRoot: "/workspace/project" } as never),
+            ),
+        }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          // A thread imported before the origin marker existed: its provider
+          // thread row carries no nativeMetadata until a later import stamps it.
+          getThreadRecords: () =>
+            imported
+              ? Effect.succeed({
+                  thread: {
+                    id: originThreadId,
+                    projectId: originProjectId,
+                    historyOrigin: "v1_import",
+                  },
+                  providerThreads: [
+                    stamped
+                      ? {
+                          ...legacyProviderThread,
+                          nativeMetadata: { nativeThreadOrigin: "imported" },
+                        }
+                      : legacyProviderThread,
+                  ],
+                } as never)
+              : Effect.fail(
+                  new Orchestrator.OrchestratorProjectionError({ threadId: originThreadId }),
+                ),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write: (input) =>
+            Effect.sync(() => {
+              writes.push(input.events);
+              imported = true;
+              return [];
+            }),
+        }),
+        Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
+          list: () => Effect.succeed([]),
+          upsert: () => Effect.void,
+          recordImportedTranscript: () => Effect.void,
+        }),
+        IdAllocator.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const importer = yield* AgentSessionImporter.AgentSessionImporter;
+    yield* importer.importRecentAgentThreads({ projectId: originProjectId });
+    expect(writes).toHaveLength(1);
+
+    // The second pass finds the thread already imported and stamps its row.
+    yield* importer.importRecentAgentThreads({ projectId: originProjectId });
+    expect(writes).toHaveLength(2);
+    expect(writes[1]?.map((event) => event.type)).toEqual(["provider-thread.updated"]);
+    const stampedEvent = writes[1]?.[0];
+    expect(stampedEvent?.id).toBe(
+      `agent-session-import:v2:provider-thread:${legacyProviderThread.id}:imported-origin`,
+    );
+    expect(stampedEvent?.payload).toMatchObject({
+      id: legacyProviderThread.id,
+      nativeThreadRef: legacyProviderThread.nativeThreadRef,
+      nativeMetadata: { nativeThreadOrigin: "imported" },
+    });
+
+    // A row that already carries the origin is left alone.
+    stamped = true;
+    yield* importer.importRecentAgentThreads({ projectId: originProjectId });
+    expect(writes).toHaveLength(2);
   }).pipe(Effect.provide(testLayer));
 });

@@ -803,6 +803,12 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Version 2 scopes provider-derived item ids by provider instance. */
   itemIdentityVersion: Schema.optional(Schema.Literal(2)),
+  /**
+   * The native thread existed before this app bound it: an imported session.
+   * An adapter whose create and resume paths differ must resume it even
+   * before any provider turn of ours has been persisted.
+   */
+  nativeThreadOrigin: Schema.optional(Schema.Literal("imported")),
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;

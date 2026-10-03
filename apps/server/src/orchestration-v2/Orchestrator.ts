@@ -2170,7 +2170,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           handoffIds: [],
           forkedFrom: null,
           contextUsage: null,
-          nativeMetadata: command.importedNativeThread.metadata ?? null,
+          nativeMetadata: {
+            ...command.importedNativeThread.metadata,
+            nativeThreadOrigin: "imported",
+          },
           createdAt: now,
           updatedAt: now,
         },

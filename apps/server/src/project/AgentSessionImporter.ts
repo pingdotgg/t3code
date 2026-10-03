@@ -172,6 +172,54 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  // Provider threads written before the import origin existed carry no
+  // marker, so a thread the scanner reports as already imported gets it
+  // stamped here; otherwise its first Claude follow-up still reopens the
+  // session with a fixed id.
+  const stampImportedOrigin = Effect.fn("stampImportedOriginV2")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: string;
+    readonly providerThreads: ReadonlyArray<OrchestrationV2ProviderThread> | undefined;
+  }) {
+    const providerThread = input.providerThreads?.find(
+      (candidate) => candidate.nativeThreadRef?.nativeId === input.providerSessionId,
+    );
+    if (
+      providerThread === undefined ||
+      providerThread.nativeMetadata?.nativeThreadOrigin === "imported"
+    ) {
+      return;
+    }
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(
+            `${IMPORT_EVENT_PREFIX}:provider-thread:${providerThread.id}:imported-origin`,
+          ),
+          type: "provider-thread.updated",
+          threadId: input.threadId,
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...providerThread,
+            nativeMetadata: { ...providerThread.nativeMetadata, nativeThreadOrigin: "imported" },
+            updatedAt: now,
+          },
+        },
+      ],
+    });
+  });
+  const stampImportedOriginOrWarn = (input: Parameters<typeof stampImportedOrigin>[0]) =>
+    stampImportedOrigin(input).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not stamp the import origin on a provider thread", {
+          threadId: input.threadId,
+          cause,
+        }),
+      ),
+    );
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -229,6 +277,16 @@ const make = Effect.gen(function* () {
         if (outcome._tag === "AlreadyImported") {
           importedThreadIds.add(threadId);
           importedCount += 1;
+          const records = yield* Effect.option(
+            orchestrator.getThreadRecords(threadId, ["providerThreads"]),
+          );
+          if (Option.isSome(records)) {
+            yield* stampImportedOriginOrWarn({
+              threadId,
+              providerSessionId: source.providerSessionId,
+              providerThreads: records.value.providerThreads,
+            });
+          }
           return;
         }
         if (outcome._tag === "Duplicate") {
@@ -249,7 +307,9 @@ const make = Effect.gen(function* () {
               providerSessionId: thread.providerSessionId,
             });
           }
-          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
+          const existing = yield* Effect.option(
+            orchestrator.getThreadRecords(threadId, ["providerThreads"]),
+          );
           if (Option.isSome(existing)) {
             if (existing.value.thread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
@@ -262,6 +322,11 @@ const make = Effect.gen(function* () {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
             yield* runtimes.recordImportedTranscript({ threadId, source });
+            yield* stampImportedOriginOrWarn({
+              threadId,
+              providerSessionId: thread.providerSessionId,
+              providerThreads: existing.value.providerThreads,
+            });
             return true;
           }
 
@@ -328,6 +393,7 @@ const make = Effect.gen(function* () {
             handoffIds: [],
             forkedFrom: null,
             pendingBackgroundTasks: [],
+            nativeMetadata: { nativeThreadOrigin: "imported" },
             createdAt,
             updatedAt,
           };
