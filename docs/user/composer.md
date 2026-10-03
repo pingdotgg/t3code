@@ -276,3 +276,10 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Thread width
+
+Use **Width** in the thread header to expand the conversation and composer in
+5% steps. **0%** keeps your **Settings → Appearance → Chat width** choice;
+**100%** uses the available chat pane. The preference stays on this device across threads and reloads, and
+the content adapts when side panels open or the window shrinks.

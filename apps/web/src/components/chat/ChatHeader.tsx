@@ -1,3 +1,4 @@
+import { ThreadWidthControl } from "./ThreadWidthControl";
 import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -332,6 +333,9 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <div className="shrink-0">
+        <ThreadWidthControl />
+      </div>
     </div>
   );
 });

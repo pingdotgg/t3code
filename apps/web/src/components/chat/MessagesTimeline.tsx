@@ -246,6 +246,8 @@ import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextC
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
+import { useThreadWidth } from "~/hooks/useThreadWidth";
+import { observeTimelineColumn } from "./observeTimelineColumn";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -913,6 +915,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const [threadWidthExpansion] = useThreadWidth();
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1101,13 +1104,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
-    const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      // Without a mounted row, treat the column as full width so the strip stays inert.
-      const contentWidth =
-        timelineViewportElement
-          .querySelector<HTMLElement>("[data-timeline-root]")
-          ?.getBoundingClientRect().width ?? viewportWidth;
+    return observeTimelineColumn(timelineViewportElement, (viewportWidth, contentWidth) => {
       const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
         viewportWidth,
         contentWidth,
@@ -1117,18 +1114,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
       reportContentOverflow();
-    };
-
-    const frame = requestAnimationFrame(measure);
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(timelineViewportElement);
-
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
+    });
+  }, [
+    timelineViewportElement,
+    rows.length,
+    listIdentityKey,
+    reportContentOverflow,
+    chatWidth,
+    threadWidthExpansion,
+  ]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -1846,7 +1840,7 @@ function ContextCompactionTimelineRow({
     <div
       role="separator"
       aria-label={row.label}
-      className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
+      className="mx-auto flex w-full items-center gap-3 py-1 text-muted-foreground text-xs"
     >
       <span className="h-px flex-1 bg-border/70" />
       <span
