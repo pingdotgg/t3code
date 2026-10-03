@@ -1209,8 +1209,8 @@ export default function GitActionsControl({
   );
   const isSelectingWorktreeBase =
     !activeServerThread &&
-    activeDraftThread?.envMode === "worktree" &&
-    activeDraftThread.worktreePath === null;
+    activeDraftThread?.worktreePath === null &&
+    activeDraftThread.envMode !== "local";
 
   useEffect(() => {
     if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {

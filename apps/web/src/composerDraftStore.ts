@@ -88,7 +88,9 @@ const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
-const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
+// Mirrors `EnvMode` in BranchToolbar.logic.ts. "sandbox" is a new worktree
+// that runs in a Docker sandbox.
+const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree", "sandbox"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
 export const DraftId = Schema.String.pipe(Schema.brand("DraftId"));
@@ -1436,7 +1438,7 @@ function normalizeDraftThreadEnvMode(
   value: unknown,
   fallbackWorktreePath: string | null,
 ): DraftThreadEnvMode {
-  if (value === "local" || value === "worktree") {
+  if (value === "local" || value === "worktree" || value === "sandbox") {
     return value;
   }
   return fallbackWorktreePath ? "worktree" : "local";

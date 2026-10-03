@@ -77,6 +77,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+import * as SandboxService from "../sandbox/SandboxService.ts";
 
 export {
   TerminalCwdError,
@@ -1375,6 +1376,8 @@ interface TerminalManagerOptions {
     readonly threadId: string;
     readonly terminalId: string;
   }) => Effect.Effect<void>;
+  /** Terminals whose cwd is in a sandboxed worktree open a shell in its container. */
+  sandboxes?: SandboxService.SandboxService["Service"];
   resolveProviderInstanceEnvironment?: (
     providerInstanceId: string,
     env: Record<string, string> | undefined,
@@ -1432,6 +1435,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
@@ -1456,8 +1460,33 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
+    ...(Option.isSome(sandboxes) ? { sandboxes: sandboxes.value } : {}),
   });
 });
+
+/**
+ * Killing the `docker exec` client leaves the sandbox shell and its children
+ * running, so a sandbox terminal also stops its process tree in the container.
+ */
+function releaseSandboxOnExit(
+  process: PtyAdapter.PtyProcess,
+  release: () => void,
+): PtyAdapter.PtyProcess {
+  process.onExit(release);
+  return {
+    get pid() {
+      return process.pid;
+    },
+    write: (data) => process.write(data),
+    resize: (cols, rows) => process.resize(cols, rows),
+    kill: (signal) => {
+      process.kill(signal);
+      release();
+    },
+    onData: (callback) => process.onData(callback),
+    onExit: (callback) => process.onExit(callback),
+  };
+}
 
 export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(function* (
   options: TerminalManagerOptions,
@@ -2217,6 +2246,45 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
   });
 
+  /**
+   * Spawns the session's shell. In a sandboxed worktree the shell is bash
+   * inside the container, reached through `docker exec -it`.
+   */
+  const spawnShell = Effect.fn("terminal.spawnShell")(function* (
+    shellCandidates: ReadonlyArray<ShellCandidate>,
+    spawnEnv: NodeJS.ProcessEnv,
+    session: TerminalSessionState,
+  ) {
+    const sandbox =
+      options.sandboxes === undefined
+        ? Option.none()
+        : yield* options.sandboxes
+            .execTarget(session.cwd)
+            .pipe(
+              Effect.mapError(
+                (cause) => new PtyAdapter.PtySpawnError({ adapter: "sandbox", cause }),
+              ),
+            );
+    if (Option.isNone(sandbox)) return yield* trySpawn(shellCandidates, spawnEnv, session);
+    const command = yield* Effect.try({
+      try: () =>
+        sandbox.value.command({
+          command: "/bin/bash",
+          args: ["-l"],
+          cwd: session.cwd,
+          env: spawnEnv,
+          tty: true,
+        }),
+      catch: (cause) => new PtyAdapter.PtySpawnError({ adapter: "sandbox", cause }),
+    });
+    const spawned = yield* trySpawn(
+      [{ shell: command.command, args: [...command.args] }],
+      command.env,
+      session,
+    ).pipe(Effect.tapError(() => Effect.sync(command.release)));
+    return { ...spawned, process: releaseSandboxOnExit(spawned.process, command.release) };
+  });
+
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
@@ -2290,7 +2358,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 }
               }
             }
-            const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+            const spawnResult = yield* spawnShell(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
 

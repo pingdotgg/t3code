@@ -158,6 +158,8 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    /** Run the new worktree in a Docker sandbox. */
+    readonly sandbox?: boolean;
   };
   readonly runSetupScript?: boolean;
 }
@@ -647,6 +649,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareWorktree.startFromOrigin === undefined
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
+            ...(prepareWorktree.sandbox === true ? { sandbox: true } : {}),
           }
         : bootstrap?.worktreePath
           ? {

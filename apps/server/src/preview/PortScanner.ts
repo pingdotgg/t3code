@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as SandboxService from "../sandbox/SandboxService.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -295,6 +296,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
+  const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
     terminalProcesses: new Map(),
@@ -390,10 +392,46 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return groups;
   };
 
-  const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
+  /**
+   * Sandbox apps listen inside their container; the server forwards each port
+   * to a host loopback port. Those listeners belong to the server process, so
+   * they are labeled with the container port, and added when no listener
+   * probe (lsof) found them.
+   */
+  const withSandboxPorts = (
     servers: ReadonlyArray<DiscoveredLocalServer>,
+  ): ReadonlyArray<DiscoveredLocalServer> => {
+    if (Option.isNone(sandboxes)) return servers;
+    const forwarded = new Map(
+      sandboxes.value.forwardedPorts().map((port) => [port.hostPort, port] as const),
+    );
+    if (forwarded.size === 0) return servers;
+    const label = (containerPort: number) => `sandbox :${containerPort}`;
+    const labeled = servers.map((server) => {
+      const port = forwarded.get(server.port);
+      return port === undefined ? server : { ...server, processName: label(port.containerPort) };
+    });
+    const found = new Set(labeled.map((server) => server.port));
+    return [
+      ...labeled,
+      ...[...forwarded.values()]
+        .filter((port) => !found.has(port.hostPort))
+        .map<DiscoveredLocalServer>((port) => ({
+          host: "127.0.0.1",
+          port: port.hostPort,
+          url: `http://127.0.0.1:${port.hostPort}`,
+          processName: label(port.containerPort),
+          pid: null,
+          terminal: null,
+        })),
+    ];
+  };
+
+  const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
+    listeners: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
+    const servers = withSandboxPorts(listeners);
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
     const groups = makeWebProbeGroups(servers, configuredUrls);

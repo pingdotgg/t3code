@@ -22,8 +22,16 @@ export interface EnvironmentOption {
   machine: EnvironmentMachineKind;
 }
 
-export const EnvMode = Schema.Literals(["local", "worktree"]);
+// "worktree" and "sandbox" both start the thread in a new worktree. A sandbox
+// also runs that worktree's agent, terminals, and setup script in Docker.
+export const EnvMode = Schema.Literals(["local", "worktree", "sandbox"]);
 export type EnvMode = typeof EnvMode.Type;
+
+// Sandboxes need server support. A draft that asked for one on a server
+// without it (for example after a machine switch) gets a plain worktree.
+export function resolveSupportedEnvMode(mode: EnvMode, sandboxesAvailable: boolean): EnvMode {
+  return mode === "sandbox" && !sandboxesAvailable ? "worktree" : mode;
+}
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
@@ -94,7 +102,14 @@ export function resolveContextStripLabelsCompact(input: {
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
-  return mode === "worktree" ? "New worktree" : "Current checkout";
+  switch (mode) {
+    case "local":
+      return "Current checkout";
+    case "worktree":
+      return "New worktree";
+    case "sandbox":
+      return "New sandbox";
+  }
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
@@ -114,7 +129,7 @@ export function resolveLockedWorkspaceLabel(
   effectiveEnvMode: EnvMode,
 ): string {
   if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  return effectiveEnvMode === "local" ? "Local checkout" : resolveEnvModeLabel(effectiveEnvMode);
 }
 
 export function resolveWorkspaceDisplayName(path: string | null): string | null {
@@ -186,7 +201,7 @@ export function resolveEffectiveEnvMode(input: {
     if (activeWorktreePath) {
       return "local";
     }
-    return draftThreadEnvMode === "worktree" ? "worktree" : "local";
+    return draftThreadEnvMode ?? "local";
   }
   return activeWorktreePath || preparingWorktree ? "worktree" : "local";
 }
@@ -200,8 +215,8 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   if (nextWorktreePath) {
     return "worktree";
   }
-  if (effectiveEnvMode === "worktree" && !currentWorktreePath) {
-    return "worktree";
+  if (effectiveEnvMode !== "local" && !currentWorktreePath) {
+    return effectiveEnvMode;
   }
   return "local";
 }
@@ -213,7 +228,7 @@ export function resolveBranchToolbarValue(input: {
   currentGitBranch: string | null;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (envMode === "worktree" && !activeWorktreePath) {
+  if (envMode !== "local" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }
   return currentGitBranch ?? activeThreadBranch;
@@ -236,7 +251,7 @@ export function resolveBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (effectiveEnvMode !== "local" && !activeWorktreePath) {
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false
         ? `origin/${resolvedActiveBranch}`

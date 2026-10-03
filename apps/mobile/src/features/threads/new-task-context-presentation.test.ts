@@ -5,7 +5,52 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskBranchLabel,
   resolveNewTaskLocalWorkspaceSelection,
+  resolveNewTaskSandbox,
+  resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
+
+describe("resolveNewTaskSandbox", () => {
+  it("keeps a sandbox choice only for new worktrees", () => {
+    const serverConfig = { sandboxes: true };
+    expect(
+      resolveNewTaskSandbox({ workspaceMode: "worktree", draftSandbox: true, serverConfig }),
+    ).toBe(true);
+    expect(
+      resolveNewTaskSandbox({ workspaceMode: "local", draftSandbox: true, serverConfig }),
+    ).toBe(false);
+  });
+
+  it("drops the choice on a server without sandboxes", () => {
+    expect(
+      resolveNewTaskSandbox({ workspaceMode: "worktree", draftSandbox: true, serverConfig: {} }),
+    ).toBe(false);
+  });
+
+  it("keeps the choice while the server config is unknown", () => {
+    expect(
+      resolveNewTaskSandbox({ workspaceMode: "worktree", draftSandbox: true, serverConfig: null }),
+    ).toBe(true);
+  });
+});
+
+describe("resolveNewTaskWorkspaceLabel", () => {
+  it("names a sandboxed worktree", () => {
+    expect(
+      resolveNewTaskWorkspaceLabel({
+        workspaceMode: "worktree",
+        worktreePath: null,
+        sandbox: true,
+      }),
+    ).toBe("New sandbox");
+    expect(
+      resolveNewTaskWorkspaceLabel({
+        workspaceMode: "worktree",
+        worktreePath: null,
+        sandbox: false,
+      }),
+    ).toBe("New worktree");
+  });
+});
 
 describe("resolveNewTaskLocalWorkspaceSelection", () => {
   it("waits for refs instead of carrying a worktree base into Current checkout", () => {

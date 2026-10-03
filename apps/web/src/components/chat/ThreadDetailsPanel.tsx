@@ -28,6 +28,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadSandboxControl } from "./ThreadSandboxControl";
 
 interface VersionMismatchIssue {
   readonly clientVersion: string;
@@ -43,6 +44,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
+  /** The thread's worktree, matched against the environment's sandboxes. */
+  worktreePath: string | null;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -59,6 +62,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   onEnvModeChange: (mode: EnvMode) => void;
   /** The thread's env mode as ChatView resolves it. */
   envMode: EnvMode;
+  /** The thread's server can run new worktrees in Docker sandboxes. */
+  sandboxesAvailable: boolean;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   startFromOrigin: boolean;
@@ -99,6 +104,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     startFromOrigin: props.startFromOrigin,
     onStartFromOriginChange: props.onStartFromOriginChange,
     envMode: props.envMode,
+    sandboxesAvailable: props.sandboxesAvailable,
     ...(props.activeThreadBranchOverride !== undefined
       ? { activeThreadBranchOverride: props.activeThreadBranchOverride }
       : {}),
@@ -166,6 +172,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {density === "full" ? (
                 <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+              ) : null}
+
+              {density !== "essential" && props.sandboxesAvailable ? (
+                <ThreadSandboxControl
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  worktreePath={props.worktreePath}
+                />
               ) : null}
 
               {density !== "essential" && props.showOpenInPicker ? (

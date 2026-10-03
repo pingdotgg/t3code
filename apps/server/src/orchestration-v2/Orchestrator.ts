@@ -103,6 +103,7 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import * as SandboxService from "../sandbox/SandboxService.ts";
 import {
   makeSubagentChildThread,
   subagentResultForRun,
@@ -741,6 +742,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
+  const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor;
 
@@ -770,23 +772,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
+  /**
+   * The shared session id for adapters that serve many threads from one
+   * process, or null for adapters with a session per thread. A shared process
+   * runs where it was opened, so threads in a sandbox never share one with
+   * the host or another sandbox.
+   */
+  const sharedProviderSessionIdFor = (input: {
+    readonly adapter: ProviderAdapterV2Shape;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly worktreePath: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const capabilities = yield* input.adapter.getCapabilities();
+      if (!capabilities.sessions.supportsMultipleProviderThreadsPerSession) return null;
+      const worktreePath = input.worktreePath;
+      const sandboxed =
+        worktreePath !== null &&
+        Option.isSome(sandboxes) &&
+        (yield* sandboxes.value.isSandboxed(worktreePath));
+      return idAllocator.derive.providerSession({
+        providerInstanceId: input.providerInstanceId,
+        ...(sandboxed ? { sandboxWorktreePath: worktreePath } : {}),
+      });
+    });
+
+  /**
+   * The session a run uses. A shared session always comes from the thread's
+   * current worktree rather than `persisted`: a launch records one before its
+   * worktree and sandbox exist. For host threads that is the same id.
+   */
   const providerSessionIdFor = (input: {
     readonly adapter: ProviderAdapterV2Shape;
     readonly providerInstanceId: ProviderInstanceId;
     readonly threadId: ThreadId;
+    readonly worktreePath: string | null;
+    readonly persisted: ProviderSessionId | null | undefined;
   }) =>
-    input.adapter.getCapabilities().pipe(
-      Effect.flatMap((capabilities) =>
-        capabilities.sessions.supportsMultipleProviderThreadsPerSession
-          ? Effect.succeed(
-              idAllocator.derive.providerSession({
+    sharedProviderSessionIdFor(input).pipe(
+      Effect.flatMap((shared) =>
+        shared !== null
+          ? Effect.succeed(shared)
+          : input.persisted !== null && input.persisted !== undefined
+            ? Effect.succeed(input.persisted)
+            : idAllocator.allocate.providerSession({
                 providerInstanceId: input.providerInstanceId,
+                threadId: input.threadId,
               }),
-            )
-          : idAllocator.allocate.providerSession({
-              providerInstanceId: input.providerInstanceId,
-              threadId: input.threadId,
-            }),
       ),
     );
 
@@ -1483,29 +1515,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }),
             ),
           ));
-      const providerSessionId =
-        (!canResumeAcrossInstances &&
-        queuedProviderThread.providerSessionId !== null &&
-        !switchPlan?.releaseProviderSessionIds.includes(queuedProviderThread.providerSessionId)
-          ? queuedProviderThread.providerSessionId
-          : null) ??
-        (yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
-          Effect.flatMap((adapter) =>
-            providerSessionIdFor({
-              adapter,
-              providerInstanceId: queuedRun.providerInstanceId,
-              threadId,
+      const providerSessionId = yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
+        Effect.flatMap((adapter) =>
+          providerSessionIdFor({
+            adapter,
+            providerInstanceId: queuedRun.providerInstanceId,
+            threadId,
+            worktreePath: projection.thread.worktreePath,
+            persisted:
+              !canResumeAcrossInstances &&
+              queuedProviderThread.providerSessionId !== null &&
+              !switchPlan?.releaseProviderSessionIds.includes(
+                queuedProviderThread.providerSessionId,
+              )
+                ? queuedProviderThread.providerSessionId
+                : null,
+          }),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId,
+              commandType: "message.dispatch",
+              cause,
             }),
-          ),
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorDispatchError({
-                commandId,
-                commandType: "message.dispatch",
-                cause,
-              }),
-          ),
-        ));
+        ),
+      );
       const providerThread: OrchestrationV2ProviderThread = {
         ...deliveryProviderThread,
         providerSessionId,
@@ -3945,15 +3980,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           input.projection,
           input.modelSelection.instanceId,
         ).find((candidate) => candidate.id !== providerThread.id);
-        const targetProviderSessionId =
-          existingTargetProviderThread?.providerSessionId ??
-          (yield* mapDispatchError(input.command)(
-            providerSessionIdFor({
-              adapter: targetAdapter,
-              providerInstanceId: input.modelSelection.instanceId,
-              threadId: input.command.threadId,
-            }),
-          ));
+        const targetProviderSessionId = yield* mapDispatchError(input.command)(
+          providerSessionIdFor({
+            adapter: targetAdapter,
+            providerInstanceId: input.modelSelection.instanceId,
+            threadId: input.command.threadId,
+            worktreePath: input.projection.thread.worktreePath,
+            persisted: existingTargetProviderThread?.providerSessionId,
+          }),
+        );
         const targetProviderThreadBase: OrchestrationV2ProviderThread =
           existingTargetProviderThread === undefined
             ? {
@@ -5024,15 +5059,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-        const providerSessionId =
-          activeProviderThread?.providerSessionId ??
-          (yield* mapDispatchError(command)(
-            providerSessionIdFor({
-              adapter,
-              providerInstanceId: modelSelection.instanceId,
-              threadId: command.threadId,
-            }),
-          ));
+        const providerSessionId = yield* mapDispatchError(command)(
+          providerSessionIdFor({
+            adapter,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: command.threadId,
+            worktreePath: projection.thread.worktreePath,
+            persisted: activeProviderThread?.providerSessionId,
+          }),
+        );
         const providerThreadId =
           activeProviderThread?.id ??
           idAllocator.derive.providerThread({
@@ -5409,15 +5444,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         isProviderSwitch && !canResumeAcrossInstances
           ? rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0]
           : activeProviderThread;
-      const providerSessionId =
-        (canResumeAcrossInstances ? undefined : targetProviderThread?.providerSessionId) ??
-        (yield* mapDispatchError(command)(
-          providerSessionIdFor({
-            adapter,
-            providerInstanceId: modelSelection.instanceId,
-            threadId: command.threadId,
-          }),
-        ));
+      const providerSessionId = yield* mapDispatchError(command)(
+        providerSessionIdFor({
+          adapter,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: command.threadId,
+          worktreePath: projection.thread.worktreePath,
+          persisted: canResumeAcrossInstances ? undefined : targetProviderThread?.providerSessionId,
+        }),
+      );
       const existingProviderSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
@@ -7576,6 +7611,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(command));
       const emitEvent = emit(events, command);
+      // The run's session was picked when the message arrived, before the
+      // worktree (and any sandbox) existed. Re-pick a shared one now.
+      const preparedAdapter = yield* providerAdapters
+        .get(state.run.providerInstanceId)
+        .pipe(mapDispatchError(command));
+      const preparedSessionId = yield* sharedProviderSessionIdFor({
+        adapter: preparedAdapter,
+        providerInstanceId: state.run.providerInstanceId,
+        worktreePath: projection.thread.worktreePath,
+      }).pipe(mapDispatchError(command));
+      if (
+        preparedSessionId !== null &&
+        preparedSessionId !== state.providerThread.providerSessionId
+      ) {
+        yield* emitEvent({
+          type: "provider-thread.updated",
+          threadId: command.threadId,
+          driver: state.providerThread.driver,
+          providerInstanceId: state.run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...state.providerThread,
+            providerSessionId: preparedSessionId,
+            updatedAt: now,
+          },
+        });
+      }
       yield* emitEvent({
         type: "checkpoint-scope.created",
         threadId: command.threadId,

@@ -508,6 +508,7 @@ export async function restoreRejectedQueuedMessage(
               ...(queuedMessage.creation.startFromOrigin !== undefined
                 ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                 : {}),
+              ...(queuedMessage.creation.sandbox ? { sandbox: true } : {}),
             },
           }
         : {}),
@@ -1029,6 +1030,7 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
+          sandbox: creation.sandbox === true,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });

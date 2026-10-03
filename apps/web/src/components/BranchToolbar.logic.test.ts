@@ -15,6 +15,7 @@ import {
   resolveLockedWorkspaceLabel,
   resolveWorkspaceDisplayName,
   resolveLocalCheckoutBranchMismatch,
+  resolveSupportedEnvMode,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
@@ -140,6 +141,31 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "local",
       }),
     ).toBe("worktree");
+  });
+
+  it("keeps new-sandbox mode when selecting a base ref, and drops it for an existing worktree", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: null,
+        effectiveEnvMode: "sandbox",
+      }),
+    ).toBe("sandbox");
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: "/repo/.t3/worktrees/feature-a",
+        currentWorktreePath: null,
+        effectiveEnvMode: "sandbox",
+      }),
+    ).toBe("worktree");
+  });
+});
+
+describe("resolveSupportedEnvMode", () => {
+  it("falls back to a plain worktree when the server cannot run sandboxes", () => {
+    expect(resolveSupportedEnvMode("sandbox", false)).toBe("worktree");
+    expect(resolveSupportedEnvMode("sandbox", true)).toBe("sandbox");
+    expect(resolveSupportedEnvMode("local", false)).toBe("local");
   });
 });
 
@@ -539,6 +565,7 @@ describe("resolveEnvModeLabel", () => {
   it("uses explicit workspace labels", () => {
     expect(resolveEnvModeLabel("local")).toBe("Current checkout");
     expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
+    expect(resolveEnvModeLabel("sandbox")).toBe("New sandbox");
   });
 });
 

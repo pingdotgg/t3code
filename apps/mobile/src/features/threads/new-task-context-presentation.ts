@@ -2,12 +2,33 @@ import { sanitizeNewRefName } from "@t3tools/shared/git";
 
 type WorkspaceMode = "local" | "worktree";
 
+/** The workspace picker's options. A sandbox is a new worktree that runs in Docker. */
+export type NewTaskWorkspaceChoice = "local" | "worktree" | "sandbox";
+
+/**
+ * Whether a new task starts in a sandbox. The draft keeps the user's choice;
+ * a server that does not offer sandboxes drops it, and an unknown config
+ * (offline or still loading) keeps it so editing a queued task cannot lose it.
+ */
+export function resolveNewTaskSandbox(input: {
+  readonly workspaceMode: WorkspaceMode;
+  readonly draftSandbox: boolean | undefined;
+  readonly serverConfig: { readonly sandboxes?: boolean } | null;
+}): boolean {
+  return (
+    input.workspaceMode === "worktree" &&
+    input.draftSandbox === true &&
+    (input.serverConfig === null || input.serverConfig.sandboxes === true)
+  );
+}
+
 export function resolveNewTaskWorkspaceLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+  readonly sandbox: boolean;
+}): "Current checkout" | "Current worktree" | "New worktree" | "New sandbox" {
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return input.sandbox ? "New sandbox" : "New worktree";
   }
   return input.worktreePath ? "Current worktree" : "Current checkout";
 }

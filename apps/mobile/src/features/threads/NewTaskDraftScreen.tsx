@@ -50,6 +50,7 @@ import {
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -122,6 +123,7 @@ import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
+  type NewTaskWorkspaceChoice,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
@@ -129,9 +131,20 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 
+const WORKSPACE_CHOICES = [
+  { id: "local", title: "Current checkout" },
+  { id: "worktree", title: "New worktree" },
+  { id: "sandbox", title: "New sandbox", subtitle: "New worktree in a Docker container" },
+] as const satisfies ReadonlyArray<{
+  readonly id: NewTaskWorkspaceChoice;
+  readonly title: string;
+  readonly subtitle?: string;
+}>;
+
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
   readonly worktreePath: string | null;
+  readonly sandbox: boolean;
   readonly size: number;
 }) {
   if (props.workspaceMode === "local" && props.worktreePath === null) {
@@ -164,7 +177,7 @@ function NewTaskWorkspaceIcon(props: {
         }
       >
         <SymbolView
-          name="arrow.triangle.branch"
+          name={props.sandbox ? "cube" : "arrow.triangle.branch"}
           size={Math.round((9 * props.size) / 16)}
           tintColorClassName="accent-icon-muted"
           type="monochrome"
@@ -996,7 +1009,10 @@ export function NewTaskDraftScreen(props: {
   const workspaceLabel = resolveNewTaskWorkspaceLabel({
     workspaceMode: flow.workspaceMode,
     worktreePath: flow.selectedWorktreePath,
+    sandbox: flow.sandbox,
   });
+  const workspaceChoice: NewTaskWorkspaceChoice =
+    flow.workspaceMode === "local" ? "local" : flow.sandbox ? "sandbox" : "worktree";
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
   async function handlePickMedia(): Promise<void> {
@@ -1549,24 +1565,62 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const workspaceControlDisabled = isComposerInteractionLocked || voiceInput.isBusy;
+  // Two workspaces toggle on tap. A server that offers sandboxes adds a third,
+  // so the control opens a menu instead.
+  const offersWorkspaceMenu = flow.canUseSandbox && !workspaceControlDisabled;
+  const workspaceControl = (
+    <ComposerInlineControl
+      accessibilityHint={
+        offersWorkspaceMenu
+          ? "Chooses where the task runs"
+          : `Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`
+      }
+      accessibilityLabel={workspaceLabel}
+      disabled={workspaceControlDisabled}
+      renderIcon={(size) => (
+        <NewTaskWorkspaceIcon
+          workspaceMode={flow.workspaceMode}
+          worktreePath={flow.selectedWorktreePath}
+          sandbox={flow.sandbox}
+          size={size}
+        />
+      )}
+      label={workspaceLabel}
+      maxWidth={flow.workspaceMode === "local" ? 220 : 148}
+      onPress={
+        offersWorkspaceMenu
+          ? undefined
+          : () => flow.setWorkspaceChoice(flow.workspaceMode === "local" ? "worktree" : "local")
+      }
+      showChevron={offersWorkspaceMenu}
+    />
+  );
+
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
-      <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
-        accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || voiceInput.isBusy}
-        renderIcon={(size) => (
-          <NewTaskWorkspaceIcon
-            workspaceMode={flow.workspaceMode}
-            worktreePath={flow.selectedWorktreePath}
-            size={size}
-          />
-        )}
-        label={workspaceLabel}
-        maxWidth={flow.workspaceMode === "local" ? 220 : 148}
-        onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
-        showChevron={false}
-      />
+      {offersWorkspaceMenu ? (
+        <ControlPillMenu
+          accessibilityLabel={workspaceLabel}
+          actions={WORKSPACE_CHOICES.map((choice) => ({
+            ...choice,
+            ...(choice.id === "local" && flow.workspaceMode === "local"
+              ? { title: workspaceLabel }
+              : {}),
+            state: choice.id === workspaceChoice ? ("on" as const) : ("off" as const),
+          }))}
+          onPressAction={({ nativeEvent }) => {
+            const choice = WORKSPACE_CHOICES.find(
+              (candidate) => candidate.id === nativeEvent.event,
+            );
+            if (choice) flow.setWorkspaceChoice(choice.id);
+          }}
+        >
+          {workspaceControl}
+        </ControlPillMenu>
+      ) : (
+        workspaceControl
+      )}
 
       <ComposerInlineControl
         accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}

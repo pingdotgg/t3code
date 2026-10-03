@@ -35,6 +35,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as SandboxService from "../sandbox/SandboxService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -55,6 +56,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+      readonly sandbox?: boolean | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -104,6 +106,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
+      "provision-sandbox",
       "run-setup-script",
       "create-thread",
       "update-thread",
@@ -156,6 +159,7 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -217,6 +221,7 @@ const make = Effect.gen(function* () {
     );
 
     const tracked = input.workspaceStrategy.type === "worktree";
+    const sandboxed = tracked && input.workspaceStrategy.sandbox === true;
     let createdWorktreePath: string | null = null;
     let setupTerminalId: string | null = null;
     if (tracked) {
@@ -224,7 +229,9 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        stages: ["fetch", "checkout", "setup-script", "agent"],
+        stages: sandboxed
+          ? ["fetch", "checkout", "sandbox", "setup-script", "agent"]
+          : ["fetch", "checkout", "setup-script", "agent"],
         fiber: yield* Effect.fiber,
       });
     }
@@ -354,6 +361,25 @@ const make = Effect.gen(function* () {
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
+        // Registered before the thread shows its worktree, so nothing opened
+        // there can start on the host while the sandbox is still starting.
+        if (sandboxed) {
+          if (Option.isNone(sandboxes)) {
+            return yield* mapError(
+              input,
+              "provision-sandbox",
+              threadId,
+            )("This server cannot run sandboxes.");
+          }
+          yield* sandboxes.value
+            .register({
+              worktreePath,
+              projectRoot: project.workspaceRoot,
+              providers: yield* providerRegistry.getProviders,
+              homes: SandboxService.sandboxProviderHomes(yield* serverSettings.getSettings),
+            })
+            .pipe(Effect.mapError(mapError(input, "provision-sandbox", threadId)));
+        }
         yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
       }
@@ -408,6 +434,19 @@ const make = Effect.gen(function* () {
           ),
           Effect.forkIn(preparationScope),
         );
+      }
+
+      // The sandbox starts before the setup script so the script installs
+      // dependencies and services inside it.
+      if (sandboxed && worktreePath !== null && Option.isSome(sandboxes)) {
+        yield* setupTracker.stageStatus(threadId, "sandbox", "running");
+        yield* sandboxes.value
+          .start({
+            worktreePath,
+            onOutput: (line) => setupTracker.appendTail(threadId, "sandbox", line),
+          })
+          .pipe(Effect.mapError(mapError(input, "provision-sandbox", threadId)));
+        yield* setupTracker.stageStatus(threadId, "sandbox", "done");
       }
 
       const cwd = worktreePath ?? project.workspaceRoot;

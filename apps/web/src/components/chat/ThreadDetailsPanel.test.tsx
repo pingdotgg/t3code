@@ -27,6 +27,9 @@ vi.mock("./ThreadAutomationsPanel", () => ({
 vi.mock("./ThreadRelationshipsControl", () => ({
   ThreadRelationshipsPanel: () => null,
 }));
+vi.mock("./ThreadSandboxControl", () => ({
+  ThreadSandboxControl: () => null,
+}));
 vi.mock("./ThreadDetailsCard", () => ({
   ThreadDetailsCard: ({ children }: { children: (density: "full") => React.ReactNode }) =>
     children("full"),
@@ -58,6 +61,7 @@ describe("ThreadDetailsPanel", () => {
       onPresentationChange: vi.fn(),
       environmentId,
       threadId: "thread:thread-details" as ThreadId,
+      worktreePath: null,
       activeProjectName: undefined,
       activeProjectScripts: [],
       preferredScriptId: null,
@@ -71,6 +75,7 @@ describe("ThreadDetailsPanel", () => {
       onEnvironmentChange: vi.fn(),
       onEnvModeChange: vi.fn(),
       envMode: "local",
+      sandboxesAvailable: false,
       startFromOrigin: false,
       onStartFromOriginChange: vi.fn(),
       onComposerFocusRequest: vi.fn(),

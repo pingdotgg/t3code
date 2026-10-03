@@ -220,13 +220,13 @@ function SetupDetailsSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
-        {/* Agent startup is the header handoff, not a fifth setup step. */}
+        {/* Agent startup is the header handoff, not another setup step. */}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
             <View key={stage.id}>
               <StageRow stage={stage} scriptName={snapshot.setupScript?.name ?? null} now={now} />
-              {stage.id === "setup-script" &&
+              {(stage.id === "setup-script" || stage.id === "sandbox") &&
               (stage.status === "running" || stage.status === "failed" || stage.tail.length > 0) ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
               ) : null}

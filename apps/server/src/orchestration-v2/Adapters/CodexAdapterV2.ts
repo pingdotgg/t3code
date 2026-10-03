@@ -83,6 +83,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import * as SandboxService from "../../sandbox/SandboxService.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexAdditionalContext,
@@ -703,6 +704,12 @@ export function buildCodexTurnStartParams(input: {
   readonly deviceToolsAvailable?: boolean;
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
+  /**
+   * The turn runs in a Docker sandbox. Codex's own sandbox cannot create
+   * namespaces inside a container, so the container is the boundary and the
+   * runtime mode's approval policy still applies.
+   */
+  readonly sandboxed?: boolean;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -711,9 +718,11 @@ export function buildCodexTurnStartParams(input: {
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
-      input.runtimePolicy.sandboxPolicy === undefined
-        ? runtimeModeDefaults.sandboxPolicy
-        : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+      input.runtimePolicy.sandboxPolicy !== undefined
+        ? yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy)
+        : input.sandboxed === true
+          ? ({ type: "dangerFullAccess" } as const)
+          : runtimeModeDefaults.sandboxPolicy;
     const selectedEffort = getModelSelectionStringOptionValue(
       input.modelSelection,
       "reasoningEffort",
@@ -1385,6 +1394,7 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers;
+    const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
 
     return CodexAppServerClientFactory.of({
       open: (input) =>
@@ -1394,13 +1404,47 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
-          const command = yield* makeCodexAppServerSpawnCommand({
-            command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
-            env: environment,
-          });
+          const args = codexAppServerArgs(
+            resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+          );
+          const openError = (cause: unknown) =>
+            new ProviderAdapterOpenSessionError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            });
+          const cwd = input.runtimePolicy.cwd;
+          const sandbox =
+            Option.isNone(sandboxes) || cwd === null
+              ? Option.none()
+              : yield* sandboxes.value.execTarget(cwd).pipe(Effect.mapError(openError));
+          // In a sandbox the image's own `codex` runs the app-server; the
+          // host binary may not even be a Linux build.
+          const command = Option.isSome(sandbox)
+            ? yield* Effect.try({
+                try: () =>
+                  sandbox.value.command({
+                    command: "codex",
+                    args,
+                    cwd: cwd ?? sandbox.value.worktreePath,
+                    env: environment,
+                    tty: false,
+                  }),
+                catch: openError,
+              }).pipe(
+                Effect.tap((plan) => Scope.addFinalizer(scope, Effect.sync(plan.release))),
+                Effect.map((plan) =>
+                  ChildProcess.make(plan.command, [...plan.args], {
+                    env: plan.env,
+                    extendEnv: false,
+                  }),
+                ),
+              )
+            : yield* makeCodexAppServerSpawnCommand({
+                command: input.settings.binaryPath || "codex",
+                args,
+                env: environment,
+              });
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError(
@@ -1452,6 +1496,7 @@ export const createCodexAdapterV2 = (
     const hostEnvironment = yield* HostProcessEnvironment;
     const idAllocator = yield* IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
+    const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
     const homeLayout = yield* resolveCodexHomeLayout(config);
 
     yield* materializeCodexShadowHome(homeLayout).pipe(
@@ -1482,6 +1527,7 @@ export const createCodexAdapterV2 = (
       idAllocator,
       serverConfig,
       continuationRequests,
+      ...(Option.isSome(sandboxes) ? { sandboxes: sandboxes.value } : {}),
       ...hooks,
     });
   });
@@ -1535,6 +1581,8 @@ export interface CodexAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
+  /** Tells turns whether their cwd is in a sandboxed worktree. */
+  readonly sandboxes?: SandboxService.SandboxService["Service"];
   /**
    * Sink for post-settle background command completions so the orchestrator
    * can start a continuation run. Optional: adapters that omit it keep
@@ -5546,6 +5594,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
                 omitServiceTier: adapterOptions.resolveRuntime !== undefined,
+                sandboxed:
+                  adapterOptions.sandboxes !== undefined &&
+                  turnInput.runtimePolicy.cwd !== null &&
+                  (yield* adapterOptions.sandboxes.isSandboxed(turnInput.runtimePolicy.cwd)),
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);

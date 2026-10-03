@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type SandboxSummary,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
@@ -327,6 +328,21 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:cancel-worktree-setup",
       tag: WS_METHODS.worktreeSetupCancel,
     }),
+    // Docker sandboxes on the environment. A thread is sandboxed when its
+    // worktree path matches one; `findSandboxForWorktree` does the lookup.
+    sandboxes: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:vcs:sandboxes",
+      tag: WS_METHODS.subscribeSandboxes,
+      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    }),
+    stopSandbox: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stop-sandbox",
+      tag: WS_METHODS.sandboxStop,
+    }),
+    removeSandbox: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:remove-sandbox",
+      tag: WS_METHODS.sandboxRemove,
+    }),
     removeWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:remove-worktree",
       tag: WS_METHODS.vcsRemoveWorktree,
@@ -356,6 +372,15 @@ export function createVcsEnvironmentAtoms<R, E>(
       onSettled: invalidateRefs,
     }),
   };
+}
+
+/** The sandbox that runs a thread's worktree, if any. */
+export function findSandboxForWorktree(
+  sandboxes: ReadonlyArray<SandboxSummary> | undefined,
+  worktreePath: string | null | undefined,
+): SandboxSummary | null {
+  if (!sandboxes || !worktreePath) return null;
+  return sandboxes.find((sandbox) => sandbox.worktreePath === worktreePath) ?? null;
 }
 
 export * from "./gitActions.ts";

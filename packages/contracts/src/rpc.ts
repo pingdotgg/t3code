@@ -98,6 +98,7 @@ import {
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
+import { SandboxListStreamEvent, SandboxRequestError, SandboxWorktreeInput } from "./sandbox.ts";
 import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
@@ -522,6 +523,9 @@ export const WS_METHODS = {
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeWorktreeSetup: "subscribeWorktreeSetup",
   worktreeSetupCancel: "worktreeSetup.cancel",
+  subscribeSandboxes: "subscribeSandboxes",
+  sandboxStop: "sandbox.stop",
+  sandboxRemove: "sandbox.remove",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
@@ -1254,6 +1258,25 @@ const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, 
   stream: true,
 });
 
+const WsSubscribeSandboxesRpc = Rpc.make(WS_METHODS.subscribeSandboxes, {
+  payload: Schema.Struct({}),
+  success: SandboxListStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsSandboxStopRpc = Rpc.make(WS_METHODS.sandboxStop, {
+  payload: SandboxWorktreeInput,
+  success: Schema.Void,
+  error: Schema.Union([SandboxRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxRemoveRpc = Rpc.make(WS_METHODS.sandboxRemove, {
+  payload: SandboxWorktreeInput,
+  success: Schema.Void,
+  error: Schema.Union([SandboxRequestError, EnvironmentAuthorizationError]),
+});
+
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
@@ -1797,6 +1820,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
   WsWorktreeSetupCancelRpc,
+  WsSubscribeSandboxesRpc,
+  WsSandboxStopRpc,
+  WsSandboxRemoveRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,

@@ -135,3 +135,34 @@ describe("new thread on an existing branch", () => {
     },
   );
 });
+
+describe("new thread in a sandbox", () => {
+  it("asks the server to prepare the new worktree in a sandbox", () => {
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "sandbox-thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-10-03T00:00:00Z",
+      text: "Run the services",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      startFromOrigin: false,
+      sandbox: true,
+      worktreeBranchName: "t3code/abc123",
+    });
+
+    expect(input.bootstrap.prepareWorktree).toEqual({
+      projectCwd: "/workspace",
+      baseBranch: "main",
+      branch: "t3code/abc123",
+      sandbox: true,
+    });
+  });
+});

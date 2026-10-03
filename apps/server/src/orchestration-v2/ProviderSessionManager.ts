@@ -34,6 +34,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as SandboxService from "../sandbox/SandboxService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
@@ -70,6 +71,9 @@ export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.T
  * terminalizes provider-bound work and retires non-replayable effects; a later
  * user command or durable replay-safe operation opens a session lazily.
  */
+/** Provider drivers that run inside a worktree's Docker sandbox. */
+const SANDBOX_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent"]);
+
 export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSessionOpenError>()(
   "ProviderSessionOpenError",
   {
@@ -198,6 +202,8 @@ interface LiveSessionEntry {
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** Where the session's process runs. A sandboxed worktree's sessions die with its container. */
+  readonly cwd: string | null;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -308,6 +314,20 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
+      const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
+      // How often each sandboxed worktree stopped. An open that sees the count
+      // change holds a client whose process died with the container.
+      const sandboxStops = new Map<string, number>();
+      const isInside = (worktreePath: string, cwd: string) =>
+        cwd === worktreePath || cwd.startsWith(`${worktreePath}/`);
+      const stopCount = (cwd: string | null) => {
+        if (cwd === null) return 0;
+        let count = 0;
+        for (const [worktreePath, stops] of sandboxStops) {
+          if (isInside(worktreePath, cwd)) count += stops;
+        }
+        return count;
+      };
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       /**
        * Optional so the many focused tests that assemble this layer by hand do
@@ -801,11 +821,19 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
+        /**
+         * Release only the session this entry holds, never a replacement that
+         * took its id. Compared by runtime: activity updates replace the entry.
+         */
+        readonly onlyIfEntry?: LiveSessionEntry;
       }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
-          if (candidate === undefined) {
+          if (
+            candidate === undefined ||
+            (input.onlyIfEntry !== undefined && candidate.runtime !== input.onlyIfEntry.runtime)
+          ) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
           const removed = yield* Effect.zip(
@@ -841,6 +869,7 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfEntry?: LiveSessionEntry;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1660,6 +1689,34 @@ export const layerWithOptions = (
       });
       yield* Effect.addFinalizer(() => shutdown);
 
+      // A stopped or removed sandbox took its sessions' processes with it.
+      // Release them so the next turn opens a fresh session, restarting the
+      // sandbox, instead of reusing a dead client.
+      if (Option.isSome(sandboxes)) {
+        yield* sandboxes.value.stopped.pipe(
+          Stream.runForEach((worktreePath) =>
+            Effect.gen(function* () {
+              sandboxStops.set(worktreePath, (sandboxStops.get(worktreePath) ?? 0) + 1);
+              const dead = [...(yield* Ref.get(sessions)).values()].filter(
+                (entry) => entry.cwd !== null && isInside(worktreePath, entry.cwd),
+              );
+              yield* Effect.forEach(
+                dead,
+                (entry) =>
+                  releaseEntry({
+                    providerSessionId: entry.runtime.providerSessionId,
+                    reason: "runtime_error",
+                    detail: "The sandbox stopped.",
+                    onlyIfEntry: entry,
+                  }).pipe(Effect.ignore),
+                { discard: true },
+              );
+            }),
+          ),
+          Effect.forkScoped,
+        );
+      }
+
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
@@ -1681,6 +1738,36 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
+              // Only these adapters start their CLI through the sandbox. Any
+              // other provider would run on the host, outside the sandbox the
+              // user chose, so it fails instead, also when it would reuse a
+              // session that is already open.
+              if (
+                cwd !== null &&
+                Option.isSome(sandboxes) &&
+                (yield* sandboxes.value.isSandboxed(cwd))
+              ) {
+                const driver =
+                  existing?.runtime.driver ??
+                  (yield* registry.get(input.modelSelection.instanceId).pipe(
+                    Effect.map((adapter) => adapter.driver),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  ));
+                if (!SANDBOX_DRIVERS.has(driver)) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: `${driver} cannot run in a sandbox yet. Use Claude or Codex in this thread.`,
+                  });
+                }
+              }
               if (existing !== undefined) {
                 if (
                   !existing.attachedThreadIds.has(input.threadId) &&
@@ -1727,6 +1814,7 @@ export const layerWithOptions = (
                   dropMcpCredentialReservation(input.threadId, mcpCredentialId);
                 }
               });
+              const stopsAtOpen = stopCount(cwd);
               const sessionScope = yield* Scope.make();
               const runtime = yield* adapter
                 .openSession({
@@ -1788,6 +1876,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                cwd,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
@@ -1807,6 +1896,20 @@ export const layerWithOptions = (
               // The entry now guards the credential via its recorded id, so
               // the pre-open reservation can be dropped.
               yield* dropReservation;
+              if (stopCount(cwd) !== stopsAtOpen) {
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "runtime_error",
+                  detail: "The sandbox stopped while the session was opening.",
+                  onlyIfEntry: entry,
+                }).pipe(logReleaseFailure(input.providerSessionId));
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause:
+                    "The sandbox stopped while the session was opening. Send the message again.",
+                });
+              }
               yield* withActivityError(
                 input.providerSessionId,
                 writeProviderSessionEvents({

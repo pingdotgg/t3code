@@ -41,7 +41,7 @@ export function resolveNewDraftStartFromOrigin(input: {
   envMode: DraftThreadEnvMode;
   newWorktreesStartFromOrigin: boolean;
 }): boolean {
-  return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
+  return input.envMode !== "local" && input.newWorktreesStartFromOrigin;
 }
 
 export function resolveNewThreadModelSelectionOverride(input: {

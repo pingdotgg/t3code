@@ -33,7 +33,7 @@ import type {
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
@@ -92,6 +92,8 @@ import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispa
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import { sandboxClaudeSpawn } from "../../sandbox/sandboxClaudeSpawn.ts";
+import * as SandboxService from "../../sandbox/SandboxService.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   claudeSignedOutMessage,
@@ -801,6 +803,8 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
 );
 
 export function makeClaudeQueryOptions(input: {
+  /** Set for sandboxed worktrees: starts the CLI inside the sandbox. */
+  readonly spawnClaudeCodeProcess?: ClaudeQueryOptions["spawnClaudeCodeProcess"];
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
   readonly resume: boolean;
@@ -903,6 +907,9 @@ export function makeClaudeQueryOptions(input: {
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(input.spawnClaudeCodeProcess === undefined
+      ? {}
+      : { spawnClaudeCodeProcess: input.spawnClaudeCodeProcess }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -2925,6 +2932,8 @@ export interface ClaudeAdapterV2Options {
   readonly path: Path.Path;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
+  /** Runs turns whose cwd is in a sandboxed worktree inside its container. */
+  readonly sandboxes?: SandboxService.SandboxService["Service"];
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
@@ -2964,6 +2973,41 @@ export function makeClaudeAdapterV2(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+
+  // A sandboxed worktree runs the CLI in its container. On macOS the host
+  // keeps Claude's login in the Keychain, which a Linux container cannot
+  // read, so the sandbox needs a token or a credentials file.
+  const claudeSandboxSpawn = (cwd: string | null) =>
+    Effect.gen(function* () {
+      if (adapterOptions.sandboxes === undefined || cwd === null) return undefined;
+      const target = yield* adapterOptions.sandboxes
+        .execTarget(cwd)
+        .pipe(Effect.mapError((cause) => queryRunnerError(cause, "sandbox")));
+      if (Option.isNone(target)) return undefined;
+      const env = adapterOptions.environment;
+      if (
+        (yield* HostProcessPlatform) === "darwin" &&
+        !env.CLAUDE_CODE_OAUTH_TOKEN &&
+        !env.ANTHROPIC_API_KEY &&
+        !env.ANTHROPIC_AUTH_TOKEN &&
+        !(yield* fileSystem
+          .exists(
+            path.join(
+              env.CLAUDE_CONFIG_DIR ?? path.join(env.HOME ?? "", ".claude"),
+              ".credentials.json",
+            ),
+          )
+          .pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* queryRunnerError(
+          new Error(
+            "Claude in a sandbox needs a token on macOS. Run `claude setup-token`, then add CLAUDE_CODE_OAUTH_TOKEN to the Claude provider's environment variables.",
+          ),
+          "sandbox",
+        );
+      }
+      return sandboxClaudeSpawn(target.value);
+    });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -6934,7 +6978,9 @@ export function makeClaudeAdapterV2(
           const hasPersistedProviderTurn = turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const sandbox = yield* claudeSandboxSpawn(turnInput.runtimePolicy.cwd);
           const queryOptions = makeClaudeQueryOptions({
+            ...(sandbox === undefined ? {} : { spawnClaudeCodeProcess: sandbox }),
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
             resume: shouldResume,
@@ -7740,6 +7786,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const sandboxes = yield* Effect.serviceOption(SandboxService.SandboxService);
     const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
@@ -7757,6 +7804,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       idAllocator,
       queryRunner,
       continuationRequests,
+      ...(Option.isSome(sandboxes) ? { sandboxes: sandboxes.value } : {}),
       ...hooks,
     });
   },

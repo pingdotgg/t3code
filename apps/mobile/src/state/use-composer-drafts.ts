@@ -359,6 +359,8 @@ export interface ComposerDraftWorkspaceSelection {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
+  /** Worktree mode only: run the new worktree in a Docker sandbox. */
+  readonly sandbox?: boolean;
 }
 
 export type ComposerDraftSettingsUpdate = Pick<
@@ -371,6 +373,7 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
+  sandbox: Schema.optional(Schema.Boolean),
 });
 
 const ComposerDraftProjectSchema = Schema.Struct({
@@ -1196,7 +1199,8 @@ export async function removeDeliveredCloudQueuedMessage(
             editor.workspaceSelection.branch !== message.creation?.branch ||
             editor.workspaceSelection.worktreePath !== message.creation?.worktreePath ||
             (editor.workspaceSelection.startFromOrigin ?? false) !==
-              (message.creation?.startFromOrigin ?? false))))
+              (message.creation?.startFromOrigin ?? false) ||
+            (editor.workspaceSelection.sandbox ?? false) !== (message.creation?.sandbox ?? false))))
     )
       continue;
     const drafts = { ...saved.drafts };
