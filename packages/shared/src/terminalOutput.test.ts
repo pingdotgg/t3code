@@ -126,6 +126,16 @@ describe("appendTerminalOutput edge cases from review", () => {
     expect(windowChars).toBeLessThanOrEqual(4_096);
     expect(state.text.length).toBeLessThanOrEqual(4_096);
   });
+
+  it("bounds long lines below a cursor that moved up", () => {
+    const long = `${"x".repeat(900)}\n`;
+    const state = feed([long.repeat(63), "\u001b[63A"], 4_096);
+    const windowChars = state.screen.lines.reduce(
+      (total, line) => total + line.reduce((sum, run) => sum + run.text.length, 0),
+      0,
+    );
+    expect(windowChars).toBeLessThanOrEqual(2 * 4_096);
+  });
 });
 
 describe("terminalOutputResumeText", () => {

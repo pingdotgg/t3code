@@ -536,6 +536,27 @@ export function appendTerminalOutput(
       terminal.saved = { ...terminal.saved, row: Math.max(0, terminal.saved.row - 1) };
     }
   }
+  // Lines below a cursor that moved up can't scroll out; they keep only their ends.
+  if (windowChars > maxChars) {
+    let budget = maxChars;
+    for (let row = 0; row <= terminal.row; row += 1) budget -= lineLength(terminal.lines[row]!);
+    for (let row = terminal.row + 1; row < terminal.lines.length; row += 1) {
+      const line = terminal.lines[row]!;
+      const length = lineLength(line);
+      const keep = Math.max(0, Math.min(length, budget));
+      if (keep < length) {
+        truncated = true;
+        terminal.lines[row] = sliceLine(line, length - keep, length);
+        if (terminal.saved !== null && terminal.saved.row === row) {
+          terminal.saved = {
+            ...terminal.saved,
+            col: Math.max(0, terminal.saved.col - (length - keep)),
+          };
+        }
+      }
+      budget -= keep;
+    }
+  }
   if (terminal.dropped) truncated = true;
   const settled = terminalOutputTail(terminal.settled, maxChars);
   const window = terminal.lines.map(serializeLine).join("\n");
