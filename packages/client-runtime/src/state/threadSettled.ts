@@ -102,24 +102,32 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
-  const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  // Only a FRESH failure raises the hand: a thread snoozed while already
+  // Only a FRESH run outcome raises the hand: a thread snoozed while already
   // failed stays snoozed — that snooze was the user saying "I saw it, not
-  // now". session.updatedAt stamps the status edge, so an error newer than
-  // the snooze is new information.
+  // now". The run's stable completion timestamp is the signal. Never use
+  // runtime.updatedAt here: in production shells it is projection activity
+  // time and advances on unrelated events (title updates, metadata changes),
+  // which used to wake snoozed limited threads long before their reset time.
   if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
-    (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
+    shell.snoozedAt != null &&
+    (latestRun?.state === "completed" ||
+      latestRun?.status === "completed" ||
+      latestRun?.state === "failed" ||
+      latestRun?.status === "failed") &&
+    latestRun.completedAt != null &&
+    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
   ) {
     return true;
   }
+  // Legacy session errors without a run timestamp: session.updatedAt stamps
+  // the status edge, so an error newer than the snooze is new information.
+  const session = shell.session ?? null;
   if (
-    shell.snoozedAt != null &&
-    (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-    latestRun.completedAt != null &&
-    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
+    session !== null &&
+    (session.status === "error" || session.status === "failed") &&
+    (shell.snoozedAt == null ||
+      (session.updatedAt != null && Date.parse(session.updatedAt) > Date.parse(shell.snoozedAt)))
   ) {
     return true;
   }
@@ -198,7 +206,10 @@ export function threadWokeAt(
     const runtime = shell.runtime ?? shell.session ?? null;
     if (
       shell.snoozedAt != null &&
-      (latestRun?.state === "completed" || latestRun?.status === "completed") &&
+      (latestRun?.state === "completed" ||
+        latestRun?.status === "completed" ||
+        latestRun?.state === "failed" ||
+        latestRun?.status === "failed") &&
       latestRun.completedAt != null &&
       Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
     ) {

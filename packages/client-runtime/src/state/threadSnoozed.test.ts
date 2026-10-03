@@ -168,6 +168,63 @@ describe("threadRaisedHandWhileSnoozed", () => {
   });
 });
 
+describe("effectiveSnoozed with production runtime shells", () => {
+  function productionFailedShell(overrides: {
+    readonly runtimeUpdatedAt: string;
+    readonly runCompletedAt: string | null;
+  }): ThreadSnoozeShell {
+    return {
+      snoozedUntil: FUTURE_WAKE,
+      // Snoozed at 09:00, after the usage-limit failure.
+      snoozedAt: SNOOZED_AT,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      runtime: {
+        threadId: ThreadId.make("thread-1"),
+        status: "failed",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: "boom",
+        updatedAt: overrides.runtimeUpdatedAt,
+      },
+      latestRun: {
+        turnId: TurnId.make("turn-1"),
+        status: "failed",
+        requestedAt: "2026-04-10T07:00:00.000Z",
+        startedAt: null,
+        completedAt: overrides.runCompletedAt,
+      },
+    };
+  }
+
+  it("stays snoozed when unrelated activity bumps runtime.updatedAt after a limit snooze", () => {
+    // A usage-limited thread snoozed until reset: failure at 08:00, snoozed at
+    // 09:00. A later title/metadata update bumps runtime.updatedAt
+    // (projection activity time) to 11:00 without any new failure. The thread
+    // must stay snoozed until the reset time.
+    expect(
+      effectiveSnoozed(
+        productionFailedShell({
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+          runCompletedAt: "2026-04-10T08:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
+  it("wakes when a run fails after the snooze was set", () => {
+    const shell = productionFailedShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T10:30:00.000Z",
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadRaisedHandWhileSnoozed(shell)).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:30:00.000Z");
+  });
+});
+
 describe("canSnooze", () => {
   it("allows snoozing quiet and working threads alike", () => {
     expect(canSnooze({ ...makeShell({}), latestUserMessageAt: null }, { now: NOW })).toBe(true);
