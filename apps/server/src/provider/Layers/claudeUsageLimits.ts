@@ -5,7 +5,7 @@
  *
  * - `get_usage` (on demand, during the capabilities probe) reports every
  *   window at once as 0–100 percentages with ISO reset times.
- * - `rate_limit_event` (streamed during a turn) names one window at a time
+ * - `rate_limit_event` (streamed during a turn) reports unified windows
  *   with a 0–1 utilization fraction and an epoch-seconds reset.
  *
  * @module provider/Layers/claudeUsageLimits
@@ -135,19 +135,31 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
-  const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  const windows = new Map<string, ServerProviderUsageWindow>();
+  const add = (type: string, utilization: number, resetsAt: number | undefined) => {
+    if (!Number.isFinite(utilization) || utilization < 0) return;
+    const reset = isoFromEpochSeconds(resetsAt);
+    if (Object.hasOwn(WINDOWS, type)) {
+      windows.set(type, makeWindow(type, utilization * 100, reset));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      const window = scopedWindow(names.overageIncluded, utilization * 100, reset);
+      windows.set(window.id, window);
+    }
+  };
+  const unified = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof unified === "object" && unified !== null && !Array.isArray(unified)) {
+    for (const [type, entry] of Object.entries(unified)) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const { utilization, resetsAt } = entry as { utilization?: unknown; resetsAt?: unknown };
+      if (typeof utilization === "number") {
+        add(type, utilization, typeof resetsAt === "number" ? resetsAt : undefined);
+      }
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
+  if (info.rateLimitType && typeof info.utilization === "number") {
+    add(info.rateLimitType, info.utilization, info.resetsAt);
   }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.size === 0 ? undefined : { windows: [...windows.values()] };
 }
 
 /**
