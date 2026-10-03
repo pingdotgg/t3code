@@ -121,6 +121,32 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
+describe("physical Usage source identity", () => {
+  it("maps Windows and WSL drive paths onto the same canonical identity", () => {
+    assert.strictEqual(
+      UsageService.canonicalPhysicalUsageSourcePath(
+        "win32",
+        "C:\\Users\\Kevin\\.claude\\projects",
+      ),
+      "c:/Users/Kevin/.claude/projects",
+    );
+    assert.strictEqual(
+      UsageService.canonicalPhysicalUsageSourcePath(
+        "linux",
+        "/mnt/c/Users/Kevin/.claude/projects",
+      ),
+      "c:/Users/Kevin/.claude/projects",
+    );
+  });
+
+  it("does not alias ordinary Linux paths", () => {
+    assert.strictEqual(
+      UsageService.canonicalPhysicalUsageSourcePath("linux", "/home/kevin/.claude/projects"),
+      undefined,
+    );
+  });
+});
+
 describe("UsageService", () => {
   it.live.each([
     { explicitDefault: true, label: "explicit" },

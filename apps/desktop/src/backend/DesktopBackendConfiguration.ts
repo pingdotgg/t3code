@@ -258,6 +258,7 @@ const readBackendObservabilitySettings = Effect.gen(function* () {
 
 interface SharedBootstrapInput {
   readonly bootstrapToken: string;
+  readonly usageSourceNamespace: string;
   readonly observabilitySettings: BackendObservabilitySettings;
 }
 
@@ -584,6 +585,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        T3CODE_USAGE_SOURCE_NAMESPACE: input.usageSourceNamespace,
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -717,8 +719,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
-  const forwardedEnv: Record<string, string> = {};
-  const forwardedEnvNames: string[] = [];
+  const forwardedEnv: Record<string, string> = {
+    T3CODE_USAGE_SOURCE_NAMESPACE: input.usageSourceNamespace,
+  };
+  const forwardedEnvNames: string[] = ["T3CODE_USAGE_SOURCE_NAMESPACE"];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
     const value = process.env[name];
     if (value !== undefined && value.length > 0) {
@@ -836,6 +840,7 @@ export const make = Effect.gen(function* () {
   // invariant the renderer relies on. modifyEffect serializes the whole
   // get-or-create so the first caller wins and the rest reuse its token.
   const tokenRef = yield* SynchronizedRef.make(Option.none<string>());
+  const usageSourceNamespaceRef = yield* SynchronizedRef.make(Option.none<string>());
   const getOrCreateBootstrapToken = SynchronizedRef.modifyEffect(tokenRef, (current) =>
     Option.match(current, {
       onSome: (token) => Effect.succeed([token, current] as const),
@@ -854,13 +859,35 @@ export const make = Effect.gen(function* () {
   // talking to. Observability settings get re-read each resolve so a
   // hot-swap of the server-settings file is picked up on the next
   // restart cycle without having to bounce the desktop process.
+  const getOrCreateUsageSourceNamespace = SynchronizedRef.modifyEffect(
+    usageSourceNamespaceRef,
+    (current) =>
+      Option.match(current, {
+        onSome: (namespace) => Effect.succeed([namespace, current] as const),
+        onNone: () =>
+          crypto.randomBytes(16).pipe(
+            Effect.map((bytes) => {
+              const namespace = Encoding.encodeHex(bytes);
+              return [namespace, Option.some(namespace)] as const;
+            }),
+          ),
+      }),
+  );
+
   const sharedInputs = Effect.gen(function* () {
-    const bootstrapToken = yield* getOrCreateBootstrapToken;
+    const [bootstrapToken, usageSourceNamespace] = yield* Effect.all([
+      getOrCreateBootstrapToken,
+      getOrCreateUsageSourceNamespace,
+    ]);
     const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return { bootstrapToken, observabilitySettings } satisfies SharedBootstrapInput;
+    return {
+      bootstrapToken,
+      usageSourceNamespace,
+      observabilitySettings,
+    } satisfies SharedBootstrapInput;
   });
 
   const buildWslPrimaryConfig = Effect.gen(function* () {

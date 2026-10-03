@@ -142,12 +142,16 @@ export interface MergedUsage {
  * having one of them silently dropped.
  */
 function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
-  return [
+  if (fingerprint.physicalSourceId !== undefined) {
+    return JSON.stringify(["physical", fingerprint.provider, fingerprint.physicalSourceId]);
+  }
+  return JSON.stringify([
+    "legacy",
     fingerprint.hostId,
     fingerprint.provider,
     fingerprint.resolvedHomePath,
     fingerprint.volumeId,
-  ].join(" ");
+  ]);
 }
 
 function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly UsageBucket[] {

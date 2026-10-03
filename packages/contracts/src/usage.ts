@@ -161,6 +161,13 @@ export const UsageSourceFingerprint = Schema.Struct({
    * effectively never collides across machines. Empty when it cannot be read.
    */
   volumeId: Schema.String,
+  /**
+   * Optional trusted alias for one physical transcript directory when the
+   * platform cannot expose the same path/inode identity on both sides of a
+   * boundary such as Windows + WSL. Only T3-managed peers that share an
+   * explicit source namespace should populate this.
+   */
+  physicalSourceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 

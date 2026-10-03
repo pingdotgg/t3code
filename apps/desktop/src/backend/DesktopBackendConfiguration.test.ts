@@ -307,6 +307,22 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("shares one Usage source namespace between Windows and managed WSL backends", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+        const primaryNamespace = primary.env.T3CODE_USAGE_SOURCE_NAMESPACE;
+        assert.match(primaryNamespace ?? "", /^[0-9a-f]{32}$/i);
+        assert.equal(wsl.env.T3CODE_USAGE_SOURCE_NAMESPACE, primaryNamespace);
+        assert.include((wsl.env.WSLENV ?? "").split(":"), "T3CODE_USAGE_SOURCE_NAMESPACE");
+      }),
+    ),
+  );
+
   it.effect("resolveWsl reuses the primary's bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -1109,7 +1125,7 @@ describe("DesktopBackendConfiguration", () => {
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:T3CODE_USAGE_SOURCE_NAMESPACE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
           );
         }).pipe(
           Effect.provide(

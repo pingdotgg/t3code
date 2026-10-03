@@ -44,6 +44,7 @@ function summary(
     hostId: string;
     homePath: string;
     volumeId?: string;
+    physicalSourceId?: string;
     distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
@@ -61,6 +62,9 @@ function summary(
         provider: source.provider,
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
+        ...(source.physicalSourceId === undefined
+          ? {}
+          : { physicalSourceId: source.physicalSourceId }),
       },
       status: "ok" as const,
       scannedFiles: 1,
@@ -131,6 +135,89 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
+    expect(merged.duplicateSources).toHaveLength(0);
+  });
+
+  it("deduplicates a trusted Windows/WSL physical source alias across path and volume namespaces", () => {
+    const physicalSourceId = "desktop-host-a:c:/users/kevin/.claude/projects";
+    const merged = mergeUsage(
+      [
+        environment(
+          "windows",
+          summary(
+            [bucket({ sourcePath: "C:\\Users\\kevin\\.claude\\projects" })],
+            [
+              {
+                provider: "claude",
+                hostId: "WINDOWS-HOST",
+                homePath: "C:\\Users\\kevin\\.claude\\projects",
+                volumeId: "ntfs:42",
+                physicalSourceId,
+              },
+            ],
+          ),
+        ),
+        environment(
+          "wsl",
+          summary(
+            [bucket({ sourcePath: "/mnt/c/Users/kevin/.claude/projects" })],
+            [
+              {
+                provider: "claude",
+                hostId: "ubuntu-wsl",
+                homePath: "/mnt/c/Users/kevin/.claude/projects",
+                volumeId: "drvfs:999",
+                physicalSourceId,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.records).toBe(5);
+    expect(merged.sessions).toBe(1);
+    expect(merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("does not collapse cross-platform sources without the trusted physical alias", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "windows",
+          summary(
+            [bucket({ sourcePath: "C:\\Users\\kevin\\.claude\\projects" })],
+            [
+              {
+                provider: "claude",
+                hostId: "WINDOWS-HOST",
+                homePath: "C:\\Users\\kevin\\.claude\\projects",
+                volumeId: "ntfs:42",
+              },
+            ],
+          ),
+        ),
+        environment(
+          "wsl",
+          summary(
+            [bucket({ sourcePath: "/mnt/c/Users/kevin/.claude/projects" })],
+            [
+              {
+                provider: "claude",
+                hostId: "ubuntu-wsl",
+                homePath: "/mnt/c/Users/kevin/.claude/projects",
+                volumeId: "drvfs:999",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(20);
     expect(merged.duplicateSources).toHaveLength(0);
   });
 

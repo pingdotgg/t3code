@@ -151,6 +151,24 @@ const layerTest = Layer.succeed(
   }),
 );
 
+export function canonicalPhysicalUsageSourcePath(
+  platform: NodeJS.Platform,
+  resolvedHomePath: string,
+): string | undefined {
+  const slashPath = resolvedHomePath.replaceAll("\\", "/");
+  const windowsPath = /^([A-Za-z]):\/(.*)$/.exec(slashPath);
+  if (windowsPath) {
+    return `${windowsPath[1]!.toLowerCase()}:/${windowsPath[2]!}`;
+  }
+  if (platform === "linux") {
+    const wslPath = /^\/mnt\/([A-Za-z])\/(.*)$/.exec(slashPath);
+    if (wslPath) {
+      return `${wslPath[1]!.toLowerCase()}:/${wslPath[2]!}`;
+    }
+  }
+  return undefined;
+}
+
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -160,6 +178,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const usageSourceNamespace = hostEnvironment["T3CODE_USAGE_SOURCE_NAMESPACE"]?.trim();
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -814,8 +833,25 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const canonicalPhysicalPath =
+        usageSourceNamespace === undefined || usageSourceNamespace.length === 0
+          ? undefined
+          : canonicalPhysicalUsageSourcePath(platform, dir);
       sources.push({
-        fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
+        fingerprint: {
+          hostId: sourceHostId ?? hostId,
+          provider,
+          resolvedHomePath: dir,
+          volumeId,
+          ...(canonicalPhysicalPath === undefined
+            ? {}
+            : {
+                physicalSourceId: JSON.stringify([
+                  usageSourceNamespace,
+                  canonicalPhysicalPath,
+                ]),
+              }),
+        },
         // Clients exclude missing sources, so saved records remain an available source.
         status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
         scannedFiles,
