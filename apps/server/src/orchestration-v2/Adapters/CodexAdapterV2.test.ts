@@ -32,6 +32,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1619,7 +1620,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
-    readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    readChildMetadata?: (
+      threadId: string,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerRequestError>,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -6297,14 +6300,85 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each(["thread/settings/updated", "model/rerouted"] as const)(
-    "keeps %s child metadata when an older lookup finishes later",
-    (method) =>
+  it.effect.each([
+    {
+      name: "recovers after an empty rollout",
+      failures: 1,
+      emptyRollout: true,
+      attempts: 2,
+      model: "gpt-6-luna",
+    },
+    {
+      name: "bounds persistent empty-rollout failures",
+      failures: 10,
+      emptyRollout: true,
+      attempts: 3,
+      model: null,
+    },
+    {
+      name: "does not retry unrelated errors",
+      failures: 10,
+      emptyRollout: false,
+      attempts: 1,
+      model: null,
+    },
+  ])("$name during child model lookup", ({ failures, emptyRollout, attempts, model }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstRead = yield* Deferred.make<void>();
+        let reads = 0;
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          undefined,
+          undefined,
+          (threadId) =>
+            Effect.gen(function* () {
+              reads += 1;
+              yield* Deferred.succeed(firstRead, undefined);
+              if (reads <= failures) {
+                return yield* CodexErrors.CodexAppServerRequestError.internalError(
+                  emptyRollout
+                    ? "failed to read session metadata: rollout at <child-rollout> is empty"
+                    : "failed to read thread: permission denied",
+                );
+              }
+              return { thread: { id: threadId }, model: "gpt-6-luna" };
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-model-recovery"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(firstRead);
+        yield* TestClock.adjust("1 second");
+        yield* harness.firstTerminal;
+        assert.equal(reads, attempts);
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(reads, attempts);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    { method: "thread/settings/updated", lookup: "stale" },
+    { method: "model/rerouted", lookup: "stale" },
+    { method: "thread/settings/updated", lookup: "failed" },
+    { method: "model/rerouted", lookup: "failed" },
+  ] as const)(
+    "keeps $method child metadata when an older $lookup lookup finishes later",
+    ({ method, lookup }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const releaseMetadata = yield* Deferred.make<void>();
           const observed = yield* Deferred.make<void>();
           const model = "gpt-5.6-sol";
+          let reads = 0;
           const notification: CodexReplay.CodexAppServerReplayEntry = {
             type: "emit_inbound",
             frame: {
@@ -6347,9 +6421,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 : Effect.void,
             undefined,
             (threadId) =>
-              Deferred.await(releaseMetadata).pipe(
-                Effect.as({ thread: { id: threadId }, model: "gpt-6-astra" }),
-              ),
+              Effect.gen(function* () {
+                reads += 1;
+                yield* Deferred.await(releaseMetadata);
+                if (lookup === "failed") {
+                  return yield* CodexErrors.CodexAppServerRequestError.internalError(
+                    "rollout at <child-rollout> is empty",
+                  );
+                }
+                return { thread: { id: threadId }, model: "gpt-6-astra" };
+              }),
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -6366,8 +6447,79 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* Deferred.succeed(releaseMetadata, undefined);
           yield* TestClock.adjust("30 seconds");
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+          assert.equal(reads, 1);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("stops child model lookup retries after interruption", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const interrupted = yield* Deferred.make<void>();
+        const releaseMetadata = yield* Deferred.make<void>();
+        let reads = 0;
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...resumeSubagentTranscript,
+            entries: resumeSubagentTranscript.entries.flatMap((entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === `turn/completed/${RESUME_CHILD_TURN_1}`
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      afterMs: 1,
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          threadId: RESUME_NATIVE_THREAD,
+                          turnId: RESUME_NATIVE_TURN,
+                          completedAtMs: 1782622443000,
+                          item: {
+                            type: "subAgentActivity",
+                            id: "child-interrupted",
+                            kind: "interrupted",
+                            agentThreadId: RESUME_CHILD_THREAD,
+                            agentPath: "/root/resume_agent",
+                          },
+                        },
+                      },
+                    },
+                    entry,
+                  ]
+                : [entry],
+            ),
+          },
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.status === "interrupted"
+              ? Deferred.succeed(interrupted, undefined)
+              : Effect.void,
+          undefined,
+          () =>
+            Effect.gen(function* () {
+              reads += 1;
+              yield* Deferred.await(releaseMetadata);
+              return yield* CodexErrors.CodexAppServerRequestError.internalError(
+                "rollout at <child-rollout> is empty",
+              );
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-interrupted-child-model"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* TestClock.adjust("100 millis");
+        yield* Deferred.await(interrupted);
+        yield* Deferred.succeed(releaseMetadata, undefined);
+        yield* TestClock.adjust("1 second");
+        assert.equal(reads, 1);
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
   );
 
   it.effect("preserves a subagent result across a trailing empty final and resume", () =>

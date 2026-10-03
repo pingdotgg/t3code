@@ -73,6 +73,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -1545,6 +1546,10 @@ export interface CodexAdapterV2Options {
   };
 }
 
+/**
+ * Constructs the Codex adapter from injected runtime services.
+ * Sessions translate native app-server events into orchestration events.
+ */
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
@@ -2536,7 +2541,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               createdBy: "agent",
               creationSource: "provider",
             });
-            const subagent = {
+            const subagent: CodexSubagentThreadContext = {
               parentContext: input.context,
               providerThread,
               childThread,
@@ -2553,7 +2558,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }),
               turnItemOrdinal,
               task,
-            } satisfies CodexSubagentThreadContext;
+            };
 
             yield* Ref.update(subagentThreads, (current) => {
               const updated = new Map(current);
@@ -2660,20 +2665,47 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
             if (task.model === null) {
-              yield* client.raw
-                .request("thread/resume", { threadId: input.nativeThreadId, excludeTurns: true })
-                .pipe(
-                  Effect.flatMap(decodeCodexChildModel),
-                  Effect.timeout("5 seconds"),
-                  Effect.flatMap((response) =>
-                    response.thread.id === input.nativeThreadId &&
-                    !subagentModels.has(input.nativeThreadId)
-                      ? updateSubagentModel(input.nativeThreadId, response.model)
-                      : Effect.void,
-                  ),
-                  Effect.catch(() => Effect.void),
-                  Effect.forkIn(scope),
-                );
+              yield* Effect.suspend(() => {
+                if (
+                  subagentModels.has(input.nativeThreadId) ||
+                  subagent.task.status === "interrupted" ||
+                  subagent.task.status === "failed" ||
+                  subagent.task.status === "cancelled"
+                )
+                  return Effect.void;
+                return client.raw
+                  .request("thread/resume", { threadId: input.nativeThreadId, excludeTurns: true })
+                  .pipe(
+                    Effect.flatMap(decodeCodexChildModel),
+                    Effect.timeout("5 seconds"),
+                    Effect.flatMap((response) =>
+                      response.thread.id === input.nativeThreadId &&
+                      !subagentModels.has(input.nativeThreadId)
+                        ? updateSubagentModel(input.nativeThreadId, response.model)
+                        : Effect.void,
+                    ),
+                  );
+              }).pipe(
+                Effect.retry({
+                  times: 2,
+                  schedule: Schedule.spaced("250 millis"),
+                  while: (error) =>
+                    error._tag === "CodexAppServerRequestError" &&
+                    error.code === -32603 &&
+                    error.errorMessage.includes("rollout at ") &&
+                    error.errorMessage.includes(" is empty"),
+                }),
+                Effect.catch((error) =>
+                  Effect.logWarning("orchestration-v2.codex-child-model-lookup-failed", {
+                    nativeThreadId: input.nativeThreadId,
+                    errorTag: error._tag,
+                    ...(error._tag === "CodexAppServerRequestError"
+                      ? { errorCode: error.code }
+                      : {}),
+                  }),
+                ),
+                Effect.forkIn(scope),
+              );
             }
           });
 
