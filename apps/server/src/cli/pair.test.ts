@@ -9,7 +9,11 @@ import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
@@ -118,6 +122,60 @@ const testDescriptor = {
   serverVersion: "0.0.1",
   capabilities: { repositoryIdentity: true },
 };
+
+const withProbeServer = <A, E, R>(
+  { status, contentType, body }: { status: number; contentType: string; body: string },
+  run: (baseDir: string, origin: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            response.writeHead(status, { "content-type": contentType });
+            response.end(body);
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.gen(function* () {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return yield* Effect.die(new Error("Expected a TCP address"));
+          }
+          const fs = yield* FileSystem.FileSystem;
+          const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pair-probe-test-" });
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+          return yield* run(baseDir, `http://127.0.0.1:${String(address.port)}`);
+        }),
+      (server) =>
+        Effect.sync(() => {
+          server.closeAllConnections();
+          server.close();
+        }),
+    ),
+  );
+
+const assertPairRejected = (baseDir: string) =>
+  Effect.gen(function* () {
+    const error = yield* provideCliTestLayers(
+      runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+    );
+    const rendered = String(
+      typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+    );
+    assert.include(rendered, "No running T3 Code server found.");
+  });
 
 const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -288,4 +346,136 @@ describe("t3 pair", () => {
       assert.include(rendered, "No running T3 Code server found.");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("does not decode an oversized stranger body as a server descriptor", () =>
+    withProbeServer(
+      {
+        status: 200,
+        contentType: "application/json",
+        // Schema-valid JSON that would pair without the byte cap.
+        body: JSON.stringify({ ...testDescriptor, padding: "x".repeat(128 * 1024) }),
+      },
+      assertPairRejected,
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a descriptor that exceeds the cap in UTF-8 bytes only", () =>
+    withProbeServer(
+      {
+        status: 200,
+        contentType: "application/json",
+        // Two UTF-8 bytes per character: below 64 KiB in string length,
+        // above it on the wire. A string-length cap would accept this.
+        body: JSON.stringify({ ...testDescriptor, label: "é".repeat(40 * 1024) }),
+      },
+      assertPairRejected,
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not pair when a valid descriptor arrives as non-JSON", () =>
+    withProbeServer(
+      {
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        body: JSON.stringify(testDescriptor),
+      },
+      assertPairRejected,
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not pair when a valid descriptor arrives with an error status", () =>
+    withProbeServer(
+      { status: 500, contentType: "application/json", body: JSON.stringify(testDescriptor) },
+      assertPairRejected,
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("pairs when the descriptor arrives with an uppercase JSON content type", () =>
+    withProbeServer(
+      {
+        status: 200,
+        contentType: "Application/JSON; charset=utf-8",
+        body: JSON.stringify(testDescriptor),
+      },
+      (baseDir) =>
+        Effect.gen(function* () {
+          const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+          assert.include(output, "Pairing with pair-test (");
+          assert.include(output, "/pair#token=");
+        }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("times out a slow-drip stranger body instead of hanging discovery", () => {
+    // Handoff from the raw Node request handler below: it holds the response
+    // open so the test fiber can drip into it. Completed synchronously from
+    // the callback via `doneUnsafe`, so no manual Effect runtime is created
+    // in the test (see `t3code(no-manual-effect-runtime-in-tests)`).
+    const dripTarget = Deferred.makeUnsafe<NodeHttp.ServerResponse>();
+    return Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            response.writeHead(200, { "content-type": "application/json" });
+            // A never-ending drip that stays under the size cap: discovery
+            // must give up via the body timeout rather than hang on the open
+            // stream.
+            response.write(`{"environmentId":`);
+            Deferred.doneUnsafe(dripTarget, Effect.succeed(response));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const address = server.address();
+            if (address === null || typeof address === "string") {
+              return yield* Effect.die(new Error("Expected a TCP address"));
+            }
+            const baseDir = NodeFS.mkdtempSync(
+              NodePath.join(NodeOS.tmpdir(), "t3-pair-drip-test-"),
+            );
+            const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+            yield* persistServerRuntimeState({
+              path: statePath,
+              state: yield* makePersistedServerRuntimeState({
+                config: { host: "127.0.0.1", devUrl: undefined },
+                port: address.port,
+              }),
+            });
+
+            const cliFiber = yield* provideCliTestLayers(
+              runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+            ).pipe(Effect.forkChild);
+            // The probe request holds the response open; the drip loop is a
+            // scoped fork, so it is interrupted when the test settles.
+            const dripResponse = yield* Deferred.await(dripTarget);
+            yield* Effect.repeat(
+              Effect.sync(() => {
+                if (!dripResponse.destroyed) {
+                  dripResponse.write(" ");
+                }
+              }),
+              Schedule.spaced("200 millis"),
+            ).pipe(Effect.forkScoped);
+
+            const error = yield* Fiber.join(cliFiber);
+
+            const rendered = String(
+              typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+            );
+            assert.include(rendered, "No running T3 Code server found.");
+          }),
+        ),
+      (server) =>
+        Effect.sync(() => {
+          server.closeAllConnections();
+          server.close();
+        }),
+    ).pipe(Effect.provide(NodeServices.layer));
+  });
 });
