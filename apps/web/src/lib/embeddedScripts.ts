@@ -258,8 +258,9 @@ function interpreterFor(name: string): Interpreter | undefined {
 function programIndex(words: ReadonlyArray<Word>): number {
   let index = 0;
   while (index < words.length) {
-    const valueOptions = PROGRAM_WRAPPERS[programName(words[index]!)];
-    if (!valueOptions) return index;
+    const name = programName(words[index]!);
+    if (!Object.hasOwn(PROGRAM_WRAPPERS, name)) return index;
+    const valueOptions = PROGRAM_WRAPPERS[name]!;
     index += 1;
     let optionsEnded = false;
     while (index < words.length) {
