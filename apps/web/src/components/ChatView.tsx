@@ -10143,7 +10143,21 @@ export default function ChatView(props: ChatViewProps) {
     })();
   }, [cancelWorktreeSetup, draftId, setupTarget.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
-  onSendRef.current = onSend;
+  const onCompactContextRef = useRef(onCompactContext);
+  // Mirror the committed handlers only, so an abandoned render can't leave
+  // the stable callbacks below pointing at uncommitted state.
+  useLayoutEffect(() => {
+    onSendRef.current = onSend;
+    onCompactContextRef.current = onCompactContext;
+  });
+  // Stable identities for the memoized composer. Both handlers close over
+  // most of this view, so passing them directly re-rendered the whole
+  // composer on every timeline scroll and streamed message.
+  const sendFromComposer = useCallback(
+    (...args: Parameters<typeof onSend>) => onSendRef.current(...args),
+    [],
+  );
+  const compactContextFromComposer = useCallback(() => onCompactContextRef.current(), []);
   // Resend once the cancelled dispatch has settled and the composer is free.
   // Every state that makes `onSend` bail and wait is part of the readiness
   // check, so the flag survives a reconnect, a reverting checkpoint, or a
@@ -10999,8 +11013,8 @@ export default function ChatView(props: ChatViewProps) {
                               onPageScrollKeyDown={onComposerPageScrollKeyDown}
                               onPageScrollKeyUp={onComposerPageScrollKeyUp}
                               onPageScrollRelease={onComposerPageScrollRelease}
-                              onCompactContext={onCompactContext}
-                              onSend={onSend}
+                              onCompactContext={compactContextFromComposer}
+                              onSend={sendFromComposer}
                               onResume={onResume}
                               onInterrupt={onInterrupt}
                               onImplementPlanInNewThread={onImplementPlanInNewThread}

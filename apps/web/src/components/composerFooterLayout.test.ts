@@ -7,6 +7,7 @@ import {
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
   overlayComposerIsResting,
+  resolveComposerRestingTweenTiming,
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
@@ -570,5 +571,66 @@ describe("progressive composer controls", () => {
         previous = next;
       }
     }
+  });
+});
+
+describe("resolveComposerRestingTweenTiming", () => {
+  const inFlight = {
+    renderedHeight: 80,
+    startTime: 1_000,
+    currentTime: 60,
+    durationMs: 200,
+    fromHeight: 50,
+    targetHeight: 102,
+  };
+
+  it("starts a default-length tween from the settled height when nothing is in flight", () => {
+    expect(
+      resolveComposerRestingTweenTiming({
+        stateChanged: true,
+        defaultDurationMs: 200,
+        nextHeight: 102,
+        settledHeight: 50,
+        interrupted: null,
+      }),
+    ).toEqual({ fromHeight: 50, durationMs: 200, remainingMs: 200, startTime: null });
+  });
+
+  it("keeps the original start and clock when a retarget lands on the same destination", () => {
+    expect(
+      resolveComposerRestingTweenTiming({
+        stateChanged: false,
+        defaultDurationMs: 200,
+        nextHeight: 102.2,
+        settledHeight: 50,
+        interrupted: inFlight,
+      }),
+    ).toEqual({ fromHeight: 50, durationMs: 200, remainingMs: 140, startTime: 1_000 });
+  });
+
+  it("retargets a new destination from the rendered height without restarting the clock", () => {
+    // A multiline paste mid-expansion: reusing the original start height and
+    // progress against the taller target would jump the card immediately.
+    expect(
+      resolveComposerRestingTweenTiming({
+        stateChanged: false,
+        defaultDurationMs: 200,
+        nextHeight: 240,
+        settledHeight: 50,
+        interrupted: inFlight,
+      }),
+    ).toEqual({ fromHeight: 80, durationMs: 140, remainingMs: 140, startTime: "now" });
+  });
+
+  it("gives a reversed state change a fresh tween from the rendered height", () => {
+    expect(
+      resolveComposerRestingTweenTiming({
+        stateChanged: true,
+        defaultDurationMs: 200,
+        nextHeight: 50,
+        settledHeight: 102,
+        interrupted: inFlight,
+      }),
+    ).toEqual({ fromHeight: 80, durationMs: 200, remainingMs: 200, startTime: null });
   });
 });

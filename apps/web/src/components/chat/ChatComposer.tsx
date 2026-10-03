@@ -192,6 +192,7 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import {
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
+  resolveComposerRestingTweenTiming,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -412,6 +413,7 @@ const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
+const COMPOSER_RESTING_CONTROLS_FADE_MS = 150;
 
 function useComposerRestingTransition(
   isCollapsed: boolean,
@@ -443,8 +445,13 @@ function useComposerRestingTransition(
     surfaceBottomInset: null,
   });
   const animationRef = useRef<Animation | null>(null);
+  const animationFromHeightRef = useRef<number | null>(null);
   const animationTargetHeightRef = useRef<number | null>(null);
   const contentAnimationsRef = useRef<Animation[]>([]);
+  // Where each content slide started, so a same-destination retarget can
+  // rebuild it on the height animation's clock instead of a fresh curve.
+  const contentFromOffsetsRef = useRef(new Map<HTMLElement, { x: number; y: number }>());
+  const stripFromHeightRef = useRef<number | null>(null);
   const stateChangeAnimationsRef = useRef<Animation[]>([]);
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
   const transitionCleanupTimeoutRef = useRef<number | null>(null);
@@ -531,8 +538,8 @@ function useComposerRestingTransition(
       const interruptedPromptTop = interruptedAnimation
         ? (prompt?.getBoundingClientRect().top ?? null)
         : null;
-      const interruptedActionTop = interruptedAnimation
-        ? (action?.getBoundingClientRect().top ?? null)
+      const interruptedActionRect = interruptedAnimation
+        ? (action?.getBoundingClientRect() ?? null)
         : null;
       const interruptedControlsLeft = interruptedAnimation
         ? (controls?.getBoundingClientRect().left ?? null)
@@ -543,12 +550,12 @@ function useComposerRestingTransition(
       const interruptedHeight = interruptedAnimation
         ? element.getBoundingClientRect().height
         : null;
-      const interruptedTargetHeight = animationTargetHeightRef.current;
       const interruptedCurrentTime =
         typeof interruptedAnimation?.currentTime === "number"
           ? interruptedAnimation.currentTime
           : null;
       const interruptedDuration = interruptedAnimation?.effect?.getComputedTiming().duration;
+      const interruptedStartTime = interruptedAnimation?.startTime ?? null;
       if (transitionCleanupTimeoutRef.current !== null) {
         window.clearTimeout(transitionCleanupTimeoutRef.current);
         transitionCleanupTimeoutRef.current = null;
@@ -582,13 +589,28 @@ function useComposerRestingTransition(
       }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
-      const nextActionTop = action?.getBoundingClientRect().top ?? null;
+      const nextActionRect = action?.getBoundingClientRect() ?? null;
       const nextControlsRect = controls?.getBoundingClientRect() ?? null;
       const nextControlsTop = nextControlsRect?.top ?? null;
       const footerBottom = footer ? nextRect.bottom - footer.getBoundingClientRect().bottom : 1;
-      const previousHeight = interruptedHeight ?? previousHeightRef.current;
-      const targetChanged =
-        interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
+      const timing = resolveComposerRestingTweenTiming({
+        stateChanged,
+        defaultDurationMs: animationDurationMs,
+        nextHeight,
+        settledHeight: previousHeightRef.current,
+        interrupted:
+          interruptedHeight === null
+            ? null
+            : {
+                renderedHeight: interruptedHeight,
+                startTime: typeof interruptedStartTime === "number" ? interruptedStartTime : null,
+                currentTime: interruptedCurrentTime,
+                durationMs: typeof interruptedDuration === "number" ? interruptedDuration : null,
+                fromHeight: animationFromHeightRef.current,
+                targetHeight: animationTargetHeightRef.current,
+              },
+      });
+      const previousHeight = timing.fromHeight;
       const shouldAnimate = shouldAnimateComposerRestingTransition({
         hasCompletedInitialLayout: hasCompletedInitialLayoutRef.current,
         stateChanged,
@@ -601,12 +623,8 @@ function useComposerRestingTransition(
         previousHeight !== null &&
         Math.abs(previousHeight - nextHeight) >= 0.5
       ) {
-        const remainingDuration =
-          typeof interruptedDuration === "number" && interruptedCurrentTime !== null
-            ? Math.max(1, interruptedDuration - interruptedCurrentTime)
-            : animationDurationMs;
-        const duration =
-          interruptedHeight !== null && !targetChanged ? remainingDuration : animationDurationMs;
+        const duration = timing.durationMs;
+        const remainingDuration = timing.remainingMs;
         element.style.overflow = "clip";
         if (modelStrip) {
           // The model controls cross the input's lower edge on their way to the strip.
@@ -637,10 +655,13 @@ function useComposerRestingTransition(
         // height on collapse, while its expanded flow layout falls below the
         // clipped surface on expansion.
         if (footer) {
+          // Pin at its natural destination height so the actions don't snap
+          // when the pin lifts.
+          const nextFooterHeight = footer.getBoundingClientRect().height;
           footer.style.position = "absolute";
           footer.style.top = "auto";
           footer.style.bottom = `${String(footerBottom)}px`;
-          footer.style.height = "3rem";
+          footer.style.height = `${String(nextFooterHeight)}px`;
           if (nextIsCollapsed) {
             footer.style.left = "auto";
             footer.style.right = "1px";
@@ -654,7 +675,11 @@ function useComposerRestingTransition(
         if (modelStrip) {
           const stripHeight = modelStrip.getBoundingClientRect().height;
           const stripOverlap = -Number.parseFloat(getComputedStyle(modelStrip).marginTop);
+          // A same-destination retarget replays the strip on the height's clock too.
+          const keptStripFromHeight =
+            typeof timing.startTime === "number" ? stripFromHeightRef.current : null;
           const fromHeight =
+            keptStripFromHeight ??
             interruptedStripHeight ??
             (previousCollapsedRef.current
               ? (previousModelStripHeightRef.current ?? stripHeight)
@@ -673,8 +698,18 @@ function useComposerRestingTransition(
           shell?.setAttribute("data-model-strip-transition", "true");
           stripAnimation = modelStrip.animate(
             [{ height: `${fromHeight}px` }, { height: `${toHeight}px` }],
-            { duration, easing: COMPOSER_RESTING_TRANSITION_EASING, fill: "both" },
+            {
+              duration: keptStripFromHeight === null ? remainingDuration : duration,
+              easing: COMPOSER_RESTING_TRANSITION_EASING,
+              fill: "both",
+            },
           );
+          if (keptStripFromHeight !== null && typeof timing.startTime === "number") {
+            stripAnimation.startTime = timing.startTime;
+          } else if (timing.startTime !== null) {
+            stripAnimation.startTime = document.timeline.currentTime;
+          }
+          stripFromHeightRef.current = fromHeight;
         }
 
         const animation = element.animate(
@@ -685,7 +720,12 @@ function useComposerRestingTransition(
             fill: "both",
           },
         );
+        if (timing.startTime !== null) {
+          animation.startTime =
+            timing.startTime === "now" ? document.timeline.currentTime : timing.startTime;
+        }
         animationRef.current = animation;
+        animationFromHeightRef.current = previousHeight;
         animationTargetHeightRef.current = nextHeight;
 
         const animatedRect = element.getBoundingClientRect();
@@ -700,7 +740,7 @@ function useComposerRestingTransition(
             ? null
             : animatedRect.top + bottomShift + previousContentOffsetsRef.current.promptFromTop);
         const previousActionTop =
-          interruptedActionTop ??
+          interruptedActionRect?.top ??
           (previousContentOffsetsRef.current.actionFromBottom === null
             ? null
             : previousBottom - previousContentOffsetsRef.current.actionFromBottom);
@@ -711,19 +751,37 @@ function useComposerRestingTransition(
           previousLeft: number | null = null,
         ) => {
           if (!content || previousTop === null) return;
+          const keptStartTime = typeof timing.startTime === "number" ? timing.startTime : null;
+          const originalOffset =
+            keptStartTime === null ? undefined : contentFromOffsetsRef.current.get(content);
           const rect = content.getBoundingClientRect();
-          const offset = previousTop - rect.top;
-          const offsetX = previousLeft === null ? 0 : previousLeft - rect.left;
-          if (Math.abs(offset) < 0.5 && Math.abs(offsetX) < 0.5) return;
-          contentAnimations.push(
-            content.animate(
-              [{ transform: `translate(${offsetX}px, ${offset}px)` }, { transform: "none" }],
-              {
-                duration,
-                easing: COMPOSER_RESTING_TRANSITION_EASING,
-              },
-            ),
+          const offset = originalOffset ?? {
+            x: previousLeft === null ? 0 : previousLeft - rect.left,
+            y: previousTop - rect.top,
+          };
+          if (Math.abs(offset.y) < 0.5 && Math.abs(offset.x) < 0.5) return;
+          const contentAnimation = content.animate(
+            [
+              { transform: `translate(${String(offset.x)}px, ${String(offset.y)}px)` },
+              { transform: "none" },
+            ],
+            {
+              duration: originalOffset === undefined ? remainingDuration : timing.durationMs,
+              easing: COMPOSER_RESTING_TRANSITION_EASING,
+            },
           );
+          if (originalOffset !== undefined && keptStartTime !== null) {
+            // Same destination: replay the original slide on the height's clock.
+            contentAnimation.startTime = keptStartTime;
+          } else {
+            // Retargets recreate these from the current position; starting them
+            // now instead of pending lets them actually advance.
+            if (timing.startTime !== null) {
+              contentAnimation.startTime = document.timeline.currentTime;
+            }
+            contentFromOffsetsRef.current.set(content, offset);
+          }
+          contentAnimations.push(contentAnimation);
         };
         animateContentPosition(prompt, previousPromptTop);
         animateContentPosition(action, previousActionTop);
@@ -773,13 +831,9 @@ function useComposerRestingTransition(
           }
 
           // The footer controls teleport between the composer footer and the
-          // context strip below it in a single commit. Fading the arriving
-          // cluster in along its direction of travel reads as one continuous
-          // move instead of a pop. Collapsing controls land in empty strip
-          // space and can appear immediately, but expanding controls return
-          // to the bottom row the prompt still occupies while the surface is
-          // short, so they stay hidden through the first half of the tween
-          // and fade in once the geometry has mostly settled.
+          // context strip below it in a single commit. A short fade along the
+          // direction of travel, started right away, reads as a quick swap
+          // instead of a pop or a lingering gap.
           const arrivingControls = nextIsCollapsed
             ? restingControlsRef.current
             : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
@@ -794,9 +848,7 @@ function useComposerRestingTransition(
                   { opacity: 1, transform: "none" },
                 ],
                 {
-                  duration: nextIsCollapsed ? duration : duration / 2,
-                  delay: nextIsCollapsed ? 0 : duration / 2,
-                  fill: "backwards",
+                  duration: Math.min(duration, COMPOSER_RESTING_CONTROLS_FADE_MS),
                   easing: COMPOSER_RESTING_TRANSITION_EASING,
                 },
               ),
@@ -813,9 +865,7 @@ function useComposerRestingTransition(
           for (const imagePreview of arrivingImagePreviews) {
             stateChangeAnimations.push(
               imagePreview.animate([{ opacity: 0 }, { opacity: 1 }], {
-                duration: nextIsCollapsed ? duration : duration / 2,
-                delay: nextIsCollapsed ? 0 : duration / 2,
-                fill: "backwards",
+                duration: Math.min(duration, COMPOSER_RESTING_CONTROLS_FADE_MS),
                 easing: COMPOSER_RESTING_TRANSITION_EASING,
               }),
             );
@@ -839,6 +889,9 @@ function useComposerRestingTransition(
             }
           }
           animationRef.current = null;
+          animationFromHeightRef.current = null;
+          contentFromOffsetsRef.current.clear();
+          stripFromHeightRef.current = null;
           animationTargetHeightRef.current = null;
           contentAnimationsRef.current = [];
           stateChangeAnimationsRef.current = [];
@@ -852,10 +905,8 @@ function useComposerRestingTransition(
         // the natural layout the eventual source of truth in that case.
         transitionCleanupTimeoutRef.current = window.setTimeout(
           () => finishTransition(true),
-          duration + COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS,
+          remainingDuration + COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS,
         );
-      } else {
-        animationTargetHeightRef.current = null;
       }
 
       previousCollapsedRef.current = nextIsCollapsed;
@@ -864,7 +915,7 @@ function useComposerRestingTransition(
       previousContentOffsetsRef.current = {
         promptFromTop: nextPromptTop === null ? null : nextPromptTop - nextRect.top,
         promptHeight: nextPromptRect?.height ?? null,
-        actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
+        actionFromBottom: nextActionRect === null ? null : nextRect.bottom - nextActionRect.top,
         controlsFromBottom: nextControlsTop === null ? null : nextRect.bottom - nextControlsTop,
         controlsFromLeft: nextControlsRect === null ? null : nextControlsRect.left - nextRect.left,
         surfaceBottomInset: overlayRect ? overlayRect.bottom - nextRect.bottom : null,
@@ -929,9 +980,9 @@ function useComposerRestingTransition(
       const promptRect = visibleTransitionElement(
         '[data-composer-prompt-surface="true"], [data-chat-composer-transition-prompt="true"]',
       )?.getBoundingClientRect();
-      const actionTop = visibleTransitionElement(
+      const actionRect = visibleTransitionElement(
         '[data-chat-composer-transition-actions="true"]',
-      )?.getBoundingClientRect().top;
+      )?.getBoundingClientRect();
       const controlsRect = (
         isCollapsedRef.current
           ? restingControlsRef.current
@@ -941,7 +992,7 @@ function useComposerRestingTransition(
       previousContentOffsetsRef.current = {
         promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
         promptHeight: promptRect?.height ?? null,
-        actionFromBottom: actionTop === undefined ? null : elementRect.bottom - actionTop,
+        actionFromBottom: actionRect === undefined ? null : elementRect.bottom - actionRect.top,
         controlsFromBottom:
           controlsRect === undefined ? null : elementRect.bottom - controlsRect.top,
         controlsFromLeft: controlsRect === undefined ? null : controlsRect.left - elementRect.left,
@@ -968,9 +1019,10 @@ function useComposerRestingTransition(
       }
       animationRef.current?.cancel();
       animationRef.current = null;
-      animationTargetHeightRef.current = null;
       for (const animation of contentAnimationsRef.current) animation.cancel();
       contentAnimationsRef.current = [];
+      contentFromOffsetsRef.current.clear();
+      stripFromHeightRef.current = null;
       for (const animation of stateChangeAnimationsRef.current) animation.cancel();
       stateChangeAnimationsRef.current = [];
       clearTransitionStyles();
@@ -1145,6 +1197,30 @@ const extendReplacementRangeForTrailingSpace = (
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
 
+/**
+ * Width the context strip's labels are still giving up (or taking back) in
+ * their compact-mode width tween. The controls host shares the strip with
+ * them, so measuring mid-tween resolves a different layout every frame, and
+ * each change re-renders the whole composer during the resting transition.
+ */
+function settlingContextLabelWidth(host: HTMLElement): number {
+  const strip = host.closest<HTMLElement>('[data-slot="composer-context-strip"]');
+  if (!strip) return 0;
+  let width = 0;
+  for (const label of strip.querySelectorAll<HTMLElement>("[data-composer-label]")) {
+    if (host.contains(label)) continue;
+    for (const animation of label.getAnimations()) {
+      if (animation.playState !== "running" || !(animation.effect instanceof KeyframeEffect)) {
+        continue;
+      }
+      const target = animation.effect.getKeyframes().at(-1)?.width;
+      if (typeof target !== "string") continue;
+      width += label.getBoundingClientRect().width - Number.parseFloat(target);
+    }
+  }
+  return width;
+}
+
 function useRestingComposerControlsLayout(host: HTMLDivElement | null, useControlsAsHost = false) {
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
@@ -1170,7 +1246,8 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     const hostWidth =
       currentHost.clientWidth -
       (Number.parseFloat(style.paddingInlineStart) || 0) -
-      (Number.parseFloat(style.paddingInlineEnd) || 0);
+      (Number.parseFloat(style.paddingInlineEnd) || 0) +
+      settlingContextLabelWidth(currentHost);
 
     setLayout((current) => {
       const next = resolveRestingComposerControlsLayout({
@@ -1308,7 +1385,11 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               />
             }
           >
-            <ComposerControlIcon icon={RuntimeModeIcon} size={size} />
+            <ComposerControlIcon
+              icon={RuntimeModeIcon}
+              size={size}
+              className={size === "xs" ? undefined : "size-3.5"}
+            />
             <SelectValue data-composer-control-label>{runtimeModeOption.label}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
@@ -6753,8 +6834,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerSurfaceRef}
             data-chat-composer-surface="true"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
+            data-chat-composer-resting={isComposerResting ? "true" : undefined}
             className={cn(
-              "rounded-3xl transition-[background-color] duration-200",
+              "rounded-(--chat-composer-corner) transition-[background-color] duration-200",
               "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-primary/70",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
@@ -6822,8 +6904,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ref={setComposerMenuAnchor}
               data-chat-composer-body="true"
               className={cn(
-                "relative px-3 pb-2 sm:px-4",
-                "pt-3.5 sm:pt-4",
+                "relative px-3 pb-2",
+                "pt-3",
                 isComposerApprovalState && "pb-3 sm:pb-4",
                 isComposerCollapsedMobile && "hidden",
                 isComposerResting && "py-2 sm:py-2",
@@ -7315,6 +7397,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
                       isComposerApprovalState && "min-h-10",
+                      // Where the placeholder wraps to two lines, keep a line of
+                      // space between it and the actions, as the taller composer had.
+                      !isComposerResting &&
+                        !isComposerApprovalState &&
+                        "@max-md/composer-surface:min-h-16",
                     )}
                     placeholderClassName={cn(
                       isComposerResting &&
@@ -7397,7 +7484,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+                  // Same 8px end and bottom inset as the resting pill, so the actions
+                  // hold still across the resting transition.
+                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible ps-3 pe-2 pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                   showMobilePendingAnswerActions && "hidden sm:flex",
@@ -7522,7 +7611,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div className="h-8">
                 <div
                   ref={setInlineRestingControlsHost}
-                  className="absolute bottom-2 inset-x-4 min-w-0"
+                  className="absolute bottom-2 inset-x-3 min-w-0"
                 >
                   <div
                     ref={restingComposerControlsRef}
