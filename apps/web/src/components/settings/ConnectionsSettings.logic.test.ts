@@ -4,6 +4,7 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  resolveTailscaleHttpsRowState,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -181,5 +182,66 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("resolveTailscaleHttpsRowState", () => {
+  const magicDnsEndpoint = (status: AdvertisedEndpoint["status"]) =>
+    makeEndpoint({
+      id: "tailscale-magicdns:https://machine.tailnet.ts.net",
+      label: "Tailscale HTTPS",
+      httpBaseUrl: "https://machine.tailnet.ts.net",
+      reachability: "private-network",
+      status,
+    });
+
+  it("keeps the switch on when Serve is enabled but the self-probe fails", () => {
+    expect(
+      resolveTailscaleHttpsRowState({
+        endpoint: magicDnsEndpoint("unavailable"),
+        serveEnabled: true,
+      }),
+    ).toEqual({
+      showSwitch: true,
+      checked: true,
+      url: "https://machine.tailnet.ts.net",
+      reachable: false,
+    });
+  });
+
+  it("keeps the switch reachable when Serve is enabled but no MagicDNS name is found", () => {
+    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: true })).toEqual({
+      showSwitch: true,
+      checked: true,
+      url: null,
+      reachable: false,
+    });
+  });
+
+  it("shows a reachable endpoint as on", () => {
+    expect(
+      resolveTailscaleHttpsRowState({
+        endpoint: magicDnsEndpoint("available"),
+        serveEnabled: true,
+      }),
+    ).toEqual({
+      showSwitch: true,
+      checked: true,
+      url: "https://machine.tailnet.ts.net",
+      reachable: true,
+    });
+  });
+
+  it("offers setup when Serve is off and hides the switch without Tailscale", () => {
+    expect(
+      resolveTailscaleHttpsRowState({
+        endpoint: magicDnsEndpoint("unavailable"),
+        serveEnabled: false,
+      }),
+    ).toEqual({ showSwitch: true, checked: false, url: null, reachable: false });
+    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: false })).toMatchObject({
+      showSwitch: false,
+      checked: false,
+    });
   });
 });
