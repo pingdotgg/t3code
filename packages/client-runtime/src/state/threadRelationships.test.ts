@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  ContextTransferId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationV2ContextTransfer,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -8,6 +15,9 @@ import {
   orderWebThreadLineageRows,
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
+  pendingMergeBackNotice,
+  resolvePendingMergeBack,
+  resolvePendingMergeBackTransfer,
   walkThreadRelationships,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
@@ -470,5 +480,179 @@ describe("web thread lineage ordering", () => {
         ],
       }),
     ).toEqual([first, second, third]);
+  });
+});
+
+describe("pending merge-back", () => {
+  const target = ThreadId.make("thread-target");
+  const fork = ThreadId.make("thread-fork");
+  const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+  const thread = {
+    id: target,
+    projectId: ProjectId.make("project"),
+    title: "Source thread",
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: target, parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  } satisfies OrchestrationV2ThreadProjection["thread"];
+
+  function transfer(id: string, overrides: Partial<OrchestrationV2ContextTransfer> = {}) {
+    return {
+      id: ContextTransferId.make(id),
+      type: "merge_back",
+      status: "pending",
+      sourceThreadId: fork,
+      targetThreadId: target,
+      sourcePoint: { threadId: fork },
+      basePoint: null,
+      sourceProviderInstanceId: null,
+      targetProviderInstanceId: null,
+      targetRunId: null,
+      resolution: null,
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: null,
+      ...overrides,
+    } satisfies OrchestrationV2ContextTransfer;
+  }
+
+  function resolve(contextTransfers: ReadonlyArray<OrchestrationV2ContextTransfer>) {
+    return resolvePendingMergeBackTransfer({ thread, contextTransfers });
+  }
+
+  it("returns null for a missing projection or no transfers", () => {
+    expect(resolvePendingMergeBackTransfer(null)).toBeNull();
+    expect(resolve([])).toBeNull();
+  });
+
+  it("selects by updatedAt rather than creation or array order without copying or sorting", () => {
+    const newer = Object.freeze(
+      transfer("newer", {
+        updatedAt: DateTime.makeUnsafe("2026-06-20T00:02:00.000Z"),
+      }),
+    );
+    const older = Object.freeze(
+      transfer("older", {
+        createdAt: DateTime.makeUnsafe("2026-06-20T00:03:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-06-20T00:01:00.000Z"),
+      }),
+    );
+    expect(resolve(Object.freeze([newer, older]))).toBe(newer);
+    expect(resolve(Object.freeze([older, newer]))).toBe(newer);
+  });
+
+  it("matches the server's last-entry-wins tie-break for equal updatedAt", () => {
+    const first = transfer("first");
+    const second = transfer("second");
+    expect(resolve([first, second])).toBe(second);
+    expect(resolve([second, first])).toBe(first);
+  });
+
+  it.each(["resolved_native", "resolved_portable", "failed", "consumed", "superseded"] as const)(
+    "ignores a newer %s transfer",
+    (status) => {
+      const pending = transfer("pending");
+      const settled = transfer("settled", {
+        status,
+        updatedAt: DateTime.makeUnsafe("2026-06-20T00:05:00.000Z"),
+      });
+      expect(resolve([pending, settled])).toBe(pending);
+      expect(resolve([settled])).toBeNull();
+    },
+  );
+
+  it.each(["fork", "provider_handoff", "subagent_spawn", "subagent_result"] as const)(
+    "ignores a pending %s transfer",
+    (type) => {
+      expect(resolve([transfer("other", { type })])).toBeNull();
+    },
+  );
+
+  it("ignores outgoing transfers and transfers for a different target", () => {
+    expect(
+      resolve([
+        transfer("outgoing", { sourceThreadId: target, targetThreadId: fork }),
+        transfer("elsewhere", { targetThreadId: ThreadId.make("elsewhere") }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("replaces a superseded merge-back and clears when the replacement is consumed", () => {
+    const first = transfer("first");
+    expect(resolve([first])).toBe(first);
+    const superseded = { ...first, status: "superseded" as const };
+    const replacement = transfer("replacement");
+    expect(resolve([superseded, replacement])).toBe(replacement);
+    expect(resolve([superseded, { ...replacement, status: "consumed" }])).toBeNull();
+  });
+
+  function resolveState(
+    contextTransfers: ReadonlyArray<OrchestrationV2ContextTransfer>,
+    runStatuses: ReadonlyArray<string> = [],
+  ) {
+    return resolvePendingMergeBack({
+      thread,
+      contextTransfers,
+      runs: runStatuses.map((status) => ({ status })) as never,
+    });
+  }
+
+  it("expects the next send to carry the transfer on an idle thread", () => {
+    const pending = transfer("pending");
+    expect(resolveState([pending], ["completed", "interrupted"])).toEqual({
+      transfer: pending,
+      forkCount: 1,
+      waitsForIdle: false,
+    });
+    expect(resolveState([])).toBeNull();
+    expect(resolvePendingMergeBack(null)).toBeNull();
+  });
+
+  it.each(["preparing", "starting", "running", "waiting"])(
+    "waits for idle while a run is %s, as the server rejects or steers that send",
+    (status) => {
+      expect(resolveState([transfer("pending")], ["completed", status])?.waitsForIdle).toBe(true);
+    },
+  );
+
+  it("counts distinct pending forks, which the server rejects together", () => {
+    const otherFork = ThreadId.make("thread-other-fork");
+    const later = DateTime.makeUnsafe("2026-06-20T00:01:00.000Z");
+    const state = resolveState([
+      transfer("fork-older", { status: "superseded" }),
+      transfer("fork-newer"),
+      transfer("other-fork", { sourceThreadId: otherFork, updatedAt: later }),
+      transfer("third-fork-done", { sourceThreadId: ThreadId.make("done"), status: "consumed" }),
+    ]);
+    expect(state?.forkCount).toBe(2);
+    expect(state?.transfer.id).toBe("other-fork");
+    expect(resolveState([transfer("a"), transfer("b", { updatedAt: later })])?.forkCount).toBe(1);
+  });
+
+  it("only marks the notice as blocking when more than one fork is pending", () => {
+    const notice = (forkCount: number, waitsForIdle: boolean) =>
+      pendingMergeBackNotice({ sourceThreadTitle: "Fork", forkCount, waitsForIdle });
+    expect(notice(1, false).blocked).toBe(false);
+    expect(notice(1, true).blocked).toBe(false);
+    expect(notice(1, true).description).not.toBe(notice(1, false).description);
+    expect(notice(2, false).blocked).toBe(true);
+    expect(notice(2, true).blocked).toBe(true);
   });
 });
