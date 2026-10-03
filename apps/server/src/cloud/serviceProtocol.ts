@@ -179,6 +179,36 @@ export function parseServiceState(value: string): ServiceState | undefined {
   }
 }
 
+/** Older protocols whose two-field install document is known to fit the
+    current runtime layout (1 and 2 shipped before the standalone executable
+    layout, which `runtimeExists` verifies separately). A protocol bump adds
+    its predecessor here only once that boundary has been checked; every
+    other protocol stays rejected. */
+const ADOPTABLE_INSTALL_STATE_PROTOCOLS: ReadonlySet<number> = new Set([1, 2]);
+
+/** Reads the two-field document an install writes, stamped with an older
+    protocol. `t3 update` installs from the outgoing CLI, so a newer launcher
+    finds that CLI's protocol next to its own version. The protocol guards the
+    runtime layout, which the launcher checks itself before starting a child,
+    so the document is adopted; one carrying an update record belongs to an
+    older launcher's update flow and is not. */
+export function adoptOlderInstallState(value: string): ServiceState | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !isRecord(parsed) ||
+      parsed.update !== undefined ||
+      typeof parsed.protocol !== "number" ||
+      !ADOPTABLE_INSTALL_STATE_PROTOCOLS.has(parsed.protocol)
+    ) {
+      return undefined;
+    }
+    return decodeServiceState({ ...parsed, protocol: SERVICE_LAUNCHER_PROTOCOL });
+  } catch {
+    return undefined;
+  }
+}
+
 /** Detects an in-flight update across launcher protocol versions before replacing its state. */
 export function serviceStateHasPendingUpdate(value: string): boolean {
   try {

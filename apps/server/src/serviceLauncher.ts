@@ -19,6 +19,7 @@ import type {
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
 import {
+  adoptOlderInstallState,
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
@@ -183,11 +184,16 @@ async function discardDatabaseBackup(baseDir: string, updateId: string): Promise
   await syncDirectory(NodePath.dirname(backupDir));
 }
 
+/** Install state left by an older CLI is rewritten under this protocol, so
+    `t3 service status` reads it too. */
 export async function readServiceState(filePath: string): Promise<ServiceState> {
   const contents = await NodeFSP.readFile(filePath, "utf8");
   const state = parseServiceState(contents);
-  if (state === undefined) throw new Error("Service state is invalid or unsupported.");
-  return state;
+  if (state !== undefined) return state;
+  const adopted = adoptOlderInstallState(contents);
+  if (adopted === undefined) throw new Error("Service state is invalid or unsupported.");
+  await writeServiceState(filePath, adopted);
+  return adopted;
 }
 
 /** Durable same-directory replacement used for every runtime state transition. */
