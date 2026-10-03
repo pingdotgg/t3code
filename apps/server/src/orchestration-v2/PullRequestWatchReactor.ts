@@ -149,9 +149,10 @@ export const make = Effect.gen(function* () {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       const failures = (readFailures.get(key) ?? 0) + 1;
       readFailures.set(key, failures);
+      // The count stays until the stop lands, so a failed stop is tried again next pass.
       if (failures >= READ_FAILURE_LIMIT) {
-        readFailures.delete(key);
         yield* giveUp(target);
+        readFailures.delete(key);
       }
       return yield* Effect.failCause(read.cause);
     }
