@@ -29,6 +29,7 @@ import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/Pull
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { QueuedTurnReactor } from "../Services/QueuedTurnReactor.ts";
 import { ServerShutdownMarkerRepository } from "../../persistence/Services/ServerShutdownMarker.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { QueuedTurnReactorLive } from "./QueuedTurnReactor.ts";
 
 const now = "2026-03-01T00:00:00.000Z";
@@ -319,6 +320,8 @@ async function runReactor(
   readModelInput: OrchestrationReadModel,
   snapshot: PullRequestMonitorSnapshot,
   options?: {
+    /** Receives the count of `thread.queue.hold` dispatch attempts. */
+    readonly holdAttemptsForTest?: { value: number };
     readonly waitAfterStartMs?: number;
     readonly firstDispatchDelayMs?: number;
     readonly snapshotDelayMs?: number;
@@ -344,6 +347,8 @@ async function runReactor(
       readonly readModel: OrchestrationReadModel;
       readonly event: OrchestrationEvent;
     };
+    /** Fail `thread.queue.hold` dispatches until this 1-based attempt number. */
+    readonly failHoldUntilAttempt?: number;
     readonly delegationIdleStallThresholdMs?: number;
   },
 ): Promise<ReadonlyArray<OrchestrationCommand>> {
@@ -352,6 +357,8 @@ async function runReactor(
   const domainEvents = await Effect.runPromise(PubSub.unbounded<OrchestrationEvent>());
   let dispatchesStarted = 0;
   let publishedDuringStart = false;
+  let holdAttempts = 0;
+  const holdAttemptsForTest = options?.holdAttemptsForTest ?? { value: 0 };
   const engineLayer = Layer.succeed(OrchestrationEngineService, {
     getReadModel: () =>
       Effect.suspend(() => {
@@ -369,8 +376,26 @@ async function runReactor(
         return Effect.succeed(readModel);
       }),
     readEvents: () => Stream.empty,
-    dispatch: (command) =>
-      Effect.sync(() => {
+    dispatch: (command) => {
+      if (command.type === "thread.queue.hold") {
+        holdAttempts += 1;
+        holdAttemptsForTest.value = holdAttempts;
+        if (
+          options?.failHoldUntilAttempt !== undefined &&
+          holdAttempts <= options.failHoldUntilAttempt
+        ) {
+          // Typed like a real dispatch failure (an invariant/command error), not
+          // a defect, so the reactor's `catchCause` handles it the same way it
+          // would handle a transient persistence rejection.
+          return Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: "thread.queue.hold",
+              detail: `simulated persistence failure on hold attempt ${holdAttempts}`,
+            }),
+          );
+        }
+      }
+      return Effect.sync(() => {
         commands.push(command);
         if ((command.type as string) === "thread.delegation.settle" && "threadId" in command) {
           readModel = {
@@ -491,7 +516,8 @@ async function runReactor(
           };
         }
         return { sequence: 2 };
-      }),
+      });
+    },
     withWorktreeLock: (effect) =>
       Effect.suspend(() => {
         const delay = dispatchesStarted++ === 0 ? (options?.firstDispatchDelayMs ?? 0) : 0;
@@ -620,6 +646,46 @@ describe("QueuedTurnReactor", () => {
       waitAfterStartMs: 40,
     });
 
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(true);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  /**
+   * If a crash hold cannot be durably installed, the thread must stay blocked:
+   * opening the global barrier unconditionally would drain a restored queue
+   * that was never held, which is the unprompted dispatch this PR prevents.
+   */
+  it("keeps a thread blocked when installing its crash hold fails", async () => {
+    const holdAttemptsForTest = { value: 0 };
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      // Every attempt fails, modelling a persistence layer that never recovers.
+      failHoldUntilAttempt: Number.MAX_SAFE_INTEGER,
+      holdAttemptsForTest,
+      waitAfterStartMs: 60,
+    });
+
+    // The hold was attempted and failed, and crucially the thread was NOT
+    // dispatched: swallowing the failure would let the unconditional
+    // `recoveryBarrierOpen = true` drain a queue that was never held.
+    expect(holdAttemptsForTest.value).toBeGreaterThanOrEqual(1);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  it("retries a failed crash hold on the sweep until it is durably installed", async () => {
+    const holdAttemptsForTest = { value: 0 };
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      // Transient failure: the first attempt fails, later ones succeed.
+      failHoldUntilAttempt: 1,
+      holdAttemptsForTest,
+      // Long enough to cover the 20s retry sweep; the retry itself is what is
+      // under test, not the cadence.
+      waitAfterStartMs: 21_000,
+    });
+
+    // Retried rather than left stuck, and the hold is eventually recorded.
+    expect(holdAttemptsForTest.value).toBeGreaterThanOrEqual(2);
     expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(true);
     expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
   });

@@ -185,6 +185,10 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   // hold exists to prevent. Drops during the window are safe: the startup sweep
   // drains everything drainable once the barrier opens.
   let recoveryBarrierOpen = false;
+  // Threads whose crash hold has not been durably installed yet. Kept separate
+  // from `recoveryBarrierOpen` so a failed hold blocks only that thread instead
+  // of stalling every other thread's queue, and so the periodic sweep can retry.
+  const awaitingHold = new Set<ThreadId>();
   const drainingThreadIds = new Set<ThreadId>();
   const pendingThreadIds = new Set<ThreadId>();
   const scheduledChildWakes = new Set<string>();
@@ -204,7 +208,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
     });
 
   const drainThread = Effect.fn("QueuedTurnReactor.drainThread")(function* (threadId: ThreadId) {
-    if (!recoveryBarrierOpen) return;
+    if (!recoveryBarrierOpen || awaitingHold.has(threadId)) return;
     if (drainingThreadIds.has(threadId)) {
       pendingThreadIds.add(threadId);
       return;
@@ -559,6 +563,35 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   };
 
   /**
+   * Install the crash hold for one thread. Leaves it blocked in `awaitingHold`
+   * on failure so no drain can slip past before the hold is durable.
+   */
+  const holdThreadAfterCrash = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const heldAt = new Date().toISOString();
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.queue.hold",
+          commandId: serverCommandId("queue.hold-after-crash"),
+          threadId,
+          heldAt,
+        })
+        .pipe(
+          Effect.tap(() => Effect.sync(() => awaitingHold.delete(threadId))),
+          // Swallowing this failure would let the unconditional
+          // `recoveryBarrierOpen = true` below drain a restored queue that was
+          // never held. Keep the thread in `awaitingHold` so it stays blocked
+          // and the retry sweep tries again.
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to hold queued turns after crash recovery", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+    });
+
+  /**
    * Hold every thread that still has queued messages after an unclean exit.
    *
    * A queued prompt is explicit user intent to run *after* whatever the thread
@@ -569,26 +602,27 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
    */
   const holdQueuedThreadsAfterCrash = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
-    const heldAt = new Date().toISOString();
-    yield* Effect.forEach(
-      readModel.threads.filter((thread) => (thread.queuedTurns ?? []).length > 0),
-      (thread) =>
-        orchestrationEngine
-          .dispatch({
-            type: "thread.queue.hold",
-            commandId: serverCommandId("queue.hold-after-crash"),
-            threadId: thread.id,
-            heldAt,
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("failed to hold queued turns after crash recovery", {
-                threadId: thread.id,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          ),
-      { concurrency: 1, discard: true },
+    const candidates = readModel.threads.filter((thread) => (thread.queuedTurns ?? []).length > 0);
+    for (const thread of candidates) {
+      awaitingHold.add(thread.id);
+    }
+    yield* Effect.forEach(candidates, (thread) => holdThreadAfterCrash(thread.id), {
+      concurrency: 1,
+      discard: true,
+    });
+  });
+
+  /**
+   * Retry crash holds that failed to install. The startup sweep runs once, so a
+   * transient persistence error would otherwise leave a recovered queue blocked
+   * forever with no way to resume it.
+   */
+  const retryFailedCrashHolds = Effect.gen(function* () {
+    if (awaitingHold.size === 0) return;
+    // Only the still-blocked threads, so a successful hold is not re-dispatched
+    // on every tick.
+    yield* Effect.forEach([...awaitingHold], (threadId) =>
+      holdThreadAfterCrash(threadId).pipe(Effect.catchCause(Effect.logWarning)),
     );
   });
 
@@ -832,9 +866,12 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         }),
       ),
     );
+    // Retried before draining, so a queue blocked by a transient persistence
+    // error gets another chance to be held rather than being dispatched.
     // Keep this sweep: PR-monitor revalidation retries also depend on it.
     yield* Effect.forkScoped(
       Effect.sleep(MONITOR_REVALIDATION_RETRY_INTERVAL).pipe(
+        Effect.andThen(retryFailedCrashHolds),
         Effect.andThen(drainQueuedThreads),
         Effect.forever,
       ),
