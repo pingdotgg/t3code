@@ -2598,12 +2598,15 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
-  // acceptEdits approves edits before the callback; the callback must ask for everything else.
+  // Claude approves what its mode allows before the callback runs (edits in
+  // acceptEdits, classifier-approved actions in auto) and sends the rest,
+  // including user ask rules, to the callback, which must ask rather than
+  // allow. Only Full access answers it without asking, unless it was
+  // downgraded to a mode Claude allows here.
   const installPermissionCallback =
     downgraded ||
     (runtimePolicy.approvalPolicy === undefined
-      ? runtimePolicy.runtimeMode === "approval-required" ||
-        runtimePolicy.runtimeMode === "auto-accept-edits"
+      ? runtimePolicy.runtimeMode !== "full-access"
       : runtimePolicy.approvalPolicy !== "never");
 
   if (permissionMode === "plan") {
