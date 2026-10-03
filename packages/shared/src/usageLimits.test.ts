@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  type LimitPoolMember,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -20,10 +21,12 @@ import {
   displayLimitWindows,
   elapsedShare,
   formatResetsIn,
+  formatSpend,
   limitsNotice,
   paceOf,
   providersWithLimits,
   remainingPercent,
+  singleAccountSpend,
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
@@ -1124,6 +1127,118 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("singleAccountSpend", () => {
+  const monthly = {
+    id: "monthly_spend",
+    kind: "monthly",
+    label: "Monthly spend",
+    usedPercent: 9.262,
+    spend: { usedMinor: 4631, limitMinor: 50000, currency: "USD", exponent: 2 },
+  } satisfies LimitPoolMember["window"];
+  const member = (
+    key: string,
+    usageWindow: LimitPoolMember["window"] = monthly,
+  ): LimitPoolMember => ({
+    account: {
+      key,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      displayName: key,
+      email: undefined,
+      plan: undefined,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [usageWindow] },
+    },
+    window: usageWindow,
+  });
+
+  it("returns the sole account's spend for the card amount", () => {
+    const spend = singleAccountSpend([member("a")]);
+    expect(spend).toEqual(monthly.spend);
+    expect(formatSpend(spend!)).toBe("$46.31 of $500.00");
+  });
+
+  it("returns null when the sole member has no spend", () => {
+    expect(singleAccountSpend([member("a", window)])).toBeNull();
+  });
+
+  it("does not sum two accounts with the same currency and exponent", () => {
+    expect(
+      singleAccountSpend([
+        member("a"),
+        member("b", { ...monthly, spend: { ...monthly.spend, usedMinor: 1000 } }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null for two accounts with different currencies", () => {
+    expect(
+      singleAccountSpend([
+        member("a"),
+        member("b", { ...monthly, spend: { ...monthly.spend, currency: "EUR" } }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null for no members", () => {
+    expect(singleAccountSpend([])).toBeNull();
+  });
+
+  it.each([1, 2])("pools %i monthly budgets without pace or resets", (count) => {
+    const accounts = [member("a").account, member("b").account].slice(0, count);
+    const pools = collectLimitPools(accounts, now);
+    expect(pools).toHaveLength(1);
+    expect(pools[0]!.windows).toHaveLength(1);
+    const pool = pools[0]!.windows[0]!;
+    expect(pool).toMatchObject({ id: "monthly_spend", kind: "monthly", pace: null, resets: [] });
+    expect(pool.members).toHaveLength(count);
+    expect(singleAccountSpend(pool.members)).toEqual(count === 1 ? monthly.spend : null);
+  });
+
+  it("uses only the account reporting the monthly budget when another has a session window", () => {
+    const [providerPool] = collectLimitPools(
+      [member("a").account, member("b", window).account],
+      now,
+    );
+    expect(providerPool!.accounts).toHaveLength(2);
+    const pool = providerPool!.windows.find((pool) => pool.id === "monthly_spend")!;
+    expect(pool.members).toHaveLength(1);
+    expect(pool.members[0]!.account.key).toBe("a");
+    expect(singleAccountSpend(pool.members)).toEqual(monthly.spend);
+  });
+});
+
+describe("formatSpend", () => {
+  it("renders minor units in the provider's currency and precision", () => {
+    expect(formatSpend({ usedMinor: 4631, limitMinor: 50000, currency: "USD", exponent: 2 })).toBe(
+      "$46.31 of $500.00",
+    );
+    expect(formatSpend({ usedMinor: 150, limitMinor: 2000, currency: "JPY", exponent: 0 })).toBe(
+      "¥150 of ¥2,000",
+    );
+  });
+
+  it("falls back to a plain amount for a currency Intl does not know", () => {
+    expect(
+      formatSpend({ usedMinor: 4631, limitMinor: 50000, currency: "CREDITS", exponent: 2 }),
+    ).toBe("46.31 CREDITS of 500.00 CREDITS");
+  });
+
+  it("caps the shown precision without rescaling the amount", () => {
+    // 21 fraction digits would throw in Intl; the amount still means 10^-21 units.
+    expect(
+      formatSpend({ usedMinor: 10 ** 21, limitMinor: 2 * 10 ** 21, currency: "USD", exponent: 21 }),
+    ).toBe("$1.00000000000000000000 of $2.00000000000000000000");
+    for (const currency of ["USD", "CREDITS"]) {
+      expect(() =>
+        formatSpend({ usedMinor: 1, limitMinor: 2, currency, exponent: 120 }),
+      ).not.toThrow();
+    }
   });
 });
 

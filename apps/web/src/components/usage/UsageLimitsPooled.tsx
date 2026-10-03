@@ -7,11 +7,13 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  formatSpend,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
   remainingPercent,
+  singleAccountSpend,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
@@ -187,6 +189,7 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {window.spend ? <Row label="Spent">{formatSpend(window.spend)}</Row> : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -243,6 +246,7 @@ function PoolSegment({
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
+  const spent = window.spend ? `${formatSpend(window.spend)} used` : null;
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -252,7 +256,7 @@ function PoolSegment({
           <button
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${spent ? `, ${spent}` : ""}${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -288,23 +292,26 @@ function PoolSegment({
             />
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
+          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise.
+              A budget has neither, so it gets no empty plate. */}
+          {resetsIn || credits ? (
+            <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
+              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+              {credits ? (
+                <>
+                  {resetsIn ? (
+                    <span aria-hidden className="text-muted-foreground">
+                      ·
+                    </span>
+                  ) : null}
+                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                    <TicketIcon className="size-3" aria-hidden />
+                    {credits}
                   </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
-          </span>
+                </>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       </PopoverTrigger>
       <LegendRow account={account} window={window} color={color} now={now} index={index} />
@@ -353,6 +360,10 @@ function LegendRow({
 }) {
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
+  // A budget has no reset to count down to; its amounts take that slot.
+  const detail = window.spend
+    ? `${formatSpend(window.spend)} used`
+    : resetsIn?.replace("resets in ", "↻ ");
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
@@ -372,10 +383,10 @@ function LegendRow({
       <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+        {detail ?? ""}
         {credits ? (
           <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
+            {detail ? <span aria-hidden>·</span> : null}
             <span
               aria-hidden
               className="inline-flex items-center gap-0.5 font-semibold text-foreground"
@@ -503,6 +514,7 @@ function PoolWindowCard({
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const spend = singleAccountSpend(pool.members);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -514,6 +526,11 @@ function PoolWindowCard({
           <span className="text-sm text-muted-foreground">left</span>
           {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
+        {spend ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {formatSpend(spend)} used
+          </span>
+        ) : null}
         {nextRefill && pool.columns.length > 1 ? (
           <span className="text-xs font-medium text-foreground tabular-nums">
             ↻ +{nextRefill.restoresPercent}%
