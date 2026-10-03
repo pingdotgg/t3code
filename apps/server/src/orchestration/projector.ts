@@ -30,7 +30,7 @@ import {
   resolveInitialThreadPullRequest,
   selectRetainedMessageIds,
   shouldPreserveActiveMessageId,
-  terminalTurnStateForSessionStatus,
+  reconcileLatestTurnWithSession,
 } from "./projection/ProjectionPolicy.ts";
 import {
   MessageSentPayloadSchema,
@@ -93,35 +93,7 @@ function latestTurnFromSession(
   thread: OrchestrationThread,
   session: OrchestrationSession,
 ): OrchestrationThread["latestTurn"] {
-  if (session.status === "running" && session.activeTurnId !== null) {
-    return {
-      turnId: session.activeTurnId,
-      state: "running",
-      requestedAt:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? thread.latestTurn.requestedAt
-          : session.updatedAt,
-      startedAt:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? (thread.latestTurn.startedAt ?? session.updatedAt)
-          : session.updatedAt,
-      completedAt: null,
-      assistantMessageId:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? thread.latestTurn.assistantMessageId
-          : null,
-    };
-  }
-
-  if (thread.latestTurn?.state === "running") {
-    return {
-      ...thread.latestTurn,
-      state: terminalTurnStateForSessionStatus(session.status),
-      completedAt: session.updatedAt,
-    };
-  }
-
-  return thread.latestTurn;
+  return reconcileLatestTurnWithSession(thread.latestTurn, session);
 }
 
 function updateThread(
@@ -1102,6 +1074,7 @@ export function projectEvent(
             files: payload.files,
             agentTouchedPaths: payload.agentTouchedPaths,
             turnFiles: payload.turnFiles,
+            transitionFiles: payload.transitionFiles,
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },

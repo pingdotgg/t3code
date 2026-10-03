@@ -181,7 +181,7 @@ function groupMessagesByTurn(messages: ReadonlyArray<OrchestrationMessage>): Arr
 }
 
 function formatCheckpoint(checkpoint: OrchestrationCheckpointSummary): string {
-  const fileRows = checkpoint.turnFiles.length > 0 ? checkpoint.turnFiles : checkpoint.files;
+  const fileRows = checkpoint.files;
   return [
     formatTable([
       ["Status", checkpoint.status],

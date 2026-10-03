@@ -60,8 +60,9 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import {
   bindDelegationExecution,
-  childReportDedupeKey,
+  childReportIdentity,
   classifyChildReport,
+  classifyExecutionProvenance,
   legacyUpdateId,
   mintDispatchRecord,
   transitionDelegationExecution,
@@ -362,14 +363,23 @@ function appendChildLifecycleNotification(
 
   const dedupeKey = childLifecycleDedupeKey(input.childThread.id, input.lifecycle, input.sourceKey);
   const delegation = input.childThread.nudging?.delegation;
-  const authorizedTurn = (delegation?.dispatchTurnId as string | null | undefined) ?? null;
-  const executionFenced = delegation?.completedAt === null && delegation.dispatchId !== undefined;
-  const superseded =
-    executionFenced &&
-    authorizedTurn !== null &&
-    input.originTurnId !== null &&
-    input.originTurnId !== undefined &&
-    input.originTurnId !== authorizedTurn;
+  // A fenced delegation requires execution proof before anything
+  // state-changing: a turn-absent signal (e.g. an unscoped provider runtime
+  // error) cannot prove it comes from the authorized execution, so terminal
+  // failure/completion stays diagnostic-only and never completes the
+  // delegation or wakes the parent. Plain progress history remains allowed.
+  // Unfenced (pre-dispatch) work keeps the legacy behavior. Parent-side
+  // signals carry parent authority and are never fenced.
+  //
+  // Supersession is settled before the terminal-failure window, and only then is
+  // `wouldMutate` decided: `classifyExecutionProvenance` takes no mutatesState
+  // argument precisely so a signal too old to count as terminal failure is not
+  // fenced just for asking whether it mutates.
+  const provenance =
+    input.authority === "parent"
+      ? ("authorized" as const)
+      : classifyExecutionProvenance({ delegation, claimedTurnId: input.originTurnId });
+  const superseded = provenance === "superseded";
   const terminalFailureOutcome: "failed" | "blocked" | null =
     !superseded &&
     delegation?.completedAt === null &&
@@ -377,22 +387,10 @@ function appendChildLifecycleNotification(
     (input.lifecycle === "failed" || input.lifecycle === "blocked")
       ? input.lifecycle
       : null;
-  const terminalFailure = terminalFailureOutcome !== null;
-  // A fenced delegation requires execution proof before anything
-  // state-changing: a turn-absent signal (e.g. an unscoped provider runtime
-  // error) cannot prove it comes from the authorized execution, so terminal
-  // failure/completion stays diagnostic-only and never completes the
-  // delegation or wakes the parent. Plain progress history remains allowed.
-  // Unfenced (pre-dispatch) work keeps the legacy behavior.
   const wouldMutate =
-    terminalFailure || (input.report !== undefined && input.report.kind !== "progress");
-  const fencedWithoutAuthority =
-    input.authority !== "parent" &&
-    !superseded &&
-    executionFenced &&
-    wouldMutate &&
-    (authorizedTurn === null || input.originTurnId === null || input.originTurnId === undefined);
-  if (fencedWithoutAuthority) {
+    terminalFailureOutcome !== null ||
+    (input.report !== undefined && input.report.kind !== "progress");
+  if (provenance === "unproven" && wouldMutate) {
     return sourceResult;
   }
   const terminalReportId = delegation
@@ -4650,6 +4648,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           files: command.files,
           agentTouchedPaths: command.agentTouchedPaths,
           turnFiles: command.turnFiles,
+          transitionFiles: command.transitionFiles,
           assistantMessageId: command.assistantMessageId ?? null,
           completedAt: command.completedAt,
         },
@@ -4824,15 +4823,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "The parent thread has been deleted.",
         });
       }
-      const reportAssignmentId = command.assignmentId ?? delegation.assignmentId;
-      const reportDispatchId = command.dispatchId ?? delegation.dispatchId ?? undefined;
-      const expectedDecisionId = childReportDedupeKey({
+      const reportIdentity = childReportIdentity({
         childThreadId: child.id,
-        dispatchId: reportDispatchId,
+        delegation,
+        claimedAssignmentId: command.assignmentId,
+        claimedDispatchId: command.dispatchId,
         originTurnId: command.originTurnId,
-        assignmentId: reportAssignmentId,
         reportId: command.reportId,
       });
+      if (reportIdentity === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Reporting requires an active delegated assignment.",
+        });
+      }
+      const { assignmentId: reportAssignmentId, dispatchId: reportDispatchId } = reportIdentity;
+      const expectedDecisionId = reportIdentity.reportKey;
       const verdict = classifyChildReport({
         delegation,
         claimedDispatchId: command.dispatchId,
@@ -4918,13 +4924,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       const source = verdictActivity(command.summary);
       const report = {
-        id: childReportDedupeKey({
-          childThreadId: child.id,
-          dispatchId: reportDispatchId,
-          originTurnId: command.originTurnId,
-          assignmentId: reportAssignmentId,
-          reportId: command.reportId,
-        }),
+        id: expectedDecisionId,
         assignmentId: reportAssignmentId,
         ...(reportDispatchId ? { dispatchId: reportDispatchId } : {}),
         childThreadId: child.id,

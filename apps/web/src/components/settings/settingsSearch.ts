@@ -97,6 +97,7 @@ const settingsByPage: ReadonlyArray<{
       "Interface font",
       "Code font",
       "Code font size",
+      "File preview line spacing",
       "Chat font size",
       "Status line font size",
       "Input font size",

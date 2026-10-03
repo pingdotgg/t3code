@@ -1302,6 +1302,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
         while: isPreviewOperationError,
       }),
+      Effect.catchTag("PreviewOperationError", (cdpError) =>
+        capturePageWithRetry(
+          { ...errorContext, operation: "automationSnapshot.capturePage" },
+          tabId,
+          wc,
+          undefined,
+          1,
+        ).pipe(
+          Effect.flatMap((image) => {
+            const size = image.getSize();
+            // Hidden guests can return empty native images; CDP remains the primary capture.
+            return image.isEmpty() || size.width <= 0 || size.height <= 0
+              ? Effect.fail(cdpError)
+              : Effect.succeed(image);
+          }),
+          Effect.catchTag("PreviewOperationError", () => Effect.fail(cdpError)),
+        ),
+      ),
     );
   });
 
