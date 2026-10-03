@@ -10,7 +10,7 @@
  * from its cached parse position so only the appended bytes are read.
  * OpenCode's SQLite reader queries the live database each scan so WAL writes
  * remain visible. Antigravity databases are memoised in memory while the
- * database and its WAL keep the same `(size, mtime)`.
+ * database and its WAL keep the same `(size, mtime, ctime)`.
  *
  * @module UsageService
  */

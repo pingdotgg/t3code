@@ -757,25 +757,46 @@ describe("SQLite usage readers", () => {
     try {
       db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
       db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, antigravityGeneration("r-1"));
+      const cache = makeAntigravityUsageCache();
+      assert.deepStrictEqual((await readAntigravityUsage(dir, 0, cache)).errors, []);
+
+      // An exclusive lock makes a fresh read fail without touching the file, so
+      // only a cache hit can still return the earlier records.
+      db.exec("BEGIN EXCLUSIVE");
+      assert.strictEqual((await readAntigravityUsage(dir, 0)).errors.length, 1);
+      const cached = await readAntigravityUsage(dir, 0, cache);
+      assert.deepStrictEqual(cached.errors, []);
+      assert.deepStrictEqual(
+        cached.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["antigravity:11:r-1"],
+      );
+      db.exec("ROLLBACK");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rereads an Antigravity database rewritten with its size and mtime restored", async () => {
+    const path = NodePath.join(dir, "session-1.db");
+    const db = new NodeSqlite.DatabaseSync(path);
+    try {
+      db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, antigravityGeneration("r-1"));
     } finally {
       db.close();
     }
     await NodeFSP.utimes(path, 1780000000, 1780000000);
     const cache = makeAntigravityUsageCache();
-    const first = await readAntigravityUsage(dir, 0, cache);
-    assert.deepStrictEqual(first.errors, []);
+    assert.deepStrictEqual((await readAntigravityUsage(dir, 0, cache)).errors, []);
 
-    // Same size and mtime, but no longer a readable database: only a cache hit
-    // can still return the earlier records.
     const { size } = await NodeFSP.stat(path);
     await NodeFSP.writeFile(path, Buffer.alloc(size));
     await NodeFSP.utimes(path, 1780000000, 1780000000);
-    assert.strictEqual((await readAntigravityUsage(dir, 0)).errors.length, 1);
-    const cached = await readAntigravityUsage(dir, 0, cache);
-    assert.deepStrictEqual(cached.errors, []);
+    const next = await readAntigravityUsage(dir, 0, cache);
+    assert.deepStrictEqual(next.errors, [path]);
     assert.deepStrictEqual(
-      cached.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-      ["antigravity:11:r-1"],
+      next.files.flatMap((file) => file.records),
+      [],
     );
   });
 

@@ -258,17 +258,15 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
 }
 
 interface CachedDatabase {
-  readonly size: number;
-  readonly mtimeMs: number;
-  readonly walSize: number | null;
-  readonly walMtimeMs: number | null;
+  readonly fingerprint: string;
   readonly candidates: readonly UsageCandidate[];
 }
 
 /**
  * Parsed databases keyed by canonical path. An entry is reused only while both
- * the database and its `-wal` sidecar are unchanged, because new rows land in
- * the WAL without touching the main file until a checkpoint.
+ * the database and its `-wal` sidecar keep the same size, mtime and ctime: new
+ * rows land in the WAL without touching the main file until a checkpoint, and
+ * ctime moves on any content write even when mtime is restored.
  */
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
@@ -372,25 +370,16 @@ export async function readAntigravityUsage(
           visited.add(canonical);
           const stat = await NodeFSP.stat(path);
           const wal = await NodeFSP.stat(`${path}-wal`).catch(() => null);
+          const fingerprint = [stat, wal]
+            .map((file) => (file ? `${file.size}:${file.mtimeMs}:${file.ctimeMs}` : "-"))
+            .join("/");
           const cached = cache?.get(canonical);
           let candidates: readonly UsageCandidate[];
-          if (
-            cached !== undefined &&
-            cached.size === stat.size &&
-            cached.mtimeMs === stat.mtimeMs &&
-            cached.walSize === (wal?.size ?? null) &&
-            cached.walMtimeMs === (wal?.mtimeMs ?? null)
-          ) {
+          if (cached?.fingerprint === fingerprint) {
             candidates = cached.candidates;
           } else {
             candidates = await readDatabase(path, stat.mtimeMs);
-            cache?.set(canonical, {
-              size: stat.size,
-              mtimeMs: stat.mtimeMs,
-              walSize: wal?.size ?? null,
-              walMtimeMs: wal?.mtimeMs ?? null,
-              candidates,
-            });
+            cache?.set(canonical, { fingerprint, candidates });
           }
           const fileIndex = files.length;
           files.push({ root, path, records: [] });
