@@ -40,9 +40,11 @@ import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -1471,6 +1473,7 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   /** Text the adapter should send, when it differs from what the user typed. */
   readonly sentPrompt?: string;
+  readonly reasoningSummary?: "auto" | "concise" | "detailed" | "none";
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -1564,7 +1567,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: input.reasoningSummary ?? "auto",
         },
       },
     },
@@ -1603,7 +1606,77 @@ function makeCodexReplayTranscript(input: {
   };
 }
 
+// Add config reads after composing transcripts, so slices and derived transcripts keep
+// their original request IDs. JSON-RPC IDs belong to the initiating direction.
+function withCodexConfigReads(
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
+  responses: ReadonlyArray<Record<string, unknown> | null> = [],
+): CodexReplay.CodexAppServerReplayTranscript {
+  const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [];
+  const requestIds = new Map<unknown, number>();
+  let offset = 0;
+  let turn = 0;
+  for (const entry of transcript.entries) {
+    if (entry.type === "runtime_exit") {
+      entries.push(entry);
+      continue;
+    }
+    const frame = entry.frame as Record<string, unknown>;
+    if (entry.type === "expect_outbound" && typeof frame.method === "string" && "id" in frame) {
+      assert.isNumber(frame.id);
+      const id = frame.id as number;
+      if (frame.method === "initialize") {
+        requestIds.clear();
+        offset = 0;
+      }
+      if (frame.method === "turn/start") {
+        const params = frame.params as Record<string, unknown>;
+        entries.push({
+          type: "expect_outbound",
+          label: "config/read",
+          frame: { id: id + offset, method: "config/read", params: { cwd: params.cwd ?? null } },
+        });
+        // A null response leaves config/read unanswered to exercise its timeout.
+        const response = responses[turn++];
+        if (response !== null) {
+          entries.push({
+            type: "emit_inbound",
+            label: "config/read",
+            frame: {
+              id: id + offset,
+              ...(response ?? { result: { config: {}, origins: {} } }),
+            },
+          });
+        }
+        offset++;
+      }
+      requestIds.set(id, id + offset);
+      entries.push({ ...entry, frame: { ...frame, id: id + offset } });
+    } else if (entry.type === "emit_inbound" && !("method" in frame) && "id" in frame) {
+      assert.isTrue(requestIds.has(frame.id), "response must match a client request");
+      entries.push({ ...entry, frame: { ...frame, id: requestIds.get(frame.id) } });
+    } else {
+      entries.push(entry);
+    }
+  }
+  return { ...transcript, entries };
+}
+
 describe("CodexAdapterV2 post-settle continuation", () => {
+  const captureLogs = () => {
+    const logs: Array<{
+      readonly message: unknown;
+      readonly annotations: Readonly<Record<string, unknown>>;
+    }> = [];
+    const logger = Logger.make(({ fiber, message }) => {
+      logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) });
+    });
+    return {
+      logs,
+      layer: Layer.merge(TestClock.layer(), Logger.layer([logger], { mergeWithExisting: false })),
+    };
+  };
+
   const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       for (let attempt = 0; attempt < 5000; attempt++) {
@@ -1620,6 +1693,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    configReadResponses: ReadonlyArray<Record<string, unknown> | null> = [],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1628,7 +1702,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+          Layer.build(
+            CodexReplay.layerReplay(withCodexConfigReads(transcript, configReadResponses)),
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterOpenSessionError({
@@ -1646,6 +1722,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) =>
+                          onRequest(method, params).pipe(
+                            Effect.andThen(client.raw.request(method, params)),
+                          ),
+                      },
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
@@ -1727,6 +1810,298 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  it.effect.each([
+    {
+      name: "unset key",
+      response: { result: { config: {}, origins: {} } },
+      summary: "auto",
+    },
+    {
+      name: "value without origin",
+      response: { result: { config: { model_reasoning_summary: "detailed" }, origins: {} } },
+      summary: "auto",
+    },
+    {
+      name: "explicit user none",
+      response: {
+        result: {
+          config: { model_reasoning_summary: "none", unrelatedFutureConfig: { enabled: true } },
+          origins: {
+            model_reasoning_summary: {
+              name: { type: "user", file: "/tmp/config.toml", profile: null },
+            },
+          },
+        },
+      },
+      summary: "none",
+    },
+    {
+      name: "session flags concise",
+      response: {
+        result: {
+          config: { model_reasoning_summary: "concise" },
+          origins: { model_reasoning_summary: { name: { type: "sessionFlags" } } },
+        },
+      },
+      summary: "concise",
+    },
+    {
+      name: "packaged defaults none",
+      response: {
+        result: {
+          config: { model_reasoning_summary: "none" },
+          origins: { model_reasoning_summary: { name: { type: "packagedDefaults" } } },
+        },
+      },
+      summary: "auto",
+    },
+    {
+      name: "method not found",
+      response: { error: { code: -32601, message: "Method not found" } },
+      summary: "auto",
+      errorTag: "CodexAppServerRequestError",
+    },
+    {
+      name: "undecodable config response with a secret",
+      response: {
+        result: {
+          config: {
+            model_reasoning_summary: 42,
+            model_providers: { x: { api_key: "sk-SECRET" } },
+          },
+          origins: {},
+        },
+      },
+      summary: "auto",
+      errorTag: "SchemaError",
+    },
+  ] as const)("uses reasoning summary for $name and starts the turn", (testCase) => {
+    const { name, response, summary } = testCase;
+    const { logs, layer } = captureLogs();
+    return Effect.gen(function* () {
+      const requests: Array<{ method: string; params: unknown }> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: `reasoning-summary-${name}`,
+          entries: codexReplayPreamble({
+            nativeThreadId: "summary-thread",
+            nativeTurnId: "summary-turn",
+            prompt: "Hello",
+            reasoningSummary: summary,
+          }),
+        }),
+        undefined,
+        (method, params) =>
+          Effect.sync(() => {
+            requests.push({ method, params });
+          }),
+        undefined,
+        [response],
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-summary"),
+          text: "Hello",
+        }),
+      );
+      assert.deepEqual(
+        requests.filter(({ method }) => method === "config/read"),
+        [{ method: "config/read", params: { cwd: "/workspace" } }],
+      );
+      const turnRequests = requests.filter(({ method }) => method === "turn/start");
+      assert.lengthOf(turnRequests, 1);
+      assert.propertyVal(turnRequests[0]?.params, "summary", summary);
+      assert.isBelow(
+        requests.findIndex(({ method }) => method === "config/read"),
+        requests.findIndex(({ method }) => method === "turn/start"),
+      );
+      assert.notInclude(encodeUnknownJson(logs), "sk-SECRET");
+      if ("errorTag" in testCase) {
+        const warning = logs.find((entry) =>
+          encodeUnknownJson(entry.message).includes(
+            "Failed to read Codex reasoning summary config.",
+          ),
+        );
+        assert.isDefined(warning);
+        assert.deepEqual(warning?.message, [
+          "Failed to read Codex reasoning summary config.",
+          { errorTag: testCase.errorTag },
+        ]);
+        assert.deepEqual(warning?.annotations, {});
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer, layer)),
+    );
+  });
+
+  it.effect(
+    "uses auto reasoning summary after config/read times out and completes the turn",
+    () => {
+      const { logs, layer } = captureLogs();
+      return Effect.gen(function* () {
+        const nativeThreadId = "summary-timeout-thread";
+        const nativeTurnId = "summary-timeout-turn";
+        const requests: Array<{ method: string; params: unknown }> = [];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "reasoning-summary-timeout",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt: "Hello",
+                reasoningSummary: "auto",
+              }),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          undefined,
+          (method, params) =>
+            Effect.sync(() => {
+              requests.push({ method, params });
+            }),
+          undefined,
+          [null],
+        );
+        const startTurn = yield* harness.runtime
+          .startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-summary-timeout"),
+              text: "Hello",
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(startTurn);
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          requests
+            .filter(({ method }) => method === "config/read" || method === "turn/start")
+            .map(({ method }) => method),
+          ["config/read", "turn/start"],
+        );
+        assert.propertyVal(
+          requests.find(({ method }) => method === "turn/start")?.params,
+          "summary",
+          "auto",
+        );
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        const warning = logs.find((entry) =>
+          encodeUnknownJson(entry.message).includes(
+            "Failed to read Codex reasoning summary config.",
+          ),
+        );
+        assert.isDefined(warning);
+        assert.deepEqual(warning?.message, [
+          "Failed to read Codex reasoning summary config.",
+          { errorTag: "TimeoutError" },
+        ]);
+        assert.deepEqual(warning?.annotations, {});
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer, layer)),
+      );
+    },
+  );
+
+  it.effect("rereads reasoning summary before each turn in the same session", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "summary-two-turns-thread";
+      const first = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "turn-one",
+        prompt: "First",
+        reasoningSummary: "none",
+      });
+      const second = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "turn-two",
+        prompt: "Second",
+        reasoningSummary: "concise",
+      })
+        .slice(5)
+        .map((entry) => {
+          if (entry.type === "runtime_exit") return entry;
+          const frame = entry.frame as Record<string, unknown>;
+          return "id" in frame ? { ...entry, frame: { ...frame, id: 4 } } : entry;
+        });
+      const requests: Array<{ method: string; params: unknown }> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "summary-two-turns",
+          entries: [
+            ...first,
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "turn-one", status: "completed" }),
+                },
+              },
+            },
+            ...second,
+          ],
+        }),
+        undefined,
+        (method, params) =>
+          Effect.sync(() => {
+            requests.push({ method, params });
+          }),
+        undefined,
+        ["none", "concise"].map((summary) => ({
+          result: {
+            config: { model_reasoning_summary: summary },
+            origins: { model_reasoning_summary: { name: { type: "sessionFlags" } } },
+          },
+        })),
+      );
+      for (const [index, text] of ["First", "Second"].entries()) {
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-summary-${index}`),
+            text,
+          }),
+        );
+        if (index === 0) yield* harness.firstTerminal;
+      }
+      assert.deepEqual(
+        requests
+          .filter(({ method }) => method === "config/read" || method === "turn/start")
+          .map(({ method }) => method),
+        ["config/read", "turn/start", "config/read", "turn/start"],
+      );
+      assert.deepEqual(
+        requests
+          .filter(({ method }) => method === "turn/start")
+          .map(({ params }) => (params as Record<string, unknown>).summary),
+        ["none", "concise"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
@@ -2644,7 +3019,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   approvalPolicy: "never",
                   approvalsReviewer: "user",
                   sandboxPolicy: { type: "dangerFullAccess" },
-                  summary: "detailed",
+                  summary: "none",
                 },
               },
             },
@@ -2658,7 +3033,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, undefined, undefined, [
+          {
+            result: {
+              config: { model_reasoning_summary: "none" },
+              origins: {
+                model_reasoning_summary: {
+                  name: { type: "user", file: "/tmp/config.toml", profile: null },
+                },
+              },
+            },
+          },
+        ]);
         const resumed = yield* harness.runtime.resumeThread({
           providerThread: harness.providerThread,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
@@ -3868,7 +4254,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stop-workspace-" });
         const localTranscript = yield* decodeReplayTranscriptJson(
-          (yield* encodeReplayTranscriptJson(transcript)).replaceAll(
+          (yield* encodeReplayTranscriptJson(withCodexConfigReads(transcript))).replaceAll(
             yield* encodeStringJson("/workspace"),
             yield* encodeStringJson(cwd),
           ),
@@ -4007,7 +4393,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const localTranscript = yield* decodeReplayTranscriptJson(
-          (yield* encodeReplayTranscriptJson(staleTranscript)).replaceAll(
+          (yield* encodeReplayTranscriptJson(withCodexConfigReads(staleTranscript))).replaceAll(
             yield* encodeStringJson("/workspace"),
             yield* encodeStringJson(cwd),
           ),
