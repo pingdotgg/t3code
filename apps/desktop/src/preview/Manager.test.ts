@@ -182,6 +182,7 @@ describe("previewWindowOpenAction", () => {
 const {
   browserWindowConstructor,
   clipboardItemConstructor,
+  createFromBuffer,
   createFromPath,
   fromId,
   getFocusedWebContents,
@@ -193,6 +194,11 @@ const {
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
   clipboardItemConstructor: vi.fn(),
+  createFromBuffer: vi.fn((data: Buffer) => ({
+    isEmpty: () => data.length === 0,
+    getSize: () => ({ width: 800, height: 600 }),
+    toPNG: () => data,
+  })),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean; readonly toPNG: () => Buffer } => ({
     isEmpty: () => false,
     toPNG: () => Buffer.from("png"),
@@ -217,6 +223,7 @@ vi.mock("electron", () => ({
     write: writeClipboard,
   },
   nativeImage: {
+    createFromBuffer,
     createFromPath,
   },
   shell: {
@@ -2309,6 +2316,102 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "snapshots a frame redrawn after reading the page, not the guest's last frame",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
+          // capturePage only nudges the window to draw; its stale pixels must not be the snapshot.
+          const copies: Array<PromiseWithResolvers<TestCapturedPreviewImage>> = [];
+          const capturePage = vi.fn((..._args: ReadonlyArray<unknown>) => {
+            const copy = Promise.withResolvers<TestCapturedPreviewImage>();
+            copies.push(copy);
+            return copy.promise;
+          });
+          const drawnCopy = {
+            isEmpty: () => false,
+            toJPEG: () => Buffer.from("stale"),
+            getSize: () => ({ width: 1, height: 1 }),
+          };
+          const settlePromises = Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve)),
+          );
+          const redrawnPng = Buffer.from("png drawn after the page changed");
+          const pendingRedraw = Promise.withResolvers<{ data: string }>();
+          const screenshotResults = [Promise.resolve({}), pendingRedraw.promise];
+          const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+            if (method === "Page.captureScreenshot") return screenshotResults.shift();
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: {
+                    url: "https://example.com",
+                    title: "Example",
+                    loading: false,
+                    visibleText: "QA new marker",
+                    interactiveElements: [],
+                  },
+                },
+              };
+            }
+            return method === "Accessibility.getFullAXTree" ? { nodes: [] } : undefined;
+          });
+          const wc = makeTestPreviewWebContents(capturePage);
+          Object.assign(wc, { isDevToolsOpened: () => false });
+          Object.assign(wc.debugger, { sendCommand });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 42);
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { setBackgroundThrottling },
+          } as never);
+
+          const snapshot = yield* manager
+            .automationSnapshot("tab_1")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          // The first capture returned no image; the retry waits on Chromium's redraw.
+          yield* TestClock.adjust(200);
+          const screenshotCalls = sendCommand.mock.calls
+            .map(([method], index) => ({
+              method,
+              order: sendCommand.mock.invocationCallOrder[index]!,
+            }))
+            .filter(({ method }) => method === "Page.captureScreenshot");
+          expect(screenshotCalls).toHaveLength(2);
+          const pageRead = sendCommand.mock.calls.findIndex(
+            ([method]) => method === "Runtime.evaluate",
+          );
+          expect(screenshotCalls[0]!.order).toBeGreaterThan(
+            sendCommand.mock.invocationCallOrder[pageRead]!,
+          );
+          // Presenting the redrawn frame needs the main window to keep drawing.
+          expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
+          // Whole-view copies that leave the page hidden make the window draw the guest.
+          expect(capturePage).toHaveBeenLastCalledWith(undefined, { stayHidden: true });
+
+          // Every drawn copy is followed by another until the redraw arrives.
+          const copiesBeforeDraw = capturePage.mock.calls.length;
+          copies.at(-1)!.resolve(drawnCopy);
+          yield* settlePromises;
+          expect(capturePage).toHaveBeenCalledTimes(copiesBeforeDraw + 1);
+
+          pendingRedraw.resolve({ data: redrawnPng.toString("base64") });
+          const result = yield* Fiber.join(snapshot);
+          expect(result.visibleText).toBe("QA new marker");
+          expect(result.screenshot.data).toBe(redrawnPng.toString("base64"));
+          expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+
+          // Once the screenshot settles, the copy in flight is the last one.
+          for (const copy of copies) copy.resolve(drawnCopy);
+          yield* settlePromises;
+          expect(capturePage).toHaveBeenCalledTimes(copiesBeforeDraw + 1);
+        }),
+      ),
+  );
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2694,11 +2797,26 @@ describe("PreviewManager", () => {
   effectIt.effect("releases snapshot control when every capture attempt stalls", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const capturePage = vi.fn(() => new Promise<TestCapturedPreviewImage>(() => {}));
+        const copies: Array<PromiseWithResolvers<TestCapturedPreviewImage>> = [];
+        const capturePage = vi.fn(() => {
+          const copy = Promise.withResolvers<TestCapturedPreviewImage>();
+          copies.push(copy);
+          return copy.promise;
+        });
+        const copyImage = (empty: boolean) => ({
+          isEmpty: () => empty,
+          toJPEG: () => Buffer.from("copy"),
+          getSize: () => ({ width: empty ? 0 : 1, height: empty ? 0 : 1 }),
+        });
+        const settlePromises = Effect.promise(
+          () => new Promise<void>((resolve) => setImmediate(resolve)),
+        );
+        const captureScreenshot = vi.fn(() => new Promise<never>(() => {}));
         const wc = makeTestPreviewWebContents(capturePage);
         Object.assign(wc, { isDevToolsOpened: () => false });
         Object.assign(wc.debugger, {
           sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Page.captureScreenshot") return captureScreenshot();
             if (method === "Runtime.evaluate") {
               return {
                 result: {
@@ -2726,21 +2844,37 @@ describe("PreviewManager", () => {
           Effect.forkChild({ startImmediately: true }),
         );
         yield* TestClock.adjust(100);
+        expect(captureScreenshot).toHaveBeenCalledOnce();
         expect(capturePage).toHaveBeenCalledOnce();
         const evaluate = yield* manager
           .automationEvaluate("tab_1", { expression: "42" })
           .pipe(Effect.forkChild({ startImmediately: true }));
         expect(evaluate.pollUnsafe()).toBeUndefined();
 
+        // The first attempt timed out; its copy landing afterwards must not request another.
+        yield* TestClock.adjust(950);
+        copies[0]!.resolve(copyImage(false));
+        yield* settlePromises;
+        expect(capturePage).toHaveBeenCalledOnce();
+
+        // An empty copy did not make the window draw, so the retry stops requesting copies.
+        yield* TestClock.adjust(100);
+        expect(captureScreenshot).toHaveBeenCalledTimes(2);
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        copies[1]!.resolve(copyImage(true));
+        yield* settlePromises;
+        expect(capturePage).toHaveBeenCalledTimes(2);
+
         yield* TestClock.adjust(4_000);
         const exit = yield* Fiber.join(snapshot);
         expect(Exit.isFailure(exit)).toBe(true);
+        expect(captureScreenshot).toHaveBeenCalledTimes(3);
         expect(capturePage).toHaveBeenCalledTimes(3);
         if (Exit.isSuccess(exit)) return;
         const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
         expect(error).toMatchObject({
           _tag: "PreviewOperationError",
-          operation: "automationSnapshot.capturePage",
+          operation: "automationSnapshot.captureScreenshot",
           tabId: "tab_1",
           webContentsId: 42,
           cause: { _tag: "TimeoutError" },

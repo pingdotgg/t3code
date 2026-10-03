@@ -343,6 +343,60 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
   };
 };
 
+/**
+ * Captures a guest frame drawn after this call. `capturePage` copies whatever frame the guest
+ * last drew, and a guest hidden behind a minimized or hidden window has not drawn since its DOM
+ * changed, so its copy shows the previous state. `Page.captureScreenshot` keeps the guest
+ * painting while hidden, forces a redraw, and copies only after that frame is presented.
+ * Needs an attached debugger, so it serves agent snapshots. The screenshot button and
+ * annotations keep `capturePage`: a person triggers them from a visible preview whose guest
+ * is already drawing what they see.
+ */
+const captureRedrawnFrame = async (
+  wc: Electron.WebContents,
+  signal: AbortSignal,
+): Promise<Electron.NativeImage> => {
+  const screenshot = wc.debugger.sendCommand("Page.captureScreenshot", {
+    format: "png",
+    // Decoded and re-encoded below, so trade compression for main-thread time.
+    optimizeForSpeed: true,
+  });
+  let settled = false;
+  const settle = () => {
+    settled = true;
+  };
+  screenshot.then(settle, settle);
+  // The window does not draw a guest it does not show (behind the app, or in a minimized
+  // window) except to serve a copy request, and Chromium throttles an undrawn guest to one
+  // frame a second, so the forced redraw is presented seconds late. Each copy makes the window
+  // draw the guest's latest frame, so keep requesting copies, one at a time, until the
+  // screenshot settles or this attempt is abandoned. A copy that fails or comes back empty ends
+  // the requests rather than spinning; the attempt then falls back to its timeout and retry.
+  // stayHidden leaves the page's visibility state alone, and Chromium only allows it for a
+  // whole-view copy (an empty capture size).
+  const requestDraw = (): void => {
+    if (settled || signal.aborted || wc.isDestroyed()) return;
+    wc.capturePage(undefined, { stayHidden: true }).then(
+      (copy) => {
+        if (!copy.isEmpty()) requestDraw();
+      },
+      () => undefined,
+    );
+  };
+  requestDraw();
+  const result: unknown = await screenshot;
+  const data =
+    typeof result === "object" && result !== null
+      ? (result as Record<string, unknown>)["data"]
+      : undefined;
+  const image =
+    typeof data === "string" ? nativeImage.createFromBuffer(Buffer.from(data, "base64")) : null;
+  if (!image || image.isEmpty()) {
+    throw new Error("Page.captureScreenshot returned no image.");
+  }
+  return image;
+};
+
 /** `capturePage` never settles when the guest's compositor is wedged. */
 const ANNOTATION_SCREENSHOT_TIMEOUT = "5 seconds";
 
@@ -709,10 +763,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       try: evaluate,
       catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
     });
-  const capturePageWithRetry = Effect.fn("PreviewManager.capturePageWithRetry")(function* (
+  const captureGuestWithRetry = Effect.fn("PreviewManager.captureGuestWithRetry")(function* (
     errorContext: PreviewOperationContext,
     tabId: string,
     wc: Electron.WebContents,
+    captureImage: (wc: Electron.WebContents, signal: AbortSignal) => Promise<Electron.NativeImage>,
   ) {
     const requireCurrentGuest = Effect.gen(function* () {
       const tabs = yield* SynchronizedRef.get(tabsRef);
@@ -725,7 +780,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* requireCurrentGuest;
       const image = yield* Effect.tryPromise({
         // An abort-signal parameter makes a stalled promise interruptible.
-        try: (_signal) => wc.capturePage(),
+        try: (signal) => captureImage(wc, signal),
         catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
       }).pipe(
         Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
@@ -737,7 +792,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* requireCurrentGuest;
       return image;
     });
-    // capturePage waits for a window frame that contains the guest. A throttled main window
+    // Both captures wait for a window frame that contains the guest. A throttled main window
     // that is covered, minimized, or on another Space draws none, so the capture never settles.
     return yield* Effect.acquireUseRelease(
       holdMainWindowPainting,
@@ -2883,7 +2938,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      capturePageWithRetry(
+      captureGuestWithRetry(
         {
           operation: "captureScreenshot.capturePage",
           tabId,
@@ -2891,6 +2946,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         },
         tabId,
         wc,
+        (guest) => guest.capturePage(),
       ),
     ]);
     const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${millis.toString(36)}`;
@@ -3758,14 +3814,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
-        capturePageWithRetry(
+        captureGuestWithRetry(
           {
-            operation: "automationSnapshot.capturePage",
+            operation: "automationSnapshot.captureScreenshot",
             tabId,
             webContentsId: wc.id,
           },
           tabId,
           wc,
+          captureRedrawnFrame,
         ),
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
