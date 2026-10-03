@@ -169,13 +169,13 @@ describe("serializeRenderedMarkdownFragment", () => {
         parentChecked: false,
         childChecked: true,
         parent: "- [ ] Parent",
-        child: "      - [x] Child",
+        child: "  - [x] Child",
       },
       {
         parentChecked: true,
         childChecked: false,
         parent: "- [x] Parent",
-        child: "      - [ ] Child",
+        child: "  - [ ] Child",
       },
     ])("copies $parent with $child", ({ parentChecked, childChecked, parent, child }) => {
       const parentContent = parentLayout === "loose" ? new FakeElement("P") : new FakeElement("LI");
@@ -206,6 +206,20 @@ describe("serializeRenderedMarkdownFragment", () => {
         `Before\n\n${parent}${parentLayout === "loose" ? "\n\n" : "\n"}${child}\n\nAfter`,
       );
     });
+  });
+
+  it("indents a code block under a numbered task item by the number width only", () => {
+    const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
+    checkbox.checked = true;
+    const item = new FakeElement("LI").append(
+      new FakeElement("P").append(checkbox, new FakeText(" Run the tests")),
+      renderedCodeBlock(["pnpm test"]),
+    );
+    const container = new FakeElement("DIV").append(new FakeElement("OL").append(item));
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "1. [x] Run the tests\n\n   ```\n   pnpm test\n   ```",
+    );
   });
 
   it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
