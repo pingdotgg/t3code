@@ -1,4 +1,9 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArguments,
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -110,6 +115,12 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   return yield* run.pipe(Effect.provide(bootServiceLayer(config)));
 });
 
+/** The running CLI's path, so a stale `t3` earlier on PATH is visible. */
+const runningCliPath = Effect.gen(function* () {
+  if (yield* HostProcessIsExecutable) return yield* HostProcessExecutablePath;
+  return (yield* HostProcessArguments)[1] ?? (yield* HostProcessExecutablePath);
+});
+
 const serviceReconcileFlags = {
   ...projectLocationFlags,
   allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
@@ -127,7 +138,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
           yield* Console.log(
-            `T3 Code service is already installed with t3@${packageJson.version}.`,
+            `T3 Code service is already installed with t3@${packageJson.version} (${yield* runningCliPath}).`,
           );
           return;
         }
@@ -153,7 +164,9 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         );
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
+          yield* Console.log(
+            `T3 Code service is already using t3@${packageJson.version} (${yield* runningCliPath}).`,
+          );
           return;
         }
         yield* Console.log(
