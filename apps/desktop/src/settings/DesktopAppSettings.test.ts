@@ -278,12 +278,29 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("rejects window bounds that do not satisfy the domain schema", () =>
+  it("normalizes only positive integer window dimensions and integer coordinates", () => {
+    const tiledBounds = { x: 10, y: 20, width: 624, height: 360 };
+
+    assert.deepEqual(DesktopAppSettings.normalizeMainWindowBounds(tiledBounds), tiledBounds);
+
+    for (const invalidBounds of [
+      { ...tiledBounds, x: 10.5 },
+      { ...tiledBounds, width: 0 },
+      { ...tiledBounds, width: -1 },
+      { ...tiledBounds, width: Number.NaN },
+      { ...tiledBounds, height: Number.POSITIVE_INFINITY },
+      { ...tiledBounds, height: 360.5 },
+    ]) {
+      assert.isNull(DesktopAppSettings.normalizeMainWindowBounds(invalidBounds));
+    }
+  });
+
+  it.effect("rejects persisted window bounds that do not satisfy the domain schema", () =>
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowBounds: { x: 10, y: 20, width: 0, height: 360 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });
@@ -335,24 +352,29 @@ describe("DesktopSettings", () => {
       ),
   );
 
-  it.effect("persists sparse desktop settings documents", () =>
+  it.effect("persists and reloads sparse desktop settings with tiled window bounds", () =>
     withSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const tiledBounds = { x: -1200, y: 40, width: 624, height: 360 };
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds(tiledBounds, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
-          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowBounds: tiledBounds,
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+
+        const reloaded = yield* settings.load;
+        assert.deepEqual(reloaded.mainWindowBounds, tiledBounds);
+        assert.isTrue(reloaded.mainWindowMaximized);
       }),
     ),
   );

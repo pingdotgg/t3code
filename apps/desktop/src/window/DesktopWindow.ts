@@ -396,8 +396,9 @@ export const make = Effect.gen(function* () {
     }
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      // Wayland compositors can tile a native surface below Electron's minimum;
+      // keeping a minimum there leaves the renderer wider than its allocated surface.
+      ...(environment.platform === "linux" ? {} : { minWidth: 840, minHeight: 620 }),
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
