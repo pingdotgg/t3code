@@ -223,6 +223,9 @@ export const make = Effect.gen(function* () {
     // never gain root through pkexec and every .deb update it installs fails.
     // A plain spawn doesn't set it. Like app.relaunch(), the new instance
     // starts once this process exits, so it can take the single-instance lock.
+    // The shell waits for EOF on a stdin pipe that only this process can write
+    // to, which arrives when this process exits however it exits. Polling the
+    // PID instead could wait on an unrelated process that reused it.
     relaunch: (options) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -231,12 +234,12 @@ export const make = Effect.gen(function* () {
               "/bin/sh",
               [
                 "-c",
-                'while kill -0 "$0" 2>/dev/null; do sleep 0.1; done; exec "$@"',
-                String(process.pid),
+                'while read -r _; do :; done; exec "$@" </dev/null',
+                "t3code-relaunch",
                 options.execPath ?? process.execPath,
                 ...(options.args ?? process.argv.slice(1)),
               ],
-              { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+              { detached: true, stdin: "pipe", stdout: "ignore", stderr: "ignore" },
             ),
           );
           // Keeps the waiting shell alive when this scope closes.

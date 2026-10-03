@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { beforeEach, vi } from "vite-plus/test";
@@ -276,21 +277,17 @@ describe("ElectronApp", () => {
       const [relauncher] = spawnedCommands;
       assert.isDefined(relauncher);
 
-      // Run the relauncher against a stand-in for this process.
-      const running = yield* spawner.spawn(ChildProcess.make("sleep", ["30"]));
-      const [shell, script, , ...relaunchArgs] = relauncher!.args;
+      // Ending the relauncher's stdin stands in for this process exiting.
       const waiting = yield* spawner.spawn(
-        ChildProcess.make(relauncher!.command, [
-          shell!,
-          script!,
-          String(running.pid),
-          ...relaunchArgs,
-        ]),
+        ChildProcess.make(relauncher!.command, relauncher!.args, {
+          ...relauncher!.options,
+          detached: false,
+        }),
       );
       assert.isTrue(yield* waiting.isRunning);
       assert.isFalse(yield* fileSystem.exists(output));
 
-      yield* running.kill();
+      yield* Stream.run(Stream.empty, waiting.stdin);
       assert.equal(yield* waiting.exitCode, 0);
       assert.equal(yield* fileSystem.readFileString(output), "two words\n$HOME\n(Nightly)\n");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
