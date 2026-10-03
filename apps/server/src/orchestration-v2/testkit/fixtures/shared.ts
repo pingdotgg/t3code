@@ -297,6 +297,11 @@ export type OrchestratorFixtureInputStep =
        */
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
+    }
+  | {
+      /** Picks another model of the same provider instance; later messages use it. */
+      readonly type: "set_model";
+      readonly model: string;
     };
 
 export interface OrchestratorFixtureInput {
@@ -368,6 +373,12 @@ export const CURSOR_MODEL_SELECTION = {
 export const GROK_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("grok"),
   model: "grok-build",
+} satisfies ModelSelection;
+
+/** Kiro's cheapest listed model, so recordings stay cheap and do not depend on "auto" routing. */
+export const KIRO_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("kiro"),
+  model: "claude-haiku-4.5",
 } satisfies ModelSelection;
 
 export const OPENCODE_MODEL_SELECTION = {
@@ -528,6 +539,8 @@ export function materializeFixtureInput(input: {
     const runIdFor = (runOrdinal: number) =>
       idAllocator.derive.run({ threadId: ids.threadId, ordinal: runOrdinal });
 
+    // A `set_model` step changes the selection every later message carries.
+    let modelSelection = input.modelSelection;
     const pushDispatch = (
       command: OrchestrationV2Command,
       options: {
@@ -556,7 +569,7 @@ export function materializeFixtureInput(input: {
         }),
         ids,
         scenario: input.scenario,
-        modelSelection: input.modelSelection,
+        modelSelection,
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),
@@ -601,7 +614,7 @@ export function materializeFixtureInput(input: {
                   commandName: `message-${messageIndex}`,
                 }),
                 ids,
-                modelSelection: input.modelSelection,
+                modelSelection,
                 messageId: yield* idAllocator.allocate.message({
                   threadId: ids.threadId,
                   ordinal: messageIndex,
@@ -635,7 +648,7 @@ export function materializeFixtureInput(input: {
                 commandName: `queue-message-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -773,7 +786,7 @@ export function materializeFixtureInput(input: {
                 commandName: `steer-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -813,7 +826,7 @@ export function materializeFixtureInput(input: {
                 commandName: `restart-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -899,6 +912,18 @@ export function materializeFixtureInput(input: {
           break;
         case "advance_clock":
           steps.push({ type: "advance_clock", duration: step.duration });
+          break;
+        case "set_model":
+          modelSelection = { ...input.modelSelection, model: step.model };
+          pushDispatch({
+            type: "thread.model-selection.set",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `set-model-${step.model}`,
+            }),
+            threadId: ids.threadId,
+            modelSelection,
+          });
           break;
         case "rollback":
           {

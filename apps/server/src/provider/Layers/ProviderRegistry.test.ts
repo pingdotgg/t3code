@@ -2892,6 +2892,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 "codex",
                 "cursor",
                 "grok",
+                "kiro",
                 "opencode",
                 "pi",
               ]);

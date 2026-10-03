@@ -241,6 +241,12 @@ export interface AcpAdapterV2Flavor {
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   /**
+   * The agent advertises its model option only after `session/new` returns
+   * (Kiro sends it in a `config_option_update`), so in-session model switching
+   * is not inferred from the setup result.
+   */
+  readonly modelOptionArrivesLate?: boolean;
+  /**
    * Replaces the default model application on session setup. Returns the model
    * the session now runs on. Antigravity resolves its provider-default alias
    * against the account's catalog instead of sending it to the agent.
@@ -254,6 +260,14 @@ export interface AcpAdapterV2Flavor {
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
+  /**
+   * Native select-option values to apply for a runtime policy (e.g. Kiro's
+   * `autopilot`), set on every session configure. A value the session does
+   * not advertise is skipped; an agent rejecting it fails the session.
+   */
+  readonly sessionConfigForPolicy?: (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) => ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /**
    * Opts the session into the ACP client `fs` capability. Agents read and write
    * files themselves under their own permission model unless a flavor sets
@@ -637,11 +651,13 @@ export const AcpProviderCapabilitiesV2 = {
 function negotiatedCapabilities(
   base: OrchestrationV2ProviderCapabilities,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+  modelOptionArrivesLate: boolean,
 ): OrchestrationV2ProviderCapabilities {
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const hasModelConfig =
+    modelOptionArrivesLate ||
     setup.configOptions?.some((option) => option.category === "model") === true;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
@@ -5523,9 +5539,19 @@ export function makeAcpAdapterV2(
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* activeContext;
+                  // Kiro sends the tool's kind on its `tool_call` and leaves it
+                  // off the permission request for that call; take it from the
+                  // tool already seen under the same id so policy can tell a
+                  // read from a write.
+                  const knownKind = context.tools.get(params.toolCall.toolCallId)?.kind;
                   const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
                     context.input.runtimePolicy,
-                    params,
+                    params.toolCall.kind == null && knownKind !== undefined
+                      ? {
+                          ...params,
+                          toolCall: { ...params.toolCall, kind: knownKind },
+                        }
+                      : params,
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
@@ -6072,7 +6098,11 @@ export function makeAcpAdapterV2(
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
         rememberTerminalEnvironment(started.sessionId, input.threadId);
-        const capabilities = negotiatedCapabilities(flavor.capabilities, started);
+        const capabilities = negotiatedCapabilities(
+          flavor.capabilities,
+          started,
+          flavor.modelOptionArrivesLate === true,
+        );
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
@@ -6216,6 +6246,17 @@ export function makeAcpAdapterV2(
                   }),
               }),
             );
+          }
+          for (const selection of flavor.sessionConfigForPolicy?.(runtimePolicy) ?? []) {
+            const option = (yield* runtime.getConfigOptions).find(
+              (candidate) => candidate.id === selection.id,
+            );
+            if (option?.type !== "select" || option.currentValue === selection.value) continue;
+            const advertisedValues = option.options.flatMap((entry) =>
+              "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+            );
+            if (!advertisedValues.includes(selection.value)) continue;
+            yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
           if (policyMode !== undefined) {

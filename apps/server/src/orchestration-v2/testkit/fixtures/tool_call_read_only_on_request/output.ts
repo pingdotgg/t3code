@@ -106,3 +106,38 @@ function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
       return undefined;
   }
 }
+
+// Kiro gates the write with its own prompt and, Supervised under the explicit
+// approval policy, then asks the user to review the turn's changes. Its
+// prompts carry the tool call id but no kind, and only the choices T3 can
+// honour (no session-wide "always") reach the card.
+export function assertToolCallReadOnlyOnRequestKiroOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
+  const projection = projectionFor(result, transcript.scenario);
+  assertSemanticProjectionIntegrity(projection);
+  assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
+  assertNoAcpClientFileOrTerminalRequests(transcript);
+  assert.deepEqual(
+    projection.runtimeRequests.map((request) => [request.status, request.decision]),
+    [
+      ["resolved", "accept"],
+      ["resolved", "accept"],
+    ],
+    "the write and Kiro's review of changes both reach the user",
+  );
+  const writes = projection.turnItems.filter(
+    (item) => item.type === "command_execution" || item.type === "file_change",
+  );
+  assert.isTrue(
+    writes.some((item) => item.status === "completed"),
+    "the approved write must complete",
+  );
+  const approval = projection.turnItems.find((item) => item.type === "approval_request");
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["accept", "decline", "cancel"],
+  );
+}

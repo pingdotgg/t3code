@@ -35,4 +35,7 @@ by the permission mode. See [ACP Registry permissions](./providers-acp.md#permis
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also asks you to
+review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.

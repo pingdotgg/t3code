@@ -5,6 +5,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  KiroSettings,
   OpenCodeSettings,
   PiSettings,
   ProviderDriverKind,
@@ -85,6 +86,21 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("kiro"),
+    label: "Kiro",
+    badgeLabel: "Early Access",
+    settingsSchema: KiroSettings,
+    environmentFields: [
+      {
+        name: "KIRO_API_KEY",
+        label: "Kiro API key",
+        description: "Optional. Signs in without `kiro-cli login` (Kiro Pro and above).",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ],
   },
   {
     value: ProviderDriverKind.make("pi"),
