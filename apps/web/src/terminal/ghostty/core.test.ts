@@ -378,3 +378,170 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
 });
+
+/** Keyboard event stub. Unset modifiers are false and locks are reported off. */
+function terminalKey(
+  partial: Partial<KeyboardEvent> & Pick<KeyboardEvent, "code" | "key">,
+): KeyboardEvent {
+  return {
+    altKey: false,
+    ctrlKey: false,
+    isComposing: false,
+    metaKey: false,
+    repeat: false,
+    shiftKey: false,
+    getModifierState: () => false,
+    ...partial,
+  } as KeyboardEvent;
+}
+
+/**
+ * Put `navigator.platform` back after a test stub.
+ *
+ * Node exposes `platform` on the prototype, so `getOwnPropertyDescriptor` is
+ * empty. Restoring only a saved own descriptor leaves the temporary own
+ * property in place and later tests keep the stub.
+ */
+function restoreNavigatorPlatform(descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(navigator, "platform", descriptor);
+    return;
+  }
+  Reflect.deleteProperty(navigator, "platform");
+}
+
+/**
+ * Run `run` while `navigator.platform` is `platform`, then restore the previous
+ * platform. `encodeKey` reads the platform when deciding whether Option
+ * produced a character. The previous value is restored when `run` throws.
+ */
+function withPlatform<T>(platform: string, run: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+  Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+  try {
+    return run();
+  } finally {
+    restoreNavigatorPlatform(descriptor);
+  }
+}
+
+describe("GhosttyTerminalCore.encodeKey", () => {
+  const cores = new Set<GhosttyTerminalCore>();
+  const initialPlatform = navigator.platform;
+  const initialPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+
+  /** Small terminal used to assert the bytes `encodeKey` writes. */
+  async function createCore() {
+    const core = await GhosttyTerminalCore.create(
+      12,
+      3,
+      8,
+      16,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    cores.add(core);
+    return core;
+  }
+
+  afterEach(() => {
+    try {
+      expect(navigator.platform).toBe(initialPlatform);
+      expect(Object.getOwnPropertyDescriptor(navigator, "platform")).toEqual(
+        initialPlatformDescriptor,
+      );
+    } finally {
+      restoreNavigatorPlatform(initialPlatformDescriptor);
+      for (const core of cores) core.dispose();
+      cores.clear();
+    }
+  });
+
+  it("restores an inherited navigator.platform after Option encoding", () => {
+    expect(initialPlatformDescriptor).toBeUndefined();
+    expect(() =>
+      withPlatform("MacIntel", () => {
+        expect(navigator.platform).toBe("MacIntel");
+        expect(Object.getOwnPropertyDescriptor(navigator, "platform")?.value).toBe("MacIntel");
+        throw new Error("encoder failed");
+      }),
+    ).toThrow("encoder failed");
+    expect(Object.getOwnPropertyDescriptor(navigator, "platform")).toBeUndefined();
+    expect(navigator.platform).toBe(initialPlatform);
+  });
+
+  it("restores an own navigator.platform descriptor", () => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      enumerable: true,
+      value: "TestPlatform",
+      writable: true,
+    });
+    try {
+      withPlatform("Linux", () => {
+        expect(navigator.platform).toBe("Linux");
+      });
+      expect(navigator.platform).toBe("TestPlatform");
+      expect(Object.getOwnPropertyDescriptor(navigator, "platform")).toMatchObject({
+        configurable: true,
+        value: "TestPlatform",
+        writable: true,
+      });
+    } finally {
+      restoreNavigatorPlatform(saved);
+    }
+  });
+
+  it("types macOS Option characters through the WASM encoder", async () => {
+    const core = await createCore();
+    const optionAt = terminalKey({ altKey: true, code: "KeyL", key: "@" });
+    withPlatform("MacIntel", () => {
+      expect(core.encodeKey(optionAt)).toBe("@");
+      expect(core.encodeKey(terminalKey({ altKey: true, code: "KeyE", key: "€" }))).toBe("€");
+      expect(core.encodeKey(terminalKey({ altKey: true, code: "Digit7", key: "|" }))).toBe("|");
+      expect(
+        core.encodeKey(terminalKey({ altKey: true, code: "Digit7", key: "\\", shiftKey: true })),
+      ).toBe("\\");
+      expect(core.encodeKey(terminalKey({ code: "KeyC", ctrlKey: true, key: "c" }))).toBe("\u0003");
+      expect(
+        core.encodeKey(terminalKey({ altKey: true, code: "ArrowLeft", key: "ArrowLeft" })),
+      ).toBe("\u001b[1;3D");
+
+      core.write("\u001b[>4;2m");
+      expect(core.encodeKey(optionAt)).toBe("@");
+      expect(
+        core.encodeKey(terminalKey({ altKey: true, code: "Digit7", key: "\\", shiftKey: true })),
+      ).toBe("\\");
+      expect(core.encodeKey(terminalKey({ code: "KeyA", key: "A", shiftKey: true }))).toBe(
+        "\u001b[27;2;65~",
+      );
+
+      core.write("\u001b[>1u");
+      expect(core.encodeKey(optionAt)).toBe("@");
+      expect(core.encodeKey(terminalKey({ altKey: true, code: "Digit7", key: "|" }))).toBe("|");
+      expect(core.encodeKey(terminalKey({ code: "KeyC", ctrlKey: true, key: "c" }))).toBe(
+        "\u001b[99;5u",
+      );
+
+      core.write("\u001b[>31u");
+      expect(core.encodeKey(optionAt)).toBe("\u001b[64::108;;64u");
+    });
+  });
+
+  it("keeps Alt as a modifier off macOS", async () => {
+    const core = await createCore();
+    withPlatform("Linux", () => {
+      expect(core.encodeKey(terminalKey({ altKey: true, code: "KeyL", key: "@" }))).toBe("\u001b@");
+    });
+    withPlatform("Win32", () => {
+      expect(core.encodeKey(terminalKey({ altKey: true, code: "Digit7", key: "|" }))).toBe(
+        "\u001b|",
+      );
+    });
+  });
+});

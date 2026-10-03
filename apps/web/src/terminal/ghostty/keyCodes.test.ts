@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import {
+  ghosttyConsumedMods,
+  ghosttyEncoderMods,
+  ghosttyKeyForCode,
+  ghosttyUnshiftedCodepoint,
+} from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -14,12 +19,95 @@ describe("ghosttyKeyForCode", () => {
 describe("ghosttyConsumedMods", () => {
   const shifted = { altKey: false, ctrlKey: false, key: "@", metaKey: false, shiftKey: true };
 
-  it("only consumes a lone Shift producing a character", () => {
-    expect(ghosttyConsumedMods(shifted)).toBe(1);
-    expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
-    expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
+  it("consumes a lone Shift producing a character", () => {
+    expect(ghosttyConsumedMods(shifted, "Linux")).toBe(1);
+    expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...shifted, key: "Tab" }, "MacIntel")).toBe(0);
     // Deliberate: Shift+Space collapses to Space so it still types one.
-    expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
+    expect(ghosttyConsumedMods({ ...shifted, key: " " }, "Linux")).toBe(1);
+  });
+
+  it("consumes a lone macOS Option that produced a character", () => {
+    const option = { altKey: true, ctrlKey: false, key: "@", metaKey: false, shiftKey: false };
+    expect(ghosttyConsumedMods(option, "MacIntel")).toBe(1 << 2);
+    expect(ghosttyConsumedMods(option, "iPhone")).toBe(1 << 2);
+    expect(ghosttyConsumedMods({ ...option, key: "€" }, "MacIntel")).toBe(1 << 2);
+    expect(ghosttyConsumedMods({ ...option, key: "\\", shiftKey: true }, "MacIntel")).toBe(
+      (1 << 2) | 1,
+    );
+    expect(ghosttyConsumedMods({ ...option, ctrlKey: true }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, metaKey: true }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, key: "ArrowLeft" }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, key: "Dead" }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods(option, "Linux")).toBe(0);
+    expect(ghosttyConsumedMods(option, "Win32")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, shiftKey: true }, "Linux")).toBe(0);
+  });
+});
+
+describe("ghosttyEncoderMods", () => {
+  const locksOff = { getModifierState: () => false };
+
+  it("drops consumed Option from the raw mask and keeps a lone Shift", () => {
+    expect(
+      ghosttyEncoderMods(
+        { ...locksOff, altKey: true, ctrlKey: false, key: "@", metaKey: false, shiftKey: false },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: 0, consumedMods: 1 << 2 });
+    expect(
+      ghosttyEncoderMods(
+        { ...locksOff, altKey: true, ctrlKey: false, key: "\\", metaKey: false, shiftKey: true },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: 0, consumedMods: (1 << 2) | 1 });
+    expect(
+      ghosttyEncoderMods(
+        { ...locksOff, altKey: false, ctrlKey: false, key: "A", metaKey: false, shiftKey: true },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: 1, consumedMods: 1 });
+    expect(
+      ghosttyEncoderMods(
+        { ...locksOff, altKey: true, ctrlKey: true, key: "a", metaKey: false, shiftKey: false },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: (1 << 1) | (1 << 2), consumedMods: 0 });
+    expect(
+      ghosttyEncoderMods(
+        { ...locksOff, altKey: true, ctrlKey: false, key: "@", metaKey: false, shiftKey: false },
+        "Linux",
+      ),
+    ).toEqual({ mods: 1 << 2, consumedMods: 0 });
+    expect(
+      ghosttyEncoderMods(
+        {
+          ...locksOff,
+          altKey: true,
+          ctrlKey: false,
+          key: "ArrowLeft",
+          metaKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: 1 << 2, consumedMods: 0 });
+  });
+
+  it("keeps lock modifiers that did not compose the character", () => {
+    expect(
+      ghosttyEncoderMods(
+        {
+          altKey: true,
+          ctrlKey: false,
+          key: "@",
+          metaKey: false,
+          shiftKey: false,
+          getModifierState: (key) => key === "CapsLock",
+        },
+        "MacIntel",
+      ),
+    ).toEqual({ mods: 1 << 4, consumedMods: 1 << 2 });
   });
 });
 

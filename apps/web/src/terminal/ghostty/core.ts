@@ -1,6 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
-  ghosttyConsumedMods,
+  ghosttyEncoderMods,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -472,6 +472,14 @@ export class GhosttyTerminalCore {
     );
   }
 
+  /**
+   * Bytes libghostty-vt emits for one key event.
+   *
+   * On macOS, a lone Option that produced a character (German Option+L is `@`)
+   * is consumed and cleared from the raw modifier mask before encoding, so the
+   * character is written instead of an Alt sequence. Ctrl, Meta, Option+arrow,
+   * and a lone Shift stay intact.
+   */
   encodeKey(event: KeyboardEvent, action: "press" | "release" = "press"): string {
     this.ensureActive();
     this.runtime.call("ghostty_key_encoder_setopt_from_terminal", this.keyEncoder, this.terminal);
@@ -481,19 +489,9 @@ export class GhosttyTerminalCore {
       action === "release" ? 0 : event.repeat ? 2 : 1,
     );
     this.runtime.call("ghostty_key_event_set_key", this.keyEvent, ghosttyKeyForCode(event.code));
-    const mods =
-      (event.shiftKey ? 1 : 0) |
-      (event.ctrlKey ? 1 << 1 : 0) |
-      (event.altKey ? 1 << 2 : 0) |
-      (event.metaKey ? 1 << 3 : 0) |
-      (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
-      (event.getModifierState("NumLock") ? 1 << 5 : 0);
+    const { mods, consumedMods } = ghosttyEncoderMods(event);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call(
-      "ghostty_key_event_set_consumed_mods",
-      this.keyEvent,
-      ghosttyConsumedMods(event),
-    );
+    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, consumedMods);
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",

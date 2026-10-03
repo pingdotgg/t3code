@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
 import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
 import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
-import { ghosttyKeyForCode } from "./keyCodes";
+import { ghosttyEncoderMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
 
 type WasmFunction = (...args: number[]) => number;
 
@@ -710,6 +710,226 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_wasm_free_opaque", eventSlot);
     call("ghostty_wasm_free_opaque", encoderSlot);
     free(kittyModePointer, kittyMode.length);
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    free(terminalOptions, 8);
+  });
+
+  it("encodes macOS Option text only when consumed Alt is absent from raw mods", async () => {
+    const result = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+    const memory = instance.exports.memory as WebAssembly.Memory;
+    const call = (name: string, ...args: number[]) =>
+      (instance.exports[name] as WasmFunction)(...args);
+    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
+    const free = (pointer: number, size: number) =>
+      call("ghostty_wasm_free_u8_array", pointer, size);
+
+    const terminalOptions = alloc(8);
+    const terminalOptionsView = new DataView(memory.buffer, terminalOptions, 8);
+    terminalOptionsView.setUint16(0, 80, true);
+    terminalOptionsView.setUint16(2, 24, true);
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+    const encoderSlot = call("ghostty_wasm_alloc_opaque");
+    const eventSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_key_encoder_new", 0, encoderSlot)).toBe(0);
+    expect(call("ghostty_key_event_new", 0, eventSlot)).toBe(0);
+    const keyEncoder = new DataView(memory.buffer).getUint32(encoderSlot, true);
+    const keyEvent = new DataView(memory.buffer).getUint32(eventSlot, true);
+
+    const writeTerminal = (data: string) => {
+      const bytes = new TextEncoder().encode(data);
+      const pointer = alloc(bytes.length);
+      new Uint8Array(memory.buffer, pointer, bytes.length).set(bytes);
+      call("ghostty_terminal_vt_write", terminal, pointer, bytes.length);
+      free(pointer, bytes.length);
+    };
+
+    const encode = (input: {
+      readonly code: string;
+      readonly key: string;
+      readonly mods: number;
+      readonly consumedMods: number;
+      readonly unshifted: number;
+    }) => {
+      call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+      call("ghostty_key_event_set_action", keyEvent, 1);
+      call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode(input.code));
+      call("ghostty_key_event_set_mods", keyEvent, input.mods);
+      call("ghostty_key_event_set_consumed_mods", keyEvent, input.consumedMods);
+      call("ghostty_key_event_set_composing", keyEvent, 0);
+      call("ghostty_key_event_set_unshifted_codepoint", keyEvent, input.unshifted);
+      const text = new TextEncoder().encode(input.key);
+      const textPointer = text.length === 0 ? 0 : alloc(text.length);
+      if (textPointer !== 0) new Uint8Array(memory.buffer, textPointer, text.length).set(text);
+      call("ghostty_key_event_set_utf8", keyEvent, textPointer, text.length);
+      const written = call("ghostty_wasm_alloc_usize");
+      const query = call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written);
+      const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+      let encoded = "";
+      if (outputSize > 0) {
+        expect(query).toBe(-3);
+        const output = alloc(outputSize);
+        expect(
+          call("ghostty_key_encoder_encode", keyEncoder, keyEvent, output, outputSize, written),
+        ).toBe(0);
+        const outputLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+        encoded = new TextDecoder().decode(new Uint8Array(memory.buffer, output, outputLength));
+        free(output, outputSize);
+      } else {
+        expect(query).toBe(0);
+      }
+      call("ghostty_wasm_free_usize", written);
+      if (textPointer !== 0) free(textPointer, text.length);
+      return encoded;
+    };
+
+    const alt = 1 << 2;
+    const optionAt = {
+      code: "KeyL",
+      key: "@",
+      shiftKey: false,
+    };
+    const produced = ghosttyEncoderMods(
+      {
+        altKey: true,
+        ctrlKey: false,
+        getModifierState: () => false,
+        key: optionAt.key,
+        metaKey: false,
+        shiftKey: optionAt.shiftKey,
+      },
+      "MacIntel",
+    );
+    const unshiftedAt = ghosttyUnshiftedCodepoint(optionAt);
+    const layoutUnshiftedAt = ghosttyUnshiftedCodepoint(optionAt, new Map([["KeyL", "l"]]));
+    expect(produced).toEqual({ mods: 0, consumedMods: alt });
+    expect(unshiftedAt).toBe("@".codePointAt(0));
+    expect(layoutUnshiftedAt).toBe("l".codePointAt(0));
+
+    // Raw Alt, whether or not it is also consumed, is an Alt chord on this
+    // non-Darwin build. The mask encodeKey sends (Alt consumed and cleared)
+    // is the one that writes the character.
+    expect(encode({ ...optionAt, mods: alt, consumedMods: 0, unshifted: unshiftedAt })).toBe(
+      "\u001b@",
+    );
+    expect(encode({ ...optionAt, mods: alt, consumedMods: alt, unshifted: unshiftedAt })).toBe("@");
+    expect(
+      encode({
+        ...optionAt,
+        mods: produced.mods,
+        consumedMods: produced.consumedMods,
+        unshifted: unshiftedAt,
+      }),
+    ).toBe("@");
+
+    writeTerminal("\u001b[>4;2m");
+    expect(encode({ ...optionAt, mods: alt, consumedMods: 0, unshifted: unshiftedAt })).toBe(
+      "\u001b[27;3;64~",
+    );
+    expect(encode({ ...optionAt, mods: alt, consumedMods: alt, unshifted: unshiftedAt })).toBe(
+      "\u001b[27;3;64~",
+    );
+    expect(
+      encode({
+        ...optionAt,
+        mods: produced.mods,
+        consumedMods: produced.consumedMods,
+        unshifted: unshiftedAt,
+      }),
+    ).toBe("@");
+    expect(
+      encode({
+        ...optionAt,
+        mods: produced.mods,
+        consumedMods: produced.consumedMods,
+        unshifted: layoutUnshiftedAt,
+      }),
+    ).toBe("@");
+
+    const optionBackslash = ghosttyEncoderMods(
+      {
+        altKey: true,
+        ctrlKey: false,
+        getModifierState: () => false,
+        key: "\\",
+        metaKey: false,
+        shiftKey: true,
+      },
+      "MacIntel",
+    );
+    const backslash = {
+      code: "Digit7",
+      key: "\\",
+      unshifted: ghosttyUnshiftedCodepoint({ code: "Digit7", key: "\\", shiftKey: true }),
+    };
+    const layoutBackslash = ghosttyUnshiftedCodepoint(
+      { code: "Digit7", key: "\\", shiftKey: true },
+      new Map([["Digit7", "7"]]),
+    );
+    expect(optionBackslash).toEqual({ mods: 0, consumedMods: alt | 1 });
+    expect(backslash.unshifted).toBe(0);
+    // Leaving the composing Shift in the raw mask still encodes modifyOtherKeys.
+    expect(
+      encode({
+        ...backslash,
+        mods: 1,
+        consumedMods: optionBackslash.consumedMods,
+      }),
+    ).toBe("\u001b[27;2;92~");
+    expect(encode({ ...backslash, ...optionBackslash })).toBe("\\");
+    expect(encode({ ...backslash, ...optionBackslash, unshifted: layoutBackslash })).toBe("\\");
+
+    const shiftA = ghosttyEncoderMods(
+      {
+        altKey: false,
+        ctrlKey: false,
+        getModifierState: () => false,
+        key: "A",
+        metaKey: false,
+        shiftKey: true,
+      },
+      "MacIntel",
+    );
+    expect(shiftA).toEqual({ mods: 1, consumedMods: 1 });
+    expect(
+      encode({
+        code: "KeyA",
+        key: "A",
+        mods: shiftA.mods,
+        consumedMods: shiftA.consumedMods,
+        unshifted: "a".codePointAt(0)!,
+      }),
+    ).toBe("\u001b[27;2;65~");
+
+    writeTerminal("\u001b[>1u");
+    expect(encode({ ...optionAt, mods: alt, consumedMods: 0, unshifted: unshiftedAt })).toBe(
+      "\u001b[64;3u",
+    );
+    expect(encode({ ...optionAt, mods: alt, consumedMods: alt, unshifted: unshiftedAt })).toBe("@");
+    expect(encode({ ...optionAt, ...produced, unshifted: unshiftedAt })).toBe("@");
+    expect(encode({ ...optionAt, ...produced, unshifted: layoutUnshiftedAt })).toBe("@");
+
+    writeTerminal("\u001b[>31u");
+    expect(encode({ ...optionAt, mods: alt, consumedMods: alt, unshifted: unshiftedAt })).toBe(
+      "\u001b[64::108;3u",
+    );
+    expect(encode({ ...optionAt, ...produced, unshifted: unshiftedAt })).toBe(
+      "\u001b[64::108;;64u",
+    );
+    expect(encode({ ...optionAt, ...produced, unshifted: layoutUnshiftedAt })).toBe(
+      "\u001b[108;;64u",
+    );
+
+    call("ghostty_key_event_free", keyEvent);
+    call("ghostty_key_encoder_free", keyEncoder);
+    call("ghostty_wasm_free_opaque", eventSlot);
+    call("ghostty_wasm_free_opaque", encoderSlot);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
     free(terminalOptions, 8);
