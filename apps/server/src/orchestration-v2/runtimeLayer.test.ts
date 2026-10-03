@@ -2173,29 +2173,37 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         worktreePath: null,
       });
       const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.link",
-        commandId: CommandId.make("pr-watch-link"),
-        threadId,
-        ...key,
-        url: "https://github.com/pingdotgg/t3code/pull/7",
-        source: "agent",
-      });
+      const url = "https://github.com/pingdotgg/t3code/pull/7";
       const watchOf = Effect.map(
         orchestrator.getThreadShell(threadId),
         (thread) => thread?.pullRequests?.[0]?.watch,
       );
 
+      // Watching an unlinked pull request links it in the same command.
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-start"),
         threadId,
         ...key,
         watching: true,
+        link: { url, source: "agent" },
       });
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        "agent",
+      );
       const started = yield* watchOf;
       assert.isDefined(started);
       if (started === undefined) return;
+
+      // A legacy client re-linking the same pull request keeps its watch.
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("pr-watch-legacy-relink"),
+        threadId,
+        linkedPullRequest: { projectId: ProjectId.make("pr-watch-project"), ...key, url },
+      });
+      assert.deepEqual(yield* watchOf, started);
 
       const recorded = { ...started, headSha: "abc123", checks: "failing" as const, wakes: 1 };
       yield* orchestrator.dispatch({

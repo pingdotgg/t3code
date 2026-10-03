@@ -2608,6 +2608,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    /** Links the pull request first when starting a watch on one the thread has not linked. */
+    link: Schema.optional(
+      Schema.Struct({ url: TrimmedNonEmptyString, source: ThreadPullRequestLinkSource }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.sync"),

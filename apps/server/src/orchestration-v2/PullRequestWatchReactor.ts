@@ -34,7 +34,7 @@ const logFailure =
   <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
     Cause.hasInterruptsOnly(cause)
       ? Effect.interrupt
-      : Effect.logWarning(message, { ...fields, cause: Cause.pretty(cause) });
+      : Effect.logWarning(message, { ...fields, cause });
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
@@ -139,7 +139,13 @@ export const make = Effect.gen(function* () {
             cursor = result.nextCursor;
           }
           return { comments, whole: cursor == null };
-        }),
+        }).pipe(
+          // A failed page only leaves the remarks for a later pass; checks still count now.
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            () => Effect.succeed({ comments: [], whole: false }),
+          ),
+        ),
       { concurrency: 2 },
     );
     // A truncated conversation with no long thread to explain it is a degraded read.
@@ -147,7 +153,21 @@ export const make = Effect.gen(function* () {
       (!activity.commentsTruncated || longThreads.length > 0) && rest.every((read) => read.whole);
     const remarks = whole ? [...activity.comments, ...rest.flatMap((read) => read.comments)] : null;
 
-    const report = evaluatePullRequestWatch(watch, detail, remarks);
+    // GitHub names the head commit; elsewhere the newest commit stands in, so a push still reads
+    // as one. Azure DevOps reports neither, and relies on checks starting over.
+    const newest = activity.commits.reduce<(typeof activity.commits)[number] | undefined>(
+      (latest, commit) =>
+        latest === undefined || Date.parse(commit.committedDate) > Date.parse(latest.committedDate)
+          ? commit
+          : latest,
+      undefined,
+    );
+    const headSha = detail.headSha ?? newest?.oid;
+    const report = evaluatePullRequestWatch(
+      watch,
+      { ...detail, ...(headSha === undefined ? {} : { headSha }) },
+      remarks,
+    );
     if (report.changes.length > 0) {
       return yield* record(
         report.exhausted ? null : report.next,

@@ -128,7 +128,7 @@ function LinkRow({
           }
           title={snapshot?.title ?? link.repository}
           signals={
-            snapshot?.state === "open" ? (
+            open ? (
               <>
                 {watching ? (
                   <Tooltip>
@@ -141,8 +141,8 @@ function LinkRow({
                     </TooltipPopup>
                   </Tooltip>
                 ) : null}
-                {snapshot.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
-                {snapshot.reviewDecision ? (
+                {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
+                {snapshot?.reviewDecision ? (
                   <PullRequestReviewDecisionGlyph decision={snapshot.reviewDecision} />
                 ) : null}
               </>

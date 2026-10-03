@@ -228,15 +228,20 @@ describe("pull request toolkit handlers", () => {
       const result = yield* harness.call("watch_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/9",
       });
-      expect(result).toMatchObject({ number: 9, watching: true, wasWatching: false });
+      // The harness thread never changes, so the result reports what it still holds.
+      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.link", number: 9, source: "agent" },
-        { type: "thread.pull-request.watch", number: 9, watching: true },
+        {
+          type: "thread.pull-request.watch",
+          number: 9,
+          watching: true,
+          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+        },
       ]);
     }),
   );
 
-  it.effect("refuses to watch a merged pull request and stops only an existing watch", () =>
+  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
     Effect.gen(function* () {
       const watch = {
         startedAt: "2026-08-20T00:00:00.000Z",
@@ -260,11 +265,8 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
       expect(
-        yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 2 }),
-      ).toMatchObject({ watching: false, wasWatching: false });
-      expect(
         yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
-      ).toMatchObject({ watching: false, wasWatching: true });
+      ).toMatchObject({ wasWatching: true });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.watch", number: 3, watching: false },
       ]);

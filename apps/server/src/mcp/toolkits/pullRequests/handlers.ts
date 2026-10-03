@@ -209,7 +209,10 @@ const make = Effect.gen(function* () {
         ? Effect.failCause(cause as Cause.Cause<never>)
         : Effect.fail(new Failure({ cause }));
 
-  /** Starts or stops a watch on a linked pull request; `watch_pull_request` links it first. */
+  /**
+   * Starts or stops a watch. One command links an unlinked pull request and watches it, and the
+   * result reports the state the thread holds afterwards.
+   */
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
     input: PullRequestTargetInput,
     watching: boolean,
@@ -217,33 +220,14 @@ const make = Effect.gen(function* () {
     const thread = yield* requireThread(PullRequestWatchFailedError);
     const project = yield* projectOf(thread, PullRequestWatchFailedError);
     const target = yield* resolveTarget(input, project);
-    const identity = {
-      host: target.host,
-      repository: target.repository,
-      number: target.number,
-      url: target.url,
-    };
-    const existing = threadPullRequestsOf(thread).find(
-      (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
-    );
-    const wasWatching = existing?.watch !== undefined;
-    if (wasWatching === watching || (!watching && existing === undefined)) {
-      return { ...identity, watching: wasWatching, wasWatching };
-    }
-    const state = existing?.snapshot?.state;
+    const watchedLink = (shell: OrchestrationV2ThreadShell) =>
+      threadPullRequestsOf(shell).find(
+        (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+      );
+    const before = watchedLink(thread);
+    const state = before?.snapshot?.state;
     if (watching && state !== undefined && state !== "open") {
       return yield* new PullRequestNotOpenError({ state });
-    }
-    if (existing === undefined) {
-      yield* engine
-        .dispatch({
-          type: "thread.pull-request.link",
-          commandId: yield* commandId("mcp-pr-link", thread.id),
-          threadId: thread.id,
-          ...identity,
-          source: "agent",
-        })
-        .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     }
     yield* engine
       .dispatch({
@@ -254,9 +238,18 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
+        ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
-    return { ...identity, watching, wasWatching };
+    const after = yield* requireThread(PullRequestWatchFailedError);
+    return {
+      host: target.host,
+      repository: target.repository,
+      number: target.number,
+      url: target.url,
+      watching: watchedLink(after)?.watch !== undefined,
+      wasWatching: before?.watch !== undefined,
+    };
   });
 
   return PullRequestsToolkit.of({

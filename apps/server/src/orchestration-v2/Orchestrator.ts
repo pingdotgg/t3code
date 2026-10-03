@@ -2224,10 +2224,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (candidate) =>
           candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
       );
+      // Same rule as a direct message.dispatch: a provider-native subagent takes no messages.
       const inactive =
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
-        thread.settledAt !== null;
+        thread.settledAt !== null ||
+        isProviderNativeSubagentThread(thread);
       if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -2304,6 +2306,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    if (
+      command.type === "thread.pull-request.watch" &&
+      command.watching &&
+      isProviderNativeSubagentThread(thread)
+    ) {
+      return yield* new OrchestratorSubagentThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
       });
     }
     if (
@@ -2790,14 +2802,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ),
                     ...(command.linkedPullRequest
                       ? [
-                          {
-                            ...legacyThreadPullRequestKey(command.linkedPullRequest),
-                            url: command.linkedPullRequest.url,
-                            source: "manual" as const,
-                            linkedAt: DateTime.formatIso(now),
-                            snapshot: null,
-                            stack: null,
-                          },
+                          withPullRequestWatch(
+                            {
+                              ...legacyThreadPullRequestKey(command.linkedPullRequest),
+                              url: command.linkedPullRequest.url,
+                              source: "manual" as const,
+                              linkedAt: DateTime.formatIso(now),
+                              snapshot: null,
+                              stack: null,
+                            },
+                            // Re-linking the same pull request keeps its watch.
+                            threadPullRequestsOf(thread).find((link) =>
+                              threadPullRequestKeysEqual(
+                                link,
+                                legacyThreadPullRequestKey(command.linkedPullRequest!),
+                              ),
+                            )?.watch,
+                          ),
                         ]
                       : []),
                   ],
@@ -2908,12 +2929,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
-          const links = threadPullRequestsOf(thread);
-          const existing = links.find(
-            (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key),
-          );
-          if (existing === undefined) return thread;
           const startedAt = DateTime.formatIso(now);
+          const linked = threadPullRequestsOf(thread);
+          const visible = (link: ThreadPullRequestLink) =>
+            link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
+          // A watch started on an unlinked (or dismissed) pull request links it in the same step.
+          const links =
+            command.type === "thread.pull-request.watch" &&
+            command.watching &&
+            command.link !== undefined &&
+            !linked.some(visible)
+              ? [
+                  ...linked.filter((link) => !threadPullRequestKeysEqual(link, key)),
+                  {
+                    ...key,
+                    url: command.link.url,
+                    source: command.link.source,
+                    linkedAt: startedAt,
+                    snapshot: null,
+                    stack: null,
+                  },
+                ]
+              : linked;
+          const existing = links.find(visible);
+          if (existing === undefined) return thread;
           const watch =
             command.type === "thread.pull-request-watch.sync"
               ? // Progress read before a stop or restart must not bring the old watch back.
@@ -2931,7 +2970,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     conflicting: false,
                     wakes: 0,
                   });
-          if (watch === existing.watch) return thread;
+          if (watch === existing.watch && links === linked) return thread;
           return {
             ...thread,
             pullRequests: links.map((link) =>
