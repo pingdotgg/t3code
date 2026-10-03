@@ -297,7 +297,13 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 
 function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return (
+      TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status) || isTransientBootstrapError(error.cause)
+    );
+  }
+
+  if (HttpClientError.isHttpClientError(error)) {
+    return error.reason._tag === "TransportError";
   }
 
   if (error instanceof TypeError) {
