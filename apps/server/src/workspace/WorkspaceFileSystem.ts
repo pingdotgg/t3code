@@ -154,8 +154,17 @@ export function replaceFileLines(
     splitLines(range.expected).length === endLine - startLine + 1 &&
     linesRead(lines, startLine, range.expected);
   if (!matches) {
-    // A deletion leaves nothing behind to recognize.
-    return { alreadyReplaced: replacement.length > 0 && linesRead(lines, startLine, replacement) };
+    // A deletion leaves nothing behind to recognize. Lines that read as the replacement but run on
+    // into the tail of `expected` are a partial edit, so those are not reported as done.
+    const after = startLine - 1 + splitLines(replacement).length + 1;
+    const expectedLines = splitLines(range.expected);
+    const partial = expectedLines.some((_, i) =>
+      linesRead(lines, after, expectedLines.slice(i).join("\n")),
+    );
+    return {
+      alreadyReplaced:
+        replacement.length > 0 && linesRead(lines, startLine, replacement) && !partial,
+    };
   }
   const next = replacement.length === 0 ? [] : splitLines(replacement);
   return {

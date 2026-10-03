@@ -39,6 +39,16 @@ describe("parseReviewSuggestions", () => {
     expect(parseReviewSuggestions(body)).toEqual(["const total = 1;", "a\n```\nb"]);
   });
 
+  it("closes a fence on a longer run of the same character", () => {
+    expect(parseReviewSuggestions("```suggestion\na\n````\n\n```\nb\n```")).toEqual(["a"]);
+  });
+
+  it("drops the indentation the fence sits at", () => {
+    expect(parseReviewSuggestions("- note\n  ```suggestion\n    if (x) {\n  ```")).toEqual([
+      "  if (x) {",
+    ]);
+  });
+
   it("reads an empty block as deleting the lines", () => {
     expect(parseReviewSuggestions("```suggestion\n```")).toEqual([""]);
   });

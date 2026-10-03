@@ -417,5 +417,15 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         ),
       ).toEqual({ alreadyReplaced: true });
     });
+
+    it("does not report a partial edit as already replaced", () => {
+      expect(
+        WorkspaceFileSystem.replaceFileLines(
+          "a\nB\nc\n",
+          { startLine: 2, endLine: 3, expected: "b\nc" },
+          "B",
+        ),
+      ).toEqual({ alreadyReplaced: false });
+    });
   });
 });
