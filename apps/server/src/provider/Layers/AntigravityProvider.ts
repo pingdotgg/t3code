@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +30,7 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { resolveUsageLimitsAfterProbe } from "../providerUsageLimits.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -123,6 +125,7 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
+  readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
@@ -192,10 +195,23 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const probedUsageLimits =
+      initialized !== undefined &&
+      before.draft.auth.status !== "unauthenticated" &&
+      options.readUsageLimits
+        ? yield* options.readUsageLimits
+        : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
-      const { message: _previousMessage, ...draft } = state.draft;
+      const { message: _previousMessage, usageLimits: previousUsageLimits, ...draft } = state.draft;
+      const usageLimits =
+        initialized === undefined && !missingInstallation
+          ? previousUsageLimits
+          : resolveUsageLimitsAfterProbe({
+              published: previousUsageLimits,
+              probed: probedUsageLimits,
+            });
       const authenticated = draft.auth.status === "authenticated";
       const message =
         errorMessage ??
@@ -227,6 +243,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                   supportsTextGeneration && draft.auth.status !== "unauthenticated",
               }
             : {}),
+          ...(usageLimits ? { usageLimits } : {}),
           ...(message ? { message } : {}),
         },
       } satisfies AntigravityProviderState;
@@ -351,25 +368,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(
-      metadata,
-      (state) =>
-        ({
-          authRevision: state.authRevision + 1,
-          draft: {
-            ...state.draft,
-            auth: { status: "unauthenticated" },
-            status: settings.enabled ? "warning" : "disabled",
-            message: SIGN_IN_MESSAGE,
-            checkedAt: updatedAt,
-            models: [],
-            slashCommands: [],
-            skills: [],
-            workspaceSnapshots: [],
-            supportsTextGeneration: false,
-          },
-        }) satisfies AntigravityProviderState,
-    );
+    yield* SubscriptionRef.update(metadata, (state) => {
+      const { usageLimits: _usageLimits, ...draft } = state.draft;
+      return {
+        authRevision: state.authRevision + 1,
+        draft: {
+          ...draft,
+          auth: { status: "unauthenticated" },
+          status: settings.enabled ? "warning" : "disabled",
+          message: SIGN_IN_MESSAGE,
+          checkedAt: updatedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          workspaceSnapshots: [],
+          supportsTextGeneration: false,
+        },
+      } satisfies AntigravityProviderState;
+    });
     discoveredSkills.clear();
   });
 
