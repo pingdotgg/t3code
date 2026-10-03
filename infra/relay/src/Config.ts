@@ -12,7 +12,9 @@ export const ManagedEndpointCleanupMode = Schema.Literals(["off", "dry-run", "en
 export type ManagedEndpointCleanupMode = typeof ManagedEndpointCleanupMode.Type;
 const decodeManagedEndpointCleanupMode = Schema.decodeUnknownEffect(ManagedEndpointCleanupMode);
 
-export const managedEndpointCleanupModeConfig = Config.String("RELAY_TUNNEL_CLEANUP_MODE").pipe(
+export const RELAY_TUNNEL_CLEANUP_MODE = "RELAY_TUNNEL_CLEANUP_MODE";
+
+export const managedEndpointCleanupModeConfig = Config.String(RELAY_TUNNEL_CLEANUP_MODE).pipe(
   Config.withDefault("off"),
   Config.map((value) => value.trim() || "off"),
   Config.mapEffect((value) =>
@@ -21,6 +23,24 @@ export const managedEndpointCleanupModeConfig = Config.String("RELAY_TUNNEL_CLEA
     ),
   ),
 );
+
+/** Decodes a cleanup mode binding; a missing or blank binding means `off`. */
+export const decodeManagedEndpointCleanupModeEnv = (value: unknown) =>
+  decodeManagedEndpointCleanupMode(
+    typeof value === "string" && value.trim() !== "" ? value.trim() : "off",
+  );
+
+/**
+ * Cleanup modes as plain Worker `env` entries. Alchemy compares declared
+ * `env` bindings when it decides whether the Worker changed, but not values
+ * read through `Config` in Init (alchemy-run/alchemy#1831), so a mode read
+ * only in Init would need a forced deploy to change.
+ */
+export const managedEndpointCleanupModeEnv = Effect.gen(function* () {
+  return {
+    [RELAY_TUNNEL_CLEANUP_MODE]: yield* managedEndpointCleanupModeConfig,
+  };
+});
 
 export interface ApnsCredentials {
   readonly teamId: string;
