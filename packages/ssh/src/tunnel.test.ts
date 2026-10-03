@@ -232,6 +232,12 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "npx");
   });
 
+  it("embeds the runner in the launch script byte for byte", () => {
+    const runner = buildRemoteT3RunnerScript(ARCHIVE);
+    assert.include(runner, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid.tmp"');
+    assert.include(buildRemoteLaunchScript(ARCHIVE), runner);
+  });
+
   it("uses the remote t3 runner for launch and pairing scripts", () => {
     const target = {
       alias: "devbox",
