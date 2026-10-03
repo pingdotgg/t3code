@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -1126,6 +1127,40 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
+
+// The real VCS process, spawning `command` wherever the driver runs git.
+const vcsProcessSpawning = (command: string) =>
+  Layer.effect(
+    VcsProcess.VcsProcess,
+    Effect.map(VcsProcess.make, (vcsProcess) =>
+      VcsProcess.VcsProcess.of({ run: (input) => vcsProcess.run({ ...input, command }) }),
+    ),
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provideMerge(NodeServices.layer));
+
+it.effect("GitVcsDriver treats a missing git executable as outside any repository", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    assert.equal(yield* driver.isInsideWorkTree(process.cwd()), false);
+    assert.equal(yield* driver.detectRepository(process.cwd()), null);
+  }).pipe(Effect.provide(vcsProcessSpawning("t3-missing-git-executable"))),
+);
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "GitVcsDriver still fails detection when git exists but cannot be spawned",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // A file without the execute bit fails to spawn with a permission error.
+      const notExecutable = yield* fileSystem.makeTempFileScoped({ prefix: "t3-git-" });
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provide(vcsProcessSpawning(notExecutable)),
+      );
+
+      const error = yield* driver.isInsideWorkTree(process.cwd()).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "VcsProcessSpawnError");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
   const observedArgs: ReadonlyArray<string>[] = [];
