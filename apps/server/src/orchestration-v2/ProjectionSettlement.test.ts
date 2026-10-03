@@ -335,6 +335,10 @@ it.effect.each([
           [open, null, 2],
         ],
       );
+      assert.deepEqual(
+        (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
+        [open],
+      );
     }).pipe(Effect.provide(testLayer)),
 );
 

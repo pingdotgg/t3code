@@ -2,6 +2,7 @@ import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
   type PullRequestSummary,
+  type ThreadId,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
@@ -29,6 +30,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 
@@ -330,22 +332,48 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
+  const refreshOpenLinks = (threadId: ThreadId) =>
+    projections.getThreadsWithPullRequests(threadId).pipe(
+      Effect.flatMap((threads) =>
+        Effect.forEach(
+          threads.flatMap((thread) =>
+            visibleThreadPullRequests(thread.pullRequests ?? []).filter(
+              (link) => link.snapshot?.state === "open",
+            ),
+          ),
+          requestSync,
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
+    );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        event.type === "thread.pull-request-synced"
-          ? Effect.forEach(
+      Stream.runForEach(events, (event) => {
+        switch (event.type) {
+          case "thread.pull-request-synced":
+            return Effect.forEach(
               visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
                 (link) => link.snapshot === null,
               ),
               requestSync,
               { discard: true },
-            )
-          : Effect.void,
-      ).pipe(Effect.catchCause(logSkipped("pull request sync event stream failed", {}))),
+            );
+          // An agent can merge or close its pull request from a shell (`gh pr merge`), which
+          // sends no merge notification. Read the thread's open links fresh when its run ends,
+          // so settlement does not wait for the next sweep and the cached summary.
+          case "run.updated":
+            return isTerminalRunStatus(event.payload.status)
+              ? refreshOpenLinks(event.threadId)
+              : Effect.void;
+          default:
+            return Effect.void;
+        }
+      }).pipe(Effect.catchCause(logSkipped("pull request sync event stream failed", {}))),
     );
     yield* forkParked(
       Effect.gen(function* () {
