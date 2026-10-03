@@ -5305,6 +5305,7 @@ export default function ChatView(props: ChatViewProps) {
         activeThreadRef,
         pullRequestSurface(linkedThreadPullRequest),
         userActionRevision,
+        true,
       );
     }
     if (!clientSettingsHydrated) return;
