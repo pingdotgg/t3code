@@ -9,6 +9,7 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
+  selectedModelOptionLabel,
   type ModelOption,
 } from "./modelOptions";
 
@@ -139,6 +140,60 @@ describe("mobile model options", () => {
     expect(groupByProvider(options)).toEqual([
       { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
+  });
+
+  it("derives an upstream provider subtitle from the slug when the catalog omits one", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "opencode_work",
+          driver: "opencode",
+          displayName: "OpenCode Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "deepseek/deepseek-v4.1-flash",
+              name: "DeepSeek V4.1 Flash",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "opencode-go/deepseek-v4.1-flash",
+              name: "DeepSeek V4.1 Flash",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, null);
+
+    // Same label, distinct upstream providers; exact slugs still route.
+    expect(options.map((option) => option.label)).toEqual([
+      "DeepSeek V4.1 Flash",
+      "DeepSeek V4.1 Flash",
+    ]);
+    expect(options.map((option) => option.subtitle)).toEqual(["DeepSeek", "OpenCode Go"]);
+    expect(options.map((option) => option.selection.model)).toEqual([
+      "deepseek/deepseek-v4.1-flash",
+      "opencode-go/deepseek-v4.1-flash",
+    ]);
+  });
+
+  it("appends the upstream provider to the selected-model trigger only for OpenCode", () => {
+    const openCode = {
+      providerDriver: "opencode",
+      label: "DeepSeek V4.1 Flash",
+      subtitle: "OpenCode Go",
+    } as unknown as ModelOption;
+    expect(selectedModelOptionLabel(openCode)).toBe("DeepSeek V4.1 Flash · OpenCode Go");
+
+    const codex = { ...openCode, providerDriver: "codex", subtitle: "OpenAI" };
+    expect(selectedModelOptionLabel(codex)).toBe("DeepSeek V4.1 Flash");
   });
 
   it("does not materialize catalog defaults for missing stored options", () => {

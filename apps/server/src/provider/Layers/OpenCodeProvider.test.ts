@@ -338,6 +338,10 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  openCode2ProviderNames: Effect.Effect<
+    ReadonlyMap<string, string>,
+    OpenCodeRuntime.OpenCodeRuntimeError
+  > = Effect.succeed(new Map<string, string>()),
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -351,9 +355,13 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        openCode2ProviderNames,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -524,6 +532,99 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("labels v1 models with their provider's configured display name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["acme-internal"],
+          all: [
+            {
+              id: "acme-internal",
+              // A user-chosen name that no allowlist knows about must survive.
+              name: "Acme Internal Gateway",
+              models: {
+                "custom-model": { id: "custom-model", name: "Custom Model", variants: {} },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const model = snapshot.models.find((entry) => entry.slug === "acme-internal/custom-model");
+
+      NodeAssert.ok(model);
+      NodeAssert.equal(model.subProvider, "Acme Internal Gateway");
+    }),
+  );
+
+  it.effect("omits the upstream label when a provider has no display name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              // What the CLI inventory reports: an id, never a display name.
+              name: "",
+              models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", variants: {} } },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
+
+      NodeAssert.ok(model);
+      NodeAssert.equal(model.subProvider, undefined);
+    }),
+  );
+
+  it.effect("keeps same-named models from two providers distinct by their slugs", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["alpha", "beta"],
+          all: [
+            {
+              id: "alpha",
+              name: "Alpha Endpoint",
+              models: { shared: { id: "shared", name: "Shared Model", variants: {} } },
+            },
+            {
+              id: "beta",
+              name: "Beta Endpoint",
+              models: { shared: { id: "shared", name: "Shared Model", variants: {} } },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.deepEqual(
+        snapshot.models
+          .filter((entry) => entry.name === "Shared Model")
+          .map((entry) => [entry.slug, entry.subProvider]),
+        [
+          ["alpha/shared", "Alpha Endpoint"],
+          ["beta/shared", "Beta Endpoint"],
+        ],
+      );
+    }),
+  );
+
   it.effect("loads local inventory from a scoped OpenCode server", () =>
     Effect.gen(function* () {
       yield* checkProvider(makeOpenCodeSettings({ serverPassword: "secret-password" }));
@@ -584,6 +685,87 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ["low", "medium", "high"],
       );
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("labels OpenCode 2 models with the provider list's display name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            // A nested model id keeps the provider id as its routing qualifier.
+            providerID: "openrouter",
+            id: "qwen/qwen3-coder",
+            name: "Qwen3 Coder",
+            variants: [],
+          },
+        ]),
+        // A user-chosen name no allowlist knows about must survive verbatim.
+        Effect.succeed(new Map([["openrouter", "My OpenRouter Proxy"]])),
+      );
+
+      const model = snapshot.models.find((entry) => entry.slug === "openrouter/qwen/qwen3-coder");
+
+      NodeAssert.ok(model);
+      NodeAssert.equal(model.subProvider, "My OpenRouter Proxy");
+    }),
+  );
+
+  it.effect("keeps the OpenCode 2 catalog when the provider list fails", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          { providerID: "openrouter", id: "big-pickle", name: "Big Pickle", variants: [] },
+        ]),
+        Effect.fail(
+          new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "provider.list",
+            detail: "status=500 body=unavailable",
+          }),
+        ),
+      );
+
+      NodeAssert.equal(snapshot.status, "ready");
+      const model = snapshot.models.find((entry) => entry.slug === "openrouter/big-pickle");
+      NodeAssert.ok(model);
+      NodeAssert.equal(model.subProvider, undefined);
+    }),
+  );
+
+  it.effect("labels only the OpenCode 2 providers the provider list names", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          { providerID: "alpha", id: "shared", name: "Shared Model", variants: [] },
+          { providerID: "beta", id: "shared", name: "Shared Model", variants: [] },
+        ]),
+        Effect.succeed(new Map([["alpha", "Alpha Endpoint"]])),
+      );
+
+      NodeAssert.deepEqual(
+        snapshot.models
+          .filter((entry) => entry.name === "Shared Model")
+          .map((entry) => [entry.slug, entry.subProvider]),
+        [
+          ["alpha/shared", "Alpha Endpoint"],
+          ["beta/shared", undefined],
+        ],
+      );
     }),
   );
 

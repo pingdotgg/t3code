@@ -86,6 +86,7 @@ import {
   buildModelOptions,
   groupByProvider,
   isModelSelectionUnavailable,
+  selectedModelOptionLabel,
 } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -1123,7 +1124,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                             size={size}
                           />
                         )}
-                        label={currentModelOption?.label ?? currentModelSelection.model}
+                        label={
+                          currentModelOption
+                            ? selectedModelOptionLabel(currentModelOption)
+                            : currentModelSelection.model
+                        }
                         maxWidth="100%"
                         onPress={openSettings}
                       />

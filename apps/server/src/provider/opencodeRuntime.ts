@@ -306,18 +306,22 @@ const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 // definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
 const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "summary", "title"]);
 
-/** @internal */
+/**
+ * Parse `opencode models --verbose`. The output names each model by a bare
+ * `provider/model` slug plus its JSON body; it never carries a provider
+ * display name, only the provider id used for routing. So the parsed provider
+ * exposes the id alone — callers must not present it as configured metadata.
+ *
+ * @internal
+ */
 export function parseModelsCliOutput(stdout: string): {
   readonly providers: ReadonlyMap<
     string,
-    { readonly id: string; readonly name: string; readonly models: { [key: string]: Model } }
+    { readonly id: string; readonly models: { [key: string]: Model } }
   >;
   readonly connected: ReadonlyArray<string>;
 } {
-  const providers = new Map<
-    string,
-    { id: string; name: string; models: { [key: string]: Model } }
-  >();
+  const providers = new Map<string, { id: string; models: { [key: string]: Model } }>();
   const lines = stdout.split("\n");
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
@@ -334,7 +338,7 @@ export function parseModelsCliOutput(stdout: string): {
             const modelID = currentSlug.slice(separator + 1);
             let provider = providers.get(providerID);
             if (!provider) {
-              provider = { id: providerID, name: providerID, models: {} };
+              provider = { id: providerID, models: {} };
               providers.set(providerID, provider);
             }
             provider.models[modelID] = model;
@@ -1044,7 +1048,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const allProviders: ProviderListResponse["all"] = [...parsed.providers.values()].map(
         (provider) => ({
           id: provider.id,
-          name: provider.name,
+          // The CLI exposes only provider ids. An empty name keeps the id from
+          // being read as a configured display name; the client falls back to
+          // formatting the slug's provider id.
+          name: "",
           source: "config" as const,
           env: [],
           options: {},

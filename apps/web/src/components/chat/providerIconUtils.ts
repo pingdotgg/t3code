@@ -1,3 +1,6 @@
+import { type ProviderDriverKind } from "@t3tools/contracts";
+import { resolveModelProviderLabel } from "@t3tools/shared/model";
+
 export type ModelEsque = {
   slug: string;
   name: string;
@@ -36,6 +39,14 @@ export function getTriggerDisplayModelName(model: ModelEsque): string {
   return getDisplayModelName(model, { preferShortName: true });
 }
 
-export function getTriggerDisplayModelLabel(model: ModelEsque): string {
-  return getTriggerDisplayModelName(model);
+export function getTriggerDisplayModelLabel(
+  model: ModelEsque,
+  driverKind?: ProviderDriverKind | undefined,
+): string {
+  const name = getTriggerDisplayModelName(model);
+  // Only OpenCode stacks many upstreams under one instance, so only its
+  // trigger earns the upstream suffix; every other driver keeps its label.
+  const upstreamProvider =
+    driverKind === "opencode" ? resolveModelProviderLabel({ ...model, driverKind }) : undefined;
+  return upstreamProvider ? `${name} · ${upstreamProvider}` : name;
 }

@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -112,6 +112,74 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       );
       assert.include(requested, "/api/skill");
       assert.deepStrictEqual(serverStarts, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("labels OpenCode 2 models with their provider's name from the provider list", () =>
+    Effect.gen(function* () {
+      const directory = process.cwd();
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        const json = (body: unknown) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(body, {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          );
+        if (path === "/api/info") {
+          return json({ version: "2.0.18", pid: 4242, urls: [], paths: { tmp: "/tmp" } });
+        }
+        if (path === "/api/model") {
+          return json({
+            location: { directory },
+            data: [
+              {
+                id: "qwen/qwen3-coder",
+                modelID: "qwen/qwen3-coder",
+                providerID: "openrouter",
+                family: "qwen",
+                name: "Qwen3 Coder",
+                package: "@opencode/ai/providers/openrouter",
+                capabilities: { tools: true, input: ["text"], output: ["text"] },
+                variants: [],
+                time: { released: 1760659200000 },
+                cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+                status: "active",
+                enabled: true,
+                limit: { context: 200000, input: 160000, output: 32000 },
+              },
+            ],
+          });
+        }
+        if (path === "/api/provider") {
+          return json({
+            location: { directory },
+            data: [
+              {
+                id: "openrouter",
+                name: "My OpenRouter Proxy",
+                activation: "enabled",
+                package: "@opencode/ai/providers/openrouter",
+              },
+            ],
+          });
+        }
+        return json({});
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        http,
+      );
+
+      const snapshot = yield* instance.snapshot.refresh;
+      const model = snapshot.models.find((entry) => entry.slug === "openrouter/qwen/qwen3-coder");
+
+      assert.ok(model);
+      assert.strictEqual(model.subProvider, "My OpenRouter Proxy");
     }).pipe(Effect.scoped),
   );
 

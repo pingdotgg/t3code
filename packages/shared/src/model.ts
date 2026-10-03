@@ -328,6 +328,65 @@ export function formatModelSlugName(slug: string): string {
   );
 }
 
+/**
+ * The upstream provider segment of a slash-qualified model slug. OpenCode
+ * catalogs many upstreams under one instance, so `deepseek/deepseek-flash`
+ * names the official `deepseek` upstream while `opencode-go/deepseek-flash`
+ * names the OpenCode Go upstream. Other runtimes also use slashes for their
+ * own namespacing (a HuggingFace `meta-llama/…` id, a native catalog's
+ * qualified model), so callers gate this to OpenCode rather than decoding
+ * every slash-qualified slug.
+ */
+export function modelProviderId(slug: string): string | undefined {
+  const separator = slug.indexOf("/");
+  if (separator <= 0) return undefined;
+  const providerId = slug.slice(0, separator).trim();
+  return providerId.length > 0 ? providerId : undefined;
+}
+
+/** OpenCode upstreams whose product casing differs from a title-cased id. */
+const OPENCODE_PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  deepseek: "DeepSeek",
+  opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  "github-copilot": "GitHub Copilot",
+};
+
+function formatUpstreamProviderLabel(providerId: string): string {
+  const normalizedId = providerId.replace(/[_.\s]+/gu, "-");
+  const known = Object.hasOwn(OPENCODE_PROVIDER_LABELS, normalizedId)
+    ? OPENCODE_PROVIDER_LABELS[normalizedId]
+    : undefined;
+  if (known) return known;
+  const formatted = providerId
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[-_.\s]+/u)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return formatted || providerId;
+}
+
+/**
+ * A model's upstream provider as a display label. The catalog's own
+ * `subProvider` wins verbatim so custom upstream names survive. Otherwise
+ * OpenCode's slash-qualified slug is decoded; every other driver returns
+ * undefined so its presentation is unchanged.
+ */
+export function resolveModelProviderLabel(model: {
+  readonly slug: string;
+  readonly subProvider?: string | null | undefined;
+  readonly driverKind?: ProviderDriverKind | undefined;
+}): string | undefined {
+  const reported = model.subProvider?.trim();
+  if (reported) return reported;
+  if (model.driverKind !== "opencode") return undefined;
+  const providerId = modelProviderId(model.slug);
+  return providerId ? formatUpstreamProviderLabel(providerId) : undefined;
+}
+
 export function normalizeModelSlug(
   model: string | null | undefined,
   provider: ProviderDriverKind = DEFAULT_PROVIDER_DRIVER_KIND,

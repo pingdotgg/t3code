@@ -18,7 +18,11 @@ import {
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import {
+  buildModelPickerSearchModel,
+  buildModelPickerSearchText,
+  scoreModelPickerSearch,
+} from "./modelPickerSearch";
 import {
   Combobox,
   ComboboxEmpty,
@@ -443,28 +447,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
       const rankedMatches = result
-        .map((model) => ({
-          model,
-          score: scoreModelPickerSearch(
-            {
-              name: model.name,
-              ...(model.shortName ? { shortName: model.shortName } : {}),
-              ...(model.subProvider ? { subProvider: model.subProvider } : {}),
-              driverKind: model.driverKind,
-              providerDisplayName: model.instanceDisplayName,
-              isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-            },
-            searchQuery,
-          ),
-          isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-          tieBreaker: buildModelPickerSearchText({
+        .map((model) => {
+          // The row shows a resolved upstream label (the catalog's own name, or
+          // OpenCode's decoded slug), so index both that label and the raw
+          // provider id the slug routes by.
+          const searchableModel = buildModelPickerSearchModel({
+            slug: model.slug,
             name: model.name,
             ...(model.shortName ? { shortName: model.shortName } : {}),
             ...(model.subProvider ? { subProvider: model.subProvider } : {}),
             driverKind: model.driverKind,
             providerDisplayName: model.instanceDisplayName,
-          }),
-        }))
+          });
+          const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
+          return {
+            model,
+            score: scoreModelPickerSearch({ ...searchableModel, isFavorite }, searchQuery),
+            isFavorite,
+            tieBreaker: buildModelPickerSearchText(searchableModel),
+          };
+        })
         .filter(
           (
             rankedModel,

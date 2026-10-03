@@ -1,3 +1,5 @@
+import { type ProviderDriverKind } from "@t3tools/contracts";
+import { modelProviderId, resolveModelProviderLabel } from "@t3tools/shared/model";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 type ModelPickerSearchableModel = {
@@ -11,9 +13,57 @@ type ModelPickerSearchableModel = {
   providerDisplayName: string;
   name: string;
   shortName?: string;
+  /**
+   * The upstream provider as the row shows it: the catalog's own
+   * `subProvider` when it has one, otherwise OpenCode's decoded slug segment
+   * (e.g. "OpenCode Zen" for `opencode/big-pickle`). Indexed so searching the
+   * visible name finds the model.
+   */
   subProvider?: string;
+  /**
+   * The raw upstream provider segment of the model's slug (e.g. `opencode-go`
+   * for `opencode-go/deepseek-flash`). Indexed alongside `subProvider` so the
+   * un-humanized id stays searchable.
+   */
+  providerId?: string;
   isFavorite?: boolean;
 };
+
+type ModelPickerSearchModelInput = {
+  readonly slug: string;
+  readonly name: string;
+  readonly shortName?: string | undefined;
+  readonly subProvider?: string | undefined;
+  readonly driverKind: ProviderDriverKind;
+  readonly providerDisplayName: string;
+};
+
+/**
+ * Maps a picker model to the fields search ranks over. The picker row labels
+ * the upstream provider via `resolveModelProviderLabel`, so the searchable
+ * `subProvider` carries that resolved label rather than the raw catalog value;
+ * the raw provider id is kept alongside it. Both feed score and tiebreaker.
+ */
+export function buildModelPickerSearchModel(
+  model: ModelPickerSearchModelInput,
+): ModelPickerSearchableModel {
+  const upstreamProvider = resolveModelProviderLabel({
+    slug: model.slug,
+    subProvider: model.subProvider,
+    driverKind: model.driverKind,
+  });
+  // Other drivers use slashes for their own namespacing, so only OpenCode's
+  // slug segment is an upstream provider worth indexing by raw id.
+  const providerId = model.driverKind === "opencode" ? modelProviderId(model.slug) : undefined;
+  return {
+    name: model.name,
+    ...(model.shortName ? { shortName: model.shortName } : {}),
+    ...(upstreamProvider ? { subProvider: upstreamProvider } : {}),
+    ...(providerId ? { providerId } : {}),
+    driverKind: model.driverKind,
+    providerDisplayName: model.providerDisplayName,
+  };
+}
 
 const MODEL_PICKER_FAVORITE_SCORE_BOOST = 24;
 
@@ -22,6 +72,7 @@ function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[]
     normalizeSearchQuery(model.name),
     ...(model.shortName ? [normalizeSearchQuery(model.shortName)] : []),
     ...(model.subProvider ? [normalizeSearchQuery(model.subProvider)] : []),
+    ...(model.providerId ? [normalizeSearchQuery(model.providerId)] : []),
     normalizeSearchQuery(model.driverKind),
     normalizeSearchQuery(model.providerDisplayName),
     buildModelPickerSearchText(model),
@@ -46,7 +97,14 @@ function scoreModelPickerSearchToken(
 
 export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
   return normalizeSearchQuery(
-    [model.name, model.shortName, model.subProvider, model.driverKind, model.providerDisplayName]
+    [
+      model.name,
+      model.shortName,
+      model.subProvider,
+      model.providerId,
+      model.driverKind,
+      model.providerDisplayName,
+    ]
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .join(" "),
   );

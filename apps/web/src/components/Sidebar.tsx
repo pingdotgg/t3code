@@ -1333,7 +1333,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (model) => model.slug === thread.modelSelection.model,
   );
   const modelLabel = selectedModel
-    ? getTriggerDisplayModelLabel(selectedModel)
+    ? getTriggerDisplayModelLabel(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
 
   // The local environment is "this machine" and needs no marker; every other
@@ -2188,7 +2188,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     (model) => model.slug === thread.modelSelection.model,
   );
   const modelLabel = selectedModel
-    ? getTriggerDisplayModelLabel(selectedModel)
+    ? getTriggerDisplayModelLabel(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,

@@ -264,6 +264,12 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       });
 
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      // `opencode models --verbose` reports only the provider id, so the CLI
+      // inventory must not dress it up as a configured display name.
+      NodeAssert.deepEqual(
+        inventory.providerList.all.map((provider) => [provider.id, provider.name]),
+        [["openai", ""]],
+      );
       NodeAssert.equal(inventory.skills.length, 0);
     }),
   );

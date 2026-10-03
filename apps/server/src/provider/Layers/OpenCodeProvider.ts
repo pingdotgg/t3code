@@ -9,6 +9,7 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -508,11 +509,33 @@ function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
   });
 }
 
+/**
+ * The display name per provider id, or empty when the server cannot report
+ * them. A failed or slow lookup only costs the labels, never the catalog, so
+ * it degrades to slug-derived labels instead of failing the status check.
+ */
+const loadOpenCode2ProviderNamesOrEmpty = (
+  load: Effect.Effect<ReadonlyMap<string, string>, OpenCodeRuntime.OpenCodeRuntimeError>,
+): Effect.Effect<ReadonlyMap<string, string>> =>
+  load.pipe(
+    Effect.timeoutOption("5 seconds"),
+    Effect.map((loaded) => (Option.isSome(loaded) ? loaded.value : new Map<string, string>())),
+    Effect.catch((cause) =>
+      Effect.logWarning("OpenCode 2 provider list failed", cause).pipe(
+        Effect.as(new Map<string, string>()),
+      ),
+    ),
+  );
+
 const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   settings: OpenCodeSettings,
   version: string,
   checkedAt: string,
   loadModels: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+  loadProviderNames: Effect.Effect<
+    ReadonlyMap<string, string>,
+    OpenCodeRuntime.OpenCodeRuntimeError
+  >,
 ) {
   const result = yield* Effect.exit(loadModels);
   const probe = (status: "ready" | "warning" | "error", message: string) => ({
@@ -539,14 +562,24 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       probe: probe("error", "OpenCode could not load its model list."),
     });
   }
+  // With no models there is nothing to label, so skip the provider lookup and
+  // the request (and timeout) it would cost.
+  let providerNames: ReadonlyMap<string, string> = new Map();
+  if (result.value.length > 0) {
+    providerNames = yield* loadOpenCode2ProviderNamesOrEmpty(loadProviderNames);
+  }
   const models = providerModelsFromSettings(
     result.value
-      .map((model) => ({
-        slug: `${model.providerID}/${model.id}`,
-        name: model.name,
-        isCustom: false,
-        capabilities: openCode2ModelCapabilities(model),
-      }))
+      .map((model) => {
+        const subProvider = nonEmptyTrimmed(providerNames.get(model.providerID));
+        return {
+          slug: `${model.providerID}/${model.id}`,
+          name: model.name,
+          ...(subProvider ? { subProvider } : {}),
+          isCustom: false,
+          capabilities: openCode2ModelCapabilities(model),
+        };
+      })
       .toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
@@ -579,6 +612,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   probeRuntime: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
   loadOpenCode2Models: Effect.Effect<
     ReadonlyArray<OpenCode2Model>,
+    OpenCodeRuntime.OpenCodeRuntimeError
+  >,
+  loadOpenCode2ProviderNames: Effect.Effect<
+    ReadonlyMap<string, string>,
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
 ): Effect.fn.Return<
@@ -650,7 +687,13 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probedExit._tag === "Failure") return fallback(Cause.squash(probedExit.cause));
   const probed = probedExit.value;
   if (probed.generation === "v2") {
-    return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
+    return yield* checkOpenCode2(
+      openCodeSettings,
+      probed.version,
+      checkedAt,
+      loadOpenCode2Models,
+      loadOpenCode2ProviderNames,
+    );
   }
   let version: string | null = probed.version;
   if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {

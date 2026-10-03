@@ -1,4 +1,5 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { resolveModelProviderLabel } from "@t3tools/shared/model";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import {
@@ -43,8 +44,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
+  const upstreamProvider = resolveModelProviderLabel({
+    ...props.model,
+    driverKind: props.driverKind,
+  });
+  const providerLabel = upstreamProvider
+    ? `${props.providerDisplayName} · ${upstreamProvider}`
     : props.providerDisplayName;
 
   const row = (
@@ -63,7 +68,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         <div className="flex min-w-0 items-center gap-2">
           <div className="min-w-0 truncate text-xs font-medium leading-snug">
             {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(props.model)
+              ? getTriggerDisplayModelLabel(props.model, props.driverKind)
               : getDisplayModelName(
                   props.model,
                   props.preferShortName ? { preferShortName: true } : undefined,

@@ -1,6 +1,11 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import {
+  buildModelPickerSearchModel,
+  buildModelPickerSearchText,
+  scoreModelPickerSearch,
+} from "./modelPickerSearch";
 
 describe("buildModelPickerSearchText", () => {
   it("builds provider-agnostic search text from generic fields", () => {
@@ -127,5 +132,73 @@ describe("scoreModelPickerSearch", () => {
         "personal",
       ),
     ).not.toBeNull();
+  });
+
+  it("matches the raw upstream provider ID even when the display name omits it", () => {
+    const model = {
+      driverKind: "opencode",
+      providerDisplayName: "OpenCode",
+      name: "DeepSeek V4.1 Flash",
+      providerId: "opencode-go",
+    };
+
+    expect(buildModelPickerSearchText(model)).toContain("opencode-go");
+    expect(scoreModelPickerSearch(model, "opencode-go")).not.toBeNull();
+    expect(scoreModelPickerSearch(model, "opencode")).not.toBeNull();
+  });
+});
+
+describe("buildModelPickerSearchModel", () => {
+  it("indexes the OpenCode Zen label its row shows, plus the raw id", () => {
+    const model = buildModelPickerSearchModel({
+      slug: "opencode/big-pickle",
+      name: "Big Pickle",
+      driverKind: ProviderDriverKind.make("opencode"),
+      providerDisplayName: "OpenCode",
+    });
+
+    expect(model.subProvider).toBe("OpenCode Zen");
+    expect(model.providerId).toBe("opencode");
+    expect(scoreModelPickerSearch(model, "zen")).not.toBeNull();
+    expect(scoreModelPickerSearch(model, "opencode")).not.toBeNull();
+  });
+
+  it("humanizes an arbitrary custom upstream but keeps its raw id searchable", () => {
+    const model = buildModelPickerSearchModel({
+      slug: "my-llm-gateway/llama-3.3",
+      name: "Llama 3.3",
+      driverKind: ProviderDriverKind.make("opencode"),
+      providerDisplayName: "OpenCode",
+    });
+
+    expect(model.subProvider).toBe("My Llm Gateway");
+    expect(scoreModelPickerSearch(model, "my llm gateway")).not.toBeNull();
+    expect(scoreModelPickerSearch(model, "my-llm-gateway")).not.toBeNull();
+  });
+
+  it("keeps a catalog-reported upstream name verbatim", () => {
+    const model = buildModelPickerSearchModel({
+      slug: "acme/custom-model",
+      name: "Custom Model",
+      subProvider: "Acme Internal Gateway",
+      driverKind: ProviderDriverKind.make("opencode"),
+      providerDisplayName: "OpenCode",
+    });
+
+    expect(model.subProvider).toBe("Acme Internal Gateway");
+    expect(scoreModelPickerSearch(model, "internal gateway")).not.toBeNull();
+    expect(scoreModelPickerSearch(model, "acme")).not.toBeNull();
+  });
+
+  it("leaves slash-qualified slugs alone for other drivers", () => {
+    const model = buildModelPickerSearchModel({
+      slug: "meta-llama/Llama-3.3",
+      name: "Llama 3.3",
+      driverKind: ProviderDriverKind.make("codex"),
+      providerDisplayName: "Codex",
+    });
+
+    expect(model.subProvider).toBeUndefined();
+    expect(model.providerId).toBeUndefined();
   });
 });

@@ -313,6 +313,27 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           ),
         ),
       );
+      // A 2.x model row carries no provider display name; the provider list
+      // does. `checkOpenCode2` treats it as optional, so a failed or missing
+      // lookup only costs the label, never the catalog.
+      const loadOpenCode2ProviderNames = openCode2Server.withConnection((connection) =>
+        connection.client.provider.list({ location: { directory: serverConfig.cwd } }).pipe(
+          Effect.map(
+            (providers) =>
+              new Map<string, string>(
+                providers.data.map((provider): [string, string] => [provider.id, provider.name]),
+              ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new OpenCodeRuntime.OpenCodeRuntimeError({
+                operation: "provider.list",
+                detail: "The OpenCode server could not list its providers.",
+                cause,
+              }),
+          ),
+        ),
+      );
       // A 2.x server lists skills and commands per directory, so one server
       // answers every workspace. Its event stream says when a directory it had
       // not served yet finished scanning.
@@ -374,6 +395,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
             serverConfig.cwd,
             runtimeProbe.refresh,
             loadOpenCode2Models,
+            loadOpenCode2ProviderNames,
           ),
           usageLimits: readOpenCodeGoUsageLimits({
             enabled: effectiveConfig.enabled,

@@ -112,6 +112,7 @@ import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
   resolveSelectableModelSelection,
+  selectedModelOptionLabel,
 } from "../../lib/modelOptions";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
@@ -1727,7 +1728,11 @@ export function NewTaskDraftScreen(props: {
                             size={size}
                           />
                         )}
-                        label={flow.selectedModelOption?.label ?? "Choose model"}
+                        label={
+                          flow.selectedModelOption
+                            ? selectedModelOptionLabel(flow.selectedModelOption)
+                            : "Choose model"
+                        }
                         maxWidth="100%"
                         onPress={settingsSheetPresentation.open}
                       />

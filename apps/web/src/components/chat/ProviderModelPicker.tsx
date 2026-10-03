@@ -89,8 +89,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
-  const triggerLabel = selectedModel
-    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+  const activeModelLabel = selectedModel
+    ? `${getTriggerDisplayModelLabel(selectedModel, activeEntry?.driverKind)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -172,7 +172,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model)}${model.isUnavailable ? " (Unavailable)" : ""}`
+        ? `${getTriggerDisplayModelLabel(model, entry?.driverKind)}${model.isUnavailable ? " (Unavailable)" : ""}`
         : selection.model,
     };
   });
@@ -188,8 +188,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
-    : (props.triggerLabel ?? allModelNames ?? triggerLabel);
+    ? `${props.triggerLabel ?? allModelNames ?? activeModelLabel} · ${shortcutLabel}`
+    : (props.triggerLabel ?? allModelNames ?? activeModelLabel);
 
   return (
     <Popover
@@ -270,7 +270,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 />
               }
             >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+              {props.triggerLabel ?? multipleLabel ?? activeModelLabel}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
           </Tooltip>

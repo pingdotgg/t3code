@@ -38,7 +38,7 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
-import { buildModelOptions } from "../../lib/modelOptions";
+import { buildModelOptions, selectedModelOptionLabel } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -553,6 +553,11 @@ function TaskForm({
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
+  const selectedModelOption = modelOptions.find(
+    (option) =>
+      option.selection.instanceId === draft.modelSelection?.instanceId &&
+      option.selection.model === draft.modelSelection?.model,
+  );
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
     reportFailure: false,
@@ -720,13 +725,10 @@ function TaskForm({
           label="Model"
           borderTop
           value={
-            modelOptions.find(
-              (option) =>
-                option.selection.instanceId === draft.modelSelection?.instanceId &&
-                option.selection.model === draft.modelSelection?.model,
-            )?.label ??
-            draft.modelSelection?.model ??
-            (modelOptions.length ? "Choose model" : "No models available")
+            selectedModelOption
+              ? selectedModelOptionLabel(selectedModelOption)
+              : (draft.modelSelection?.model ??
+                (modelOptions.length ? "Choose model" : "No models available"))
           }
           onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
           disabled={saving || dictationPending || environmentUnavailable}

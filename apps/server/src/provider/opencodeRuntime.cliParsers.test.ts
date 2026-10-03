@@ -35,7 +35,8 @@ describe("parseModelsCliOutput", () => {
     const provider = result.providers.get("anthropic")!;
     NodeAssert.ok(provider);
     NodeAssert.equal(provider.id, "anthropic");
-    NodeAssert.equal(provider.name, "anthropic");
+    // The CLI output carries only the routing id, never a display name.
+    NodeAssert.equal("name" in provider, false);
     NodeAssert.equal(Object.keys(provider.models).length, 1);
 
     const model = provider.models["claude-sonnet-4-5"]!;

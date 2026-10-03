@@ -14,11 +14,13 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  resolveModelProviderLabel,
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  modelProviderId,
   modelSelectionsEqual,
 } from "./model.ts";
 
@@ -361,5 +363,98 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+});
+
+describe("model provider identity", () => {
+  it("reads the upstream provider segment from a slash-qualified slug", () => {
+    expect(modelProviderId("deepseek/deepseek-flash")).toBe("deepseek");
+    expect(modelProviderId("opencode-go/deepseek-v4.1-flash")).toBe("opencode-go");
+    expect(modelProviderId("gpt-5.6-sol")).toBeUndefined();
+    expect(modelProviderId("/leading")).toBeUndefined();
+    expect(modelProviderId("trailing/")).toBe("trailing");
+  });
+
+  it("labels the same OpenCode model by its upstream provider so duplicates stay distinct", () => {
+    const official = resolveModelProviderLabel({
+      slug: "deepseek/deepseek-flash",
+      driverKind: ProviderDriverKind.make("opencode"),
+    });
+    const go = resolveModelProviderLabel({
+      slug: "opencode-go/deepseek-v4.1-flash",
+      driverKind: ProviderDriverKind.make("opencode"),
+    });
+    expect(official).not.toBe(go);
+    expect(official).toBe("DeepSeek");
+    expect(go).toBe("OpenCode Go");
+  });
+
+  it("uses the product casing for known OpenCode upstreams", () => {
+    const label = (slug: string) =>
+      resolveModelProviderLabel({ slug, driverKind: ProviderDriverKind.make("opencode") });
+    expect(label("deepseek/deepseek-flash")).toBe("DeepSeek");
+    expect(label("opencode/claude-fable-5")).toBe("OpenCode Zen");
+    expect(label("opencode-go/deepseek-v4.1-flash")).toBe("OpenCode Go");
+    expect(label("openai/gpt-5.4")).toBe("OpenAI");
+    expect(label("openrouter/deepseek-flash")).toBe("OpenRouter");
+    expect(label("github-copilot/claude-fable-5")).toBe("GitHub Copilot");
+  });
+
+  it("does not decode slash-qualified slugs for other drivers", () => {
+    expect(
+      resolveModelProviderLabel({
+        slug: "meta-llama/Llama-3",
+        driverKind: ProviderDriverKind.make("codex"),
+      }),
+    ).toBeUndefined();
+    expect(resolveModelProviderLabel({ slug: "deepseek/deepseek-flash" })).toBeUndefined();
+  });
+
+  it("prefers a catalog-reported custom upstream name over the slug", () => {
+    expect(
+      resolveModelProviderLabel({
+        slug: "github-copilot/claude-fable-5",
+        subProvider: "GitHub Copilot",
+        driverKind: ProviderDriverKind.make("opencode"),
+      }),
+    ).toBe("GitHub Copilot");
+    expect(resolveModelProviderLabel({ slug: "gpt-5.6-sol", subProvider: "OpenAI" })).toBe(
+      "OpenAI",
+    );
+  });
+
+  it("leaves plain built-in models unlabeled", () => {
+    expect(
+      resolveModelProviderLabel({
+        slug: "gpt-5.6-sol",
+        driverKind: ProviderDriverKind.make("codex"),
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveModelProviderLabel({ slug: "claude-sonnet-5", subProvider: "  " }),
+    ).toBeUndefined();
+  });
+
+  it("humanizes separator- and camel-case provider IDs", () => {
+    const label = (slug: string) =>
+      resolveModelProviderLabel({ slug, driverKind: ProviderDriverKind.make("opencode") });
+    expect(label("some-upstream/deepseek-flash")).toBe("Some Upstream");
+    expect(label("github_copilot/x")).toBe("GitHub Copilot");
+    expect(label("openCode/x")).toBe("Open Code");
+  });
+
+  it("treats Object prototype member names as ordinary custom providers", () => {
+    const label = (slug: string) =>
+      resolveModelProviderLabel({ slug, driverKind: ProviderDriverKind.make("opencode") });
+    expect(label("constructor/x")).toBe("Constructor");
+    expect(label("hasOwnProperty/x")).toBe("Has Own Property");
+    expect(label("valueOf/x")).toBe("Value Of");
+  });
+
+  it("falls back to the raw custom provider ID when humanizing yields no label", () => {
+    const label = (slug: string) =>
+      resolveModelProviderLabel({ slug, driverKind: ProviderDriverKind.make("opencode") });
+    expect(label("___/x")).toBe("___");
+    expect(label(".../x")).toBe("...");
   });
 });

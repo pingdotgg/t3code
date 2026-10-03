@@ -8,6 +8,7 @@ import type {
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  resolveModelProviderLabel,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -31,6 +32,16 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
 };
+
+/**
+ * Composer trigger label for the selected model. Only OpenCode crowds one
+ * instance with same-named models from different upstreams, so only it
+ * appends the upstream provider; other providers keep their plain label.
+ */
+export function selectedModelOptionLabel(option: ModelOption): string {
+  const upstream = option.providerDriver === "opencode" ? option.subtitle : "";
+  return [option.label, upstream].filter(Boolean).join(" · ");
+}
 
 function providerDisplayLabel(provider: {
   readonly displayName?: string | undefined;
@@ -179,7 +190,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: model.subProvider ?? "",
+        subtitle: resolveModelProviderLabel({ ...model, driverKind: provider.driver }) ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -233,7 +244,9 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
-        subtitle: model?.subProvider ?? "",
+        subtitle: model
+          ? (resolveModelProviderLabel({ ...model, driverKind: provider?.driver }) ?? "")
+          : "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
