@@ -1,6 +1,6 @@
 import { Effect, Schema, SchemaTransformation } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
@@ -128,7 +128,7 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
-const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
+export const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 
@@ -137,11 +137,23 @@ export const DEFAULT_PROVIDER_DRIVER_KIND = COPILOT_DRIVER_KIND;
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
+/**
+ * Canonical default selection for automated runs (self-testing, delegated
+ * validation, fresh auto-bootstrapped projects): Copilot GPT-6 Luna with
+ * reasoning effort pinned to low for speed and cost. Explicit user, project,
+ * or per-delegation settings always win over this; it only fills gaps.
+ */
+export const DEFAULT_AUTOMATED_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("copilot"),
+  model: "gpt-6-luna",
+  options: [{ id: "reasoning", value: "low" }],
+};
+
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-4-6",
   [CURSOR_DRIVER_KIND]: "auto",
-  [COPILOT_DRIVER_KIND]: "auto",
+  [COPILOT_DRIVER_KIND]: "gpt-6-luna",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   // "default" defers to the user's own Pi settings.json model selection.
   [PI_DRIVER_KIND]: "default",
