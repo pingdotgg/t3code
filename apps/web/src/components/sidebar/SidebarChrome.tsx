@@ -63,7 +63,13 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       <SidebarBrand onBackdrop={backdropVariant !== null} />
       {pillLabel ? (
         <Badge
-          className="relative z-10 ml-1 hidden @[15rem]/sidebar-header:inline-flex"
+          // Desktop titlebar controls push the brand further right, so the pill needs more room there.
+          className={cn(
+            "relative z-10 ml-1 hidden",
+            isElectron
+              ? "@[20rem]/sidebar-header:inline-flex"
+              : "@[15rem]/sidebar-header:inline-flex",
+          )}
           data-environment-identification="pill"
           size="sm"
           variant="secondary"
@@ -80,7 +86,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
