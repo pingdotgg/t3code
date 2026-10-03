@@ -26,6 +26,7 @@ import {
   decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
@@ -283,6 +284,25 @@ describe("pull request detail decoding", () => {
       ["test", "failure"],
       ["ci/legacy", "success"],
     ]);
+  });
+
+  it("keeps what branch protection requires, and asks for it on github.com only", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "test", status: "IN_PROGRESS", isRequired: true },
+            { __typename: "StatusContext", context: "bot", state: "PENDING", isRequired: false },
+            { __typename: "StatusContext", context: "legacy", state: "SUCCESS" },
+          ],
+        }),
+      ),
+    );
+    expect(detail.checks.map((check) => check.required)).toEqual([true, false, undefined]);
+    expect(pullRequestCoreGraphQlQuery("github.com")).toContain("isRequired");
+    expect(pullRequestCoreGraphQlQuery("github.example.com")).not.toContain("isRequired");
   });
 
   it("keeps a workflow waiting for approval out of the passing state", () => {

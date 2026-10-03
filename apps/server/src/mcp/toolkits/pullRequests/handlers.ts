@@ -34,7 +34,9 @@ import {
   PullRequestHostRequiredError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
+  PullRequestNotOpenError,
   type PullRequestTargetInput,
+  PullRequestWatchFailedError,
   PullRequestThreadNotFoundError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
@@ -122,6 +124,7 @@ function entryOf(
     number: link.number,
     url: link.url,
     source: link.source,
+    watching: link.watch !== undefined,
     state: link.snapshot?.state ?? null,
     title: link.snapshot?.title ?? null,
     headBranch: link.snapshot?.headBranch ?? null,
@@ -163,7 +166,8 @@ const make = Effect.gen(function* () {
     Failure:
       | typeof PullRequestLinkFailedError
       | typeof PullRequestUnlinkFailedError
-      | typeof PullRequestListFailedError,
+      | typeof PullRequestListFailedError
+      | typeof PullRequestWatchFailedError,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const thread = yield* engine
@@ -178,7 +182,10 @@ const make = Effect.gen(function* () {
 
   const projectOf = (
     thread: OrchestrationV2ThreadShell,
-    Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError,
+    Failure:
+      | typeof PullRequestLinkFailedError
+      | typeof PullRequestUnlinkFailedError
+      | typeof PullRequestWatchFailedError,
   ) =>
     projects.getShell(thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
@@ -186,13 +193,64 @@ const make = Effect.gen(function* () {
     );
 
   const dispatchFailure =
-    (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>
+    (
+      Failure:
+        | typeof PullRequestLinkFailedError
+        | typeof PullRequestUnlinkFailedError
+        | typeof PullRequestWatchFailedError,
+    ) =>
     <E>(
       cause: Cause.Cause<E>,
-    ): Effect.Effect<never, PullRequestLinkFailedError | PullRequestUnlinkFailedError> =>
+    ): Effect.Effect<
+      never,
+      PullRequestLinkFailedError | PullRequestUnlinkFailedError | PullRequestWatchFailedError
+    > =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.failCause(cause as Cause.Cause<never>)
         : Effect.fail(new Failure({ cause }));
+
+  /**
+   * Starts or stops a watch. One command links an unlinked pull request and watches it, and the
+   * result reports the state the thread holds afterwards.
+   */
+  const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
+    input: PullRequestTargetInput,
+    watching: boolean,
+  ) {
+    const thread = yield* requireThread(PullRequestWatchFailedError);
+    const project = yield* projectOf(thread, PullRequestWatchFailedError);
+    const target = yield* resolveTarget(input, project);
+    const watchedLink = (shell: OrchestrationV2ThreadShell) =>
+      threadPullRequestsOf(shell).find(
+        (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+      );
+    const before = watchedLink(thread);
+    const state = before?.snapshot?.state;
+    if (watching && state !== undefined && state !== "open") {
+      return yield* new PullRequestNotOpenError({ state });
+    }
+    yield* engine
+      .dispatch({
+        type: "thread.pull-request.watch",
+        commandId: yield* commandId("mcp-pr-watch", thread.id),
+        threadId: thread.id,
+        host: target.host,
+        repository: target.repository,
+        number: target.number,
+        watching,
+        ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+      })
+      .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
+    const after = yield* requireThread(PullRequestWatchFailedError);
+    return {
+      host: target.host,
+      repository: target.repository,
+      number: target.number,
+      url: target.url,
+      watching: watchedLink(after)?.watch !== undefined,
+      wasWatching: before?.watch !== undefined,
+    };
+  });
 
   return PullRequestsToolkit.of({
     link_pull_request: (input) =>
@@ -260,6 +318,8 @@ const make = Effect.gen(function* () {
       }),
     list_thread_pull_requests: () =>
       requireThread(PullRequestListFailedError).pipe(Effect.map(listThreadPullRequests)),
+    watch_pull_request: (input) => setWatching(input, true),
+    unwatch_pull_request: (input) => setWatching(input, false),
   });
 });
 
