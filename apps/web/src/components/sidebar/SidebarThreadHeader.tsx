@@ -1,14 +1,16 @@
 /**
- * The sidebar header: one row holding search, project scope and new thread.
+ * The sidebar header: one row holding search, environment scope, project
+ * scope and new thread.
  *
- * Search owns the row's text and spans it. Project scope collapses to an icon
- * that sits with new-project and new-thread as a segmented group at the end.
- * The scope icon swaps to the project favicon while a project is selected,
- * so the header still names the scope after the row that showed it is gone.
+ * Search owns the row's text and spans it. Both scopes collapse to icons that
+ * sit with new-project and new-thread as a segmented group at the end, broader
+ * axis first. Each scope icon swaps to the selected machine glyph or project
+ * favicon, so the header still names the scope after the row that showed it
+ * is gone.
  *
- * The scope picker itself is passed in: its combobox state lives with the rest
+ * The scope pickers themselves are passed in: their state lives with the rest
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
- * the picker's popup can anchor to that width rather than to its 28px trigger.
+ * their popups can anchor to that width rather than to a 28px trigger.
  */
 import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
@@ -27,9 +29,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export interface SidebarThreadHeaderProps {
   /** Lands on the search field so a popup can anchor to its width. */
   searchFieldRef?: RefObject<HTMLDivElement | null>;
-  /** Without projects there is nothing to scope, so those controls stay out. */
+  /** Without projects there is nothing to scope by project, so those controls stay out. */
   hasProjects: boolean;
-  /** The project scope combobox, rendered as the first icon of the group. */
+  /** The environment scope menu, first in the group; null when there is nothing to choose. */
+  environmentScope: ReactNode;
+  /** The project scope combobox, rendered after the environment scope. */
   projectScope: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
@@ -52,6 +56,7 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
+  environmentScope,
   projectScope,
   onNewProject,
   onNewThread,
@@ -124,6 +129,7 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {environmentScope}
         {hasProjects ? (
           <>
             {projectScope}

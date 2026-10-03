@@ -1,11 +1,15 @@
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
-import { ChevronDownIcon, LayersIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { ChevronDownIcon } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import {
+  presentationScopeOptions,
+  useEnvironments,
+  type EnvironmentPresentation,
+} from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { ALL_ENVIRONMENTS_VALUE, EnvironmentScopeRadioItems } from "../EnvironmentScopeRadioItems";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { InlineButton } from "../ui/button";
 import {
@@ -20,13 +24,11 @@ import {
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
-  ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
-  settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
@@ -119,9 +121,8 @@ function EnvironmentScopeMenu({
     value,
     resolved.kind === "checkout" ? resolved.environmentId : null,
   );
-  const selected = environments.find(
-    (environment) => environment.environmentId === environmentValue,
-  );
+  const options = useMemo(() => presentationScopeOptions(environments), [environments]);
+  const selected = options.find((option) => option.environmentId === environmentValue);
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
@@ -129,14 +130,14 @@ function EnvironmentScopeMenu({
         selected ? (
           <EnvironmentMachineIcon
             aria-hidden
-            kind={resolveEnvironmentMachineKind(selected.serverConfig)}
+            kind={selected.machine}
             className="size-3.5 shrink-0"
           />
         ) : null
       }
       label={
         selected
-          ? settingsScopeEnvironmentLabel(selected, environments)
+          ? selected.label
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
             : singleEnvironment
@@ -150,36 +151,7 @@ function EnvironmentScopeMenu({
           if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
         }}
       >
-        {!singleEnvironment ? (
-          <>
-            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
-              <span className="flex min-w-0 items-center gap-2">
-                <LayersIcon aria-hidden className="size-3.5" />
-                <span className="min-w-0 flex-1 truncate">All environments</span>
-                <MenuRadioItemIndicator />
-              </span>
-            </MenuRadioItem>
-            <MenuSeparator />
-          </>
-        ) : null}
-        {environments.map((environment) => (
-          <MenuRadioItem key={environment.environmentId} value={environment.environmentId}>
-            <span className="flex min-w-0 items-center gap-2">
-              <EnvironmentMachineIcon
-                aria-hidden
-                kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-                className="size-3.5"
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {settingsScopeEnvironmentLabel(environment, environments)}
-              </span>
-              {environment.connection.phase === "connected" ? null : (
-                <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
-              )}
-              <MenuRadioItemIndicator />
-            </span>
-          </MenuRadioItem>
-        ))}
+        <EnvironmentScopeRadioItems options={options} includeAllEnvironments={!singleEnvironment} />
       </MenuRadioGroup>
     </ScopeMenu>
   );
