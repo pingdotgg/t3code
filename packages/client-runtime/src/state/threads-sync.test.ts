@@ -1905,13 +1905,11 @@ describe("EnvironmentThreads", () => {
       }
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
 
-      // A long resume keeps a healthy session too, so it also resubscribes.
       yield* Queue.offer(harness.wakeups, "application-active-reconnect");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 4) break;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
     }),
   );
 });

@@ -433,22 +433,20 @@ describe("environment shell synchronization", () => {
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40]);
 
-      // A long resume keeps a healthy session too, so it also resubscribes.
       yield* Queue.offer(wakeups, "application-active-reconnect");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 4) break;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 40]);
+      expect((yield* Ref.get(capturedAfterSequences)).length).toBe(3);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
 
       // Replacing the session performs another authoritative refresh.
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 5) break;
+        if ((yield* Ref.get(capturedAfterSequences)).length >= 4) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 40, 20]);
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
     }),
   );
