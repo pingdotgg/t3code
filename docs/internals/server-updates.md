@@ -70,6 +70,18 @@ readiness or the launcher's commit boundary. Graceful shutdown captures intent b
 closing providers, then reconciles after ingestion has stopped so a late completion
 cannot be overwritten by a stale cancellation.
 
+Recovery isolates projection and reconciliation failures per thread. It logs the
+thread and trigger, then continues recovering other threads and reconciling the
+outbox. Cancellation still stops recovery. Reads of the candidate list and global
+outbox failures remain startup errors. Recovery stays serial because all writes
+share the environment's database.
+
+Live provider residency tracks active starts by run attempt. A root provider-turn
+snapshot binds its native turn identity to that attempt. A start error or a matching
+terminal removes the same entry, so duplicate or delayed terminals cannot release
+a successor or sibling turn. Thread and run ordinal alone are insufficient because
+steering can reuse them. Unknown snapshots and terminals do not create activity.
+
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, archive state, provider selection, and newer user work before
 dispatching. Stable command and message IDs prevent duplicate submissions after an

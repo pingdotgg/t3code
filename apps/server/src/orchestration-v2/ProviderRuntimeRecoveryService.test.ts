@@ -15,7 +15,10 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as EffectWorker from "./EffectWorker.ts";
@@ -25,6 +28,290 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+function shutdownProjection(threadId: ThreadId) {
+  const providerInstanceId = ProviderInstanceId.make("codex");
+  const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+  const providerSessionId = ProviderSessionId.make(`provider-session:${threadId}`);
+  const activeAttemptId = RunAttemptId.make(`attempt:${threadId}`);
+  return {
+    thread: { id: threadId, archivedAt: null, deletedAt: null, providerInstanceId },
+    runs: [
+      {
+        id: RunId.make(`run:${threadId}`),
+        ordinal: 1,
+        status: "running",
+        providerInstanceId,
+        providerThreadId,
+        activeAttemptId,
+      },
+    ],
+    providerThreads: [
+      {
+        id: providerThreadId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        providerSessionId,
+        providerInstanceId,
+        driver: "codex",
+        status: "active",
+        nativeThreadRef: { driver: "codex", nativeId: `native:${threadId}`, strength: "strong" },
+      },
+    ],
+    providerSessions: [
+      { id: providerSessionId, providerInstanceId, driver: "codex", status: "ready" },
+    ],
+    providerTurns: [
+      {
+        id: ProviderTurnId.make(`provider-turn:${threadId}`),
+        providerThreadId,
+        runAttemptId: activeAttemptId,
+        status: "running",
+      },
+    ],
+    runtimeRequests: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    messages: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+}
+
+it.effect.each([
+  { stage: "read", cause: "failure" },
+  { stage: "read", cause: "defect" },
+  { stage: "write", cause: "failure" },
+  { stage: "write", cause: "defect" },
+] as const)("continues shutdown after a preparation $stage $cause", ({ stage, cause }) =>
+  Effect.gen(function* () {
+    const badThread = ThreadId.make("shutdown-bad-thread");
+    const healthyThread = ThreadId.make("shutdown-healthy-thread");
+    const progress = yield* Ref.make<string[]>([]);
+    const record = (step: string) => Ref.update(progress, (steps) => [...steps, step]);
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([badThread, healthyThread]),
+            getRuntimeRecoveryProjection: (threadId) =>
+              threadId === badThread && stage === "read"
+                ? cause === "defect"
+                  ? Effect.die("corrupt projection")
+                  : Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+                : Effect.succeed(shutdownProjection(threadId)),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              input.effects[0]?.threadId === badThread
+                ? cause === "defect"
+                  ? Effect.die("corrupt continuation intent")
+                  : Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 0 }))
+                : record("healthy-prepared").pipe(Effect.as([])),
+            commitCommand: (input) =>
+              record(`reconciled:${input.threadId}`).pipe(
+                Effect.as({ committed: true, cancelledEffectCount: 0 } as never),
+              ),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: record("outbox").pipe(
+              Effect.as({ requeued: 2, cancelled: 3 }),
+            ),
+          }),
+        ),
+      ),
+    );
+    const summary = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+      Effect.flatMap((recovery) =>
+        Effect.gen(function* () {
+          yield* recovery.prepareForShutdown.pipe(Effect.ensuring(record("sessions-shutdown")));
+          return yield* recovery.reconcile("shutdown");
+        }),
+      ),
+      Effect.provide(layer),
+    );
+    assert.deepEqual(yield* Ref.get(progress), [
+      "healthy-prepared",
+      "sessions-shutdown",
+      ...(stage === "write" ? [`reconciled:${badThread}`] : []),
+      `reconciled:${healthyThread}`,
+      "outbox",
+    ]);
+    assert.equal(summary.terminalizedRuns, stage === "write" ? 2 : 1);
+    assert.equal(summary.requeuedEffects, 2);
+    assert.equal(summary.retiredEffects, 3);
+  }),
+);
+
+it.effect.each(["read", "write"] as const)(
+  "preserves interruption during a shutdown preparation %s",
+  (stage) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("shutdown-interrupted-thread");
+      const progress = yield* Ref.make<string[]>([]);
+      const layer = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () =>
+                Effect.succeed([threadId, ThreadId.make("shutdown-next-thread")]),
+              getRuntimeRecoveryProjection: (id) =>
+                Ref.update(progress, (steps) => [...steps, `read:${id}`]).pipe(
+                  Effect.andThen(
+                    stage === "read" ? Effect.interrupt : Effect.succeed(shutdownProjection(id)),
+                  ),
+                ),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({ writeWithEffects: () => Effect.interrupt }),
+            IdAllocator.layer,
+            Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+          ),
+        ),
+      );
+      const exit = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+        Effect.flatMap((recovery) => recovery.prepareForShutdown),
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      assert.deepEqual(yield* Ref.get(progress), [`read:${threadId}`]);
+    }),
+);
+
+it.effect.each(["failure", "defect"] as const)(
+  "retains a global shutdown candidate discovery %s",
+  (cause) =>
+    Effect.gen(function* () {
+      const failure = new ProjectionStore.ProjectionStoreReadError({
+        threadId: ThreadId.make("candidate-discovery"),
+      });
+      const layer = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () =>
+                cause === "defect"
+                  ? Effect.die("candidate discovery failed")
+                  : Effect.fail(failure),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+          ),
+        ),
+      );
+      const exit = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+        Effect.flatMap((recovery) => recovery.prepareForShutdown),
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        if (cause === "defect") {
+          assert.isTrue(Cause.hasDies(exit.cause));
+        } else {
+          const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+          assert.instanceOf(error, ProviderRuntimeRecovery.ProviderRuntimeRecoveryError);
+          assert.equal(error.cause, failure);
+        }
+      }
+    }),
+);
+
+it.effect.each([
+  { trigger: "startup", failure: "read" },
+  { trigger: "startup", failure: "commit" },
+  { trigger: "shutdown", failure: "read" },
+  { trigger: "shutdown", failure: "commit" },
+] as const)("continues $trigger recovery after a thread $failure defect", ({ trigger, failure }) =>
+  Effect.gen(function* () {
+    const badThread = ThreadId.make("recovery-bad-thread");
+    const healthyThread = ThreadId.make("recovery-healthy-thread");
+    const committed = yield* Ref.make<ThreadId[]>([]);
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([badThread, healthyThread]),
+            getRuntimeRecoveryProjection: (threadId) =>
+              threadId === badThread && failure === "read"
+                ? Effect.die("corrupt thread projection")
+                : Effect.succeed({
+                    thread: { id: threadId },
+                    runtimeRequests: [
+                      {
+                        id: RuntimeRequestId.make(`request:${threadId}`),
+                        nodeId: NodeId.make(`node:${threadId}`),
+                        status: "pending",
+                        responseCapability: { type: "not_resumable", reason: "old process" },
+                      },
+                    ],
+                    providerSessions: [],
+                    providerThreads: [],
+                    providerTurns: [],
+                    runs: [],
+                    attempts: [],
+                    nodes: [],
+                    subagents: [],
+                    messages: [],
+                    turnItems: [],
+                  } as unknown as OrchestrationV2ThreadProjection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) =>
+              input.threadId === badThread
+                ? Effect.die("corrupt thread event")
+                : Ref.update(committed, (ids) => [...ids, input.threadId]).pipe(
+                    Effect.as({ committed: true, cancelledEffectCount: 0 } as never),
+                  ),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 2, cancelled: 3 }),
+          }),
+        ),
+      ),
+    );
+    const summary = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+      Effect.flatMap((recovery) => recovery.reconcile(trigger)),
+      Effect.provide(layer),
+    );
+    assert.deepEqual(yield* Ref.get(committed), [healthyThread]);
+    assert.equal(summary.closedRequests, 1);
+    assert.equal(summary.requeuedEffects, 2);
+    assert.equal(summary.retiredEffects, 3);
+  }),
+);
+
+it.effect("preserves cancellation while recovering an individual thread", () =>
+  Effect.gen(function* () {
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([ThreadId.make("cancelled-recovery")]),
+            getRuntimeRecoveryProjection: () => Effect.interrupt,
+          }),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    const exit = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+      Effect.flatMap((recovery) => recovery.reconcile("startup")),
+      Effect.provide(layer),
+      Effect.exit,
+    );
+    assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+  }),
+);
 
 it.effect("leaves durable effects for the worker after runtime reconciliation", () =>
   Effect.gen(function* () {

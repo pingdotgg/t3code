@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -721,21 +722,34 @@ export const make = Effect.gen(function* () {
       let closedRequests = 0;
       let retiredEffects = 0;
       for (const threadId of threadIds) {
-        const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderRuntimeRecoveryError({
-                operation: "read-projections",
-                threadId,
-                cause,
-              }),
+        const result = yield* Effect.gen(function* () {
+          const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "read-projections",
+                  threadId,
+                  cause,
+                }),
+            ),
+          );
+          const enabled =
+            continueAfterRestart !== null &&
+            resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
+              .continueThreadsAfterServerUpdate;
+          return yield* reconcileProjection(projection, trigger, enabled);
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logError("orchestration-v2.runtime-recovery.thread-failed", {
+                  trigger,
+                  threadId,
+                  cause,
+                }).pipe(Effect.as(null)),
           ),
         );
-        const enabled =
-          continueAfterRestart !== null &&
-          resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        if (result === null) continue;
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
@@ -763,32 +777,45 @@ export const make = Effect.gen(function* () {
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      if (
-        !resolveProjectSettings(enabled, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate
-      )
-        continue;
-      // Shutdown reconciliation cancels the background work below, so a
-      // settled thread's continuation must be captured while it is still open.
-      const run = restartContinuationRun(
-        projection,
-        providerThreadsWithOpenBackgroundWork(projection),
+      yield* Effect.gen(function* () {
+        const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+        if (
+          !resolveProjectSettings(enabled, projection.thread.projectId).settings
+            .continueThreadsAfterServerUpdate
+        )
+          return;
+        // Shutdown reconciliation cancels the background work below, so a
+        // settled thread's continuation must be captured while it is still open.
+        const run = restartContinuationRun(
+          projection,
+          providerThreadsWithOpenBackgroundWork(projection),
+        );
+        if (!run) return;
+        const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [
+            {
+              id: `effect:restart-continuation:${run.id}`,
+              commandId,
+              threadId,
+              request: { type: "provider-runtime.continue", sourceRunId: run.id },
+            },
+          ],
+        });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logError("orchestration-v2.runtime-recovery.thread-failed", {
+                trigger: "shutdown",
+                phase: "prepare",
+                threadId,
+                cause,
+              }),
+        ),
       );
-      if (!run) continue;
-      const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
-      yield* eventSink.writeWithEffects({
-        commandId,
-        events: [],
-        effects: [
-          {
-            id: `effect:restart-continuation:${run.id}`,
-            commandId,
-            threadId,
-            request: { type: "provider-runtime.continue", sourceRunId: run.id },
-          },
-        ],
-      });
     }
   }).pipe(
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
