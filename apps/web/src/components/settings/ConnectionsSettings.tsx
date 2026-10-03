@@ -58,6 +58,7 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  resolveTailscaleHttpsRowState,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -2237,7 +2238,7 @@ export function ConnectionsSettings() {
     }
   }, [desktopBridge, desktopServerExposureState?.tailscaleServePort]);
 
-  const handleStartTailscaleServeDisable = useCallback((_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = useCallback(() => {
     setDisableTailscaleServeDialogOpen(true);
   }, []);
 
@@ -2593,8 +2594,12 @@ export function ConnectionsSettings() {
         : visibleDesktopNetworkAdvertisedEndpoints,
     [tailscaleHttpsEndpoint, visibleDesktopNetworkAdvertisedEndpoints],
   );
+  const tailscaleHttpsRowState = resolveTailscaleHttpsRowState({
+    endpoint: tailscaleHttpsEndpoint,
+    serveEnabled: desktopServerExposureState?.tailscaleServeEnabled === true,
+  });
   const isLocalBackendRemotelyReachable =
-    isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
+    isLocalBackendNetworkAccessible || tailscaleHttpsRowState.checked;
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
@@ -3185,23 +3190,29 @@ export function ConnectionsSettings() {
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
       description={
-        tailscaleHttpsEndpoint
-          ? tailscaleHttpsEndpoint.status === "available"
-            ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : "Start Tailscale to set up HTTPS access through MagicDNS."
+        tailscaleHttpsRowState.checked
+          ? (tailscaleHttpsRowState.url ??
+            "Tailscale isn't reporting a MagicDNS name for this machine.")
+          : tailscaleHttpsEndpoint
+            ? "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : "Start Tailscale to set up HTTPS access through MagicDNS."
+      }
+      status={
+        tailscaleHttpsRowState.url !== null && !tailscaleHttpsRowState.reachable
+          ? "This machine can't reach that URL, so pairing links won't offer it."
+          : null
       }
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsRowState.showSwitch ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={tailscaleHttpsRowState.checked}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
-              if (checked) {
+              if (!checked) {
+                handleStartTailscaleServeDisable();
+              } else if (tailscaleHttpsEndpoint) {
                 handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
               }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
             }}
             aria-label="Enable Tailscale HTTPS"
           />
