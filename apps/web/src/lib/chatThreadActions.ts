@@ -100,3 +100,18 @@ export async function startNewThreadFromContext(
   await context.handleNewThread(projectRef);
   return true;
 }
+
+/** Opens a blank draft on a saved thread's branch, reusing its checkout. */
+export async function startNewThreadOnBranch(
+  thread: (ThreadContextLike & { branch: string | null; worktreePath: string | null }) | null,
+  handleNewThread: NewThreadHandler,
+): Promise<boolean> {
+  if (!thread?.branch) return false;
+  const opened = await handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    envMode: thread.worktreePath ? "worktree" : "local",
+    startFromOrigin: false,
+  });
+  return opened != null;
+}
