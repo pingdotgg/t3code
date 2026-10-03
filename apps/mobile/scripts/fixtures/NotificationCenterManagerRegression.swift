@@ -6,9 +6,9 @@ public enum UIBackgroundFetchResult {
   case noData
 }
 
-public struct UNNotificationPresentationOptions: OptionSet {
-  public let rawValue: Int
-  public init(rawValue: Int) { self.rawValue = rawValue }
+// A class, because the delegate protocol below is @objc. The manager only uses `[]`.
+public final class UNNotificationPresentationOptions: NSObject, ExpressibleByArrayLiteral {
+  public init(arrayLiteral elements: Int...) { super.init() }
 }
 
 public final class UNNotification: NSObject {}
@@ -18,7 +18,20 @@ public final class UNNotificationResponse: NSObject {
   init(_ identifier: String) { self.identifier = identifier }
 }
 
-public protocol UNUserNotificationCenterDelegate: AnyObject {}
+// The manager forwards calls to a chained delegate through these optional methods.
+@objc public protocol UNUserNotificationCenterDelegate: NSObjectProtocol {
+  @objc optional func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  )
+  @objc optional func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  )
+  @objc optional func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?)
+}
 
 public final class UNUserNotificationCenter: NSObject {
   private static let instance = UNUserNotificationCenter()
@@ -169,6 +182,21 @@ private func concurrentRegistrations() throws {
   try require(delegates.map { $0.events.count } == removed, "Removed delegates must not receive new callbacks")
 }
 
+private func partiallyHandledReplay() throws {
+  let manager = NotificationCenterManager.shared
+  deliver("handled")
+  deliver("unhandled")
+  let original = TestDelegate()
+  original.onResponse = { $0.identifier == "handled" }
+  manager.addDelegate(original)
+  let receiver = TestDelegate()
+  receiver.onResponse = { _ in true }
+  manager.addDelegate(receiver)
+  try require(receiver.events == ["unhandled"], "Replay must retain each response that the delegate did not handle")
+  manager.removeDelegate(original)
+  manager.removeDelegate(receiver)
+}
+
 @main
 private enum RegressionTests {
   static func main() {
@@ -177,6 +205,7 @@ private enum RegressionTests {
       case "reentrant": try reentrantCallbacks()
       case "handoff": try registrationDuringDelivery()
       case "pending": try responseDuringReplay()
+      case "partial": try partiallyHandledReplay()
       case "concurrent": try concurrentRegistrations()
       default: throw NSError(domain: "NotificationCenterManagerRegression", code: 2)
       }

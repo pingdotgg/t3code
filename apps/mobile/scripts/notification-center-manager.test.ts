@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Compiles and runs the native dependency regression directly.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -28,12 +29,23 @@ describe.skipIf(NodeOS.platform() !== "darwin")(
         manager,
         source.replace(/^import (ExpoModulesCore|UserNotifications)\n/gm, ""),
       );
+      // The manager guards its registry with ExpoModulesCore's Mutex, so compile that file too.
+      const require = NodeModule.createRequire(import.meta.url);
+      const mutex = NodePath.join(
+        NodePath.dirname(
+          NodeModule.createRequire(require.resolve("expo/package.json")).resolve(
+            "expo-modules-core/package.json",
+          ),
+        ),
+        "ios/Utilities/Mutex.swift",
+      );
       NodeChildProcess.execFileSync(
         "swiftc",
         [
           "-swift-version",
           "5",
           "-sanitize=thread",
+          mutex,
           manager,
           NodeURL.fileURLToPath(
             new URL("./fixtures/NotificationCenterManagerRegression.swift", import.meta.url),
@@ -53,6 +65,7 @@ describe.skipIf(NodeOS.platform() !== "darwin")(
       ["reentrant", "allows callbacks to replace delegates without deadlocking"],
       ["handoff", "delivers responses to delegates registering during delivery"],
       ["pending", "retains new responses received while replaying pending responses"],
+      ["partial", "retains responses that a replaying delegate did not handle"],
       ["concurrent", "registers, removes, and broadcasts concurrently without data races"],
     ])("%s: %s", (name) => {
       const output = NodeChildProcess.execFileSync(executable, [name], {

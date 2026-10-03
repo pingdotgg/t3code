@@ -146,6 +146,7 @@
     },
     "autolinking": {
       "buildFromSource": [
+        "expo-modules-core",
         "expo-notifications",
         "react-native-screens",
         "react-native-reanimated",

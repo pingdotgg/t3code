@@ -15,6 +15,9 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 
+// Android keyboards send with Ctrl where iPad keyboards use Command.
+const SEND_MODIFIER = Platform.OS === "android" ? "Ctrl" : "Command";
+
 const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
   readonly behavior: ComposerEnterBehavior;
   readonly label: string;
@@ -28,7 +31,7 @@ const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
   {
     behavior: "newline",
     label: "Insert new line",
-    description: "Return inserts a new line. Command-Return sends the message.",
+    description: `Return inserts a new line. ${SEND_MODIFIER}-Return sends the message.`,
   },
 ];
 

@@ -243,6 +243,10 @@ patchedDependencies:
   expo-glass-effect@58.0.3: patches/expo-glass-effect@58.0.3.patch
   expo-blur@58.0.3: patches/expo-blur@58.0.3.patch
   expo-audio@58.0.4: patches/expo-audio@58.0.4.patch
+  # Lock the permission requester registry. Modules register requesters while other threads read them.
+  expo-modules-core@58.0.11: patches/expo-modules-core@58.0.11.patch
+  # Queue a notification response before delivery, and remove only the replayed responses, so a tap is not lost.
+  expo-notifications@58.0.11: patches/expo-notifications@58.0.11.patch
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
   "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch

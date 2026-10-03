@@ -18,6 +18,7 @@ import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.GestureDetector
+import android.view.KeyCharacterMap
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.ViewGroup
@@ -47,6 +48,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private val onComposerSelectionChange by EventDispatcher()
   private val onComposerFocus by EventDispatcher()
   private val onComposerBlur by EventDispatcher()
+  private val onComposerSubmit by EventDispatcher()
   private val onComposerPasteImages by EventDispatcher()
   private val onComposerContextPress by EventDispatcher()
   private val onComposerPasteContext by EventDispatcher()
@@ -142,6 +144,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
           "selection" to currentSelectionPayload(start, end),
         ),
       )
+    }
+    editor.submitListener = { alternate ->
+      onComposerSubmit(mapOf("alternate" to alternate))
     }
     editor.setOnFocusChangeListener { _, hasFocus ->
       if (hasFocus) {
@@ -308,6 +313,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   fun setReadOnly(readOnly: Boolean) {
     editor.readOnly = readOnly
     editor.isCursorVisible = editor.isEnabled && !readOnly
+  }
+
+  fun setEnterBehavior(behavior: String) {
+    editor.returnSends = behavior != "newline"
+  }
+
+  fun setSubmitEnabled(enabled: Boolean) {
+    editor.submitEnabled = enabled
   }
 
   fun setScrollEnabled(scrollEnabled: Boolean) {
@@ -586,9 +599,18 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var pasteImagesListener: ((List<String>) -> Unit)? = null
   var pasteContextListener: ((Map<String, String>) -> Unit)? = null
   var pasteTextListener: ((String, Int, Int) -> Unit)? = null
+
+  /** Called for a hardware-keyboard send chord. The argument is true for the alternate send. */
+  var submitListener: ((Boolean) -> Unit)? = null
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+
+  /** Whether a hardware Return sends (`enterBehavior` "send") or inserts a newline. */
+  var returnSends = true
+
+  /** The JS wrapper enables submission only when it has an onSubmit handler. */
+  var submitEnabled = false
 
   /**
    * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
@@ -642,7 +664,38 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     return spans.isNotEmpty()
   }
 
+  /**
+   * Maps a hardware Return chord to a send, like the iOS composer. The plainer chord does the
+   * configured behavior and the Ctrl chord does the other one: with "send", Return sends,
+   * Ctrl-Return sends the alternate way and Shift-Return inserts a newline; with "newline",
+   * Ctrl-Return sends and Ctrl-Shift-Return sends the alternate way. Returns whether the send is
+   * the alternate one, or null to insert a newline. Soft keyboards always insert a newline.
+   */
+  private fun submitChord(keyCode: Int, event: KeyEvent): Boolean? {
+    val isReturn = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+    val fromSoftKeyboard =
+      event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD ||
+        (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD) != 0
+    val canSubmit = submitEnabled && submitListener != null && !readOnly
+    if (!isReturn || fromSoftKeyboard || !canSubmit) {
+      return null
+    }
+    return when {
+      event.hasNoModifiers() -> if (returnSends) false else null
+      event.hasModifiers(KeyEvent.META_CTRL_ON) -> returnSends
+      event.hasModifiers(KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON) ->
+        if (returnSends) null else true
+      else -> null
+    }
+  }
+
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    val alternate = submitChord(keyCode, event)
+    if (alternate != null) {
+      // A held Return repeats. Send once, and drop the repeats instead of typing newlines.
+      if (event.repeatCount == 0) submitListener?.invoke(alternate)
+      return true
+    }
     val handled = when (keyCode) {
       KeyEvent.KEYCODE_DEL -> deleteChip(true)
       KeyEvent.KEYCODE_FORWARD_DEL -> deleteChip(false)

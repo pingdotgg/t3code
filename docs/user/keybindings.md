@@ -44,7 +44,7 @@ to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
 Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
 
-## iPad
+## iPad and Android
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
 displayed threads. The shortcuts follow the current list filters and order.
@@ -56,6 +56,9 @@ to show only actions.
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
 also sends. To make Return insert a new line instead, change the Return key
 behavior in Settings → Keyboard.
+
+On Android, use `Ctrl` in place of `Cmd`. Thread shortcuts and the command palette
+need a tablet-sized screen; on a phone, `Ctrl+K` opens search.
 
 ## Edit the configuration file
 
