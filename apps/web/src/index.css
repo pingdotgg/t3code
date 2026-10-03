@@ -1934,6 +1934,51 @@ code {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
 }
 
+/* Long code blocks keep their actions in reach. The header sticks below the
+   timeline's top fade; once stuck, the title hides, the header strip lets
+   clicks through to the code, and the toolbar sits on an opaque plate that
+   pointer devices see while the block is hovered or focused. Browsers without
+   scroll-state queries keep the static header. The block uses overflow: clip,
+   not hidden, so it does not become the header's scroll container. */
+@supports (container-type: scroll-state) {
+  .chat-markdown .chat-markdown-codeblock-header {
+    position: sticky;
+    top: var(--workspace-titlebar-scroll-fade-height);
+    z-index: 1;
+    container-type: scroll-state;
+    pointer-events: none;
+  }
+
+  .chat-markdown .chat-markdown-codeblock-title,
+  .chat-markdown .chat-markdown-codeblock-actions {
+    pointer-events: auto;
+  }
+
+  @container scroll-state(stuck: top) {
+    .chat-markdown .chat-markdown-codeblock-title {
+      visibility: hidden;
+    }
+
+    .chat-markdown .chat-markdown-codeblock-actions {
+      border-radius: var(--radius-md);
+      background-color: var(--popover);
+      box-shadow:
+        0 0 0 2px var(--popover),
+        0 0 0 3px var(--border);
+    }
+  }
+
+  @media (hover: hover) {
+    @container scroll-state(stuck: top) {
+      .chat-markdown
+        .chat-markdown-codeblock:not(:hover, :focus-within)
+        .chat-markdown-codeblock-actions {
+        opacity: 0;
+      }
+    }
+  }
+}
+
 .chat-markdown .chat-markdown-codeblock pre {
   margin: 0;
   border: none;
