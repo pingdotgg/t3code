@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1186,26 +1187,24 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   );
 });
 
-// A client that disconnects mid-scan interrupts the shared discovery effect on
-// the connection fiber. The cache must not retain that interrupt: doing so
-// replayed it to every later connect for the whole TTL, so `server.getConfig`
-// failed and no client could reconnect until the server restarted.
-it.effect("rescans after an interrupted discovery instead of caching the interrupt", () => {
+// Connects run discovery under a timeout and may disconnect mid-scan. Neither
+// may cancel the scan: on a busy host every connect would time out partway
+// through, cache nothing, and leave every client without editors.
+it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
-  let blockFirstScan = true;
-  let scans = 0;
+  const release = Deferred.makeUnsafe<void>();
+  let parkedStats = 0;
   const launcherLayer = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
-          // The first scan parks inside `stat` so the interrupt lands while
-          // discovery is in flight, which is what a client disconnecting
-          // mid-connect does to the shared effect.
+          // Scans park inside `stat` until released, so the interrupt lands
+          // while discovery is in flight.
           stat: () =>
             Effect.gen(function* () {
-              scans += 1;
-              if (blockFirstScan) {
-                return yield* Effect.never;
+              if (!Deferred.isDoneUnsafe(release)) {
+                parkedStats += 1;
+                yield* Deferred.await(release);
               }
               return fileInfo;
             }),
@@ -1222,16 +1221,18 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
   return Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
 
-    const fiber = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    const interrupted = yield* Effect.forkChild(launcher.resolveAvailableEditors());
     yield* Effect.yieldNow;
-    yield* Fiber.interrupt(fiber);
+    yield* Fiber.interrupt(interrupted);
 
-    // The next connect must still get a real answer well inside the TTL.
-    blockFirstScan = false;
-    scans = 0;
-    const editors = yield* launcher.resolveAvailableEditors();
+    // The next connect joins the running scan instead of starting its own.
+    const next = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    yield* Effect.yieldNow;
+    assert.equal(parkedStats, 1);
+
+    yield* Deferred.succeed(release, undefined);
+    const editors = yield* Fiber.join(next);
     assert.equal(editors.includes("vscode"), true);
-    assert.isAbove(scans, 0);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
