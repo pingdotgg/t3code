@@ -35,6 +35,8 @@ const LOGGED_IN_MODELS_OUTPUT = [
   "",
 ].join("\n");
 
+const MODELS_CALLS_FILE = "models-calls";
+
 const LOGGED_OUT_MODELS_OUTPUT = LOGGED_IN_MODELS_OUTPUT.replace(
   "You are logged in with grok.com.",
   "You are not authenticated.",
@@ -403,7 +405,13 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   // A stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
-  const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
+  // `retryModelsOutput` is what every `models` call after the first prints, and
+  // each call appends a line to the `models-calls` file next to the CLI.
+  const writeFakeGrokCli = (input: {
+    readonly modelsOutput: string;
+    readonly retryModelsOutput?: string;
+    readonly acp: boolean;
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
@@ -417,6 +425,14 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
+          '  const fs = await import("node:fs");',
+          `  const callsPath = new URL("${MODELS_CALLS_FILE}", import.meta.url);`,
+          "  const retryOutput = fs.existsSync(callsPath) ? process.env.FAKE_GROK_RETRY_MODELS_OUTPUT : undefined;",
+          '  fs.appendFileSync(callsPath, "models\\n");',
+          "  if (retryOutput !== undefined) {",
+          "    process.stdout.write(retryOutput);",
+          "    process.exit(0);",
+          "  }",
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
           "  process.exit(0);",
@@ -425,6 +441,9 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           ...(input.acp ? [execScriptSource({ scriptPath: mockAgentPath })] : ["process.exit(3);"]),
           "",
         ].join("\n"),
+        ...(input.retryModelsOutput === undefined
+          ? {}
+          : { env: { FAKE_GROK_RETRY_MODELS_OUTPUT: input.retryModelsOutput } }),
       });
     });
 
@@ -478,6 +497,64 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.auth.status).toBe("unauthenticated");
       expect(snapshot.message).toContain("grok login");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
+    }),
+  );
+
+  const countModelsCalls = (grokPath: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const calls = yield* fs.readFileString(
+        NodePath.join(NodePath.dirname(grokPath), MODELS_CALLS_FILE),
+      );
+      return calls.trim().split("\n").length;
+    });
+
+  it.effect("stays authenticated when `grok models` refreshes an expired access token", () =>
+    Effect.gen(function* () {
+      const { snapshot, modelsCalls } = yield* Effect.scoped(
+        Effect.gen(function* () {
+          // An expired access token prints the logged-out line while the CLI
+          // refreshes it, so only the next run reports the login.
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
+            retryModelsOutput: LOGGED_IN_MODELS_OUTPUT,
+            acp: true,
+          });
+          const snapshot = yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "" },
+          );
+          return { snapshot, modelsCalls: yield* countModelsCalls(grokPath) };
+        }),
+      );
+
+      expect(modelsCalls).toBe(2);
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth).toEqual({
+        status: "authenticated",
+        type: "cached_token",
+        label: "Grok account",
+      });
+    }),
+  );
+
+  it.effect("checks `grok models` once when the first run reports a login", () =>
+    Effect.gen(function* () {
+      const modelsCalls = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: LOGGED_IN_MODELS_OUTPUT,
+            acp: true,
+          });
+          yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "" },
+          );
+          return yield* countModelsCalls(grokPath);
+        }),
+      );
+
+      expect(modelsCalls).toBe(1);
     }),
   );
 
