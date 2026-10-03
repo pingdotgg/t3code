@@ -3305,6 +3305,14 @@ export function makeClaudeAdapterV2(
             },
           );
         });
+        /** Drops a process's calls that never linked to a task; they no longer can. */
+        const forgetClaudeBackgroundCalls = (nativeThreadId: string) =>
+          Ref.update(claudeBackgroundCalls, (current) => {
+            const calls = new Map(
+              [...current.calls].filter(([, call]) => call.nativeThreadId !== nativeThreadId),
+            );
+            return calls.size === current.calls.size ? current : { ...current, calls };
+          });
         /** Drops tasks that ended: gone from the thread's roster, or notified. */
         const endClaudeBackgroundTasks = (
           ended: (taskId: string, task: { readonly nativeThreadId: string }) => boolean,
@@ -3705,12 +3713,7 @@ export function makeClaudeAdapterV2(
             yield* endClaudeBackgroundTasks(
               (_taskId, task) => task.nativeThreadId === nativeThreadId,
             );
-            yield* Ref.update(claudeBackgroundCalls, (current) => {
-              const calls = new Map(
-                [...current.calls].filter(([, call]) => call.nativeThreadId !== nativeThreadId),
-              );
-              return calls.size === current.calls.size ? current : { ...current, calls };
-            });
+            yield* forgetClaudeBackgroundCalls(nativeThreadId);
           });
 
         // Drop idle wake traffic for a dead native process so it cannot pin
@@ -7289,6 +7292,8 @@ export function makeClaudeAdapterV2(
                   current?.query === querySession ? [true, null] : [false, current],
                 );
                 if (ownsLiveQuery) {
+                  // Also when idle: a wake turn's call can outlive its process.
+                  yield* forgetClaudeBackgroundCalls(context.nativeThreadId);
                   yield* finalizeActiveTurnAfterQueryExit(
                     exit._tag === "Failure" ? exit.cause : undefined,
                   );

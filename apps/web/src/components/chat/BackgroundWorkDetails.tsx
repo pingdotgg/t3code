@@ -40,9 +40,7 @@ export function BackgroundWorkDetails({
               {formatPendingBackgroundWorkStatus(item, nowMs)}
             </span>
             {item.command === undefined ? null : (
-              <code className="line-clamp-6 font-mono text-2xs whitespace-pre-wrap">
-                {item.command}
-              </code>
+              <code className="font-mono text-2xs whitespace-pre-wrap">{item.command}</code>
             )}
           </li>
         );
