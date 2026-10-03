@@ -91,4 +91,122 @@ describe("t3code/no-global-process-runtime", () => {
       export const isWindows = os.platform() === "win32";
     `,
   );
+
+  rule.valid(
+    "allows a shadowed node os namespace parameter",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = (NodeOS: { platform: () => string }) => NodeOS.platform();
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node os namespace local const",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = () => {
+        const NodeOS = { platform: () => "win32" };
+        return NodeOS.platform();
+      };
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node os namespace catch param",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = () => {
+        try {
+          return "ok";
+        } catch (NodeOS) {
+          return (NodeOS as { platform: () => string }).platform();
+        }
+      };
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node os namespace destructured parameter",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = ({ NodeOS }: { NodeOS: { platform: () => string } }) => NodeOS.platform();
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node process namespace parameter",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = (NodeProcess: { platform: string }) => NodeProcess.platform;
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node process namespace destructured parameter",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = ({ NodeProcess }: { NodeProcess: { arch: string } }) => NodeProcess.arch;
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node process namespace local const",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = () => {
+        const NodeProcess = { arch: "arm64" };
+        return NodeProcess.arch;
+      };
+    `,
+  );
+
+  rule.valid(
+    "allows unrelated node process imports",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const nodeEnv = NodeProcess.env.NODE_ENV;
+      export const args = NodeProcess.argv.slice(2);
+    `,
+  );
+
+  rule.invalid(
+    "reports node process namespace platform reads",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const isWindows = NodeProcess.platform === "win32";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessPlatform/);
+    },
+  );
+
+  rule.invalid(
+    "reports node process namespace architecture reads",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const isArm = NodeProcess.arch === "arm64";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessArchitecture/);
+    },
+  );
+
+  rule.invalid(
+    "reports default node process platform reads",
+    `
+      import nodeProcess from "node:process";
+
+      export const isWindows = nodeProcess.platform === "win32";
+    `,
+  );
 });
