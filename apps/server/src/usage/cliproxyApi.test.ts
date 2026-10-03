@@ -47,7 +47,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      (typeof accounts)[number] & {
+        disabled?: boolean;
+        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -139,6 +144,34 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("uses current and legacy token plans for missing Free and Go quota metadata", () =>
+    Effect.gen(function* () {
+      for (const field of ["plan_type", "chatgpt_plan_type"] as const) {
+        const test = fixture({
+          accounts: accounts.map((account, index) => ({
+            ...account,
+            id_token: { ...account.id_token, [field]: index === 0 ? "free" : "go" },
+          })),
+          upstream: () => ({
+            status: 200,
+            body: { rate_limit: { primary_window: { used_percent: 12 } } },
+          }),
+        });
+        const api = yield* test.api;
+        const result = yield* api.readAccounts(config);
+        expect(result.map((account) => account.plan)).toEqual([
+          "ChatGPT Free Subscription",
+          "ChatGPT Go Subscription",
+        ]);
+        for (const account of result) {
+          expect(account.usageLimits.windows).toMatchObject([
+            { kind: "monthly", windowDurationMins: 43_200, usedPercent: 12 },
+          ]);
+        }
+      }
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
