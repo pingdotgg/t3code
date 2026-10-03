@@ -7,7 +7,7 @@ function measure(input: { width: number; height: number; resting?: boolean; hidd
   const body = { clientWidth: 532, querySelector: () => editor };
   vi.stubGlobal("getComputedStyle", (element: unknown) =>
     element === body
-      ? { paddingLeft: "16px", paddingRight: "16px" }
+      ? { paddingInlineStart: "16px", paddingInlineEnd: "16px" }
       : { lineHeight: input.resting ? "32px" : "22.75px" },
   );
   vi.stubGlobal("document", {
