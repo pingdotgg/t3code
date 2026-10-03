@@ -36,6 +36,54 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   }),
 );
 
+it.effect(
+  "uses an explicit Android SDK root for SSH helpers and preserves ANDROID_HOME precedence",
+  () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      yield* Effect.promise(async () => {
+        const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-sdk-"));
+        try {
+          const explicit = NodePath.join(home, "custom sdk");
+          const preferred = NodePath.join(home, "preferred sdk");
+          for (const [sdk, label] of [
+            [explicit, "explicit"],
+            [preferred, "preferred"],
+          ]) {
+            await NodeFSP.mkdir(NodePath.join(sdk!, "platform-tools"), { recursive: true });
+            await NodeFSP.writeFile(
+              NodePath.join(sdk!, "platform-tools/adb"),
+              `#!/bin/sh\necho ${label}\n`,
+              { mode: 0o755 },
+            );
+          }
+          // A conventional SDK must not override an explicitly configured one.
+          await NodeFSP.mkdir(NodePath.join(home, "Android/Sdk"), { recursive: true });
+          for (const [androidHome, expected] of [
+            ["", "explicit"],
+            [preferred, "preferred"],
+          ]) {
+            const result = await exec(
+              "/bin/sh",
+              ["-c", `${remoteDeviceEnvironment}\nadb version`],
+              {
+                env: {
+                  HOME: home,
+                  PATH: "/nonexistent",
+                  ANDROID_HOME: androidHome,
+                  ANDROID_SDK_ROOT: explicit,
+                },
+              },
+            );
+            expect(result.stdout.trim()).toBe(expected);
+          }
+        } finally {
+          await NodeFSP.rm(home, { recursive: true, force: true });
+        }
+      });
+    }),
+);
+
 it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {
     if ((yield* HostProcessPlatform) === "win32") return;
