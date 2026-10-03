@@ -9,8 +9,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as GitMetadataFastPath from "../vcs/GitMetadataFastPath.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
@@ -97,19 +99,26 @@ function buildRepositoryIdentity(input: {
   };
 }
 
-const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
-  function* (cwd: string) {
-    const processRunner = yield* ProcessRunner.ProcessRunner;
+/** Reads the answer from the repository files when possible, otherwise spawns git. */
+const runGitMetadataCommand = Effect.fn("RepositoryIdentityResolver.runGitMetadataCommand")(
+  function* (cwd: string, args: ReadonlyArray<string>) {
+    const answer = yield* Effect.promise(() =>
+      GitMetadataFastPath.tryAnswerGitCommand({ cwd, args }),
+    );
+    if (answer !== null) return Option.some({ code: answer.exitCode, stdout: answer.stdout });
 
+    const processRunner = yield* ProcessRunner.ProcessRunner;
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
-    const topLevelResult = yield* processRunner
-      .run({
-        command: "git",
-        args: ["-C", cwd, "rev-parse", "--show-toplevel"],
-        timeoutBehavior: "timedOutResult",
-      })
+    return yield* processRunner
+      .run({ command: "git", args: ["-C", cwd, ...args], timeoutBehavior: "timedOutResult" })
       .pipe(Effect.option);
+  },
+);
+
+const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
+  function* (cwd: string) {
+    const topLevelResult = yield* runGitMetadataCommand(cwd, ["rev-parse", "--show-toplevel"]);
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
       return null;
     }
@@ -124,14 +133,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
 )(function* (
   cacheKey: string,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-  const remoteResult = yield* processRunner
-    .run({
-      command: "git",
-      args: ["-C", cacheKey, "remote", "-v"],
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(Effect.option);
+  const remoteResult = yield* runGitMetadataCommand(cacheKey, ["remote", "-v"]);
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
     return null;
   }

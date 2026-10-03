@@ -100,7 +100,20 @@ const withMetricsImpl = <A, E, R>(
     const exit = yield* Effect.exit(effect);
     const endedAt = yield* Clock.currentTimeNanos;
     const elapsedNanos = endedAt > startedAt ? endedAt - startedAt : 0n;
-    const duration = Duration.nanos(elapsedNanos);
+    yield* recordMetrics(options, exit, Duration.nanos(elapsedNanos));
+    if (Exit.isSuccess(exit)) {
+      return exit.value;
+    }
+    return yield* Effect.failCause(exit.cause);
+  });
+
+/** Records what `withMetrics` would for an outcome whose duration was measured elsewhere. */
+export const recordMetrics = (
+  options: WithMetricsOptions,
+  exit: Exit.Exit<unknown, unknown>,
+  duration: Duration.Duration,
+) =>
+  Effect.gen(function* () {
     const baseAttributes =
       typeof options.attributes === "function" ? options.attributes() : (options.attributes ?? {});
 
@@ -125,11 +138,6 @@ const withMetricsImpl = <A, E, R>(
         1,
       );
     }
-
-    if (Exit.isSuccess(exit)) {
-      return exit.value;
-    }
-    return yield* Effect.failCause(exit.cause);
   });
 
 export const withMetrics: {
