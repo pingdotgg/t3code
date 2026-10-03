@@ -114,7 +114,7 @@ const INTERPRETERS: Record<string, Interpreter> = {
   ruby: {
     language: "ruby",
     inline: flagIn("-e"),
-    valueOptions: new Set(["-r"]),
+    valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },
   perl: { language: "perl", inline: flagIn("-e", "-E"), stdin: "without-script-file" },
