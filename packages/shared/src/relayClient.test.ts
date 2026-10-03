@@ -199,6 +199,44 @@ describe("RelayClient", () => {
     ),
   );
 
+  it.effect("downloads the pinned x64 Windows asset on Windows ARM64", () => {
+    const requestedUrls: Array<string> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const manager = yield* makeCloudflaredRelayClient({ baseDir });
+
+      expect(yield* manager.resolve).toEqual({ status: "missing", version: CLOUDFLARED_VERSION });
+      const error = yield* manager.install.pipe(Effect.flip);
+      expect(requestedUrls).toEqual([
+        `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe`,
+      ]);
+      expect(error.reason).toBe("invalid_checksum");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                requestedUrls.push(request.url);
+                return HttpClientResponse.fromWeb(request, new Response(new Uint8Array()));
+              }),
+            ),
+          ),
+          makeSpawnerLayer([]),
+          Layer.succeed(HostProcessPlatform, "win32"),
+          Layer.succeed(HostProcessArchitecture, "arm64"),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: "" } })),
+        ),
+      ),
+    );
+  });
+
   it.effect.skipIf(windowsHost)("serializes concurrent installs within one runtime", () => {
     const commands: Array<string> = [];
     const bytes = new TextEncoder().encode("test-cloudflared-binary");
