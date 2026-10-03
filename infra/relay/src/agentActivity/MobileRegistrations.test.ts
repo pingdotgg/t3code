@@ -18,11 +18,11 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
-import { FcmDeliveries } from "./FcmDeliveries.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 const publisherLayer = AgentActivityPublisher.layer.pipe(
   Layer.provide(
-    Layer.succeed(FcmDeliveries, {
+    Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
       process: () => Effect.void,
     }),
@@ -106,7 +106,6 @@ function makeEnvironmentLinks(
 ): EnvironmentLinks.EnvironmentLinks["Service"] {
   return {
     upsert: () => Effect.void,
-    listUsersForEnvironment: () => Effect.succeed(["dev:julius"]),
     listDeliveryUsersForEnvironment: () =>
       Effect.succeed([
         {
@@ -115,7 +114,6 @@ function makeEnvironmentLinks(
           liveActivitiesEnabled: true,
         },
       ]),
-    listPublicKeysForEnvironment: () => Effect.succeed([]),
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
     revokeForUser: () => Effect.succeed(false),

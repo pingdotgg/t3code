@@ -2,6 +2,10 @@ import type { OrchestrationMessageContext, ServerProviderSkill } from "@t3tools/
 import type { Ref } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 
+import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
+
+export type { ComposerEnterBehavior };
+
 export type ComposerEditorSelection = {
   readonly start: number;
   readonly end: number;
@@ -61,6 +65,19 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
-  /** Invoked by the native editor when Command-Return is pressed on a hardware keyboard. */
-  readonly onSubmit?: () => void;
+  /**
+   * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
+   * hardware Return handling.
+   */
+  readonly enterBehavior?: ComposerEnterBehavior;
+  /** Shortcut-HUD title for the primary send chord. iOS only. */
+  readonly submitTitle?: string;
+  /** Shortcut-HUD title for the Command-modified send chord. iOS only. */
+  readonly alternateSubmitTitle?: string;
+  /**
+   * Hardware keyboard submission. `alternate` is true for the Command-modified
+   * chord, which sends using the opposite of the configured follow-up
+   * behavior. Always false on Android, which has no hardware Return handling.
+   */
+  readonly onSubmit?: (alternate: boolean) => void;
 }

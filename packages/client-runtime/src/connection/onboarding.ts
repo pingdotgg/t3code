@@ -31,6 +31,7 @@ import {
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 
 export interface PairingConnectionInput {
   readonly pairingUrl?: string;
@@ -91,6 +92,11 @@ export const preparePairingRegistration = Effect.fn(
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+  // An outdated server is still saved so it can be updated from this client.
+  if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
+    return yield* compatibilityError;
+  }
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,

@@ -1,8 +1,9 @@
 import { SymbolView } from "./AppSymbol";
+import { AppText } from "./AppText";
 import { Image } from "expo-image";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
   getProjectFaviconResourceKey,
@@ -11,6 +12,12 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
 import { projectFaviconUrlAtom } from "../state/assets";
+import {
+  countGlyphs,
+  projectIconColorClassNames,
+  resolveProjectIconGlyph,
+  type ProjectIconGlyph,
+} from "../lib/projectIcon";
 
 import {
   beginProjectFaviconRequest,
@@ -18,22 +25,24 @@ import {
   hasLoadedProjectFavicon,
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
-} from "./projectFaviconCache";
+} from "../lib/projectFaviconRequests";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
 /* ─── Component ──────────────────────────────────────────────────────── */
-export function ProjectFavicon(props: {
+export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
   readonly open?: boolean;
   readonly size?: number;
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
+  readonly projectIcon?: ProjectIconOverride | null;
 }) {
   const size = props.size ?? 42;
+  const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
-    props.workspaceRoot == null
+    props.workspaceRoot == null || glyph !== null
       ? EMPTY_FAVICON_URL
       : projectFaviconUrlAtom({
           environmentId: props.environmentId,
@@ -41,15 +50,33 @@ export function ProjectFavicon(props: {
           faviconPath: props.faviconPath,
         }),
   );
-  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
+  const renderableFaviconUrl = useMemo(
+    () => (isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl),
+    [faviconUrl],
+  );
   // Inline images are self-contained; remote URLs key on their revision so signed-token
   // rotation reuses the disk cache while a changed icon starts from the loading state.
-  const cacheKey =
-    renderableFaviconUrl && props.workspaceRoot
-      ? renderableFaviconUrl.startsWith("data:")
-        ? getProjectFaviconResourceKey(props.environmentId, props.workspaceRoot, props.faviconPath)
-        : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
-      : null;
+  const cacheKey = useMemo(
+    () =>
+      renderableFaviconUrl && props.workspaceRoot
+        ? renderableFaviconUrl.startsWith("data:")
+          ? getProjectFaviconResourceKey(
+              props.environmentId,
+              props.workspaceRoot,
+              props.faviconPath,
+            )
+          : getProjectFaviconCacheKey(
+              props.environmentId,
+              props.workspaceRoot,
+              renderableFaviconUrl,
+            )
+        : null,
+    [renderableFaviconUrl, props.environmentId, props.workspaceRoot, props.faviconPath],
+  );
+
+  if (glyph !== null) {
+    return <ProjectIconGlyphView glyph={glyph} size={size} />;
+  }
 
   return (
     <ProjectFaviconImage
@@ -60,6 +87,56 @@ export function ProjectFavicon(props: {
       projectTitle={props.projectTitle}
       size={size}
     />
+  );
+});
+
+function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonly size: number }) {
+  const { glyph, size } = props;
+  if (glyph.kind === "emoji") {
+    return (
+      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+        <AppText
+          allowFontScaling={false}
+          style={{
+            fontSize: size * 0.8,
+            lineHeight: size,
+            textAlign: "center",
+            includeFontPadding: false,
+          }}
+        >
+          {glyph.emoji}
+        </AppText>
+      </View>
+    );
+  }
+
+  const colors = projectIconColorClassNames(glyph.color);
+  return (
+    <View
+      className={colors.background}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size * 0.25,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <AppText
+        allowFontScaling={false}
+        numberOfLines={1}
+        className={`font-mono ${colors.text}`}
+        style={{
+          fontWeight: "700",
+          fontSize: size * (countGlyphs(glyph.text) === 1 ? 0.6 : 0.515625),
+          lineHeight: size,
+          textAlign: "center",
+          includeFontPadding: false,
+        }}
+      >
+        {glyph.text}
+      </AppText>
+    </View>
   );
 }
 
@@ -105,7 +182,7 @@ function ProjectFaviconImage(props: {
       {!showImage ? (
         <SymbolView
           name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
-          size={props.size * 0.78}
+          size={props.size}
           tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
         />

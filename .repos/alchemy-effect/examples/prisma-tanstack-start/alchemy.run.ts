@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
 const tanstackMessageConfig = (fallback: string) =>
-  Config.string("TANSTACK_MESSAGE").pipe(Effect.orElseSucceed(() => fallback));
+  Config.String("TANSTACK_MESSAGE").pipe(Effect.orElseSucceed(() => fallback));
 
 export default Alchemy.Stack(
   "PrismaTanstackStart",
@@ -19,13 +19,13 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
-    const appName = yield* Config.string("PRISMA_TANSTACK_APP").pipe(
+    const appName = yield* Config.String("PRISMA_TANSTACK_APP").pipe(
       Effect.orElseSucceed(() => `alchemy-prisma-tanstack-start-${stage}`),
     );
-    const customDomainHostname = yield* Config.string(
+    const customDomainHostname = yield* Config.String(
       "PRISMA_TANSTACK_DOMAIN",
     ).pipe(Effect.orElseSucceed(() => undefined));
-    const devPort = yield* Config.number("PRISMA_TANSTACK_DEV_PORT").pipe(
+    const devPort = yield* Config.Number("PRISMA_TANSTACK_DEV_PORT").pipe(
       Effect.orElseSucceed(() => 3000),
     );
 
@@ -34,7 +34,7 @@ export default Alchemy.Stack(
     // `createDatabase: false` keeps the example explicit so the database below
     // is visible as its own Alchemy resource.
     const project = yield* Prisma.Project("Project", {
-      name: yield* Config.string("PRISMA_PROJECT").pipe(
+      name: yield* Config.String("PRISMA_PROJECT").pipe(
         Effect.orElseSucceed(() => undefined),
       ),
       createDatabase: false,

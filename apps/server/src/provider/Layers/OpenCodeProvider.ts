@@ -3,11 +3,13 @@ import {
   type OpenCodeSettings,
   type ServerProviderModel,
   type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -15,16 +17,11 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   nonEmptyTrimmed,
-  parseGenericCliVersion,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  MINIMUM_OPENCODE_VERSION,
-  OpenCodeRuntime,
-  openCodeRuntimeErrorDetail,
-  type OpenCodeInventory,
-} from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import type { ProbedOpenCode } from "../opencodeVersionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 
@@ -32,7 +29,6 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;
@@ -254,7 +250,9 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
-function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
+function flattenOpenCodeModels(
+  input: OpenCodeRuntime.OpenCodeInventory,
+): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
   const models: Array<ServerProviderModel> = [];
 
@@ -293,7 +291,7 @@ function trimOptional(value: string | null | undefined): string | undefined {
 }
 
 export function openCodeSkillsToServerProviderSkills(
-  input: OpenCodeInventory["skills"] | undefined,
+  input: OpenCodeRuntime.OpenCodeInventory["skills"] | undefined,
 ): ReadonlyArray<ServerProviderSkill> {
   const skills: ServerProviderSkill[] = [];
   for (const skill of input ?? []) {
@@ -313,6 +311,26 @@ export function openCodeSkillsToServerProviderSkills(
   }
 
   return skills.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+export function openCodeCommandsToServerProviderSlashCommands(
+  input: OpenCodeRuntime.OpenCodeInventory["commands"],
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commands: ServerProviderSlashCommand[] = [COMPACT_SLASH_COMMAND];
+  const names = new Set([COMPACT_SLASH_COMMAND.name]);
+  for (const command of input ?? []) {
+    const name = trimOptional(command.name);
+    if (!name || names.has(name) || command.source === "skill") continue;
+    names.add(name);
+    const description = trimOptional(command.description);
+    const hint = trimOptional(command.hints.join(" "));
+    commands.push({
+      name,
+      ...(description ? { description } : {}),
+      ...(hint ? { input: { hint } } : {}),
+    });
+  }
+  return commands;
 }
 
 export const makePendingOpenCodeProvider = (
@@ -360,18 +378,216 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
+/** One model an OpenCode 2 server lists, as the status check reads it. */
+export interface OpenCode2Model {
+  readonly providerID: string;
+  readonly id: string;
+  readonly name: string;
+  readonly variants: ReadonlyArray<{ readonly id: string }>;
+}
+
+/**
+ * A server loads its catalog lazily and lists nothing for its first few
+ * hundred milliseconds, and a local instance starts a fresh server for each
+ * status check. So an empty list is read again for a while, and the last
+ * non-empty list stands in if the catalog still has not loaded.
+ */
+export const makeOpenCode2ModelLoader = <E>(
+  list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+) =>
+  Effect.sync(() => {
+    let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
+    return list.pipe(
+      Effect.repeat({
+        until: (models) => models.length > 0,
+        schedule: Schedule.spaced("250 millis"),
+      }),
+      Effect.timeoutOption("5 seconds"),
+      Effect.map((loaded) => {
+        if (loaded._tag === "Some" && loaded.value.length > 0) lastLoaded = loaded.value;
+        return lastLoaded;
+      }),
+    );
+  });
+
+/** A workspace's skills and commands, as an OpenCode 2 server lists them for its directory. */
+export interface OpenCode2Workspace {
+  readonly skills: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+    readonly description?: string | undefined;
+  }>;
+  readonly commands: ReadonlyArray<{
+    readonly name: string;
+    readonly description?: string | undefined;
+  }>;
+}
+
+/**
+ * A server scans a directory it has not served yet in the background: its
+ * first read lists no commands at all (not even the built-ins), and
+ * `command.updated` plus `skill.updated` for the directory end the scan. A
+ * directory it already serves lists everything at once. `scanned` must be
+ * listening before `read` runs, since the read is what starts the scan.
+ */
+export const loadOpenCode2Workspace = <E>(
+  read: Effect.Effect<OpenCode2Workspace, E>,
+  scanned: Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const first = yield* read;
+    if (first.commands.length > 0) return first;
+    yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
+    return yield* read;
+  });
+
+export function openCode2SkillsToServerProviderSkills(
+  skills: OpenCode2Workspace["skills"],
+): ReadonlyArray<ServerProviderSkill> {
+  return skills
+    .map((skill) => {
+      const description = trimOptional(skill.description);
+      return {
+        name: skill.id,
+        path: skill.path,
+        enabled: true,
+        ...(skill.name === skill.id ? {} : { displayName: skill.name }),
+        ...(description ? { description, shortDescription: description } : {}),
+      };
+    })
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+export function openCode2CommandsToServerProviderSlashCommands(
+  commands: OpenCode2Workspace["commands"],
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const slashCommands: ServerProviderSlashCommand[] = [COMPACT_SLASH_COMMAND];
+  const names = new Set([COMPACT_SLASH_COMMAND.name]);
+  for (const command of commands) {
+    const name = trimOptional(command.name);
+    if (!name || names.has(name)) continue;
+    names.add(name);
+    const description = trimOptional(command.description);
+    slashCommands.push({ name, ...(description ? { description } : {}) });
+  }
+  return slashCommands;
+}
+
+/**
+ * Every mode maps onto OpenCode 2 session rules. Auto asks like Supervised:
+ * OpenCode has no reviewer that approves routine actions. Plan mode is its
+ * `plan` agent, so the composer's mode toggle drives it.
+ */
+const OPENCODE_2_PRESENTATION = {
+  ...OPENCODE_PRESENTATION,
+  showInteractionModeToggle: true,
+  supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto", "full-access"],
+} as const;
+
+function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
+  const variants = model.variants.map((variant) => variant.id);
+  const defaultVariant = inferDefaultVariant(model.providerID, variants);
+  return createModelCapabilities({
+    optionDescriptors:
+      variants.length === 0
+        ? []
+        : [
+            {
+              id: "variant",
+              label: "Reasoning",
+              type: "select",
+              options: variants.map((id) => ({
+                id,
+                label: titleCaseSlug(id),
+                ...(id === defaultVariant ? { isDefault: true } : {}),
+              })),
+              ...(defaultVariant === undefined ? {} : { currentValue: defaultVariant }),
+            },
+          ],
+  });
+}
+
+const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
+  settings: OpenCodeSettings,
+  version: string,
+  checkedAt: string,
+  loadModels: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+) {
+  const result = yield* Effect.exit(loadModels);
+  const probe = (status: "ready" | "warning" | "error", message: string) => ({
+    installed: true,
+    version,
+    status,
+    auth: { status: status === "ready" ? ("authenticated" as const) : ("unknown" as const) },
+    message,
+  });
+  if (result._tag === "Failure") {
+    // The detail can carry a response body; it stays in the log, not the status.
+    yield* Effect.logWarning("OpenCode 2 model list failed", result.cause);
+    return buildServerProvider({
+      presentation: OPENCODE_2_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models: providerModelsFromSettings(
+        [],
+        settings.customModels,
+        DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+      ),
+      // Compaction does not depend on the model catalog.
+      slashCommands: [COMPACT_SLASH_COMMAND],
+      probe: probe("error", "OpenCode could not load its model list."),
+    });
+  }
+  const models = providerModelsFromSettings(
+    result.value
+      .map((model) => ({
+        slug: `${model.providerID}/${model.id}`,
+        name: model.name,
+        isCustom: false,
+        capabilities: openCode2ModelCapabilities(model),
+      }))
+      .toSorted((left, right) => left.name.localeCompare(right.name)),
+    settings.customModels,
+    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+  );
+  return buildServerProvider({
+    presentation: OPENCODE_2_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    // Every session can compact; a workspace snapshot adds that directory's commands.
+    slashCommands: [COMPACT_SLASH_COMMAND],
+    probe:
+      result.value.length > 0
+        ? probe(
+            "ready",
+            `OpenCode ${version} lists ${result.value.length} model${result.value.length === 1 ? "" : "s"}.`,
+          )
+        : probe("warning", "OpenCode 2 is running, but it did not list any models yet."),
+  });
+});
+
+/**
+ * `probeRuntime` is the driver's memoized version probe: `opencode --version` for a local binary,
+ * the version endpoints for a configured server. The status check refreshes it, so an in-place
+ * upgrade re-routes the instance.
+ */
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
   cwd: string,
-  environment?: NodeJS.ProcessEnv,
+  probeRuntime: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
+  loadOpenCode2Models: Effect.Effect<
+    ReadonlyArray<OpenCode2Model>,
+    OpenCodeRuntime.OpenCodeRuntimeError
+  >,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
+  OpenCodeRuntime.OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
 > {
-  const openCodeRuntime = yield* OpenCodeRuntime;
+  const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
-  const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
@@ -420,58 +636,37 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     });
   }
 
-  let version: string | null = null;
-  if (!isExternalServer) {
-    const versionExit = yield* Effect.exit(
-      openCodeRuntime
-        .runOpenCodeCommand({
-          binaryPath: openCodeSettings.binaryPath,
-          args: ["--version"],
-          environment: resolvedEnvironment,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-          ),
-          Effect.timeoutOrElse({
-            duration: OPENCODE_VERSION_PROBE_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new OpenCodeProbeError({
-                  detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
-                }),
-              ),
+  const probedExit = yield* Effect.exit(
+    probeRuntime.pipe(
+      Effect.mapError(
+        (cause) =>
+          new OpenCodeProbeError({
+            cause,
+            detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
           }),
-        ),
-    );
-    if (versionExit._tag === "Failure") {
-      return fallback(Cause.squash(versionExit.cause));
-    }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
-
-    if (!version) {
-      return fallback(
-        new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        ),
-        null,
-      );
-    }
-    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
-      return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
-        enabled: openCodeSettings.enabled,
-        checkedAt,
-        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-        probe: {
-          installed: true,
-          version,
-          status: "error",
-          auth: { status: "unknown" },
-          message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        },
-      });
-    }
+      ),
+    ),
+  );
+  if (probedExit._tag === "Failure") return fallback(Cause.squash(probedExit.cause));
+  const probed = probedExit.value;
+  if (probed.generation === "v2") {
+    return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
+  }
+  let version: string | null = probed.version;
+  if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
+    return buildServerProvider({
+      presentation: OPENCODE_PRESENTATION,
+      enabled: openCodeSettings.enabled,
+      checkedAt,
+      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      probe: {
+        installed: true,
+        version: probed.version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `OpenCode v${probed.version} is too old. Upgrade to v${OpenCodeRuntime.MINIMUM_OPENCODE_VERSION} or newer.`,
+      },
+    });
   }
 
   const loadInventory = (server: {
@@ -503,7 +698,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const inventoryExit = yield* Effect.exit(
     inventoryEffect.pipe(
       Effect.mapError(
-        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        (cause) =>
+          new OpenCodeProbeError({
+            cause,
+            detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
+          }),
       ),
     ),
   );
@@ -526,7 +725,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     checkedAt,
     models,
     skills,
-    slashCommands: [COMPACT_SLASH_COMMAND],
+    slashCommands: openCodeCommandsToServerProviderSlashCommands(
+      inventoryExit.value.inventory.commands,
+    ),
     probe: {
       installed: true,
       version,

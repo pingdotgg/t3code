@@ -1,8 +1,9 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -116,7 +117,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
             showHeader={false}
           />
         ) : (
-          <View collapsable={false} className="rounded-[24px] bg-card p-5">
+          <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
               Sign in to your T3 account to set up T3 Connect.
             </Text>

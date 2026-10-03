@@ -3,11 +3,16 @@ import type {
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
+import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+
+const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { pullRequestComposerContext } from "../../lib/composerContext";
+import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -29,8 +34,10 @@ import {
 import {
   dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
+  resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -162,6 +169,8 @@ export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
+  threadShells = EMPTY_THREAD_SHELLS,
+  currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
@@ -177,6 +186,10 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
+  /** Candidates for `@` thread suggestions; the caller reads them from the entity store. */
+  readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  /** Left out of `@` thread suggestions: a thread is never context for itself. */
+  readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
@@ -329,6 +342,7 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "slash-command") {
       const q = trigger.query.toLowerCase();
+      const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
@@ -336,10 +350,18 @@ export function useComposerCommandMenu({
         hasCompactableConversation,
         offersUsageLimits,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
-        selectedProviderStatus,
+        selectedProviderStatus: selectedProviderStatus
+          ? {
+              ...selectedProviderStatus,
+              slashCommands: getProviderSlashCommandsForSlashMenu(
+                resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
+                visibleSkills,
+              ),
+            }
+          : null,
       });
 
-      const skillItems = getProviderSkillsForSlashMenu(skills, true)
+      const skillItems = visibleSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -355,7 +377,7 @@ export function useComposerCommandMenu({
     if (trigger.kind === "skill") {
       const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
-        trimLeadingPattern: /^\$+/,
+        trimLeadingPattern: /^\p{Sc}+/u,
       });
 
       if (!normalizedQuery) {
@@ -436,26 +458,41 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "path") {
-      return pathSearch.entries.map((entry) => {
-        const parts = entry.path.split("/");
-        return {
-          id: `path:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          kind: entry.kind,
-          label: parts[parts.length - 1] ?? entry.path,
-          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-        };
-      });
+      const threadItems = environmentId
+        ? matchComposerThreadItems({
+            shells: threadShells,
+            environmentId,
+            excludeThreadId: currentThreadId,
+            query: trigger.query,
+          })
+        : [];
+      return [
+        ...threadItems,
+        ...pathSearch.entries.map((entry) => {
+          const parts = entry.path.split("/");
+          return {
+            id: `path:${entry.path}`,
+            type: "path" as const,
+            path: entry.path,
+            kind: entry.kind,
+            label: parts[parts.length - 1] ?? entry.path,
+            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+          };
+        }),
+      ];
     }
 
     return [];
   }, [
+    currentThreadId,
+    environmentId,
+    threadShells,
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
     pullRequestSearch.entries,
+    projectCwd,
     selectedProviderStatus,
     skills,
     trigger,
@@ -465,6 +502,41 @@ export function useComposerCommandMenu({
   const onSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!trigger) return;
+      if (item.type === "thread") {
+        if (!ownerKey || trigger.kind !== "path") return;
+        const shell = threadShells.find(
+          (candidate) =>
+            candidate.environmentId === item.thread.environmentId &&
+            candidate.id === item.thread.threadId,
+        );
+        if (!shell) return;
+        const record = threadComposerContext(item.thread, shell.title);
+        const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+        const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+        if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+          Alert.alert(
+            "Too many context items",
+            "Remove some context from the draft and try again.",
+          );
+          return;
+        }
+        const result = replaceTextRange(
+          draftMessage,
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${formatComposerContextReference(record)} `,
+        );
+        onChangeDraftMessage(result.text);
+        if (!alreadyAttached) {
+          const draft = getComposerDraftSnapshot(ownerKey);
+          setComposerDraftContext(ownerKey, {
+            version: 1,
+            records: [...(draft.context?.records ?? []), record],
+          });
+        }
+        setSelection({ start: result.cursor, end: result.cursor });
+        return;
+      }
       if (item.type === "pull-request") {
         if (
           !ownerKey ||
@@ -533,6 +605,7 @@ export function useComposerCommandMenu({
       onUpdateInteractionMode,
       onUsageLimits,
       selectedProviderStatus?.showInteractionModeToggle,
+      threadShells,
       trigger,
     ],
   );

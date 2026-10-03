@@ -15,6 +15,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
+  makeTargetedProviderUpdateAction,
   enrichProviderSnapshotWithVersionAdvisory,
   homebrewOwnershipFromCommandPath,
   makeCachedProviderMaintenanceResolution,
@@ -38,7 +39,7 @@ const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
-    Effect.map((id) => NodePath.join(NodeOS.tmpdir(), `${name}-${id}`)),
+    Effect.map((id) => NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), `${name}-${id}`)),
   );
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
@@ -785,4 +786,46 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(resolutions).toBe(2);
     }),
   );
+});
+
+it("pins only owned package-manager installs and preserves their execution context", () => {
+  const capabilities = makeProviderMaintenanceCapabilities({
+    provider: driver("codex"),
+    packageName: "@openai/codex",
+    updateExecutable: "npm",
+    updateLockKey: "npm-global:/opt/node",
+    updateArgs: [
+      "install",
+      "-g",
+      "--prefix",
+      "/opt/node",
+      "--allow-scripts=@openai/codex",
+      "@openai/codex@latest",
+    ],
+    env: { PATH: "/opt/node/bin" },
+  });
+  const pinned = makeTargetedProviderUpdateAction(capabilities, "2.0.0");
+  expect(pinned).toMatchObject({
+    executable: "npm",
+    lockKey: capabilities.update?.lockKey,
+    env: capabilities.update?.env,
+    args: [
+      "install",
+      "-g",
+      "--prefix",
+      "/opt/node",
+      "--allow-scripts=@openai/codex",
+      "@openai/codex@2.0.0",
+    ],
+  });
+  expect(pinned?.command).toContain("@openai/codex@2.0.0");
+  for (const lockKey of ["codex-native", "homebrew", "manual"]) {
+    expect(
+      makeTargetedProviderUpdateAction(
+        { ...capabilities, update: { ...capabilities.update!, lockKey } },
+        "2.0.0",
+      ),
+    ).toBeNull();
+  }
+  expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0; rm -rf /")).toBeNull();
 });

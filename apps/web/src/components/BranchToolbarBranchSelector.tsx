@@ -1,34 +1,32 @@
+import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useRightPanelStore } from "../rightPanelStore";
-import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
   useEffect,
-  useId,
-  useLayoutEffect,
+  useImperativeHandle,
   useMemo,
   useOptimistic,
-  useRef,
   useState,
   useTransition,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -36,9 +34,14 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+} from "./chat/threadDetailsPanelStyles";
+import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
-import { composerFloatingLayerProps } from "./chat/composerEventScope";
+import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
@@ -56,24 +59,22 @@ import {
   resolveThreadPullRequestBadge,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
-import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxListVirtualized,
-  ComboboxPopup,
-  ComboboxStatus,
-  ComboboxTrigger,
-} from "./ui/combobox";
+
+import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
+import { ComposerControl } from "./chat/ComposerControl";
+import { MiddleTruncate } from "./ui/middle-truncate";
+import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+export interface BranchToolbarBranchSelectorHandle {
+  open: () => void;
+}
 
 interface BranchToolbarBranchSelectorProps {
+  forceNewWorktree?: boolean;
+  ref?: Ref<BranchToolbarBranchSelectorHandle>;
   className?: string;
+  displayMode?: "toolbar" | "panel";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -92,7 +93,10 @@ function toBranchActionErrorMessage(error: unknown): string {
 }
 
 export function BranchToolbarBranchSelector({
+  forceNewWorktree = false,
+  ref,
   className,
+  displayMode = "toolbar",
   environmentId,
   threadId,
   draftId,
@@ -105,7 +109,7 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
-  const startFromOriginSwitchId = useId();
+  const composerFloatingLayerProps = useComposerMenuProps();
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
@@ -124,11 +128,11 @@ export function BranchToolbarBranchSelector({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
+  const serverThread = useThreadShell(threadRef);
+  const serverSession = serverThread?.runtime ?? null;
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThreadShell(threadRef);
-  const serverSession = serverThread?.session ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   const activeProjectRef = serverThread
@@ -143,7 +147,9 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath = forceNewWorktree
+    ? null
+    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
@@ -234,15 +240,11 @@ export function BranchToolbarBranchSelector({
   // from the response entirely, which would defeat the collision check below.
   // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
   const branchRefQuery = sanitizeNewRefName(deferredTrimmedBranchQuery);
-  const branchRefTarget = useMemo(
-    () => ({
-      environmentId,
-      cwd: branchCwd,
-      query: branchRefQuery,
-    }),
-    [branchCwd, branchRefQuery, environmentId],
-  );
-  const branchRefState = usePaginatedBranches(branchRefTarget);
+  const branchRefState = usePaginatedBranches({
+    environmentId,
+    cwd: branchCwd,
+    query: branchRefQuery,
+  });
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
@@ -525,92 +527,23 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   // Combobox / list plumbing
   // ---------------------------------------------------------------------------
-  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = useCallback((open: boolean) => {
-    previousBranchListScrollTopRef.current = null;
     setIsBranchMenuOpen(open);
     if (!open) {
       setBranchQuery("");
     }
   }, []);
 
-  const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
-  const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
-  const fetchNextBranchPage = useCallback(() => {
-    if (!hasNextPage || isFetchingNextPage) {
-      return;
-    }
-
-    branchRefState.loadNext();
-  }, [branchRefState.loadNext, hasNextPage, isFetchingNextPage]);
-  const maybeFetchNextBranchPage = useCallback(() => {
-    const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const previousScrollTop = previousBranchListScrollTopRef.current;
-    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
-    if (
-      !isBranchMenuOpen ||
-      !hasNextPage ||
-      isFetchingNextPage ||
-      !shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop,
-        scrollTop: scrollElement.scrollTop,
-        scrollHeight: scrollElement.scrollHeight,
-        clientHeight: scrollElement.clientHeight,
-      })
-    ) {
-      return;
-    }
-
-    fetchNextBranchPage();
-  }, [fetchNextBranchPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
-
-  const branchListRef = useRef<LegendListRef | null>(null);
-  const updateBranchListScrollFades = useCallback(() => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isBranchMenuOpen) {
-      return;
-    }
-
-    setShowTopBranchScrollFade(false);
-    setShowBottomBranchScrollFade(filteredBranchPickerItems.length > 8);
-    let nestedFrame = 0;
-    const frame = requestAnimationFrame(() => {
-      updateBranchListScrollFades();
-      nestedFrame = requestAnimationFrame(updateBranchListScrollFades);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(nestedFrame);
-    };
-  }, [
-    deferredTrimmedBranchQuery,
-    filteredBranchPickerItems.length,
-    isBranchMenuOpen,
-    updateBranchListScrollFades,
-  ]);
-
-  useEffect(() => {
-    if (!isBranchMenuOpen) {
-      return;
-    }
-
-    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      open: () => {
+        if (isInitialBranchesLoadPending || isBranchActionPending) return;
+        handleOpenChange(true);
+      },
+    }),
+    [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending],
+  );
 
   const triggerLabel = resolveBranchTriggerLabel({
     activeWorktreePath,
@@ -651,6 +584,23 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
+  const panelPrLabel =
+    prNumber === undefined
+      ? ""
+      : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
+
+  function selectPickerItem(itemValue: string) {
+    if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
+      handleOpenChange(false);
+      onComposerFocusRequest?.();
+      onCheckoutPullRequestRequest(prReference);
+    } else if (itemValue === createBranchItemValue) {
+      createRef(trimmedBranchQuery);
+    } else {
+      const refName = branchByName.get(itemValue);
+      if (refName) selectBranch(refName);
+    }
+  }
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -660,16 +610,7 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          className="pe-2"
-          onClick={() => {
-            if (!prReference || !onCheckoutPullRequestRequest) {
-              return;
-            }
-            setIsBranchMenuOpen(false);
-            setBranchQuery("");
-            onComposerFocusRequest?.();
-            onCheckoutPullRequestRequest(prReference);
-          }}
+          onClick={() => selectPickerItem(itemValue)}
         >
           <div className="flex min-w-0 items-center gap-2 py-1">
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -690,8 +631,7 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          className="pe-1.5"
-          onClick={() => createRef(trimmedBranchQuery)}
+          onClick={() => selectPickerItem(itemValue)}
         >
           <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
         </ComboboxItem>
@@ -701,192 +641,130 @@ export function BranchToolbarBranchSelector({
     const refName = branchByName.get(itemValue);
     if (!refName) return null;
 
-    const hasSecondaryWorktree =
-      refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
-    const badge = refName.current
-      ? "current"
-      : hasSecondaryWorktree
-        ? "worktree"
-        : refName.isRemote
-          ? "remote"
-          : refName.isDefault
-            ? "default"
-            : null;
     return (
-      <ComboboxItem
-        hideIndicator
-        key={itemValue}
+      <BranchPickerRefItem
+        branch={refName}
+        projectCwd={activeProjectCwd}
         index={index}
         value={itemValue}
-        className="pe-1.5"
-        onClick={() => selectBranch(refName)}
+        onClick={() => selectPickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
-      >
-        <div className="flex w-full min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate">{itemValue}</span>
-          {badge && <span className="shrink-0 text-[10px] text-muted-foreground/45">{badge}</span>}
-        </div>
-      </ComboboxItem>
+      />
     );
   }
 
   return (
-    <Combobox
+    <BranchPicker
       items={branchPickerItems}
       filteredItems={filteredBranchPickerItems}
-      autoHighlight
-      virtualized
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
-          return;
-        }
-        void branchListRef.current?.scrollIndexIntoView?.({
-          index: eventDetails.index,
-          animated: false,
-        });
-      }}
-      onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}
+      onOpenChange={handleOpenChange}
+      onSelectItem={selectPickerItem}
       value={resolvedActiveBranch}
+      query={branchQuery}
+      resultsQuery={deferredTrimmedBranchQuery}
+      onQueryChange={setBranchQuery}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadNext={branchRefState.loadNext}
+      statusText={branchStatusText}
+      renderItem={renderPickerItem}
+      getItemType={(item) =>
+        item === checkoutPullRequestItemValue
+          ? "checkout-pull-request"
+          : item === createBranchItemValue
+            ? "create-branch"
+            : "branch"
+      }
+      originControl={
+        isSelectingWorktreeBase
+          ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
+          : undefined
+      }
+      popupProps={{
+        align: displayMode === "panel" ? "start" : "end",
+        side: displayMode === "panel" ? "bottom" : "top",
+        className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-80"),
+        ...(displayMode === "toolbar" ? composerFloatingLayerProps : {}),
+      }}
     >
       <div
-        className={cn("flex min-w-0 items-center gap-1", className)}
-        data-composer-context-control
+        className={cn(
+          "flex min-w-0",
+          displayMode === "panel" ? "w-full flex-col items-stretch" : "items-center gap-1",
+          className,
+        )}
       >
-        <ThreadPullRequestBadgeControl
-          variant="ghost"
-          badge={prBadge}
-          number={prNumber}
-          url={prUrl}
-          status={displayedPrStatus}
-          onOpenStack={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
-          onOpenPullRequest={(event) => {
-            if (prUrl) openPrLink(event, prUrl);
-          }}
-        />
-        {/* Context menu lives on the wrapper: the disabled Button has
-            pointer-events-none, so the trigger itself never sees right-clicks
-            while refs are loading or a branch action is pending. */}
+        {displayMode !== "panel" ? (
+          <ThreadPullRequestBadgeControl
+            render={<ComposerControl size="xs" />}
+            badge={prBadge}
+            pullRequests={serverThread?.pullRequests ?? []}
+            number={prNumber}
+            url={prUrl}
+            status={displayedPrStatus}
+            onOpenList={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
+            onOpenPullRequest={(event, targetUrl = prUrl) => {
+              if (targetUrl) openPrLink(event, targetUrl);
+            }}
+          />
+        ) : null}
         <span
           className="flex min-w-0"
+          onMouseDownCapture={(event) => {
+            if (event.button !== 0 || event.ctrlKey) {
+              event.stopPropagation();
+            }
+          }}
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
           <ComboboxTrigger
-            render={<Button variant="ghost" size="xs" />}
-            // No press-scale: the popup aligns live to this trigger, so a
-            // momentary 0.97 shrink would drag the open popup ~3px sideways.
-            className="min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80 active:scale-100"
+            render={
+              displayMode === "panel" ? (
+                <ThreadDetailsControl part="select" />
+              ) : (
+                <ComposerControl size="xs" />
+              )
+            }
+            className="min-w-0 max-w-full active:scale-100"
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
-            <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-            <span
-              data-composer-label
-              className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
-            >
-              <span
-                data-composer-label-motion
-                className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-              >
-                {triggerLabel}
+            <GitBranchIcon
+              className={cn(
+                "size-3 shrink-0 opacity-70",
+                displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+              )}
+            />
+            <ComposerContextLabel displayMode={displayMode}>
+              <MiddleTruncate value={triggerLabel} className="w-full" />
+            </ComposerContextLabel>
+            {displayMode === "panel" ? (
+              <span data-slot="select-icon">
+                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
               </span>
-            </span>
-            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+            ) : (
+              <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+            )}
           </ComboboxTrigger>
         </span>
+        {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
+          <ThreadDetailsPrRows
+            links={serverThread?.pullRequests ?? []}
+            currentLink={currentLinkedPr}
+            onOpenLink={openPrLink}
+            environmentId={environmentId}
+            pr={displayedPr}
+            number={prNumber}
+            reference={currentLinkedPr}
+            status={displayedPrStatus}
+            project={activeProject}
+            label={panelPrLabel}
+            openAriaLabel={prUrl ?? "Open pull request"}
+            onOpen={(event) => openPrLink(event, prUrl)}
+            onActed={() => branchStatusQuery.refresh()}
+          />
+        ) : null}
       </div>
-      <ComboboxPopup
-        align="end"
-        side="top"
-        className="flex w-80 flex-col"
-        {...composerFloatingLayerProps}
-      >
-        <div className="shrink-0 px-3 pt-2.5">
-          <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
-            <SearchIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
-            />
-            <ComboboxInput
-              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
-              inputClassName="rounded-none bg-transparent text-sm"
-              placeholder="Search refs..."
-              showTrigger={false}
-              size="sm"
-              unstyled
-              value={branchQuery}
-              onChange={(event) => setBranchQuery(event.target.value)}
-            />
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
-          <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
-            <ComboboxListVirtualized className="size-full min-w-0 p-0">
-              <LegendList<string>
-                ref={branchListRef}
-                data={filteredBranchPickerItems}
-                keyExtractor={(item) => item}
-                getItemType={(item) =>
-                  item === checkoutPullRequestItemValue
-                    ? "checkout-pull-request"
-                    : item === createBranchItemValue
-                      ? "create-branch"
-                      : "branch"
-                }
-                renderItem={({ item, index }) => renderPickerItem(item, index)}
-                estimatedItemSize={28}
-                drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
-                className={cn(
-                  "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1",
-                  getVirtualizedScrollFadeClassName({
-                    top: showTopBranchScrollFade,
-                    bottom: showBottomBranchScrollFade,
-                  }),
-                )}
-                style={{ maxHeight: "14rem" }}
-              />
-            </ComboboxListVirtualized>
-          </div>
-          {isSelectingWorktreeBase ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <label
-                    htmlFor={startFromOriginSwitchId}
-                    className="flex cursor-pointer items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-xs"
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
-                      <RefreshIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
-                      <span className="truncate">Start from origin</span>
-                    </span>
-                    <Switch
-                      id={startFromOriginSwitchId}
-                      checked={startFromOrigin}
-                      size="sm"
-                      aria-label="Start worktree from origin"
-                      onCheckedChange={(checked) => onStartFromOriginChange(Boolean(checked))}
-                    />
-                  </label>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
-        </div>
-      </ComboboxPopup>
-    </Combobox>
+    </BranchPicker>
   );
 }

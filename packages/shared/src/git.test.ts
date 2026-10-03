@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
@@ -48,6 +49,38 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(
       "bitbucket.org/workspace/repo",
+    );
+  });
+
+  it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
+      "dev.azure.com/t3tools/platform/_git/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/T3Tools/Platform/T3Code")).toBe(
+      "dev.azure.com/t3tools/platform/_git/t3code",
+    );
+    expect(
+      normalizeGitRemoteUrl("https://T3Tools@dev.azure.com/T3Tools/Platform/_git/T3Code"),
+    ).toBe("dev.azure.com/t3tools/platform/_git/t3code");
+  });
+
+  it("puts the organization back in the host on the name dev.azure.com replaced", () => {
+    expect(
+      normalizeGitRemoteUrl("T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code"),
+    ).toBe("t3tools.visualstudio.com/platform/_git/t3code");
+    expect(normalizeGitRemoteUrl("https://T3Tools.visualstudio.com/Platform/_git/T3Code")).toBe(
+      "t3tools.visualstudio.com/platform/_git/t3code",
+    );
+  });
+
+  it("leaves an Azure SSH host it cannot read as the path it was given", () => {
+    // Not `v3`, and not four segments: rewriting either would invent a repository that the web
+    // spelling has no name for, so the remote stands as it arrived.
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v4/T3Tools/Platform/T3Code")).toBe(
+      "ssh.dev.azure.com/v4/t3tools/platform/t3code",
+    );
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/T3Code")).toBe(
+      "ssh.dev.azure.com/v3/t3tools/t3code",
     );
   });
 });
@@ -240,5 +273,54 @@ describe("applyGitStatusStreamEvent", () => {
       behindCount: 1,
       pr: null,
     });
+  });
+});
+
+describe("formatGeneratedBranchName", () => {
+  it.each(["t3code", "t3code/"])("joins static prefix %s with one slash", (prefix) => {
+    expect(
+      formatGeneratedBranchName("Add Search", { mode: "static", prefix, instructions: "" }),
+    ).toBe("t3code/add-search");
+  });
+  it("supports an empty prefix and preserves user prefix casing", () => {
+    expect(
+      formatGeneratedBranchName("Add Search", { mode: "static", prefix: "", instructions: "" }),
+    ).toBe("add-search");
+    expect(
+      formatGeneratedBranchName("Add Search", {
+        mode: "static",
+        prefix: "Team/Julius/",
+        instructions: "",
+      }),
+    ).toBe("Team/Julius/add-search");
+  });
+  it.each([
+    ["release..candidate", "release-candidate/add-search"],
+    [" Team / Jules.lock/", "Team/Jules-lock/add-search"],
+    ["-team//feature@{new}", "team/feature-new/add-search"],
+    [" /?. / ", "add-search"],
+  ])("normalizes invalid static prefix %s", (prefix, expected) => {
+    expect(
+      formatGeneratedBranchName("Add Search", { mode: "static", prefix, instructions: "" }),
+    ).toBe(expected);
+  });
+  it("uses the model's semantic prefix without the stored static prefix", () => {
+    expect(
+      formatGeneratedBranchName("feat/Add Search", {
+        mode: "semantic",
+        prefix: "t3code",
+        instructions: "",
+      }),
+    ).toBe("feat/add-search");
+  });
+  it("preserves the full custom name, including case, dots and length", () => {
+    const branch = `Julius/ABC-123/release.v2-${"x".repeat(70)}`;
+    expect(
+      formatGeneratedBranchName(` ${branch} `, {
+        mode: "custom",
+        prefix: "ignored",
+        instructions: "",
+      }),
+    ).toBe(branch);
   });
 });

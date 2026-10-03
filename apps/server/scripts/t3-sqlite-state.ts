@@ -182,7 +182,7 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const databasePath = path.join(baseDir, "userdata", "state.sqlite");
+  const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {
@@ -248,17 +248,17 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
 const t3SqliteStateCommand = Command.make(
   "t3-sqlite-state",
   {
-    operation: Argument.choice("operation", SqliteStateOperation.literals).pipe(
+    operation: Argument.Literals("operation", SqliteStateOperation.literals).pipe(
       Argument.withDescription("Run a read-only query or a backed-up fixture mutation."),
     ),
-    baseDir: Flag.string("base-dir").pipe(
-      Flag.withDescription("Explicit T3 base directory containing userdata/state.sqlite."),
+    baseDir: Flag.String("base-dir").pipe(
+      Flag.withDescription("Explicit T3 base directory containing userdata/statev2.sqlite."),
     ),
-    sql: Flag.string("sql").pipe(
+    sql: Flag.String("sql").pipe(
       Flag.optional,
       Flag.withDescription("SQL source supplied directly on the command line."),
     ),
-    file: Flag.string("file").pipe(
+    file: Flag.String("file").pipe(
       Flag.optional,
       Flag.withDescription("Path to a SQL source file."),
     ),

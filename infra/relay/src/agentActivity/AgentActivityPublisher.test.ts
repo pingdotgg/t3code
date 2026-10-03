@@ -7,12 +7,12 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
-import { FcmDeliveries } from "./FcmDeliveries.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
 const publisherLayer = AgentActivityPublisher.layer.pipe(
   Layer.provide(
-    Layer.succeed(FcmDeliveries, {
+    Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
       process: () => Effect.void,
     }),
@@ -84,7 +84,6 @@ function makeEnvironmentLinks(
 ): EnvironmentLinks.EnvironmentLinks["Service"] {
   return {
     upsert: () => Effect.void,
-    listUsersForEnvironment: () => Effect.succeed(["dev:julius"]),
     listDeliveryUsersForEnvironment: () =>
       Effect.succeed([
         {
@@ -93,7 +92,6 @@ function makeEnvironmentLinks(
           liveActivitiesEnabled: true,
         },
       ]),
-    listPublicKeysForEnvironment: () => Effect.succeed([]),
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
     revokeForUser: () => Effect.succeed(false),
@@ -142,7 +140,7 @@ describe("AgentActivityPublisher", () => {
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");
-    const fcmCalls: Array<Parameters<FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
     const appleDevices: string[] = [];
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
@@ -182,7 +180,7 @@ describe("AgentActivityPublisher", () => {
                     }),
                 }),
               ),
-              Layer.succeed(FcmDeliveries, {
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
                 enqueue: (input) =>
                   Effect.sync(() => {
                     fcmCalls.push(input);

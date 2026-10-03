@@ -9,6 +9,12 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
+/** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
+export const ORCHESTRATION_PROTOCOL_VERSION = 2;
+export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
+export const ORCHESTRATION_PROTOCOL_QUERY_PARAM = "orchestrationProtocol";
+export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
+
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
   "linux",
@@ -54,6 +60,13 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
  */
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
+/**
+ * How a new worktree populates git submodules: every nested level, only the
+ * ones this repository declares, or not at all.
+ */
+export const WorktreeSubmodules = Schema.Literals(["recursive", "top-level", "none"]);
+export type WorktreeSubmodules = typeof WorktreeSubmodules.Type;
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 /** How a server can replace itself with another version when asked over RPC.
@@ -91,16 +104,21 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
+  pullRequestChecks: Schema.optionalKey(Schema.Boolean),
   /** Server understands canonical inline context links plus their message context records.
       Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
+  /** Server rejects required worktrees instead of falling back to the project checkout. */
+  requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
+  storageCleanup: Schema.optionalKey(Schema.Boolean),
+  projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server persists the opt-in for continuing interrupted threads after restarts. */
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
@@ -126,16 +144,26 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   /** Server persists manual Active order through thread.active.reorder. */
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.auto-settle.set (per-thread auto-settle off).
+      Same version-skew contract as threadSettlement. */
+  threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
-  /** Server supports legacy linkedPullRequest updates through thread.meta.update.
-      Independent of threadPullRequests; servers supporting both advertise both. */
+  /** Server understands thread.visit / thread.mark-unread commands and
+      projects lastVisitedAt on thread shells. Same version-skew contract as
+      threadSettlement: clients keep their local visited state against
+      servers that lack this. */
+  threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pull-request.link / .unlink, exposes `pullRequests` on
-      threads, and routes PullRequestRef.host across projects on the same host. Same
-      version-skew contract as threadSettlement. */
+  /** Server resolves message delivery and model-selection context and validates
+      identified rollback readiness. Clients retain projection-based command
+      shaping and validation when this is absent. */
+  serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pull-request.watch and wakes agents on pull request changes. */
+  threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
@@ -153,6 +181,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       this is false — no update would ever repaint it. Absent on older
       servers, which may still publish, so only an explicit false skips. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  /** Server runs repository clones for new projects in the background and
+      streams their progress (`projectClone.*`, `subscribeProjectClones`).
+      Absent on older servers, where clients must clone with the blocking
+      `sourceControl.cloneRepository` call instead. */
+  projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server detects `platform.machine` and persists the `environmentIcon`
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
@@ -170,17 +203,11 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
+  /** Absent on hosts from before explicit orchestration protocol negotiation. */
+  orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
-
-export const EnvironmentConnectionState = Schema.Literals([
-  "connecting",
-  "connected",
-  "disconnected",
-  "error",
-]);
-export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
 
 export const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),
@@ -213,9 +240,3 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
-
-export const ScopedThreadSessionRef = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-});
-export type ScopedThreadSessionRef = typeof ScopedThreadSessionRef.Type;

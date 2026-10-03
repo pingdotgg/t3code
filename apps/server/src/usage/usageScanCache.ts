@@ -14,19 +14,36 @@
  *
  * @module usageScanCache
  */
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
-
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
-import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
+import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
-const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// v4: records carry Claude fast mode, which v3 rows never captured.
+// v5: Codex records carry their service tier. v4 rows store speed the same
+// way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
+const SPEED_COMPATIBLE_SINCE_VERSION = 4;
+
+/**
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ */
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+
+/** Serialised as the index into this list. */
+const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
+
+function isSpeed(value: unknown): value is UsageSpeed {
+  return SPEEDS.some((speed) => speed === value);
+}
 
 export interface CachedFile {
   readonly size: number;
@@ -61,6 +78,7 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  speed: number,
 ];
 
 interface SerializedFile {
@@ -112,6 +130,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     record.totals.reasoningTokens,
     record.dedupeKey,
     record.reportedCostUsd,
+    SPEEDS.indexOf(record.speed),
   ];
 
   const files: Record<string, SerializedFile> = {};
@@ -147,7 +166,14 @@ export function decodeScanCache(document: unknown): ScanCache {
   if (typeof document !== "object" || document === null) return cache;
 
   const root = document as Partial<SerializedCache>;
-  if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
+  const version = root.version;
+  if (
+    typeof version !== "number" ||
+    version < SPEED_COMPATIBLE_SINCE_VERSION ||
+    version > USAGE_SCAN_CACHE_VERSION
+  ) {
+    return cache;
+  }
   if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
   if (typeof root.files !== "object" || root.files === null) return cache;
 
@@ -168,7 +194,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 10) return null;
+      if (!isRecordArray(row) || row.length < 11) return null;
       const [
         timestampMs,
         modelIndex,
@@ -180,7 +206,9 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        speedIndex,
       ] = row as SerializedRecord;
+      const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
       if (
@@ -191,7 +219,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !Number.isFinite(reasoning) ||
+        speed === undefined
       ) {
         return null;
       }
@@ -209,6 +238,7 @@ export function decodeScanCache(document: unknown): ScanCache {
           reasoningTokens: reasoning,
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
+        speed,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
@@ -239,7 +269,11 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    const codexState = decodeCodexState(entry.cs);
+    // v4 Codex records predate service tiers, so they all priced as standard.
+    // Keep them, because the rollout may be gone, but make a live rollout
+    // re-parse whole: no file has size -1, and a zero position cannot resume.
+    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
+    const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -248,17 +282,14 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: entry.s,
+      size: legacyCodex ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: {
-        resumeOffset: entry.o,
-        guardLength: entry.gl,
-        guardHash: entry.gh,
-        codexState,
-      },
+      position: legacyCodex
+        ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
+        : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     });
   }
 
@@ -276,6 +307,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   const state = value as Partial<CodexScanState>;
   if (
     typeof state.model !== "string" ||
+    !isSpeed(state.speed) ||
     typeof state.sessionId !== "string" ||
     (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
     typeof state.sawSessionMeta !== "boolean" ||
@@ -287,6 +319,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   }
   return {
     model: state.model,
+    speed: state.speed,
     sessionId: state.sessionId,
     lastUsageSignature: state.lastUsageSignature ?? null,
     sawSessionMeta: state.sawSessionMeta,
@@ -295,47 +328,11 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   };
 }
 
-export interface PruneOptions {
-  /** Files the walk just saw. Only meaningful inside the walked window. */
-  readonly livePaths: ReadonlySet<string>;
-  /**
-   * Roots the walk actually completed. Absence from `livePaths` only proves a
-   * file is gone when its root was walked: a provider whose directory failed to
-   * resolve this pass must not have its warm entries purged.
-   */
-  readonly walkedRoots: readonly string[];
-  /** Start of the walked window; entries older than this were not looked for. */
-  readonly windowStartMs: number;
-  /** Entries older than this are dropped regardless. */
-  readonly retentionCutoffMs: number;
-}
-
-/**
- * Drops aged-out entries, and entries for files that have disappeared.
- *
- * The walk only covers the requested window, so absence from `livePaths` only
- * proves deletion for entries *inside* that window. Pruning everything the walk
- * missed would evict the 30-day entries every time someone looked at 7 days.
- *
- * Replaces an earlier record cap that cleared the whole cache once exceeded,
- * which meant a large enough window never warmed up at all.
- */
-export function pruneScanCache(cache: ScanCache, options: PruneOptions): number {
+/** Keeps saved usage after transcript cleanup, until the reporting retention expires. */
+export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): number {
   let removed = 0;
   for (const [path, entry] of cache) {
-    const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const underWalkedRoot = options.walkedRoots.some((root) => {
-      const relative = NodePath.relative(root, path);
-      return (
-        relative === "" ||
-        (relative !== ".." &&
-          !relative.startsWith(`..${NodePath.sep}`) &&
-          !NodePath.isAbsolute(relative))
-      );
-    });
-    const deleted =
-      underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
-    if (agedOut || deleted) {
+    if (entry.mtimeMs < retentionCutoffMs) {
       cache.delete(path);
       removed += 1;
     }

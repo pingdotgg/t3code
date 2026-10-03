@@ -12,7 +12,13 @@
  *
  * @module usageAggregation
  */
-import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  UsageBucket,
+  UsageCategoryCost,
+  UsageDay,
+  UsageResolution,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
@@ -50,6 +56,10 @@ interface MutableBucket {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheSavingsUsd: number;
+  categoryCostUsd: UsageCategoryCost | null;
+  fastCostUsd: number;
+  ultrafastCostUsd: number;
+  speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -112,7 +122,7 @@ export class UsageAggregator {
    * can derive per-window facts (distinct sessions, for one) from the records
    * that landed rather than everything the mtime prefilter happened to admit.
    */
-  add(record: UsageRecord): boolean {
+  add(record: UsageRecord, sourcePath?: string): boolean {
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
         this.#duplicatesDropped += 1;
@@ -146,13 +156,17 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}`;
+    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${sourcePath ?? ""}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheSavingsUsd: 0,
+        categoryCostUsd: null,
+        fastCostUsd: 0,
+        ultrafastCostUsd: 0,
+        speedPremiumUsd: 0,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
@@ -161,20 +175,29 @@ export class UsageAggregator {
       this.#buckets.set(key, bucket);
     }
 
-    const priced = priceUsage(
-      this.#options.rates,
-      record.model,
-      record.totals,
-      record.reportedCostUsd,
-      this.#options.priceOverrides,
-    );
+    const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
+    if (priced.categoryCostUsd !== null) {
+      const sum = bucket.categoryCostUsd;
+      const add = priced.categoryCostUsd;
+      bucket.categoryCostUsd =
+        sum === null
+          ? add
+          : {
+              input: sum.input + add.input,
+              cacheRead: sum.cacheRead + add.cacheRead,
+              cacheWrite: sum.cacheWrite + add.cacheWrite,
+              output: sum.output + add.output,
+            };
+    }
+    if (record.speed === "fast") bucket.fastCostUsd += priced.costUsd;
+    if (record.speed === "ultrafast") bucket.ultrafastCostUsd += priced.costUsd;
+    bucket.speedPremiumUsd += priced.speedPremiumUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
-      record.model,
-      record.totals,
+      record,
       this.#options.priceOverrides,
     );
     bucket.records += 1;
@@ -187,15 +210,35 @@ export class UsageAggregator {
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
+      const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
+        key.split("\u0000");
+      const category = bucket.categoryCostUsd;
+      const fastCostUsd = roundUsd(bucket.fastCostUsd);
+      const ultrafastCostUsd = roundUsd(bucket.ultrafastCostUsd);
+      const speedPremiumUsd = roundUsd(bucket.speedPremiumUsd);
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
         model,
+        ...(sourcePath === "" ? {} : { sourcePath }),
         totals: bucket.totals,
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
+        // Zero and unknown figures are omitted to keep payloads small.
+        ...(category === null
+          ? {}
+          : {
+              categoryCostUsd: {
+                input: roundUsd(category.input),
+                cacheRead: roundUsd(category.cacheRead),
+                cacheWrite: roundUsd(category.cacheWrite),
+                output: roundUsd(category.output),
+              },
+            }),
+        ...(fastCostUsd === 0 ? {} : { fastCostUsd }),
+        ...(ultrafastCostUsd === 0 ? {} : { ultrafastCostUsd }),
+        ...(speedPremiumUsd === 0 ? {} : { speedPremiumUsd }),
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
@@ -217,6 +260,14 @@ export class UsageAggregator {
       outOfWindow: this.#outOfWindow,
     };
   }
+}
+
+/**
+ * Rounds to micro-dollars. The split and speed figures need no more precision,
+ * and shorter numbers keep them cheap on the wire.
+ */
+function roundUsd(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
 }
 
 /**

@@ -146,7 +146,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div className="rounded-3xl border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
@@ -177,6 +177,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
+              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
               headingLevelOffset={3}
@@ -185,6 +186,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={displayedPlanMarkdown}
               cwd={cwd}
+              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
               headingLevelOffset={3}
@@ -223,7 +225,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
               <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input

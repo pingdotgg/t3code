@@ -165,24 +165,14 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   };
 }
 
-export function transferDelta(
-  start: WebSocketTransferTotals,
-  end: WebSocketTransferTotals,
-): WebSocketTransferTotals {
-  return {
-    wireBytes: Math.max(0, end.wireBytes - start.wireBytes),
-    decodedBytes: Math.max(0, end.decodedBytes - start.decodedBytes),
-    messages: Math.max(0, end.messages - start.messages),
-  };
-}
-
 function countingWsRpcProtocolLayer(input: {
   readonly url: string;
   readonly cookie: string;
   readonly recorder: WebSocketTransferRecorder;
 }) {
+  // Socket.makeWebSocket only ever passes its `protocols` option here.
   const webSocketConstructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) =>
-    input.recorder.connect(url, protocols, input.cookie),
+    input.recorder.connect(url, protocols as string | string[] | undefined, input.cookie),
   );
   return RpcClient.layerProtocolSocket().pipe(
     Layer.provide(

@@ -65,6 +65,47 @@ teardown, because a database failure must leave the active link usable. Failed
 teardown retains enough state to retry. See the
 [managed endpoint lifecycle](../../infra/relay/src/environments/ManagedEndpointProvider.ts).
 
+## Idle tunnels are reclaimed and recovered
+
+Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
+that sleeps with a linked environment leaves a paid tunnel behind. The relay's
+five-minute maintenance job can reclaim those tunnels. `RELAY_TUNNEL_CLEANUP_MODE`
+selects `off`, `dry-run`, or `enabled`, with `off` as the default. The mode is
+read at deploy time, so changing it means a relay deploy, not a variable flip.
+A candidate is a same-stage tunnel that Cloudflare reports down for at least
+five minutes, or one that never connected and is at least an hour old. The
+longer grace for never-connected tunnels covers a pairing still in progress.
+
+Cleanup deletes only tunnels whose host has registered recovery. Allocations
+without recovery registration belong to hosts that cannot replace a deleted
+tunnel and are left alone. Allocations with no recorded tunnel ID, or a
+different tunnel ID, are skipped because a provision may own them. A tunnel with
+no allocation row at all is counted as `skippedOrphan` and never deleted: there
+is no row to lock, so a relink that adopts it by name could race the delete.
+Clear those by hand. Each sweep is bounded: at most ten list requests, 100 deletions, a
+two-minute deadline, and an early stop on a Cloudflare rate limit. Each sweep
+starts one budget further along the candidate list, so a block of deletes that
+keep failing cannot starve the tunnels listed after them. See the
+[reaper](../../infra/relay/src/environments/ManagedEndpointReaper.ts).
+
+A host registers recovery at startup by sending its tunnel ID and loopback
+origin with a short-lived signature from the environment key. Registration
+touches Cloudflare only when the local host or port changed, and once per
+existing allocation on the first registration after the upgrade because the
+stored origin is empty. First registrations are jittered so an auto-update wave
+does not hit the relay at once. The host stores a confirmed-origin marker with
+the connector config, and a later boot starts the connector before registration
+only when that marker matches the current config and port. If registration
+cannot reach the relay for ten minutes, the host starts its stored config anyway
+and keeps registering in the background until it can reconcile the origin.
+If the connector exits, or `cloudflared` reports repeated tunnel
+rejections, the host asks the relay for a replacement, at most once every two
+minutes. The relay
+provisions under the same allocation, so the hostname and DNS record survive
+and clients keep their bindings. Every mutation on an allocation bumps its
+`generation`, and deletion locks the row at the generation it claimed, so a
+host that reconnects mid-sweep wins.
+
 ## OAuth traps
 
 Interactive clients and the headless CLI use the same Clerk application but
@@ -72,10 +113,15 @@ different credentials. The relay accepts both session-template JWTs and CLI
 OAuth tokens; requiring a JWT template for the CLI would reject valid logins.
 The CLI is a public OAuth client using PKCE and stores no client secret.
 
-CLI authorization starts on the hosted `/connect` page so sign-in completes
-before entering Clerk's authorize endpoint. Sending a signed-out browser
-straight to that endpoint loses the authorize parameters during the sign-in
-redirect. The [shared flow](../../packages/shared/src/connectAuth.ts) preserves
-PKCE and state for both loopback and pasted-code callbacks. SSH and headless
-sessions use the pasted-code flow because the browser cannot ordinarily reach a
-listener on the remote machine.
+Loopback CLI authorization starts on the hosted `/connect` page so sign-in
+completes before entering Clerk's authorize endpoint. Sending a signed-out
+browser straight to that endpoint loses the authorize parameters during the
+sign-in redirect. The [shared flow](../../packages/shared/src/connectAuth.ts)
+preserves PKCE and state for the loopback callback.
+
+SSH and headless sessions use Clerk's OAuth device authorization grant because
+the browser cannot ordinarily reach a listener on the remote machine. The CLI
+polls Clerk's token endpoint directly while the user approves a short code on
+Clerk's hosted device page; the hosted app plays no part and there is no
+redirect URI or PKCE. The grant must be enabled on the CLI OAuth application
+or the device endpoint returns an error before any prompt is shown.

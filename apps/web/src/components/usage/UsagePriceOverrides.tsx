@@ -91,13 +91,16 @@ type SaveAttempt = {
   >;
 };
 
+/** Edits custom model prices. `initialModel` opens with a new row for that model. */
 export function UsagePriceOverrides({
   usage,
   initialSelectedEnvironmentIds,
+  initialModel,
   onOpenChange,
 }: {
   readonly usage: readonly EnvironmentUsageStatus[];
   readonly initialSelectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const environments = useAtomValue(priceTargetsAtom);
@@ -105,7 +108,16 @@ export function UsagePriceOverrides({
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
   );
-  const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>([]);
+  // A model that already has a custom price somewhere is edited in its existing row.
+  const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>(() =>
+    initialModel === undefined ||
+    selected.some(
+      (environment) =>
+        environment.prices !== null && Object.hasOwn(environment.prices, initialModel),
+    )
+      ? []
+      : [{ id: "new:initial", model: initialModel, isNew: true, values: {} }],
+  );
   const [pending, setPending] = useState(false);
   const [attempt, setAttempt] = useState<SaveAttempt | null>(null);
   const focusRowRef = useRef<string | null>(null);
@@ -252,7 +264,7 @@ export function UsagePriceOverrides({
             Prices apply to all past and future usage on the environments you select.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="grid gap-4">
+        <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <Label id="usage-prices-apply-label" className="shrink-0">
@@ -269,7 +281,7 @@ export function UsagePriceOverrides({
                   </span>
                   <ChevronDownIcon className="size-3.5 shrink-0" aria-hidden />
                 </MenuTrigger>
-                <MenuPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+                <MenuPopup align="start">
                   <MenuCheckboxItem
                     checked={selectedIds === null}
                     closeOnClick={false}
@@ -323,12 +335,12 @@ export function UsagePriceOverrides({
                     <col className="w-10" />
                   </colgroup>
                   <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="pl-3">Model ID</TableHead>
+                    <TableRow>
+                      <TableHead>Model ID</TableHead>
                       {USAGE_PRICE_FIELDS.map((field) => (
                         <TableHead key={field.key}>{field.label}</TableHead>
                       ))}
-                      <TableHead className="px-1">
+                      <TableHead>
                         <Button
                           size="icon-xs"
                           variant="ghost"
@@ -347,24 +359,19 @@ export function UsagePriceOverrides({
                   </TableHeader>
                   <TableBody>
                     {rows.length === 0 ? (
-                      <TableRow className="hover:bg-transparent">
-                        <TableCell
-                          colSpan={6}
-                          className="py-8 text-center whitespace-normal text-muted-foreground"
-                        >
-                          {selected.some((environment) => environment.prices === null)
-                            ? "Some environment prices are unavailable."
-                            : "No custom prices. Add a row to override automatic pricing."}
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center whitespace-normal">
+                          <p className="py-6 text-muted-foreground">
+                            {selected.some((environment) => environment.prices === null)
+                              ? "Some environment prices are unavailable."
+                              : "No custom prices. Add a row to override automatic pricing."}
+                          </p>
                         </TableCell>
                       </TableRow>
                     ) : (
                       rows.map((row) => (
-                        <TableRow
-                          key={row.id}
-                          data-row-id={row.id}
-                          className="hover:bg-transparent"
-                        >
-                          <TableCell className="pl-3 whitespace-normal">
+                        <TableRow key={row.id} data-row-id={row.id}>
+                          <TableCell className="whitespace-normal">
                             {row.isNew ? (
                               <Input
                                 size="compact"
@@ -407,14 +414,16 @@ export function UsagePriceOverrides({
                             ) : null}
                           </TableCell>
                           {row.removed ? (
-                            <TableCell colSpan={4} className="text-muted-foreground">
-                              Automatic pricing after saving
+                            <TableCell colSpan={4}>
+                              <span className="text-muted-foreground">
+                                Automatic pricing after saving
+                              </span>
                             </TableCell>
                           ) : (
                             USAGE_PRICE_FIELDS.map((field) => {
                               const cell = usagePriceCell(selected, row.model, field.key);
                               return (
-                                <TableCell key={field.key} className="px-1">
+                                <TableCell key={field.key}>
                                   <Input
                                     size="compact"
                                     inputMode="decimal"
@@ -429,7 +438,7 @@ export function UsagePriceOverrides({
                                     }
                                     autoComplete="off"
                                     disabled={locked}
-                                    className="tabular-nums"
+                                    font="mono"
                                     onChange={(event) =>
                                       editCell(row, field.key, event.target.value)
                                     }
@@ -438,7 +447,7 @@ export function UsagePriceOverrides({
                               );
                             })
                           )}
-                          <TableCell className="px-1">
+                          <TableCell>
                             <Tooltip>
                               <TooltipTrigger
                                 render={<Button size="icon-xs" variant="ghost" />}

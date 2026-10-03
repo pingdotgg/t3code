@@ -1,19 +1,11 @@
-import { describe, expect, expectTypeOf, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import {
-  classifyTaskAgentKind,
-  ProviderRuntimeEvent,
-  type ProviderRuntimeEventType,
-} from "./providerRuntime.ts";
+import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
-  it("includes every runtime event in the public event type", () => {
-    expectTypeOf<ProviderRuntimeEvent["type"]>().toEqualTypeOf<ProviderRuntimeEventType>();
-  });
-
   it("requires input and output totals for complete turn usage", () => {
     const completeEvent = {
       type: "turn.completed",
@@ -234,24 +226,5 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
-  });
-});
-
-describe("classifyTaskAgentKind", () => {
-  it("classifies agent-flavored, watch-loop, and inert types", () => {
-    expect(classifyTaskAgentKind({ taskType: "local_agent" })).toBe("agent");
-    expect(classifyTaskAgentKind({ taskType: "local_workflow" })).toBe("agent");
-    expect(classifyTaskAgentKind({ taskType: undefined })).toBe("agent");
-    expect(classifyTaskAgentKind({ taskType: "brand_new_agent_type" })).toBe("agent");
-    expect(classifyTaskAgentKind({ taskType: "local_bash" })).toBe("background");
-    expect(classifyTaskAgentKind({ taskType: "monitor" })).toBe("background");
-    expect(classifyTaskAgentKind({ taskType: "plan" })).toBe("background");
-  });
-
-  it("agent-owned tasks are background unless themselves agent-flavored", () => {
-    expect(classifyTaskAgentKind({ taskType: "local_bash", agentId: "owner" })).toBe("background");
-    expect(classifyTaskAgentKind({ taskType: undefined, agentId: "owner" })).toBe("background");
-    // Nested agent: outlives its parent, stays in the roster.
-    expect(classifyTaskAgentKind({ taskType: "local_agent", agentId: "owner" })).toBe("agent");
   });
 });

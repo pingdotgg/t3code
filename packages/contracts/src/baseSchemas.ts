@@ -6,7 +6,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) => Effect.succeed(value.trim()),
       encode: (value) => Effect.succeed(value.trim()),
     }),
@@ -82,6 +82,31 @@ export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value
   );
 };
 
+/**
+ * A nullable setting whose null is "unset" and never crosses the wire: it
+ * decodes from a missing or unknown key and encodes back to a missing key.
+ * For a field that older clients decode as a required literal, so a null
+ * on the wire would fail their whole settings snapshot.
+ */
+export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.NullOr(value),
+      SchemaTransformation.transformOptional<Value["Encoded"] | null, unknown>({
+        decode: (raw) =>
+          Option.some(
+            Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
+              ? (raw.value as Value["Encoded"])
+              : null,
+          ),
+        encode: (raw) =>
+          Option.isSome(raw) && raw.value !== null ? Option.some(raw.value) : Option.none(),
+      }),
+    ),
+  );
+};
+
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) => {
   const decodeElement = Schema.decodeUnknownOption(element as never);
   return Schema.Array(Schema.Unknown).pipe(
@@ -119,6 +144,12 @@ export const MessageId = makeEntityId("MessageId");
 export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
+export const RunId = makeEntityId("RunId");
+export type RunId = typeof RunId.Type;
+export const RunAttemptId = makeEntityId("RunAttemptId");
+export type RunAttemptId = typeof RunAttemptId.Type;
+export const NodeId = makeEntityId("NodeId");
+export type NodeId = typeof NodeId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
 export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
@@ -156,15 +187,37 @@ export type ClientConnectionMethod = typeof ClientConnectionMethod.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
+export const ProviderSessionId = makeEntityId("ProviderSessionId");
+export type ProviderSessionId = typeof ProviderSessionId.Type;
+export const ProviderThreadId = makeEntityId("ProviderThreadId");
+export type ProviderThreadId = typeof ProviderThreadId.Type;
+export const ProviderTurnId = makeEntityId("ProviderTurnId");
+export type ProviderTurnId = typeof ProviderTurnId.Type;
 export const RuntimeSessionId = makeEntityId("RuntimeSessionId");
 export type RuntimeSessionId = typeof RuntimeSessionId.Type;
 export const RuntimeItemId = makeEntityId("RuntimeItemId");
 export type RuntimeItemId = typeof RuntimeItemId.Type;
+export const TurnItemId = makeEntityId("TurnItemId");
+export type TurnItemId = typeof TurnItemId.Type;
 export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
 export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
 export type RuntimeTaskId = typeof RuntimeTaskId.Type;
+export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
+export type ScheduledTaskId = typeof ScheduledTaskId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
 export type CheckpointRef = typeof CheckpointRef.Type;
+export const CheckpointId = makeEntityId("CheckpointId");
+export type CheckpointId = typeof CheckpointId.Type;
+export const CheckpointScopeId = makeEntityId("CheckpointScopeId");
+export type CheckpointScopeId = typeof CheckpointScopeId.Type;
+export const ContextHandoffId = makeEntityId("ContextHandoffId");
+export type ContextHandoffId = typeof ContextHandoffId.Type;
+export const ContextTransferId = makeEntityId("ContextTransferId");
+export type ContextTransferId = typeof ContextTransferId.Type;
+export const RawEventId = makeEntityId("RawEventId");
+export type RawEventId = typeof RawEventId.Type;
+export const PlanId = makeEntityId("PlanId");
+export type PlanId = typeof PlanId.Type;

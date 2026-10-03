@@ -148,7 +148,7 @@ function DragHandle(props: {
 
 export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
-  const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
+  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
@@ -379,7 +379,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
               onPress={props.onClose}
               className="min-h-11 justify-center px-3"
             >
-              <Text className="text-base text-primary">Done</Text>
+              <Text className="text-base text-primary-text">Done</Text>
             </Pressable>
           </View>
           <Text className="px-5 pb-3 text-sm text-foreground-muted">

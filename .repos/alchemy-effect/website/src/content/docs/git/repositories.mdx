@@ -1,0 +1,110 @@
+---
+title: Repositories
+description: Create, fork, import, and manage repositories over the typed REST plane.
+---
+
+Repositories live at `/api/v1/repos`, declared as an Effect `HttpApi`.
+One schema types the server, the client, and your tests:
+
+```typescript
+import { GitApi } from "alchemy/Git";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+
+const client = yield* HttpApiClient.make(GitApi, { baseUrl: host });
+
+const created = yield* client.repos.create({
+  payload: { owner: "acme", name: "web", public: true },
+});
+```
+
+Everything below is also plain HTTP for `curl` and `fetch`, and the
+[GitHub facade](/git/github-api) covers Octokit.
+
+## Creating
+
+```typescript
+yield* client.repos.create({
+  payload: {
+    owner: "acme",
+    name: "web",
+    description: "the marketing site",
+    defaultBranch: "main", // default
+    public: true, // default false
+    readOnly: false,
+  },
+});
+```
+
+The response carries the repository and its clone URL. A duplicate
+`owner/name` is a typed `RepoAlreadyExists`. Who may create under an
+owner is your middleware's call; the engine attaches no meaning to the
+owner name beyond uniqueness.
+
+`owner/name` is the public identity. The repository's id is stable, so
+renaming never moves data.
+
+## Visibility
+
+`public` is a flag the engine stores and reports. What it grants is
+your middleware's decision; the tutorial's middleware serves anonymous
+reads of a public repository, REST reads, raw files, the ref
+advertisement, and `upload-pack`, and answers `401` with
+`WWW-Authenticate` otherwise, so git prompts. `Git.isRead` and
+`Git.RegistryStore` are what it asks.
+
+Listings return everything the Registry holds; `public: true` in the
+query narrows them to public repositories.
+
+## Read-only
+
+`readOnly: true` rejects pushes in-band, so the client sees a clear
+error on the ref rather than a transport failure. Use it to freeze a
+migrated repository or park one you are retiring.
+
+## Updating
+
+```typescript
+yield* client.repos.update({
+  params: { owner: "acme", repo: "web" },
+  payload: { description: "archived", readOnly: true },
+});
+```
+
+`defaultBranch` must name a branch that exists. Pointing it at a
+missing ref is a typed `RefNotFound`.
+
+## Forking and importing
+
+Fork copies a repository server-side, with no round trip through a
+client:
+
+```typescript
+yield* client.repos.fork({
+  params: { owner: "acme", repo: "web" },
+  payload: { targetOwner: "dana", targetName: "web" },
+});
+```
+
+Import pulls from any public git URL. Both return at once with
+`status: "importing"`. Poll `repos.get` until it reads `"ready"`.
+
+## Deleting
+
+```typescript
+yield* client.repos.delete({ params: { owner: "acme", repo: "web" } });
+```
+
+Delete answers `204` at once and purges in the background. The name is
+released and the objects drain through a scheduled job. A second
+delete during the drain is an idempotent `204`, and reads of a
+draining repository behave as if it were gone.
+
+## Listing
+
+```typescript
+const page = yield* client.repos.list({ query: { owner: "acme" } });
+```
+
+Paginated with an opaque cursor. Listings come from the
+[registry](/git/blocks/registry), so object counts read as zero here.
+Fetch a repository directly for live numbers.

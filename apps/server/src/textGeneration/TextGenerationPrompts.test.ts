@@ -6,7 +6,11 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import {
+  normalizeCliError,
+  sanitizeThreadTitle,
+  toJsonSchemaObject,
+} from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -114,6 +118,39 @@ describe("buildPrContentPrompt", () => {
 });
 
 describe("buildBranchNamePrompt", () => {
+  it("requests a semantic prefix as part of the same branch response", () => {
+    const { prompt, outputSchema } = buildBranchNamePrompt({
+      message: "Add search",
+      naming: { mode: "semantic", prefix: "ignored", instructions: "ignored instruction" },
+    });
+    expect(prompt).toContain("feat/add-search");
+    expect(prompt).not.toContain("ignored instruction");
+    expect(toJsonSchemaObject(outputSchema)).toMatchObject({ required: ["branch"] });
+  });
+  it("appends custom instructions without imposing a prefix, case or word limit", () => {
+    const { prompt } = buildBranchNamePrompt({
+      message: "Add search",
+      naming: {
+        mode: "custom",
+        prefix: "ignored",
+        instructions: "Use Julius/ABC-123 and preserve capitalization.",
+      },
+    });
+    expect(prompt).toContain("Use Julius/ABC-123 and preserve capitalization.");
+    expect(prompt).toContain("complete branch name");
+    expect(prompt).not.toContain("2-6 words");
+    expect(prompt).not.toContain("lowercase");
+    expect(prompt).not.toContain("no issue prefixes");
+  });
+  it("asks for just the fragment in static mode", () => {
+    const { prompt } = buildBranchNamePrompt({
+      message: "Add search",
+      naming: { mode: "static", prefix: "team", instructions: "ignored instruction" },
+    });
+    expect(prompt).toContain("without a prefix or namespace");
+    expect(prompt).not.toContain("ignored instruction");
+  });
+
   it("includes the user message in the prompt", () => {
     const result = buildBranchNamePrompt({
       message: "Fix the login timeout bug",
@@ -146,6 +183,14 @@ describe("buildBranchNamePrompt", () => {
 });
 
 describe("buildThreadTitlePrompt", () => {
+  it("requires each generated field in the strict response schema", () => {
+    const { outputSchema } = buildThreadTitlePrompt({ message: "Fix this" });
+    expect(toJsonSchemaObject(outputSchema)).toMatchObject({
+      required: ["title", "needsRefinement"],
+      properties: { title: { type: "string" }, needsRefinement: { type: "boolean" } },
+    });
+  });
+
   it("includes the user message without absent attachment metadata", () => {
     const result = buildThreadTitlePrompt({
       message: "Investigate reconnect regressions after session restore",
@@ -242,15 +287,22 @@ describe("sanitizeThreadTitle", () => {
       sanitizeThreadTitle(
         '{"title": "Reconnect failures after restart because the session state does not recover"}',
       ),
-    ).toBe("Reconnect failures after restart because the se...");
+    ).toBe("Reconnect failures after restart because the session state does not recover");
   });
 
-  it("truncates long titles with the shared sidebar-safe limit", () => {
+  it("keeps complete titles for client display truncation", () => {
     expect(
       sanitizeThreadTitle(
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
-    ).toBe("Reconnect failures after restart because the se...");
+    ).toBe("Reconnect failures after restart because the session state does not recover");
+  });
+
+  it("caps runaway titles so a paragraph cannot reach the sidebar", () => {
+    const words = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
+    const title = sanitizeThreadTitle(words);
+    expect(title.length).toBeLessThanOrEqual(120);
+    expect(title.endsWith("...")).toBe(true);
   });
 });
 

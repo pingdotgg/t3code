@@ -40,6 +40,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
+import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
 
 // Wide enough for the longest action label ("Unarchive").
@@ -129,11 +130,14 @@ const SwipeableScrollGateContext = createContext(true);
 
 export function SwipeableScrollGateProvider(props: {
   readonly enabled: boolean;
+  readonly activation?: SwipeRowActivation;
   readonly children: ReactNode;
 }) {
   return (
     <SwipeableScrollGateContext.Provider value={props.enabled}>
-      {props.children}
+      <SwipeRowActivationContext value={props.activation ?? null}>
+        {props.children}
+      </SwipeRowActivationContext>
     </SwipeableScrollGateContext.Provider>
   );
 }
@@ -260,13 +264,30 @@ interface ThreadSwipeableProps {
    * open/mid-drag state can't leak onto another row.
    */
   readonly resetKey?: string;
-  readonly simultaneousWithExternalGesture?: ComponentProps<
-    typeof ReanimatedSwipeable
-  >["simultaneousWithExternalGesture"];
+  /** Paints the row without swipe machinery; see swipe-row-activation. */
+  readonly dormant?: boolean;
+  readonly simultaneousWith?: ComponentProps<typeof ReanimatedSwipeable>["simultaneousWith"];
   readonly threadTitle: string;
 }
 
+const closeDormant = () => {};
+
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
+  if (props.dormant) {
+    // Mirrors ReanimatedSwipeable's container and children views.
+    return (
+      <View
+        style={[
+          { overflow: "hidden", backgroundColor: props.backgroundColor },
+          props.containerStyle,
+        ]}
+      >
+        <View style={{ backgroundColor: props.backgroundColor }}>
+          {props.children(closeDormant)}
+        </View>
+      </View>
+    );
+  }
   // Recycled content gets fresh native and animation state. Late callbacks
   // from the previous row retain its action, never the replacement's action.
   return <ThreadSwipeableRow key={props.resetKey} {...props} />;
@@ -410,7 +431,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           animationOptions={THREAD_SWIPE_SPRING}
           childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
           containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
-          dragOffsetFromRightEdge={8}
+          dragOffsetFromRight={-8}
           enabled={!isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Fail the swipe once the pan is vertically dominant (patched-in RNGH
@@ -474,7 +495,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
             </Animated.View>
           )}
           rightThreshold={actionsWidth * 0.42}
-          simultaneousWithExternalGesture={props.simultaneousWithExternalGesture}
+          simultaneousWith={props.simultaneousWith}
         >
           {props.children(close)}
         </ReanimatedSwipeable>

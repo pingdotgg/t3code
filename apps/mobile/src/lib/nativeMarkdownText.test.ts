@@ -7,6 +7,7 @@ import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
+  nativeMarkdownWithAuthoredWindowsPaths,
   nativeMarkdownWithPreservedSoftBreaks,
   nativeMarkdownContextCopyRanges,
   contextChipPresentation,
@@ -187,6 +188,49 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
+  it("keeps Windows path backslashes the parser reads as escapes", () => {
+    const markdown = [
+      String.raw`![shot](C:\Users\me\.t3\_build\shot.png "Shot")`,
+      String.raw`[settings](C:\Users\me\.claude\settings.json) and [site](https://example.com/a\.b)`,
+      "![ref][ref]",
+      String.raw`[ref]: \\wsl.localhost\Ubuntu\.t3\ref.png`,
+    ].join("\n\n");
+    // md4c drops each backslash that precedes punctuation.
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "image", href: String.raw`C:\Users\me.t3_build\shot.png` },
+        { type: "link", href: String.raw`C:\Users\me.claude\settings.json` },
+        { type: "link", href: "https://example.com/a.b" },
+        { type: "image", href: String.raw`\wsl.localhost\Ubuntu.t3\ref.png` },
+      ],
+    };
+
+    expect(
+      nativeMarkdownWithAuthoredWindowsPaths(node, markdown).children?.map(({ href }) => href),
+    ).toEqual([
+      String.raw`C:\Users\me\.t3\_build\shot.png`,
+      String.raw`C:\Users\me\.claude\settings.json`,
+      "https://example.com/a.b",
+      String.raw`\\wsl.localhost\Ubuntu\.t3\ref.png`,
+    ]);
+  });
+
+  it("leaves a Windows path as parsed when two written paths could have produced it", () => {
+    const markdown = [
+      String.raw`\`![example](C:\Users\me\.t3\shot.png)\``,
+      String.raw`![real](C:\Users\me.t3\shot.png)`,
+    ].join("\n\n");
+    const node: MarkdownNode = {
+      type: "document",
+      children: [{ type: "image", href: String.raw`C:\Users\me.t3\shot.png` }],
+    };
+
+    expect(nativeMarkdownWithAuthoredWindowsPaths(node, markdown).children?.[0]?.href).toBe(
+      String.raw`C:\Users\me.t3\shot.png`,
+    );
+  });
+
   it("normalizes common inline HTML and entities", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -307,28 +351,31 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
-  it("decorates known skill references as selectable skill links", () => {
-    const node: MarkdownNode = {
-      type: "document",
-      children: [
-        {
-          type: "paragraph",
-          children: [{ type: "text", content: "Use $ui for this." }],
-        },
-      ],
-    };
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "decorates %s skill references as selectable skill links",
+    (prefix) => {
+      const node: MarkdownNode = {
+        type: "document",
+        children: [
+          {
+            type: "paragraph",
+            children: [{ type: "text", content: `Use ${prefix}ui for this.` }],
+          },
+        ],
+      };
 
-    expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
-      { text: "Use ", role: "body" },
-      {
-        text: "$ui",
-        role: "body",
-        skillName: "ui",
-        skillLabel: "UI",
-      },
-      { text: " for this.", role: "body" },
-    ]);
-  });
+      expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
+        { text: "Use ", role: "body" },
+        {
+          text: `${prefix}ui`,
+          role: "body",
+          skillName: "ui",
+          skillLabel: "UI",
+        },
+        { text: " for this.", role: "body" },
+      ]);
+    },
+  );
 
   it("decorates known skill references that begin with a digit", () => {
     const node: MarkdownNode = {

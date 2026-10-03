@@ -316,6 +316,18 @@ describe("resolveHostedFirstRunDecision", () => {
     });
   });
 
+  it("keeps Connections reachable for a remote-only desktop predating onboarding", () => {
+    expect(
+      resolveHostedFirstRunDecision({
+        hydrated: true,
+        completed: false,
+        catalogReady: true,
+        environmentCount: 0,
+        localEnvironmentDisabled: true,
+      }),
+    ).toEqual({ decision: "app", persistCompletion: true });
+  });
+
   it("backfills onboarding for a hosted install with saved environments", () => {
     expect(
       resolveHostedFirstRunDecision({
@@ -355,9 +367,9 @@ const bootstrapThread = {
   id: "bootstrap-thread",
   projectId: bootstrapProject.id,
   environmentId: primaryEnvironmentId,
-  latestTurn: null,
+  latestRun: null,
   latestUserMessageAt: null,
-  session: null,
+  runtime: null,
 };
 
 describe("isFreshFirstRunWorkspace", () => {
@@ -496,7 +508,7 @@ describe("isFreshFirstRunWorkspace", () => {
         primaryEnvironmentId,
         serverCwd: "/projects/current",
         projects: [bootstrapProject],
-        threads: [{ ...bootstrapThread, latestTurn: { id: "first-turn" } }],
+        threads: [{ ...bootstrapThread, latestRun: { id: "first-run" } }],
       }),
     ).toBe(false);
   });
@@ -507,7 +519,7 @@ describe("isFreshFirstRunWorkspace", () => {
         primaryEnvironmentId,
         serverCwd: "/projects/current",
         projects: [bootstrapProject],
-        threads: [{ ...bootstrapThread, session: { status: "ready" } }],
+        threads: [{ ...bootstrapThread, runtime: { status: "ready" } }],
       }),
     ).toBe(false);
   });

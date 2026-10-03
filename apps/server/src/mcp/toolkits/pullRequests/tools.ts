@@ -10,13 +10,13 @@ import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngine.OrchestrationEngineService,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  Orchestrator.OrchestratorV2,
+  ProjectService.ProjectService,
 ];
 
 const REGISTER_EVERY_PR =
@@ -108,6 +108,24 @@ export class PullRequestUnlinkFailedError extends Schema.TaggedError<PullRequest
   }
 }
 
+export class PullRequestWatchFailedError extends Schema.TaggedError<PullRequestWatchFailedError>()(
+  "PullRequestWatchFailedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not change whether the pull request is watched.";
+  }
+}
+
+export class PullRequestNotOpenError extends Schema.TaggedError<PullRequestNotOpenError>()(
+  "PullRequestNotOpenError",
+  { state: Schema.String },
+) {
+  override get message(): string {
+    return `The pull request is ${this.state}, so there is nothing to watch.`;
+  }
+}
+
 export class PullRequestListFailedError extends Schema.TaggedError<PullRequestListFailedError>()(
   "PullRequestListFailedError",
   { cause: Schema.Defect() },
@@ -126,6 +144,8 @@ export const PullRequestToolError = Schema.Union([
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
+  PullRequestWatchFailedError,
+  PullRequestNotOpenError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -154,9 +174,21 @@ export const UnlinkPullRequestResult = Schema.Struct({
 });
 export type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
 
+export const WatchPullRequestResult = Schema.Struct({
+  ...PullRequestIdentity,
+  watching: Schema.Boolean.annotate({
+    description: "Whether T3 Code now watches the pull request for this thread.",
+  }),
+  wasWatching: Schema.Boolean.annotate({
+    description: "Whether it was already watched before the call.",
+  }),
+});
+export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
+
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
   source: ThreadPullRequestLinkSource,
+  watching: Schema.Boolean,
   state: Schema.NullOr(PullRequestState),
   title: Schema.NullOr(Schema.String),
   headBranch: Schema.NullOr(Schema.String),
@@ -224,8 +256,38 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const WatchPullRequestTool = Tool.make("watch_pull_request", {
+  description:
+    "Have T3 Code watch an open pull request for this thread, linking it first if needed. T3 Code checks it every minute and wakes you with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Use this to monitor or babysit a pull request instead of polling, sleeping, or running a watcher. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. Watching ends when the pull request merges or closes, when T3 Code cannot read it for 15 minutes, or when you call unwatch_pull_request.",
+  parameters: PullRequestTargetInput,
+  success: WatchPullRequestResult,
+  failure: PullRequestToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Watch pull request")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
+  description:
+    "Stop T3 Code from watching a pull request for this thread. The pull request stays linked. Pass the URL, or repository plus number.",
+  parameters: PullRequestTargetInput,
+  success: WatchPullRequestResult,
+  failure: PullRequestToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Stop watching pull request")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   UnlinkPullRequestTool,
   ListThreadPullRequestsTool,
+  WatchPullRequestTool,
+  UnwatchPullRequestTool,
 );
