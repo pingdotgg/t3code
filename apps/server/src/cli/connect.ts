@@ -112,12 +112,15 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   }
   // A stored credential whose refresh fails (revoked, expired grant) must
   // fall through to a fresh device authorization, not dead-end the command.
+  const fallThroughToDeviceAuthorization = () =>
+    Console.log("The stored T3 Connect credential could not be refreshed; signing in again.").pipe(
+      Effect.as(Option.none()),
+    );
   const existing = yield* tokens.getExisting.pipe(
-    Effect.catchTag("CloudCliCredentialRefreshError", () =>
-      Console.log(
-        "The stored T3 Connect credential could not be refreshed; signing in again.",
-      ).pipe(Effect.as(Option.none())),
-    ),
+    Effect.catchTags({
+      CloudCliCredentialRefreshError: fallThroughToDeviceAuthorization,
+      CloudCliMissingRefreshToken: fallThroughToDeviceAuthorization,
+    }),
   );
   if (Option.isSome(existing)) {
     return existing.value.identity ?? null;
