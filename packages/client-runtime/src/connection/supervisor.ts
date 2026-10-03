@@ -2,7 +2,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import type * as Duration from "effect/Duration";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -480,26 +480,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
-      const probe = yield* lease.session.probe.pipe(
-        Effect.timeoutOrElse({
-          duration: probeTimeout,
-          orElse: () =>
-            Effect.fail(
-              new ConnectionTransientError({
-                reason: "timeout",
-                detail: `${target.label} did not respond to a connection health check.`,
-              }),
-            ),
-        }),
-        Effect.forkChild,
-      );
+      const probe = yield* Effect.forkChild(lease.session.probe);
+      let deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(probeTimeout);
       for (;;) {
-        const probeEvent = yield* Effect.raceFirst(
+        const remainingMs = Math.max(0, deadline - (yield* Clock.currentTimeMillis));
+        const probeEvent = yield* Effect.raceAllFirst([
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
           takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
-        );
+          Effect.sleep(remainingMs).pipe(Effect.as({ _tag: "TimedOut" as const })),
+        ]);
+        if (probeEvent._tag === "TimedOut") {
+          yield* Fiber.interrupt(probe);
+          return yield* new ConnectionTransientError({
+            reason: "timeout",
+            detail: `${target.label} did not respond to a connection health check.`,
+          });
+        }
         if (probeEvent._tag === "ProbeCompleted") {
           if (Exit.isSuccess(probeEvent.exit)) {
             yield* Ref.set(probeUnanswered, false);
@@ -511,6 +509,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (endDuringProbe !== undefined) {
           yield* Fiber.interrupt(probe);
           return endDuringProbe === "reset";
+        }
+        // A retry or an offline report during a desktop foreground probe wants
+        // its quicker answer, so it shortens the running probe.
+        const signalTimeout = probeTimeoutFor(probeEvent.signal);
+        if (signalTimeout !== undefined) {
+          deadline = Math.min(
+            deadline,
+            (yield* Clock.currentTimeMillis) + Duration.toMillis(signalTimeout),
+          );
         }
       }
     }
