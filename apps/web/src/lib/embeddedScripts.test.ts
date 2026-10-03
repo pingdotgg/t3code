@@ -58,6 +58,8 @@ describe("embeddedScripts", () => {
     [`bun -e 'console.log(Bun.version)'`, "typescript", "console.log(Bun.version)"],
     [`deno eval 'console.log(1)'`, "typescript", "console.log(1)"],
     [`deno eval --config deno.json 'console.log(1)'`, "typescript", "console.log(1)"],
+    [`deno eval --env-file 'console.log(1)'`, "typescript", "console.log(1)"],
+    [`psql -f schema.sql -c 'select 1'`, "sql", "select 1"],
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
