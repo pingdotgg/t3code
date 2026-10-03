@@ -7,7 +7,7 @@ import {
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { BROWSER_REMOTE_EDITORS, resolveRemoteOpenState } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -115,6 +115,14 @@ describe("resolveRemoteOpenState", () => {
         remoteOpenTargets: undefined,
       }),
     ).toEqual({ mode: "local-exec" });
+  });
+});
+
+describe("BROWSER_REMOTE_EDITORS", () => {
+  it("leads with VS Code and offers the other remote-capable editors", () => {
+    expect(BROWSER_REMOTE_EDITORS[0]).toBe("vscode");
+    expect(BROWSER_REMOTE_EDITORS).toEqual(expect.arrayContaining(["vscodium", "cursor", "zed"]));
+    expect(BROWSER_REMOTE_EDITORS).not.toContain("idea");
   });
 });
 
