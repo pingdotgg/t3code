@@ -32,12 +32,14 @@ import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
+import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -233,18 +235,33 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
   }
 });
 
+const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
+  "queued-runs",
+  "runtime",
+  "subagent-results",
+  "delegated-completions",
+];
+
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
 
-  // Threads the server would resume or start work on by itself: in-flight or
-  // queued runs, undelivered delegated results, and usage-limit recovery.
-  yield* sql`CREATE TEMP TABLE live_threads AS
+  // Threads the server would resume or start work on by itself. Its own
+  // recovery queries find most of them; usage-limit recovery also depends on
+  // settings, so any thread whose latest run failed or that has a recovery
+  // choice counts as live too.
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const recoveryThreadIds = yield* Effect.forEach(RECOVERY_KINDS, (kind) =>
+    projections.getRecoveryThreadIds(kind),
+  );
+  yield* sql`CREATE TEMP TABLE live_threads (thread_id TEXT PRIMARY KEY)`;
+  for (const threadId of new Set(recoveryThreadIds.flat())) {
+    yield* sql`INSERT INTO live_threads (thread_id) VALUES (${threadId})`;
+  }
+  yield* sql`INSERT OR IGNORE INTO live_threads (thread_id)
     SELECT r.thread_id FROM orchestration_v2_projection_runs r
-    WHERE r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
-      OR json_type(r.payload_json, '$.delegatedCompletion.delivery') = 'object'
-      OR (r.status = 'failed' AND r.ordinal = (
-        SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
-        WHERE latest.thread_id = r.thread_id))
+    WHERE r.status = 'failed' AND r.ordinal = (
+      SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
+      WHERE latest.thread_id = r.thread_id)
     UNION
     SELECT thread_id FROM orchestration_v2_projection_threads
     WHERE json_extract(payload_json, '$.limitRecovery') IS NOT NULL`;
@@ -484,7 +501,11 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
     );
     const result = yield* pruneSnapshot(input).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: snapshotPath })),
+        ),
+      ),
       wrapPhase("prune", snapshotPath),
     );
 

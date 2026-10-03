@@ -38,18 +38,31 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
 
       const forkPayload =
         '{"lineage":{"parentThreadId":"stopped-thread","relationshipToParent":"fork","rootThreadId":"stopped-thread"}}';
+      const subagentPayload =
+        '{"lineage":{"parentThreadId":"subagent-parent","relationshipToParent":"subagent","rootThreadId":"subagent-parent"},"forkedFrom":{"type":"node","nodeId":"node-1"}}';
+      // Excluded threads are newer than the kept family, so only the filters
+      // can keep them out of a one-family-per-project clone.
       const threads = [
-        ["stopped-thread", "project-kept", "completed", "{}"],
-        ["fork-thread", "project-kept", "completed", forkPayload],
-        ["running-thread", "project-kept", "running", "{}"],
-        ["settled-thread", "project-kept", "completed", '{"settledAt":"2026-08-01"}'],
-        ["limit-thread", "project-kept", "completed", '{"limitRecovery":{"autoResume":true}}'],
-        ["deleted-project-thread", "project-deleted", "completed", "{}"],
+        ["stopped-thread", "project-kept", "completed", "{}", "2026-08-01"],
+        ["fork-thread", "project-kept", "completed", forkPayload, "2026-08-02"],
+        ["running-thread", "project-kept", "running", "{}", "2026-08-05"],
+        ["settled-thread", "project-kept", "completed", '{"settledAt":"2026-08-01"}', "2026-08-05"],
+        [
+          "limit-thread",
+          "project-kept",
+          "completed",
+          '{"limitRecovery":{"autoResume":true}}',
+          "2026-08-05",
+        ],
+        // Its result never reached the parent, so startup would deliver it.
+        ["subagent-parent", "project-kept", "completed", "{}", "2026-08-05"],
+        ["subagent-child", "project-kept", "completed", subagentPayload, "2026-08-05"],
+        ["deleted-project-thread", "project-deleted", "completed", "{}", "2026-08-05"],
       ] as const;
-      for (const [threadId, projectId, runStatus, payload] of threads) {
+      for (const [threadId, projectId, runStatus, payload, updatedAt] of threads) {
         yield* sql`INSERT INTO orchestration_v2_projection_threads
           (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
-          VALUES (${threadId}, ${projectId}, ${threadId}, 'codex', 'full-access', 'default', '2026-08-01', '2026-08-01', ${payload})`;
+          VALUES (${threadId}, ${projectId}, ${threadId}, 'codex', 'full-access', 'default', '2026-08-01', ${updatedAt}, ${payload})`;
         yield* sql`INSERT INTO orchestration_v2_projection_runs
           (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
           VALUES (${`run-${threadId}`}, ${threadId}, 1, 'codex', ${runStatus}, '2026-08-01', '{}')`;
@@ -60,7 +73,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       // A provider session shared by two threads names its latest writer.
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
         (provider_session_id, thread_id, provider, status, updated_at, payload_json)
-        VALUES ('session-shared', 'running-thread', 'codex', 'ready', '2026-08-01', '{}')`;
+        VALUES ('session-shared', 'running-thread', 'codex', 'stopped', '2026-08-01', '{}')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
         (provider_session_id, thread_id)
         VALUES ('session-shared', 'running-thread'), ('session-shared', 'stopped-thread')`;
