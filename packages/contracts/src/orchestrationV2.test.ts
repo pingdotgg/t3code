@@ -45,6 +45,48 @@ import {
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
+function emptyThreadProjection() {
+  return {
+    thread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
+    },
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: now,
+  };
+}
+
 const LegacyShellStreamItem = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("synchronized") }),
   Schema.Struct({
@@ -324,6 +366,47 @@ describe("orchestration V2 contracts", () => {
     });
     expect(legacyDecoded.afterSequence).toBe(12);
     expect("acceptBoundedSnapshot" in legacyDecoded).toBe(false);
+  });
+
+  it("negotiates compact bounded turnItems without disturbing older peers", () => {
+    // Older servers strip the unknown opt-in, so they keep sending full turnItems.
+    const legacyDecoded = decodeLegacySubscribeThreadInput({
+      threadId: "thread-1",
+      acceptBoundedSnapshot: true,
+      acceptCompactTurnItems: true,
+    });
+    expect("acceptCompactTurnItems" in legacyDecoded).toBe(false);
+    expect(
+      decodeOrchestrationV2SubscribeThreadInput({
+        threadId: "thread-1",
+        acceptCompactTurnItems: true,
+      }).acceptCompactTurnItems,
+    ).toBe(true);
+
+    const decodeStreamItem = Schema.decodeUnknownSync(OrchestrationV2ThreadStreamItem);
+    const projection = decodeStreamItem({
+      kind: "snapshot",
+      snapshotSequence: 1,
+      projection: emptyThreadProjection(),
+    });
+    // Older servers never send the marker; newer clients treat absence as full turnItems.
+    expect(projection.kind === "snapshot" && projection.turnItemsOmitLocalVisible).toBe(undefined);
+    const marked = decodeStreamItem({
+      kind: "snapshot",
+      snapshotSequence: 1,
+      projection: emptyThreadProjection(),
+      turnItemsOmitLocalVisible: true,
+    });
+    expect(marked.kind === "snapshot" && marked.turnItemsOmitLocalVisible).toBe(true);
+    // The marker only means "omitted"; any other value is a protocol error.
+    expect(() =>
+      decodeStreamItem({
+        kind: "snapshot",
+        snapshotSequence: 1,
+        projection: emptyThreadProjection(),
+        turnItemsOmitLocalVisible: false,
+      }),
+    ).toThrow();
   });
 
   it("decodes persisted capability snapshots that predate runtimePolicy", () => {
