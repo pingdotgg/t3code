@@ -16,7 +16,10 @@ import {
   orchestrationV2RunWorkStartedAt,
   type ThreadId,
 } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -295,9 +298,17 @@ export interface PendingBackgroundWorkItem {
 }
 
 export interface PendingBackgroundWorkPresentation {
-  /** "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command". */
+  /**
+   * "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command",
+   * or "Running: Start the dev server" when only commands remain.
+   */
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+  /**
+   * True when the work will wake the agent (subagents, monitors). False when
+   * only commands remain, such as a dev server: the agent is done.
+   */
+  readonly waiting: boolean;
 }
 
 function joinWithAnd(parts: ReadonlyArray<string>): string {
@@ -305,11 +316,12 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-/** Names what a settled thread is still waiting on, grouped by kind, for the composer strip. */
+/** Names what a settled thread still runs, grouped by kind, for the composer strip. */
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
+  const waiting = backgroundWorkHoldsCompletion(tasks);
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
@@ -335,10 +347,15 @@ export function presentPendingBackgroundWork(
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
-    return {
-      title: only.label === noun ? `Waiting on a ${noun}` : `Waiting on ${noun} ${only.label}`,
-      items,
-    };
+    const named = only.label !== noun;
+    const title = waiting
+      ? named
+        ? `Waiting on ${noun} ${only.label}`
+        : `Waiting on a ${noun}`
+      : named
+        ? `Running: ${only.label}`
+        : `Running a ${noun}`;
+    return { title, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -346,7 +363,7 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `Waiting on ${joinWithAnd(groups)}`, items };
+  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
 }
 
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */
