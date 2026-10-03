@@ -4,10 +4,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
@@ -49,6 +51,16 @@ const makeHttpClientLayer = (bytes: Uint8Array) =>
         HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer)),
       ),
     ),
+  );
+
+// Records each request and never responds, simulating a wedged endpoint.
+const makeStalledHttpClientLayer = (requests: Array<unknown>) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push(request);
+      return Effect.never;
+    }),
   );
 
 const makeSpawnerLayer = (commands: Array<string>) =>
@@ -278,4 +290,44 @@ describe("RelayClient", () => {
       );
     },
   );
+
+  it.effect("fails a stalled download after the download timeout", () => {
+    const requests: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const manager = yield* makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: "https://example.test/cloudflared",
+          sha256: "00".repeat(32),
+          archive: "binary",
+        },
+      });
+
+      const child = yield* Effect.forkChild(manager.install);
+      // Spin until the wedged download is in flight, so the clock
+      // adjustment below cannot run before the timeout is armed.
+      while (requests.length === 0) {
+        yield* Effect.yieldNow;
+      }
+      // The download timeout is 10 minutes; advance past it.
+      yield* TestClock.adjust("11 minutes");
+      const error = yield* Fiber.join(child).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(RelayClientInstallError);
+      expect(error.reason).toBe("download_failed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          makeStalledHttpClientLayer(requests),
+          makeSpawnerLayer([]),
+          hostRuntimeLayer(),
+        ),
+      ),
+    );
+  });
 });
