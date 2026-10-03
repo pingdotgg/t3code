@@ -8,10 +8,13 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   baseSshArgs,
+  buildSshHostSpecEffect,
+  collectProcessOutput,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
   runSshCommand,
@@ -79,6 +82,55 @@ describe("ssh command", () => {
         },
       );
     }),
+  );
+
+  it.effect("keeps a discovered SSH URI valid after resolving its user", () =>
+    Effect.gen(function* () {
+      for (const [alias, hostname, expected] of [
+        ["ssh://host.example:2222", "host.example", "alice@host.example"],
+        ["ssh://[::1]:2222", "::1", "alice@::1"],
+        ["SSH://host.example:2222", "host.example", "alice@host.example"],
+        ["SsH://[::1]:2222", "::1", "alice@::1"],
+      ]) {
+        const resolved = parseSshResolveOutput(
+          alias!,
+          `hostname ${hostname}\nuser alice\nport 2222\n`,
+        );
+        assert.equal(yield* buildSshHostSpecEffect(resolved), expected);
+        assert.include(baseSshArgs(resolved), "2222");
+        assert.include(baseSshArgs({ ...resolved, port: null }), "2222");
+      }
+    }),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "passes SSH URI destinations to OpenSSH with their exact user and port",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        for (const hostname of ["host.example", "2001:db8::1", "fe80::1%fixture0"]) {
+          for (const username of [null, "developer+ops", "developer%ops"]) {
+            const alias = `ssh://${hostname.includes(":") ? `[${hostname}]` : hostname}:2222`;
+            const target = { alias, hostname, username, port: null };
+            const hostSpec = yield* buildSshHostSpecEffect(target);
+            const child = yield* spawner.spawn(
+              ChildProcess.make("ssh", ["-F", "/dev/null", "-G", ...baseSshArgs(target), hostSpec]),
+            );
+            const stdout = yield* collectProcessOutput(child.stdout);
+            assert.equal(Number(yield* child.exitCode), 0);
+            assert.include(stdout, "port 2222\n");
+            assert.include(stdout, `hostname ${hostname}\n`);
+            if (username) assert.include(stdout, `user ${username}\n`);
+          }
+        }
+        const encoded = {
+          alias: "ssh://developer%2Bops%25@host.example:2222",
+          hostname: "host.example",
+          username: null,
+          port: null,
+        };
+        assert.equal(yield* buildSshHostSpecEffect(encoded), "developer+ops%@host.example");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("builds interactive ssh args without forcing batch mode", () =>

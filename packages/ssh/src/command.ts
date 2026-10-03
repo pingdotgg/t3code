@@ -79,12 +79,34 @@ export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
     .slice(0, 16);
 }
 
-function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
+// SSH authorities permit scoped IPv6 addresses that WHATWG URL rejects.
+function parseSshDestination(target: DesktopSshEnvironmentTarget) {
   const destination = target.alias.trim() || target.hostname.trim();
   if (destination.length === 0) {
     throw new Error("SSH target is missing its alias/hostname.");
   }
-  return target.username ? `${target.username}@${destination}` : destination;
+  if (!/^ssh:\/\//iu.test(destination)) {
+    return { hostname: destination, username: target.username, port: target.port };
+  }
+  const authority = /^ssh:\/\/(?:([^@/?#:]+)@)?(\[[^\]]+\]|[^:/?#@]+)(?::(\d+))?\/?$/iu.exec(
+    destination,
+  );
+  if (!authority?.[2]) throw new Error("SSH URI is invalid.");
+  const hostname = authority[2].startsWith("[") ? authority[2].slice(1, -1) : authority[2];
+  const port = authority[3] === undefined ? null : Number(authority[3]);
+  if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) {
+    throw new Error("SSH URI port is invalid.");
+  }
+  return {
+    hostname,
+    username: target.username ?? (authority[1] ? decodeURIComponent(authority[1]) : null),
+    port: target.port ?? port,
+  };
+}
+
+function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
+  const { hostname, username } = parseSshDestination(target);
+  return username ? `${username}@${hostname}` : hostname;
 }
 
 export const buildSshHostSpecEffect = (
@@ -102,12 +124,13 @@ export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly batchMode?: "yes" | "no" },
 ): string[] {
+  const { port } = parseSshDestination(target);
   return [
     "-o",
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
-    ...(target.port !== null ? ["-p", String(target.port)] : []),
+    ...(port ? ["-p", String(port)] : []),
   ];
 }
 
