@@ -2329,6 +2329,24 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequestNumber} here, or check it out in its own folder.`,
+      });
+    }
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2362,10 +2380,10 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
-          force: true,
         });
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
