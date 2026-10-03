@@ -2894,6 +2894,14 @@ function useChatMarkdownState({
   };
 }
 
+/**
+ * Lets the surface around a message add one action to a fenced block's header, keyed by the
+ * fence's meta string. Return null to leave a block alone.
+ */
+export const MarkdownCodeBlockActionContext = React.createContext<
+  ((meta: string | undefined) => ReactNode) | null
+>(null);
+
 const ChatMarkdownRendererContext = React.createContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
 >(null!);
@@ -3403,13 +3411,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
       ChatMarkdownRendererContext,
     );
+    const renderAction = use(MarkdownCodeBlockActionContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
 
     const language = extractFenceLanguage(codeBlock.className);
-    const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const meta = extractPreCodeMeta(node);
+    const fenceTitle = extractFenceTitle(meta);
     const highlightedCode = (
       <RenderErrorBoundary
         resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
@@ -3458,6 +3468,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             : undefined
         }
         isStreaming={isStreaming}
+        leadingActions={renderAction?.(meta)}
       >
         {highlightedCode}
       </MarkdownCodeBlock>

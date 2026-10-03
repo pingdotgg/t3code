@@ -427,6 +427,8 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "operation_failed",
+  "lines_changed",
+  "lines_already_replaced",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
 
@@ -482,6 +484,18 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  /**
+   * Write `contents` over lines `startLine`..`endLine` (1-based, inclusive) instead of the whole
+   * file, and only while those lines still read `expected`. A file that moved fails with
+   * `lines_changed` rather than patching whatever now sits there.
+   */
+  replaceLines: Schema.optional(
+    Schema.Struct({
+      startLine: PositiveInt,
+      endLine: PositiveInt,
+      expected: Schema.String,
+    }),
+  ),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 

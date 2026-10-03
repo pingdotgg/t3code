@@ -30,6 +30,7 @@ import {
   mergePullRequestThreadComments,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { PullRequestSuggestionScope } from "./PullRequestApplySuggestion";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -93,6 +94,7 @@ export function PendingReviewCommentCard({
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
+  headBranch,
   canReply,
   canResolve,
   canReact,
@@ -111,6 +113,7 @@ export function ReviewThreadCard({
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
+  headBranch: string;
   canReply: boolean;
   canResolve: boolean;
   canReact: boolean;
@@ -289,20 +292,29 @@ export function ReviewThreadCard({
                     onCancel={() => setEditingId(null)}
                   />
                 ) : (
-                  <div className="mt-1 flex items-start gap-1">
-                    <PullRequestMarkdown
-                      className="min-w-0 flex-1 text-sm"
-                      text={comment.body}
-                      cwd={workspaceRoot}
-                      environmentId={environmentId}
-                    />
-                    {canEditComment(comment) ? (
-                      <PullRequestEditButton
-                        aria-label="Edit comment"
-                        onClick={() => setEditingId(comment.id)}
+                  <PullRequestSuggestionScope
+                    environmentId={environmentId}
+                    reference={reference}
+                    thread={thread}
+                    body={comment.body}
+                    headBranch={headBranch}
+                    workspaceRoot={workspaceRoot}
+                  >
+                    <div className="mt-1 flex items-start gap-1">
+                      <PullRequestMarkdown
+                        className="min-w-0 flex-1 text-sm"
+                        text={comment.body}
+                        cwd={workspaceRoot}
+                        environmentId={environmentId}
                       />
-                    ) : null}
-                  </div>
+                      {canEditComment(comment) ? (
+                        <PullRequestEditButton
+                          aria-label="Edit comment"
+                          onClick={() => setEditingId(comment.id)}
+                        />
+                      ) : null}
+                    </div>
+                  </PullRequestSuggestionScope>
                 )}
               </article>
             ))}

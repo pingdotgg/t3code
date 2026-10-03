@@ -475,6 +475,7 @@ const RawReviewThreadsSchema = Schema.Struct({
               path: Schema.optional(Schema.NullOr(Schema.String)),
               /** Null once the thread's line has left the diff, which `isOutdated` reports. */
               line: Schema.optional(Schema.NullOr(Schema.Int)),
+              startLine: Schema.optional(Schema.NullOr(Schema.Int)),
               diffSide: Schema.optional(Schema.NullOr(Schema.String)),
               comments: RawThreadCommentsSchema,
             }),
@@ -881,6 +882,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           isOutdated
           path
           line
+          startLine
           diffSide
           comments(first: 10) {
             totalCount
@@ -2267,6 +2269,14 @@ export function decodeReviewThreadsJson(
             thread.line !== null && thread.line !== undefined && thread.line > 0
               ? thread.line
               : null,
+          ...(thread.startLine !== null &&
+          thread.startLine !== undefined &&
+          thread.startLine > 0 &&
+          thread.line !== null &&
+          thread.line !== undefined &&
+          thread.startLine < thread.line
+            ? { startLine: thread.startLine }
+            : {}),
           side: thread.diffSide?.toUpperCase() === "LEFT" ? "left" : "right",
           isResolved: thread.isResolved === true,
           isOutdated: thread.isOutdated === true,

@@ -243,6 +243,8 @@ export const PullRequestReviewThread = Schema.Struct({
   path: TrimmedNonEmptyString,
   /** Null when the host anchors the thread to a file rather than to a line. */
   line: Schema.NullOr(PositiveInt),
+  /** First line of a multi-line thread, which then runs to `line`. Absent for a single line. */
+  startLine: Schema.optional(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,
   /**

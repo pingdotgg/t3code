@@ -337,5 +337,85 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(escapedStat).toBeNull();
       }),
     );
+
+    it.effect("replaces a line range while it still reads as expected", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "one\r\ntwo\r\nthree\r\nfour\r\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/a.ts",
+          contents: "TWO\nTWO AND A HALF",
+          replaceLines: { startLine: 2, endLine: 3, expected: "two\nthree" },
+        });
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/a.ts"))
+          .pipe(Effect.orDie);
+
+        expect(saved).toBe("one\r\nTWO\r\nTWO AND A HALF\r\nfour\r\n");
+      }),
+    );
+
+    it.effect("refuses a line range that no longer matches and leaves the file alone", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "one\nchanged\nthree\n");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/a.ts",
+            contents: "TWO",
+            replaceLines: { startLine: 2, endLine: 2, expected: "two" },
+          })
+          .pipe(Effect.flip);
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/a.ts"))
+          .pipe(Effect.orDie);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileLinesChangedError);
+        expect(error).toMatchObject({ alreadyReplaced: false });
+        expect(saved).toBe("one\nchanged\nthree\n");
+      }),
+    );
+  });
+
+  describe("replaceFileLines", () => {
+    it("deletes the range for an empty replacement", () => {
+      expect(
+        WorkspaceFileSystem.replaceFileLines(
+          "a\nb\nc",
+          { startLine: 2, endLine: 2, expected: "b" },
+          "",
+        ),
+      ).toEqual({ contents: "a\nc" });
+    });
+
+    it("refuses a range past the end of the file", () => {
+      expect(
+        WorkspaceFileSystem.replaceFileLines(
+          "a\n",
+          { startLine: 2, endLine: 2, expected: "" },
+          "x",
+        ),
+      ).toEqual({ alreadyReplaced: false });
+    });
+
+    it("recognizes a range that already reads as the replacement", () => {
+      expect(
+        WorkspaceFileSystem.replaceFileLines(
+          "a\r\nB\r\nB2\r\nc\r\n",
+          { startLine: 2, endLine: 2, expected: "b" },
+          "B\nB2",
+        ),
+      ).toEqual({ alreadyReplaced: true });
+    });
   });
 });
