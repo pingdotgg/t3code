@@ -106,4 +106,39 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
+
+  it.effect("repoints a Windows shim and keeps its codepage header", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const oldExe = path.join(root, "runtime/versions/1.0.0/t3.exe");
+      const newExe = path.join(root, "runtime/versions/2.0.0/t3.exe");
+      const bin = path.join(root, "bin");
+      const shim = path.join(bin, "t3.cmd");
+      for (const file of [oldExe, newExe]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(shim, `@echo off\r\nchcp 65001 >nul\r\n"${oldExe}" %*\r\n`);
+
+      const repointed = yield* repointLauncher({
+        launchedAs: oldExe,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newExe,
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessEnvironment, { PATH: bin }),
+      );
+
+      assert.deepStrictEqual(Option.getOrUndefined(repointed), shim);
+      const contents = yield* fs.readFileString(shim);
+      assert.ok(contents.includes(`"${newExe}"`));
+      // The rewritten shim must keep the UTF-8 codepage switch that lets
+      // cmd.exe read non-ASCII install paths.
+      assert.ok(contents.includes("chcp 65001 >nul"));
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "win32")),
+  );
 });

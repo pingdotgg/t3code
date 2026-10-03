@@ -113,3 +113,137 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
     },
   );
 });
+
+// cmd.exe parses batch files with the console's codepage, so the Windows shim
+// only works when its bytes survive that decode. Drive the real installer with
+// a non-ASCII T3CODE_HOME and then run the shim it wrote, the way a user would.
+describe.skipIf(HostProcessPlatform.defaultValue() !== "win32")("installer windows shim", () => {
+  it("runs the t3.cmd shim through a non-ASCII install home", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-shim-"));
+    try {
+      const home = NodePath.join(root, "Déry home");
+      const bin = NodePath.join(root, "bin");
+      const version = "1.2.3";
+      const stem = `t3-${version}-win32-x64`;
+      const archiveName = `${stem}.zip`;
+      const zipSource = NodePath.join(root, "zip-src");
+      const staging = NodePath.join(zipSource, stem);
+      await NodeFSP.mkdir(staging, { recursive: true });
+      // A stub t3.exe that prints its version and echoes its arguments, so the
+      // shim's `%*` forwarding is observable. Compiled with the .NET Framework
+      // compiler that ships with Windows; no SDK required.
+      const stubSource = NodePath.join(root, "stub.cs");
+      await NodeFSP.writeFile(
+        stubSource,
+        [
+          "public static class Stub {",
+          "  public static void Main(string[] args) {",
+          '    System.Console.WriteLine("t3 v1.2.3 " + string.Join(" ", args));',
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      const csc = [
+        "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+        "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe",
+      ].find((candidate) => {
+        try {
+          NodeChildProcess.execFileSync(candidate, ["-help"], { stdio: "ignore" });
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (!csc) throw new Error("no .NET Framework compiler found");
+      NodeChildProcess.execFileSync(
+        csc,
+        ["-nologo", `-out:${NodePath.join(staging, "t3.exe")}`, stubSource],
+        {
+          stdio: "ignore",
+        },
+      );
+      // Windows ships bsdtar at an absolute path; a GNU tar on the PATH would
+      // read the `C:` drive letter as a remote host.
+      NodeChildProcess.execFileSync("C:\\Windows\\System32\\tar.exe", [
+        "-a",
+        "-cf",
+        NodePath.join(root, archiveName),
+        "-C",
+        zipSource,
+        stem,
+      ]);
+      const archive = await NodeFSP.readFile(NodePath.join(root, archiveName));
+      const checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
+      const server = NodeHttp.createServer((request, response) => {
+        if (request.url?.endsWith("/SHA256SUMS")) {
+          response.end(`${checksum}  ${archiveName}\n`);
+        } else if (request.url?.endsWith(`/${archiveName}`)) {
+          response.writeHead(200, { "Content-Length": archive.length }).end(archive);
+        } else {
+          response.writeHead(404).end();
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+      const child = NodeChildProcess.spawn(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          NodePath.resolve(import.meta.dirname, "install.ps1"),
+        ],
+        {
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+            T3CODE_CHANNEL: "stable",
+            T3CODE_VERSION: version,
+            T3CODE_HOME: home,
+            T3CODE_INSTALL_BIN_DIR: bin,
+            T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let output = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
+      });
+      expect(code).toBe(0);
+      expect(output).toContain("Installed T3 Code 1.2.3");
+      expect(
+        await NodeFSP.readFile(
+          NodePath.join(home, "runtime", "versions", version, ".install-complete"),
+          "utf8",
+        ),
+      ).toBe("1.2.3");
+      const shim = NodePath.join(bin, "t3.cmd");
+      // windowsVerbatimArguments keeps the /s /c tail verbatim; Node's default
+      // arg escaping would mangle the inner quotes cmd needs.
+      const invoked = NodeChildProcess.spawnSync(
+        "cmd.exe",
+        ["/d", "/s", "/c", `"${shim}" one two`],
+        {
+          encoding: "utf8",
+          windowsVerbatimArguments: true,
+        },
+      );
+      expect(invoked.status).toBe(0);
+      expect(invoked.stdout).toContain("t3 v1.2.3 one two");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});

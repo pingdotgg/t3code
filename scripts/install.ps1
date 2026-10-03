@@ -212,9 +212,8 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
 Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
-# UTF-8 without a BOM: cmd.exe reads the shim as-is, and ASCII would corrupt
-# non-ASCII characters in the user's home path.
-[System.IO.File]::WriteAllText($shim, "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*", (New-Object System.Text.UTF8Encoding $false))
+# cmd parses batch files in the console's codepage: switch to UTF-8 for the target, then restore.
+[System.IO.File]::WriteAllText($shim, "@echo off`r`nfor /f `"tokens=2 delims=:`" %%c in ('chcp') do set `"T3CP=%%c`"`r`nchcp 65001 >nul`r`n`"$(Join-Path $targetDir 't3.exe')`" %*`r`nset `"T3EC=%ERRORLEVEL%`"`r`nchcp %T3CP% >nul`r`nset `"T3CP=`"`r`nexit /b %T3EC%`r`n", (New-Object System.Text.UTF8Encoding $false))
 if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 [Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
 if (($env:PATH -split ";") -notcontains $binDir) {
