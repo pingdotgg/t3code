@@ -265,6 +265,63 @@ it.effect("does not wait for an in-flight detail read to display a preview", () 
   }),
 );
 
+it.effect("starts a fresh detail lookup while an interrupted read is cleaning up", () =>
+  Effect.gen(function* () {
+    const detailStarted = yield* Deferred.make<void>();
+    const cleanupStarted = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    let calls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => {
+            const call = ++calls;
+            return Effect.gen(function* () {
+              if (call === 1) {
+                yield* Deferred.succeed(detailStarted, undefined);
+                return yield* Effect.never;
+              }
+              return hostedChangeRequest("fresh detail");
+            }).pipe(
+              Effect.ensuring(
+                call === 1
+                  ? Deferred.succeed(cleanupStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseCleanup)),
+                    )
+                  : Effect.void,
+              ),
+            );
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    const first = yield* service
+      .detail(reference)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(detailStarted);
+    const firstInterrupt = yield* Fiber.interrupt(first).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Deferred.await(cleanupStarted);
+
+    const second = yield* service
+      .detail(reference)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(releaseCleanup, undefined);
+    yield* Fiber.join(firstInterrupt);
+
+    assert.strictEqual((yield* Fiber.join(second)).body, "fresh detail");
+    assert.strictEqual(
+      (yield* service.detail({ ...reference, allowStale: false })).body,
+      "fresh detail",
+    );
+    assert.strictEqual(calls, 2);
+  }),
+);
+
 it.effect("keeps previews warm when another project finishes a turn", () =>
   Effect.gen(function* () {
     const reads: string[] = [];

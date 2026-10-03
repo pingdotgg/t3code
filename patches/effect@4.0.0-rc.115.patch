@@ -1,3 +1,16 @@
+diff --git a/dist/Cache.js b/dist/Cache.js
+index 315795c3f9f23cc407b270f7def4fef792257a0c..541ae1896a58c88b147d4f364529f1f36e2d98cf 100644
+--- a/dist/Cache.js
++++ b/dist/Cache.js
+@@ -300,6 +300,8 @@ class EntryImpl {
+     return effect.onExit(effect.fiberJoin(this.fiber), () => {
+       this.awaiters--;
+       if (this.awaiters > 0 || this.fiber.pollUnsafe()) return effect.void;
++      // A new reader must not join this lookup while interruption finalizers run.
++      this.expiresAt = 0;
+       return effect.fiberInterrupt(this.fiber);
+     });
+   }
 diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
 index e8b9be4..9cffc5c 100644
 --- a/dist/unstable/ai/McpServer.js
@@ -350,3 +363,16 @@ index cbf047f..c7d5cc2 100644
    }
  
    get remoteAddress(): Option.Option<string> {
+diff --git a/src/Cache.ts b/src/Cache.ts
+index de91e02322e21f59c0b49cfebed68a4a536ff9e4..d24cd5cc79ff0c805665ace97d462b2138a4cf48 100644
+--- a/src/Cache.ts
++++ b/src/Cache.ts
+@@ -669,6 +669,8 @@ class EntryImpl<A, E> implements Entry<A, E> {
+     return effect.onExit(effect.fiberJoin(this.fiber), () => {
+       this.awaiters--
+       if (this.awaiters > 0 || this.fiber.pollUnsafe()) return effect.void
++      // A new reader must not join this lookup while interruption finalizers run.
++      this.expiresAt = 0
+       return effect.fiberInterrupt(this.fiber)
+     })
+   }
