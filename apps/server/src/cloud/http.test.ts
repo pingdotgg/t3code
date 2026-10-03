@@ -61,6 +61,7 @@ import {
   registerManagedCloudTunnelRecovery,
   releaseManagedTunnelOnShutdown,
   startManagedCloudTunnelIfOriginConfirmed,
+  activateManagedTunnelWithRetry,
 } from "./http.ts";
 import {
   managedTunnelStartupAction,
@@ -1260,4 +1261,69 @@ describe("link proof provider kinds", () => {
     ]);
     expect(linkProofScopes(proofRequest("manual"))).toEqual(["agent_activity_notifications"]);
   });
+});
+
+describe("activateManagedTunnelWithRetry", () => {
+  it.effect("gives up after the retry window instead of spinning forever", () =>
+    Effect.gen(function* () {
+      const configJson = `{"providerKind":"cloudflare_tunnel","connectorToken":"token","tunnelId":"tunnel"}`;
+      const values = new Map<string, Uint8Array>([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, new TextEncoder().encode(configJson)],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const secrets: ServerSecretStore.ServerSecretStore["Service"] = {
+        get: (name: string) => {
+          const value = values.get(name);
+          return value === undefined ? Effect.succeedNone : Effect.succeedSome(value);
+        },
+        set: (name: string, value: Uint8Array) =>
+          Effect.sync(() => {
+            values.set(name, value);
+          }),
+        create: unusedSecretStoreOperation,
+        getOrCreateRandom: unusedSecretStoreOperation,
+        remove: unusedSecretStoreOperation,
+      };
+      const endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"] = {
+        applyConfig: (config) =>
+          Effect.sync(() => {
+            applyConfigCalls.push(config);
+            return {
+              status: "failed" as const,
+              providerKind: "cloudflare_tunnel" as const,
+              failure: "spawn-failed" as const,
+              reason: "connector spawn failed",
+            };
+          }),
+        recoveryRequests: Stream.empty,
+        requestRecovery: () => Effect.void,
+        withLinkStateLock: (effect) => effect,
+      };
+      const dependencies = { secrets, endpointRuntime };
+      const fiber = yield* Effect.forkScoped(
+        activateManagedTunnelWithRetry(
+          dependencies,
+          {
+            config: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "token",
+              tunnelId: "tunnel",
+            },
+            configJson,
+            origin: { localHttpHost: "127.0.0.1", localHttpPort: 4884 },
+          },
+          true,
+        ),
+      );
+      // Past the 10-minute retry window: the request must have failed with
+      // the last activation error, releasing the sequential recovery queue.
+      // On base (unbounded retry) the fiber is still running here.
+      yield* TestClock.adjust("11 minutes");
+      // pollUnsafe: in Effect v4 there is no Effect-returning Fiber.poll.
+      expect(fiber.pollUnsafe() !== undefined).toBe(true);
+      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "EnvironmentCloudEndpointUnavailableError" });
+      expect(applyConfigCalls.length).toBeGreaterThan(1);
+    }),
+  );
 });

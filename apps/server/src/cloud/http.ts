@@ -71,6 +71,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW } from "./managedTunnelStartup.ts";
 import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -517,7 +518,7 @@ function managedEndpointRuntimeConfigsMatch(
 }
 
 const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(function* (
-  dependencies: CloudHttpDependencies,
+  dependencies: Pick<CloudHttpDependencies, "secrets" | "endpointRuntime">,
   input: {
     readonly config: RelayManagedEndpointRuntimeConfig;
     readonly configJson: string;
@@ -547,8 +548,10 @@ const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel
   );
 });
 
-const activateManagedTunnelWithRetry = (
-  dependencies: CloudHttpDependencies,
+// Exported for tests: the retry window is what keeps one poisoned recovery
+// request from occupying the sequential recovery queue forever.
+export const activateManagedTunnelWithRetry = (
+  dependencies: Pick<CloudHttpDependencies, "secrets" | "endpointRuntime">,
   input: {
     readonly config: RelayManagedEndpointRuntimeConfig;
     readonly configJson: string;
@@ -565,11 +568,15 @@ const activateManagedTunnelWithRetry = (
             ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
               error.endpointRuntimeStatus,
             ),
+          // Bounded like the registration retry window: a persistently
+          // failing connector (binary missing, spawn broken) must release
+          // the recovery queue so newer requests can be processed.
           schedule: Schedule.exponential("1 second").pipe(
             Schedule.modifyDelay(({ duration }) =>
               Effect.succeed(Duration.min(duration, Duration.seconds(30))),
             ),
             Schedule.jittered,
+            Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
           ),
         }),
       )
