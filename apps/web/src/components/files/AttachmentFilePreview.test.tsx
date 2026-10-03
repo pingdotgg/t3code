@@ -65,6 +65,11 @@ describe("attachment HTML preview recovery", () => {
     });
   };
 
+  // The rendered HTML frame probes its own URL with HEAD to report a document
+  // that fails to load. These tests are about the source view's own requests.
+  const sourceFetches = () =>
+    vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method !== "HEAD");
+
   const toggleMode = async (label: string) => {
     await act(async () => {
       renderer.root.findByProps({ "aria-label": label }).props.onClick();
@@ -75,14 +80,13 @@ describe("attachment HTML preview recovery", () => {
     await openRemote();
     now = 61 * 60_000;
     await toggleMode("Show HTML source");
-    expect(fetch).toHaveBeenCalledExactlyOnceWith(renewedUrl, expect.any(Object));
+    expect(sourceFetches()).toEqual([[renewedUrl, expect.any(Object)]]);
 
     await toggleMode("Show rendered page");
     expect(renderer.root.findByType("iframe").props.src).toBe(renewedUrl);
     await toggleMode("Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(2);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([renewedUrl, renewedUrl]);
+    expect(sourceFetches().map(([url]) => url)).toEqual([renewedUrl, renewedUrl]);
   });
 
   it("does not fetch or mark an expired URL fresh when reauthorization is unavailable", async () => {
@@ -90,7 +94,7 @@ describe("attachment HTML preview recovery", () => {
     now = 61 * 60_000;
     refresh.mockResolvedValue(null);
     await toggleMode("Show HTML source");
-    expect(fetch).not.toHaveBeenCalled();
+    expect(sourceFetches()).toEqual([]);
     expect(renderer.root.findByProps({ role: "alert" }).children).toEqual([
       "Reconnect to the environment and try again.",
     ]);
@@ -98,7 +102,7 @@ describe("attachment HTML preview recovery", () => {
     await toggleMode("Show rendered page");
     await toggleMode("Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(3);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(sourceFetches()).toEqual([]);
   });
 
   it("can return to rendered HTML after local source decoding fails", async () => {
