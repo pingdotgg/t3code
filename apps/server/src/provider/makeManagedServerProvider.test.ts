@@ -657,4 +657,59 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
+
+  it.effect("does not publish a window streamed after a failed probe as the full list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshCount = yield* Ref.make(0);
+        const failedLimits = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        } as const;
+        const probedLimits = {
+          checkedAt: "2026-04-10T00:00:03.000Z",
+          windows: [
+            { id: "five_hour", kind: "session", label: "Session", usedPercent: 10 },
+            { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 25 },
+          ],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
+            Effect.map((count) => ({
+              ...refreshedSnapshot,
+              usageLimits: count < 3 ? failedLimits : probedLimits,
+            })),
+          ),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const weekly = {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 20,
+        } as const;
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [weekly],
+        });
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [weekly],
+          unavailable: { reason: "probeFailed" },
+        });
+
+        // A second failed probe has no last good list to keep.
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, probedLimits);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
 });
