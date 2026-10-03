@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  markdownWithTableCopyFormat,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -341,5 +344,56 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "Hello World (Document template)",
     );
+  });
+});
+
+describe("markdownWithTableCopyFormat", () => {
+  const message = [
+    "Here is the status.",
+    "",
+    "| Question | Answer |",
+    "| --- | --- |",
+    "| **Loader** URL? | See [docs](https://example.com) and `v2\\|v3` |",
+    "| Owner, team | Platform |",
+    "| ![Build badge](https://example.com/b.svg) | ok |",
+    "",
+    "```md",
+    "| a | b |",
+    "| - | - |",
+    "```",
+  ].join("\n");
+
+  it("rewrites tables as plain-text tab-separated rows and leaves everything else alone", () => {
+    expect(markdownWithTableCopyFormat(message, "tsv")).toBe(
+      [
+        "Here is the status.",
+        "",
+        "Question\tAnswer",
+        "Loader URL?\tSee docs and v2|v3",
+        "Owner, team\tPlatform",
+        "Build badge\tok",
+        "",
+        "```md",
+        "| a | b |",
+        "| - | - |",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  it("fits each row to the header's width, as the rendered table does", () => {
+    const ragged = ["| a | b |", "| - | - |", "| 1 | 2 | 3 |", "| x |"].join("\n");
+
+    expect(markdownWithTableCopyFormat(ragged, "tsv")).toBe("a\tb\n1\t2\nx\t");
+  });
+
+  it("drops the quote prefix from every row of a quoted table", () => {
+    const quoted = ["> Note", ">", "> | a | b |", "> | - | - |", "> | 1 | 2 |"].join("\n");
+
+    expect(markdownWithTableCopyFormat(quoted, "tsv")).toBe("> Note\n>\na\tb\n1\t2");
+  });
+
+  it("quotes CSV cells that contain commas", () => {
+    expect(markdownWithTableCopyFormat(message, "csv")).toContain('"Owner, team",Platform');
   });
 });

@@ -32,6 +32,7 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
   ServerProviderSkill,
+  TableCopyFormat,
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
@@ -145,7 +146,7 @@ import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
-  serializeTableElementToCsv,
+  serializeTableElementToDelimited,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
@@ -346,7 +347,7 @@ const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 interface MarkdownActionFailureContext {
   readonly operation: string;
   readonly target?: string;
-  readonly format?: "markdown" | "csv";
+  readonly format?: TableCopyFormat;
   readonly language?: string;
   readonly fenceTitle?: string;
   readonly copyTarget?: string;
@@ -785,7 +786,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     setExpanded((value) => !value);
   }
 
-  const handleCopy = useCallback((format: "markdown" | "csv") => {
+  const handleCopy = useCallback((format: TableCopyFormat) => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
@@ -793,7 +794,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
+        : serializeTableElementToDelimited(table, format);
     void navigator.clipboard
       .writeText(text)
       .then(() => {
@@ -872,6 +873,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
           </Tooltip>
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
+            <MenuItem onClick={() => handleCopy("tsv")}>Copy as TSV</MenuItem>
             <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
           </MenuPopup>
         </Menu>
@@ -2484,11 +2486,12 @@ function useChatMarkdownState({
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
-  // view keeps links, emphasis, lists, and code fences intact.
+  // view keeps links, emphasis, lists, and code fences intact. Tables follow
+  // the table copy format setting.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
-    const payload = chatMarkdownClipboardPayload(selection);
+    const payload = chatMarkdownClipboardPayload(selection, getClientSettings().tableCopyFormat);
     if (!payload) return;
     event.preventDefault();
     event.clipboardData.setData("text/plain", payload.text);

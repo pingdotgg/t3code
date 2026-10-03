@@ -24,6 +24,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
+  type TableCopyFormat,
   type DiffLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -195,6 +196,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const TABLE_COPY_FORMAT_LABELS: Record<TableCopyFormat, string> = {
+  markdown: "Markdown",
+  tsv: "Tab-separated",
+  csv: "CSV",
+};
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
@@ -545,6 +552,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.tableCopyFormat !== DEFAULT_UNIFIED_SETTINGS.tableCopyFormat
+        ? ["Table copy format"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -707,6 +717,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
+      settings.tableCopyFormat,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
@@ -783,6 +794,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      tableCopyFormat: DEFAULT_UNIFIED_SETTINGS.tableCopyFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -2516,6 +2528,47 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("table-copy-format")}
+          description="How tables are written when you copy a message or a selection. Tab-separated pastes as a table into Slack and spreadsheets."
+          resetAction={
+            settings.tableCopyFormat !== DEFAULT_UNIFIED_SETTINGS.tableCopyFormat ? (
+              <SettingResetButton
+                label="table copy format"
+                onClick={() =>
+                  updateSettings({
+                    tableCopyFormat: DEFAULT_UNIFIED_SETTINGS.tableCopyFormat,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.tableCopyFormat}
+              onValueChange={(value) => {
+                if (value === "markdown" || value === "tsv" || value === "csv") {
+                  updateSettings({ tableCopyFormat: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Table copy format">
+                <SelectValue>{TABLE_COPY_FORMAT_LABELS[settings.tableCopyFormat]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="markdown">
+                  {TABLE_COPY_FORMAT_LABELS.markdown}
+                </SelectItem>
+                <SelectItem hideIndicator value="tsv">
+                  {TABLE_COPY_FORMAT_LABELS.tsv}
+                </SelectItem>
+                <SelectItem hideIndicator value="csv">
+                  {TABLE_COPY_FORMAT_LABELS.csv}
                 </SelectItem>
               </SelectPopup>
             </Select>

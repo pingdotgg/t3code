@@ -55,6 +55,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.11"
   },

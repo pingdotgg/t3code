@@ -241,11 +241,14 @@ import {
   encodeComposerContextClipboardHtml,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  markdownWithTableCopyFormat,
+} from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
-import { useClientSettings } from "~/hooks/useSettings";
+import { getClientSettings, useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -2654,7 +2657,13 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  const text = assistantCopyState.text ?? "";
+  return (
+    <MessageCopyButton
+      text={() => markdownWithTableCopyFormat(text, getClientSettings().tableCopyFormat)}
+      variant="ghost"
+    />
+  );
 }
 
 function ProposedPlanTimelineRow({

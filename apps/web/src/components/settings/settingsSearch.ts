@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "table-copy-format",
+    title: "Table copy format",
+    to: "/settings/general",
+    searchTerms: ["clipboard markdown tsv csv tab separated spreadsheet slack paste"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",

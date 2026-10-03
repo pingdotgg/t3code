@@ -16,7 +16,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   variant = "outline",
   className,
 }: {
-  text: string;
+  /** A function defers building the copied text until the click. */
+  text: string | (() => string);
   /** Additional clipboard types written beside `text/plain` when the platform allows it. */
   extraFlavors?: Readonly<Record<string, string>>;
   size?: "xs" | "icon-xs";
@@ -38,7 +39,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
           <Button
             aria-label="Copy message"
             disabled={isCopied}
-            onClick={() => copyToClipboard(text)}
+            onClick={() => copyToClipboard(typeof text === "function" ? text() : text)}
             ref={ref}
             type="button"
             size={size}
