@@ -52,6 +52,7 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
+import { resolveFollowUpDispatchMode } from "../features/threads/composerSendPresentation";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "../state/atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
@@ -77,10 +78,7 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
-import {
-  resolveComposerDispatchMode,
-  type ActiveTurnComposerAction,
-} from "@t3tools/client-runtime/state/composer-dispatch";
+import { type ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import { Atom } from "effect/unstable/reactivity";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -659,16 +657,13 @@ export function useThreadComposerState() {
 
       // Resolved here rather than at drain time: the outbox can deliver minutes
       // later, and the choice belongs to the moment the user pressed send.
-      // Steering travels as "auto" so a turn that ends in the meantime degrades
-      // to a queued run on the server instead of failing the delivery and
-      // bouncing the message back into the draft.
-      const followUpAction = resolveComposerDispatchMode({
-        running: activeThreadBusy && canSteerActiveTurn,
-        alternateModifier: followUpOverride !== undefined && followUpOverride !== followUpBehavior,
-        activeTurnDefault: followUpBehavior,
+      const followUpDispatchMode = resolveFollowUpDispatchMode({
+        running: activeThreadBusy,
+        canSteer: canSteerActiveTurn,
+        isCompacting,
+        followUpBehavior,
+        ...(followUpOverride === undefined ? {} : { followUpOverride }),
       });
-      const followUpDispatchMode =
-        followUpAction === "auto" ? null : followUpAction === "queue" ? "queue" : "auto";
 
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
@@ -719,6 +714,7 @@ export function useThreadComposerState() {
       activeThreadBusy,
       canSteerActiveTurn,
       followUpBehavior,
+      isCompacting,
       saveQueuedRunEdit,
       selectedEnvironmentRuntime?.connectionState,
       selectedEnvironmentRuntime?.serverConfig,

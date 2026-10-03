@@ -14,13 +14,13 @@ export function resolveComposerDispatchMode(input: {
   readonly alternateModifier: boolean;
   readonly activeTurnDefault?: ActiveTurnComposerAction;
   /** The in-flight turn is context compaction, which cannot take a steer, so
-   *  automatic follow-ups queue behind it. */
+   *  every follow-up, the alternate included, queues behind it. */
   readonly activeTurnIsCompaction?: boolean;
 }): ComposerDispatchMode {
   if (!input.running) return "auto";
+  if (input.activeTurnIsCompaction) return "queue";
   const defaultAction = input.activeTurnDefault ?? "steer";
   if (input.alternateModifier) return defaultAction === "queue" ? "steer" : "queue";
-  if (input.activeTurnIsCompaction && defaultAction !== "restart") return "queue";
   return defaultAction;
 }
 

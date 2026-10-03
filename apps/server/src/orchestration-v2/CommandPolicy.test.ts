@@ -193,6 +193,10 @@ it.each(["/Logout", "/LOGOUT"])("preserves ordinary delivery for %s", (text) => 
     messages: [{ id: messageId, role: "user", text, attachments: [] }],
   } as unknown as OrchestrationV2ThreadProjection;
   assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
     CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
     { type: "steer_active", targetRunId: activeRunId },
   );
