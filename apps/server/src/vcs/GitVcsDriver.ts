@@ -416,7 +416,7 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Checkpoints never capture untracked files over this size, and restore never cleans them away.
 // Hashing one into the object store can outlast the Git timeout and orphan a tmp_pack every turn.
-export const CHECKPOINT_MAX_UNTRACKED_FILE_BYTES = 100 * 1024 * 1024;
+const CHECKPOINT_MAX_UNTRACKED_FILE_BYTES = 100 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
@@ -806,19 +806,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "core.fsyncMethod=fsync",
   ] as const;
 
-  // Lists untracked files over the checkpoint cap, relative to cwd, or undefined when Git's
-  // listing was truncated. Pass the private index through env to classify against it.
+  // Lists files over the checkpoint cap that are untracked in the real index, as git status
+  // shows them, relative to cwd. Returns undefined when the listing is incomplete: Git failed
+  // (an unreadable index), output was truncated, or a path is not valid UTF-8 and so cannot be
+  // named back to Git or lstat.
   const listOversizedUntrackedFiles = Effect.fn(
     "GitVcsDriver.checkpoints.listOversizedUntrackedFiles",
-  )(function* (operation: string, cwd: string, env?: NodeJS.ProcessEnv) {
+  )(function* (operation: string, cwd: string) {
     const untracked = yield* execute({
       operation,
       cwd,
       args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
-      ...(env !== undefined ? { env } : {}),
+      allowNonZeroExit: true,
       maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
     });
-    if (untracked.stdoutTruncated) return undefined;
+    if (
+      untracked.exitCode !== 0 ||
+      untracked.stdoutTruncated ||
+      untracked.stdoutInvalidUtf8 === true
+    ) {
+      return undefined;
+    }
     return yield* Effect.filter(
       splitNullSeparatedGitStdoutPaths(untracked).filter((entry) => !entry.endsWith("/")),
       // lstat: Git stores a symlink, never its target, so a link is never oversized.
@@ -987,9 +995,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        // A truncated listing stages everything, as capture did before the size cap.
+        // An incomplete listing stages everything, as capture did before the size cap.
         const oversizedExclusions = (
-          (yield* listOversizedUntrackedFiles(operation, input.cwd, commitEnv)) ?? []
+          (yield* listOversizedUntrackedFiles(operation, input.cwd)) ?? []
         ).map((entry) => `:(exclude,literal)${entry}`);
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
@@ -1132,7 +1140,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           command: "git ls-files",
           cwd: input.cwd,
           exitCode: 0,
-          detail: "Too many untracked files to restore the checkpoint without risking large files.",
+          detail: "Could not list every untracked file, so restore could delete large files.",
         });
       }
       const keepOversized: Array<string> = [];

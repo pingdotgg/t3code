@@ -187,18 +187,42 @@ it.effect("checkpoint capture skips untracked files over the size cap", () =>
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
-// Reports every untracked listing as truncated, as Git does past the output limit.
-const truncateUntrackedListings = (liveProcess: VcsProcess.VcsProcess["Service"]) =>
+// Marks every untracked listing incomplete, as Git output past the limit or with a non-UTF-8 path is.
+const markUntrackedListings = (
+  liveProcess: VcsProcess.VcsProcess["Service"],
+  incomplete: Partial<VcsProcess.VcsProcessOutput>,
+) =>
   Effect.provideService(VcsProcess.VcsProcess, {
     run: (input) =>
       liveProcess
         .run(input)
         .pipe(
           Effect.map((result) =>
-            input.args.includes("--others") ? { ...result, stdoutTruncated: true } : result,
+            input.args.includes("--others") ? { ...result, ...incomplete } : result,
           ),
         ),
   });
+
+it.effect("checkpoint capture keeps an over-cap file staged in the real index", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-size-staged-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "staged.bin"), "x".repeat(1025));
+    yield* git(["add", "staged.bin"]);
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual(
+      (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+      "file.txt\nstaged.bin\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
 
 it.effect("checkpoint capture stages everything when the untracked listing is truncated", () =>
   Effect.gen(function* () {
@@ -207,7 +231,7 @@ it.effect("checkpoint capture stages everything when the untracked listing is tr
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape({
       checkpointMaxUntrackedFileBytes: 1024,
-    }).pipe(truncateUntrackedListings(liveProcess));
+    }).pipe(markUntrackedListings(liveProcess, { stdoutTruncated: true }));
     const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-size-trunc-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* fileSystem.writeFileString(path.join(cwd, "over.bin"), "x".repeat(1025));
@@ -221,40 +245,45 @@ it.effect("checkpoint capture stages everything when the untracked listing is tr
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
-it.effect("checkpoint restore refuses a truncated untracked listing before changing files", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const liveProcess = yield* VcsProcess.VcsProcess;
-    const driver = yield* GitVcsDriver.makeVcsDriverShape({
-      checkpointMaxUntrackedFileBytes: 1024,
-    });
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-checkpoint-size-trunc-restore-",
-    });
-    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "edited\n");
-    yield* fileSystem.writeFileString(path.join(cwd, "over.bin"), "x".repeat(1025));
-    yield* fileSystem.writeFileString(path.join(cwd, "under.txt"), "later\n");
-    const truncatedDriver = yield* GitVcsDriver.makeVcsDriverShape({
-      checkpointMaxUntrackedFileBytes: 1024,
-    }).pipe(truncateUntrackedListings(liveProcess));
+it.effect.each([
+  { incomplete: { stdoutTruncated: true }, reason: "truncated" },
+  { incomplete: { stdoutInvalidUtf8: true }, reason: "non-UTF-8" },
+])(
+  "checkpoint restore refuses a $reason untracked listing before changing files",
+  ({ incomplete }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape({
+        checkpointMaxUntrackedFileBytes: 1024,
+      });
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-size-trunc-restore-",
+      });
+      const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "edited\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "over.bin"), "x".repeat(1025));
+      yield* fileSystem.writeFileString(path.join(cwd, "under.txt"), "later\n");
+      const incompleteDriver = yield* GitVcsDriver.makeVcsDriverShape({
+        checkpointMaxUntrackedFileBytes: 1024,
+      }).pipe(markUntrackedListings(liveProcess, incomplete));
 
-    const result = yield* Effect.result(
-      truncatedDriver.checkpoints.restoreCheckpoint({
-        cwd,
-        checkpointRef,
-        fallbackToHead: false,
-      }),
-    );
+      const result = yield* Effect.result(
+        incompleteDriver.checkpoints.restoreCheckpoint({
+          cwd,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
 
-    assert.strictEqual(result._tag, "Failure");
-    if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "VcsProcessExitError");
-    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
-    assert.isTrue(yield* fileSystem.exists(path.join(cwd, "over.bin")));
-    assert.isTrue(yield* fileSystem.exists(path.join(cwd, "under.txt")));
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "VcsProcessExitError");
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
+      assert.isTrue(yield* fileSystem.exists(path.join(cwd, "over.bin")));
+      assert.isTrue(yield* fileSystem.exists(path.join(cwd, "under.txt")));
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
 it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
