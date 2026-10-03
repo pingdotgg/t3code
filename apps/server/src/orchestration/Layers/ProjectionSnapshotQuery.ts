@@ -1046,6 +1046,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
    * server and a reconnecting client agree with the live projector about whether
    * a start is still outstanding.
    */
+  // Gated on the NOT EXISTS above: the placeholder row is durable, but
+  // a start that already resolved must not be reported as outstanding. Deletion
+  // happens on the events that resolve a start, and bootstrap skips historical
+  // events by design, so a placeholder written before this branch shipped — or
+  // stranded by a process death between commit and the resolving event — would
+  // otherwise wedge the thread permanently. Repairing at read time covers both
+  // without a migration, and matches the live projector because both sides ask the
+  // same question of the same session state.
   const pendingTurnStartRowColumns = sql`
   pending.pending_message_id AS "pendingMessageId",
   pending.requested_at AS "requestedAt",
@@ -1063,9 +1071,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         AND candidate.state = 'pending'
         AND candidate.pending_message_id IS NOT NULL
         AND candidate.checkpoint_turn_count IS NULL
-      ORDER BY candidate.requested_at DESC, candidate.row_id DESC
+        ORDER BY candidate.requested_at DESC, candidate.row_id DESC
       LIMIT 1
     )
+   AND NOT EXISTS (
+     SELECT 1
+     FROM projection_thread_sessions AS resolved
+     WHERE resolved.thread_id = threads.thread_id
+       AND (
+         (resolved.status = 'running' AND resolved.active_turn_id IS NOT NULL)
+         OR (
+           resolved.active_turn_id IS NULL
+           AND resolved.status IN ('error', 'stopped', 'interrupted')
+         )
+       )
+   )
 `;
 
   const listPendingTurnStartRows = SqlSchema.findAll({

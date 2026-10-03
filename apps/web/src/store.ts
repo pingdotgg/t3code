@@ -358,6 +358,11 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    // Snapshot hydration must carry the pending start too, not just the live
+    // event path. Without it a reconnecting client or second browser rebuilt its
+    // thread from a snapshot with no pending start and offered a send the server
+    // rejects as a duplicate.
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,

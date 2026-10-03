@@ -1303,13 +1303,23 @@ export function projectEvent(
           // A failed start resolves the pending start, so the thread is sendable
           // again. Only the failure for the pending message clears it — a failure
           // for an older message must not unblock a newer start.
+          //
+          // `payload` is Schema.Unknown, so it can be null or undefined. Narrow
+          // before reading it: this runs for every appended activity, and an
+          // unguarded property access threw a TypeError that failed the whole
+          // orchestration transaction instead of recording the activity.
           const pending = thread.pendingTurnStart;
-          const failureMessageId = (payload.activity.payload as { readonly messageId?: unknown })
-            .messageId;
+          const activityPayload = payload.activity.payload;
+          const failureMessageId =
+            typeof activityPayload === "object" &&
+            activityPayload !== null &&
+            "messageId" in activityPayload &&
+            typeof activityPayload.messageId === "string"
+              ? activityPayload.messageId
+              : undefined;
           const clearsPendingStart =
             payload.activity.kind === "provider.turn.start.failed" &&
-            pending !== undefined &&
-            pending !== null &&
+            pending != null &&
             (failureMessageId === undefined || failureMessageId === pending.messageId);
 
           return {

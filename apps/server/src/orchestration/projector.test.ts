@@ -2182,6 +2182,42 @@ describe("orchestration projector", () => {
     expect(threadHasInFlightTurn(died.threads[0]!)).toBe(false);
   });
 
+  it("records activities whose payload is null without throwing", async () => {
+    // `OrchestrationThreadActivity.payload` is Schema.Unknown, so null is valid.
+    // Reading `.messageId` off it unguarded threw a TypeError inside projectEvent,
+    // which failed the whole orchestration transaction and lost the activity.
+    const threadId = "thread-null-activity-payload";
+    const model = await createThreadModel(threadId, "2026-03-01T12:00:00.000Z");
+    const appended = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 930,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T12:00:01.000Z",
+          commandId: "cmd-null-payload-activity",
+          payload: {
+            threadId,
+            activity: {
+              id: "activity-null-payload",
+              tone: "info",
+              kind: "thread.note",
+              summary: "A note with no payload",
+              payload: null,
+              turnId: null,
+              createdAt: "2026-03-01T12:00:01.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(
+      appended.threads[0]?.activities.some((activity) => activity.id === "activity-null-payload"),
+    ).toBe(true);
+  });
+
   it("does not clear a pending start for a failure belonging to an older message", async () => {
     const threadId = "thread-pending-turn-mismatch";
     const requestedAt = "2026-03-01T10:00:00.000Z";
