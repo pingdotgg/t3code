@@ -62,7 +62,7 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(settled?.settledTurnIds).toEqual(
+    expect(new Set(settled?.settledTurns.keys())).toEqual(
       new Set([turnId, TurnId.make("turn-liveness-aborted")]),
     );
   });
@@ -83,7 +83,7 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(settled?.settledTurnIds.has(turnId)).toBe(true);
+    expect(settled?.settledTurns.has(turnId)).toBe(true);
   });
 
   it("settles nothing for a turnId-less terminal event with no announced turn", async () => {
@@ -98,7 +98,7 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(settled?.settledTurnIds.size).toBe(0);
+    expect(settled?.settledTurns.size).toBe(0);
   });
 
   it("prefers the event's own turnId over the last announced turn", async () => {
@@ -117,8 +117,8 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(settled?.settledTurnIds.has(otherTurnId)).toBe(true);
-    expect(settled?.settledTurnIds.has(turnId)).toBe(false);
+    expect(settled?.settledTurns.has(otherTurnId)).toBe(true);
+    expect(settled?.settledTurns.has(turnId)).toBe(false);
   });
 
   it("does not settle a turn from non-terminal events", async () => {
@@ -135,7 +135,7 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(observation?.settledTurnIds.size).toBe(0);
+    expect(observation?.settledTurns.size).toBe(0);
     expect(observation?.lastEventAtMs).toBeGreaterThan(0);
   });
 
@@ -157,12 +157,12 @@ describe("ProviderRuntimeLivenessLive", () => {
       }),
     );
 
-    expect(observed?.settledTurnIds.has(turnId)).toBe(true);
-    expect(otherObserved?.settledTurnIds.size).toBe(0);
+    expect(observed?.settledTurns.has(turnId)).toBe(true);
+    expect(otherObserved?.settledTurns.size).toBe(0);
   });
 
   it("bounds the settled turn tail to the most recent ids", async () => {
-    const settledTurnIds = await withLiveness((liveness) =>
+    const settledTurns = await withLiveness((liveness) =>
       Effect.gen(function* () {
         // More turns than the bounded tail retains.
         for (let index = 0; index < 12; index += 1) {
@@ -174,29 +174,29 @@ describe("ProviderRuntimeLivenessLive", () => {
             }),
           );
         }
-        return (yield* liveness.observe(threadId))?.settledTurnIds ?? new Set<string>();
+        return new Set((yield* liveness.observe(threadId))?.settledTurns.keys() ?? []);
       }),
     );
 
-    expect(settledTurnIds.size).toBe(8);
+    expect(settledTurns.size).toBe(8);
     // Newest ids are retained; the oldest fell out of the tail.
-    expect(settledTurnIds.has(TurnId.make("turn-liveness-11"))).toBe(true);
-    expect(settledTurnIds.has(TurnId.make("turn-liveness-0"))).toBe(false);
+    expect(settledTurns.has(TurnId.make("turn-liveness-11"))).toBe(true);
+    expect(settledTurns.has(TurnId.make("turn-liveness-0"))).toBe(false);
   });
 
   it("treats a repeated terminal event as idempotent", async () => {
-    const settledTurnIds = await withLiveness((liveness) =>
+    const settledTurns = await withLiveness((liveness) =>
       Effect.gen(function* () {
         for (let index = 0; index < 20; index += 1) {
           yield* liveness.record(
             runtimeEvent({ type: "turn.completed", turnId, payload: { state: "completed" } }),
           );
         }
-        return (yield* liveness.observe(threadId))?.settledTurnIds ?? new Set<string>();
+        return new Set((yield* liveness.observe(threadId))?.settledTurns.keys() ?? []);
       }),
     );
 
-    expect(settledTurnIds).toEqual(new Set([turnId]));
+    expect(settledTurns).toEqual(new Set([turnId]));
   });
 
   it("forgets a thread's observation on request", async () => {

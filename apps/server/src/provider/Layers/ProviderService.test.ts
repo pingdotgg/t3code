@@ -2506,7 +2506,7 @@ it.effect("ProviderServiceLive records runtime liveness before publishing events
             // subscriber sees the terminal event, otherwise a reconciler reading
             // it can still mistake that turn for a lost session.
             const observation = yield* liveness.observe(threadId);
-            yield* Ref.set(settledAtDelivery, observation?.settledTurnIds ?? null);
+            yield* Ref.set(settledAtDelivery, new Set(observation?.settledTurns.keys() ?? []));
           }
         }),
       ).pipe(Effect.forkScoped);

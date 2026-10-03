@@ -30,9 +30,15 @@ export interface ProviderThreadRuntimeObservation {
   readonly lastEventAtMs: number;
   /**
    * Turn ids the provider reported a terminal outcome for
-   * (`turn.completed` / `turn.aborted`), oldest first and bounded.
+   * (`turn.completed` / `turn.aborted`) mapped to when that outcome was
+   * observed, bounded to the most recent ids.
+   *
+   * The timestamp matters: "the provider settled this turn" is only evidence of
+   * a lagging projection for as long as the settle is recent. A projection that
+   * never converges (a rejected terminal command, a snapshot restore) must not
+   * be able to hold a reaper off forever, so a consumer bounds the hold by age.
    */
-  readonly settledTurnIds: ReadonlySet<string>;
+  readonly settledTurns: ReadonlyMap<string, number>;
 }
 
 export interface ProviderRuntimeLivenessShape {
@@ -45,6 +51,15 @@ export interface ProviderRuntimeLivenessShape {
 
   /** Latest observation for a thread, or `null` when nothing was observed. */
   readonly observe: (threadId: ThreadId) => Effect.Effect<ProviderThreadRuntimeObservation | null>;
+
+  /**
+   * Drop observations older than the retention window.
+   *
+   * `record` also prunes, but only when provider traffic arrives, so on an
+   * otherwise idle server a stale entry would live forever. A reconciler calls
+   * this on its own schedule so retention never depends on unrelated activity.
+   */
+  readonly prune: () => Effect.Effect<void>;
 
   /** Drop a thread's observation (session stopped, thread deleted). */
   readonly forget: (threadId: ThreadId) => Effect.Effect<void>;

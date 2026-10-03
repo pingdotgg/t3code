@@ -156,6 +156,9 @@ describe("ProviderSessionReaper", () => {
     readonly listSessionsImplementation?: ProviderServiceShape["listSessions"];
     readonly sweepIntervalMs?: number;
     readonly settledTurnGraceMs?: number;
+    readonly settledTurnHoldMs?: number;
+    /** Backdate ledger observations so a settle looks older than it is. */
+    readonly observationAgeMs?: number;
     /** Provider runtime events replayed into the liveness ledger before the reaper starts. */
     readonly observedRuntimeEvents?: ReadonlyArray<ProviderRuntimeEvent>;
     /** Overrides the projection the reaper's pre-dispatch re-read observes. */
@@ -255,6 +258,9 @@ describe("ProviderSessionReaper", () => {
       ...(input.settledTurnGraceMs === undefined
         ? {}
         : { settledTurnGraceMs: input.settledTurnGraceMs }),
+      ...(input.settledTurnHoldMs === undefined
+        ? {}
+        : { settledTurnHoldMs: input.settledTurnHoldMs }),
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
@@ -752,6 +758,7 @@ describe("ProviderSessionReaper", () => {
     const harness = await createHarness({
       sweepIntervalMs: 100,
       settledTurnGraceMs: 0,
+      settledTurnHoldMs: 60_000,
       // The provider is idle, so the bare mismatch check would reap.
       activeSessions: [],
       observedRuntimeEvents: [settledTurnEvent(threadId, turnId)],
@@ -782,6 +789,53 @@ describe("ProviderSessionReaper", () => {
     expect(harness.dispatchedCommands).toEqual([]);
   });
 
+  it("stops holding a settled turn once the hold window expires", async () => {
+    // A projection that never converges (rejected terminal command, snapshot
+    // restore) must not be able to hold the reaper off forever just because
+    // the provider reported the turn settled once.
+    const threadId = ThreadId.make("thread-reaper-settled-turn-expired");
+    const turnId = TurnId.make("turn-reaper-settled-turn-expired");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      settledTurnGraceMs: 0,
+      // Any settle older than this no longer excuses the mismatch.
+      settledTurnHoldMs: 0,
+      activeSessions: [],
+      observedRuntimeEvents: [settledTurnEvent(threadId, turnId)],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-settled-turn-expired");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    // The startup sweep reconciles without an error banner; the recovered sweep
+    // is the one that must report the lost session.
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands.length).toBeGreaterThan(0);
+    expect(harness.dispatchedCommands.at(-1)).toMatchObject({
+      type: "thread.session.set",
+      session: { status: "interrupted", lastError: "Provider session was lost unexpectedly." },
+    });
+  });
+
   it("holds a stale active turn whose terminal event omitted the turn id", async () => {
     const threadId = ThreadId.make("thread-reaper-settled-turnless");
     const turnId = TurnId.make("turn-reaper-settled-turnless");
@@ -790,6 +844,7 @@ describe("ProviderSessionReaper", () => {
       sweepIntervalMs: 100,
       // Grace exhausted, so only the settled-turn signal can hold this.
       settledTurnGraceMs: 0,
+      settledTurnHoldMs: 60_000,
       activeSessions: [],
       observedRuntimeEvents: [
         {

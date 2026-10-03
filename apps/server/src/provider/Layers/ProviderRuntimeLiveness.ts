@@ -23,19 +23,20 @@ const SETTLING_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set(
  * short tail is enough to cover "the projection is a few turns behind" without
  * growing per thread.
  */
-const MAX_SETTLED_TURN_IDS = 8;
+const MAX_SETTLED_TURNS = 8;
 
 /**
  * Threads stop emitting once their work is done, so entries must not be kept
  * forever. Comfortably longer than the reaper's inactivity threshold (30 min)
  * so a genuinely stuck thread is still observable when a sweep asks.
  */
-const OBSERVATION_TTL_MS = 2 * 60 * 60 * 1000;
+export const PROVIDER_RUNTIME_LIVENESS_RETENTION_MS = 2 * 60 * 60 * 1000;
 
 /**
  * `record` runs on the ingestion funnel for every event, including every
- * `content.delta`, so it must stay O(1). The TTL sweep over all entries is
- * amortized behind this interval instead of running per event.
+ * `content.delta`, so it must stay O(1). The sweep over all entries is
+ * amortized behind this interval instead of running per event. `prune` exists
+ * for callers that must not depend on unrelated provider traffic.
  */
 const PRUNE_INTERVAL_MS = 60 * 1000;
 
@@ -47,30 +48,39 @@ interface MutableObservation {
    * `ProviderRuntimeIngestion` falls back to the session's active turn.
    */
   lastStartedTurnId: string | null;
-  settledTurnIds: Set<string>;
+  /** Settled turn id -> when the settle was observed. Insertion-ordered. */
+  readonly settledTurns: Map<string, number>;
+}
+
+interface LedgerState {
+  readonly entries: Map<string, MutableObservation>;
+  lastPruneAtMs: number;
 }
 
 function newObservation(nowMs: number): MutableObservation {
-  return { lastEventAtMs: nowMs, lastStartedTurnId: null, settledTurnIds: new Set() };
+  return { lastEventAtMs: nowMs, lastStartedTurnId: null, settledTurns: new Map() };
 }
 
 const makeProviderRuntimeLiveness = Effect.gen(function* () {
-  interface LedgerState {
-    readonly entries: Map<string, MutableObservation>;
-    lastPruneAtMs: number;
-  }
-
-  const entriesRef = yield* Ref.make<LedgerState>({
-    entries: new Map<string, MutableObservation>(),
+  const stateRef = yield* Ref.make<LedgerState>({
+    entries: new Map(),
     lastPruneAtMs: 0,
   });
 
-  // Entries are mutated in place under `Ref.modify`, which is the single
-  // exclusive access point for this state, and `observe` copies the settled
-  // tail out before returning. Nothing else aliases these objects, so a
-  // per-event Map copy would be pure overhead on the hot path.
+  const sweepExpired = (state: LedgerState, nowMs: number): void => {
+    for (const [threadId, observation] of state.entries) {
+      if (nowMs - observation.lastEventAtMs > PROVIDER_RUNTIME_LIVENESS_RETENTION_MS) {
+        state.entries.delete(threadId);
+      }
+    }
+  };
+
+  // Entries are mutated in place under `Ref.modify`, the single exclusive
+  // access point for this state, and `observe` copies the settled tail out
+  // before returning. Nothing else aliases these objects, so a per-event Map
+  // copy would be pure overhead on the hot path.
   const record: ProviderRuntimeLivenessShape["record"] = (event) =>
-    Ref.modify(entriesRef, (state): [void, LedgerState] => {
+    Ref.modify(stateRef, (state): [void, LedgerState] => {
       const nowMs = Date.now();
       const threadId = event.threadId;
       const observation = state.entries.get(threadId) ?? newObservation(nowMs);
@@ -91,13 +101,14 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
         const settledTurnId = event.turnId ?? observation.lastStartedTurnId;
         if (settledTurnId !== null) {
           // A resumed session can re-report a terminal event for a turn already
-          // in the tail; the set makes the repeat a no-op.
-          observation.settledTurnIds.add(settledTurnId);
-          // Set iteration is insertion-ordered, so this drops the oldest ids.
-          while (observation.settledTurnIds.size > MAX_SETTLED_TURN_IDS) {
-            const [oldest] = observation.settledTurnIds;
-            if (oldest === undefined) break;
-            observation.settledTurnIds.delete(oldest);
+          // in the tail; Map.set keeps insertion order stable for a repeat.
+          observation.settledTurns.delete(settledTurnId);
+          observation.settledTurns.set(settledTurnId, nowMs);
+          // Map iteration is insertion-ordered, so this drops the oldest ids.
+          while (observation.settledTurns.size > MAX_SETTLED_TURNS) {
+            const oldest = observation.settledTurns.keys().next();
+            if (oldest.done === true) break;
+            observation.settledTurns.delete(oldest.value);
           }
         }
       }
@@ -107,35 +118,38 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
 
       if (nowMs - state.lastPruneAtMs >= PRUNE_INTERVAL_MS) {
         state.lastPruneAtMs = nowMs;
-        for (const [candidateThreadId, candidate] of state.entries) {
-          if (nowMs - candidate.lastEventAtMs > OBSERVATION_TTL_MS) {
-            state.entries.delete(candidateThreadId);
-          }
-        }
+        sweepExpired(state, nowMs);
       }
 
       return [undefined, state];
     });
 
   const observe: ProviderRuntimeLivenessShape["observe"] = (threadId) =>
-    Ref.get(entriesRef).pipe(
+    Ref.get(stateRef).pipe(
       Effect.map((state): ProviderThreadRuntimeObservation | null => {
         const observation = state.entries.get(threadId);
         if (observation === undefined) return null;
         return {
           lastEventAtMs: observation.lastEventAtMs,
-          settledTurnIds: new Set(observation.settledTurnIds),
+          settledTurns: new Map(observation.settledTurns),
         };
       }),
     );
 
+  const prune: ProviderRuntimeLivenessShape["prune"] = () =>
+    Ref.modify(stateRef, (state): [void, LedgerState] => {
+      state.lastPruneAtMs = Date.now();
+      sweepExpired(state, state.lastPruneAtMs);
+      return [undefined, state];
+    });
+
   const forget: ProviderRuntimeLivenessShape["forget"] = (threadId) =>
-    Ref.modify(entriesRef, (state): [void, LedgerState] => {
+    Ref.modify(stateRef, (state): [void, LedgerState] => {
       state.entries.delete(threadId);
       return [undefined, state];
     });
 
-  return { record, observe, forget } satisfies ProviderRuntimeLivenessShape;
+  return { record, observe, prune, forget } satisfies ProviderRuntimeLivenessShape;
 });
 
 export const ProviderRuntimeLivenessLive = Layer.effect(
