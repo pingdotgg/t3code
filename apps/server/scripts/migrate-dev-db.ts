@@ -8,8 +8,9 @@
  *   1. Nukes `<worktree>/.t3/userdata/statev2.sqlite`.
  *   2. Snapshots the real db (`~/.t3/userdata/statev2.sqlite`, read-only
  *      VACUUM INTO) and prunes it to the most recently updated projects and,
- *      per project, the most recent threads that have fully stopped. Working,
- *      settled, and archived threads are skipped, and scheduled tasks and
+ *      per project, the most recent threads that have fully stopped, with
+ *      their forks and subagents. Working, settled, and archived threads, and
+ *      threads with pending recovery, are skipped, and scheduled tasks and
  *      queued effects are dropped, so the dev server never adopts live work.
  *      Auth sessions, pairing links, command receipts, and provider
  *      runtime rows are dropped — pair a fresh browser against dev.
@@ -19,8 +20,8 @@
  *      the silent failure where two branches claim the same
  *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
  *
- * The event logs are pruned per thread while `sqlite_sequence` and the
- * projection cursors carry over untouched, so new events keep appending
+ * The event log (`orchestration_events`) is pruned per stream while
+ * `sqlite_sequence` and the projection cursors carry over untouched, so new events keep appending
  * after the old high-water mark and projection cursors never rewind.
  */
 
@@ -235,21 +236,38 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
 
-  // "Stopped" means the V2 thread is not deleted, archived, or settled, and
-  // none of its runs is still in flight.
-  yield* sql`CREATE TEMP TABLE stopped_threads AS
-    SELECT t.thread_id, t.project_id, t.updated_at
-    FROM orchestration_v2_projection_threads t
-    WHERE t.deleted_at IS NULL
-      AND json_extract(t.payload_json, '$.deletedAt') IS NULL
-      AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-      AND json_extract(t.payload_json, '$.settledAt') IS NULL
-      AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
-      AND NOT EXISTS (
-        SELECT 1 FROM orchestration_v2_projection_runs r
-        WHERE r.thread_id = t.thread_id
-          AND r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
-      )`;
+  // Threads the server would resume or start work on by itself: in-flight or
+  // queued runs, undelivered delegated results, and usage-limit recovery.
+  yield* sql`CREATE TEMP TABLE live_threads AS
+    SELECT r.thread_id FROM orchestration_v2_projection_runs r
+    WHERE r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+      OR json_type(r.payload_json, '$.delegatedCompletion.delivery') = 'object'
+      OR (r.status = 'failed' AND r.ordinal = (
+        SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
+        WHERE latest.thread_id = r.thread_id))
+    UNION
+    SELECT thread_id FROM orchestration_v2_projection_threads
+    WHERE json_extract(payload_json, '$.limitRecovery') IS NOT NULL`;
+
+  // Forks and subagents read history and results through their lineage, so
+  // a thread family is cloned or dropped as a whole. A family is stopped when
+  // its root is visible and unsettled and none of its threads is live.
+  yield* sql`CREATE TEMP TABLE thread_families AS
+    SELECT thread_id, updated_at,
+      COALESCE(json_extract(payload_json, '$.lineage.rootThreadId'), thread_id) AS root_id
+    FROM orchestration_v2_projection_threads`;
+
+  yield* sql`CREATE TEMP TABLE stopped_families AS
+    SELECT f.root_id, root.project_id, MAX(f.updated_at) AS updated_at
+    FROM thread_families f
+    JOIN orchestration_v2_projection_threads root ON root.thread_id = f.root_id
+    WHERE root.deleted_at IS NULL
+      AND json_extract(root.payload_json, '$.deletedAt') IS NULL
+      AND json_extract(root.payload_json, '$.archivedAt') IS NULL
+      AND json_extract(root.payload_json, '$.settledAt') IS NULL
+      AND json_extract(root.payload_json, '$.settledOverride') IS NOT 'settled'
+    GROUP BY f.root_id, root.project_id
+    HAVING SUM(f.thread_id IN (SELECT thread_id FROM live_threads)) = 0`;
 
   // Projects with clonable threads outrank empty-but-recent ones: the point
   // of the exercise is thread data, not the project list.
@@ -258,7 +276,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     FROM projection_projects p
     LEFT JOIN (
       SELECT project_id, MAX(updated_at) AS last_stopped_at
-      FROM stopped_threads
+      FROM stopped_families
       GROUP BY project_id
     ) q ON q.project_id = p.project_id
     WHERE p.deleted_at IS NULL
@@ -267,33 +285,47 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     LIMIT ${input.projects}`;
 
   yield* sql`CREATE TEMP TABLE kept_threads AS
-    SELECT thread_id FROM (
-      SELECT
-        st.thread_id,
-        ROW_NUMBER() OVER (
-          PARTITION BY st.project_id
-          ORDER BY st.updated_at DESC
-        ) AS recency_rank
-      FROM stopped_threads st
-      JOIN kept_projects kp ON kp.project_id = st.project_id
-    )
-    WHERE recency_rank <= ${input.threadsPerProject}`;
+    SELECT f.thread_id FROM thread_families f
+    WHERE f.root_id IN (
+      SELECT root_id FROM (
+        SELECT
+          sf.root_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.project_id
+            ORDER BY sf.updated_at DESC
+          ) AS recency_rank
+        FROM stopped_families sf
+        JOIN kept_projects kp ON kp.project_id = sf.project_id
+      )
+      WHERE recency_rank <= ${input.threadsPerProject}
+    )`;
 
   // Every V2 table and every V1 table the lazy importer reads is keyed by
   // thread_id, so one sweep covers both and new tables need no change here.
+  // Provider sessions are shared between threads and pruned by binding below.
   const threadTables = yield* sql<{ name: string }>`
     SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
-    WHERE m.type = 'table' AND c.name = 'thread_id'`;
+    WHERE m.type = 'table' AND c.name = 'thread_id'
+      AND m.name <> 'orchestration_v2_projection_provider_sessions'`;
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql`DELETE FROM projection_projects
         WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
+      yield* sql`DELETE FROM orchestration_v2_projection_provider_sessions
+        WHERE COALESCE(thread_id, '') NOT IN (SELECT thread_id FROM kept_threads)
+          AND provider_session_id NOT IN (
+            SELECT provider_session_id FROM orchestration_v2_projection_provider_session_bindings
+            WHERE thread_id IN (SELECT thread_id FROM kept_threads)
+          )`;
       for (const { name } of threadTables) {
         yield* sql.unsafe(
           `DELETE FROM "${name}" WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`,
         ).unprepared;
       }
+      yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
+        WHERE source_thread_id NOT IN (SELECT thread_id FROM kept_threads)
+           OR target_thread_id NOT IN (SELECT thread_id FROM kept_threads)`;
       yield* sql`DELETE FROM orchestration_events
         WHERE (aggregate_kind = 'thread'
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
@@ -318,7 +350,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     FROM projection_projects p
     ORDER BY p.updated_at DESC`;
   const [events] = yield* sql<{ count: number }>`
-    SELECT COUNT(*) AS count FROM orchestration_v2_events`;
+    SELECT COUNT(*) AS count FROM orchestration_events`;
 
   return {
     projects: keptProjects as ReadonlyArray<KeptProject>,
@@ -506,7 +538,9 @@ export const migrateDevDbCommand = Command.make(
     ),
     threadsPerProject: Flag.Int("threads-per-project").pipe(
       Flag.withDefault(10),
-      Flag.withDescription("How many recent stopped threads to keep per project."),
+      Flag.withDescription(
+        "How many recent stopped threads, with their forks and subagents, to keep per project.",
+      ),
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.optional,

@@ -44,6 +44,6 @@ Clients read projects from `projection_projects` and everything else from the `o
 
 Most V2 rows carry a `payload_json` that must decode against the schemas in `packages/contracts/src/orchestrationV2.ts`. The safest start is a row the app wrote itself: create a thread through the UI, copy its rows, and edit them. Keep identifiers unique, timestamps as ISO strings, and related project, thread, and run IDs consistent.
 
-Direct projection writes are appropriate for ephemeral visual states, edge-case counts, long titles, long timelines, and similar UI fixtures. They do not create a coherent event history. Leave `orchestration_v2_events` unchanged, and do not use direct projection writes to claim backend business behavior works.
+Direct projection writes are appropriate for ephemeral visual states, edge-case counts, long titles, long timelines, and similar UI fixtures. They do not create a coherent event history. Leave the event log (`orchestration_events`) unchanged, and do not use direct projection writes to claim backend business behavior works.
 
 Use the app's commands or APIs for behavior tests. Use `node apps/server/src/bin.ts auth ...` for auth state rather than editing `auth_pairing_links` or `auth_sessions`.

@@ -88,20 +88,8 @@ The most common defect in this repo is a change that works on the path you teste
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
-- Copy from `~/.t3/userdata` (the developer's real data, the most realistic test set). Worktree state lives at `<worktree>/.t3/userdata`.
-- The server reads `statev2.sqlite`. It copies the V1 `state.sqlite` only when `statev2.sqlite` is missing, so copy and refresh `statev2.sqlite`.
-- `vp run migrate-dev-db` gives a small copy: a few recent projects and their stopped threads, with no scheduled tasks or auth sessions. Stop your dev server first.
-- For a full copy, snapshot with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file. Then clear the scheduled tasks, so your dev server does not run the developer's automations:
-
-  ```bash
-  mkdir -p .t3/userdata
-  rm -f .t3/userdata/statev2.sqlite*  # VACUUM INTO refuses to overwrite
-  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/statev2.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/statev2.sqlite'\")"
-  bun -e "new (require('bun:sqlite').Database)('.t3/userdata/statev2.sqlite').run('DELETE FROM scheduled_tasks')"
-  ```
-
-  A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
-
+- Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.t3/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data.
+- Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
