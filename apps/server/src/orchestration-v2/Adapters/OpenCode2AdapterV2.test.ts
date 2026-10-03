@@ -398,6 +398,38 @@ const history = {
 };
 
 describe("OpenCode2 adapter", () => {
+  it.effect("attaches complete quoted skill names once and leaves unknown names out", () =>
+    Effect.gen(function* () {
+      const text =
+        'use $"Poteto Mode" then €"Poteto Mode" and $2spec with $"Unknown Skill" and $20k';
+      const { runtime, thread } = yield* resumed([
+        out("skill.list", { "location[directory]": WORK }),
+        reply("skill.list", {
+          location: { directory: WORK },
+          data: ["Poteto Mode", "Poteto", "2spec", "20k"].map((name) => ({
+            id: name,
+            name,
+            path: `${WORK}/skills/${name}/SKILL.md`,
+            content: "Skill instructions",
+          })),
+        }),
+        out("session.prompt", {
+          sessionID: SESSION,
+          text,
+          skills: [{ id: "Poteto Mode" }, { id: "2spec" }],
+        }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: { ...turnInput(thread).message, text },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

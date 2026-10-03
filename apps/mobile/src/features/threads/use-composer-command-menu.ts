@@ -12,6 +12,7 @@ const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
@@ -152,7 +153,7 @@ export function resolveComposerCommandSelection(input: {
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
   } else if (item.type === "skill") {
-    replacement = `$${item.skill.name} `;
+    replacement = `${serializeComposerSkillToken(item.skill.name)} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {

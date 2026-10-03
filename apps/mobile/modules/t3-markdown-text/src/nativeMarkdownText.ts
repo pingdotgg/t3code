@@ -1,8 +1,13 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import {
+  collectComposerInlineTokens,
+  collectComposerSkillTokens,
+  serializeComposerSkillToken,
+} from "@t3tools/shared/composerInlineTokens";
 import { imageMimeType } from "@t3tools/shared/image";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { videoMimeType } from "@t3tools/shared/video";
+export { parseNativeMarkdownWithSkillTokens } from "./nativeMarkdownSkills";
 /**
  * Every accent shares a lightness so no kind reads heavier than another; only hue carries
  * identity. These are the sRGB form of the same OKLCH set web uses, so a chip looks the
@@ -116,7 +121,7 @@ export function nativeMarkdownContextCopyRanges(
     const source = reference
       ? formatComposerContextReference({ ...reference, label: run.text })
       : run.skillName
-        ? `$${run.skillName}`
+        ? serializeComposerSkillToken(run.skillName)
         : run.fileIcon && run.href
           ? (run.sourceText ?? `[${run.text}](<${run.href}>)`)
           : null;
@@ -320,9 +325,6 @@ function appendRun(
   return runs;
 }
 
-const SKILL_TOKEN_REGEX =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
-
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
   if (displayName) {
@@ -353,15 +355,14 @@ function decorateSkillRuns(
 
     let cursor = 0;
     let matched = false;
-    for (const match of run.text.matchAll(SKILL_TOKEN_REGEX)) {
-      const prefix = match[1] ?? "";
-      const name = match[2] ?? "";
+    for (const token of collectComposerSkillTokens(run.text)) {
+      const name = token.value;
       const skill = skillByName.get(name);
       if (!skill) {
         continue;
       }
-      const start = (match.index ?? 0) + prefix.length;
-      const end = (match.index ?? 0) + match[0].length;
+      const start = token.start;
+      const end = token.end;
       if (start > cursor) {
         decorated.push({ ...run, text: run.text.slice(cursor, start) });
       }
@@ -440,6 +441,9 @@ function appendNode(
   switch (node.type) {
     case "text":
     case "math_inline":
+      if ("skillSource" in node && typeof node.skillSource === "string") {
+        return appendRun(runs, node.skillSource, context);
+      }
       return appendRun(runs, textNodeContent(nodeTextContent(node)), context);
     case "html_inline":
       return appendRun(runs, inlineHtmlText(nodeTextContent(node)), context);

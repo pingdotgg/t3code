@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
@@ -307,7 +308,7 @@ function readAtomSource(node: ProseMirrorNode): string {
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";
-      return name ? `$${name}` : "";
+      return name ? serializeComposerSkillToken(name) : "";
     }
     default:
       return "";

@@ -1,17 +1,157 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import {
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
+  nativeMarkdownNodePosition,
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
   nativeMarkdownWithAuthoredWindowsPaths,
   nativeMarkdownWithPreservedSoftBreaks,
   nativeMarkdownContextCopyRanges,
   contextChipPresentation,
+  parseNativeMarkdownWithSkillTokens,
 } from "@t3tools/mobile-markdown-text/markdown";
+
+describe("native quoted skill preservation", () => {
+  it.each(["code_inline", "link"] as const)("keeps quoted examples inside %s", (type) => {
+    const token = serializeComposerSkillToken("Foo*Bar*");
+    const source = type === "link" ? `[ ${token} ](https://example.com)` : `\`${token}\``;
+    const raw: MarkdownNode = {
+      type: "document",
+      children: [{ type, beg: 0, end: source.length, content: token }],
+    };
+    const parse = vi.fn(() => raw);
+    expect(parseNativeMarkdownWithSkillTokens(source, parse)).toBe(raw);
+    expect(parse).toHaveBeenCalledOnce();
+    expect(
+      nativeMarkdownDocumentRuns(raw, [{ name: "Foo*Bar*" }]).some((run) => run.skillName),
+    ).toBe(false);
+  });
+
+  it("keeps original paragraph positions and literal text beside multiple Unicode skill names", () => {
+    const names = ["日本 *UI*", "Review \\Tools"];
+    const source = `😀 T3QuotedSkill0Z0Z ${names.map(serializeComposerSkillToken).join(" and ")}\n\nTail`;
+    const byteLength = (value: string) => new TextEncoder().encode(value).length;
+    const parse = (value: string): MarkdownNode => {
+      let offset = 0;
+      return {
+        type: "document",
+        beg: 0,
+        end: byteLength(value),
+        children: value.split("\n\n").map((content) => {
+          const beg = offset;
+          const end = beg + byteLength(content);
+          offset = end + 2;
+          return {
+            type: "paragraph",
+            beg,
+            end,
+            children: [{ type: "text", content, beg, end }],
+          };
+        }),
+      };
+    };
+    const document = parseNativeMarkdownWithSkillTokens(source, parse);
+    const runs = nativeMarkdownDocumentRuns(
+      document,
+      names.map((name) => ({ name })),
+    );
+    expect(runs.filter((run) => run.skillName).map((run) => run.skillName)).toEqual(names);
+    expect(runs.map((run) => run.text).join("")).toBe(source);
+    expect(nativeMarkdownNodePosition(document.children![1]!, 1)).toBe(
+      `offset:${byteLength(source.slice(0, source.indexOf("Tail")))}`,
+    );
+    expect(document.end).toBe(byteLength(source));
+  });
+
+  it.each([
+    "Foo*Bar*",
+    'Review "UI"',
+    "Review \\Tools",
+    "Review <mark>&amp;</mark>",
+    "Review\nUI",
+    "Review\rUI",
+    "Review\r\nUI",
+  ])("renders and copies %s after native Markdown interpretation", (name) => {
+    const source = `Use ${serializeComposerSkillToken(name)} next`;
+    // The native MD4C parser consumes escapes and creates an italic node for *Bar*.
+    const raw: MarkdownNode =
+      name === "Foo*Bar*"
+        ? {
+            type: "document",
+            beg: 0,
+            end: 20,
+            children: [
+              {
+                type: "paragraph",
+                beg: 0,
+                end: 20,
+                children: [
+                  { type: "text", beg: 0, end: 9, content: 'Use $"Foo' },
+                  {
+                    type: "italic",
+                    beg: 9,
+                    end: 14,
+                    children: [{ type: "text", beg: 10, end: 13, content: "Bar" }],
+                  },
+                  { type: "text", beg: 14, end: 20, content: '" next' },
+                ],
+              },
+            ],
+          }
+        : {
+            type: "document",
+            beg: 0,
+            end: source.length,
+            children: [
+              {
+                type: "paragraph",
+                beg: 0,
+                end: source.length,
+                children: [
+                  {
+                    type: "text",
+                    beg: 0,
+                    end: source.length,
+                    content: source.replace(/\\([\\"])/g, "$1"),
+                  },
+                ],
+              },
+            ],
+          };
+    const parse = vi
+      .fn<(value: string) => MarkdownNode>()
+      .mockReturnValueOnce(raw)
+      .mockImplementation((value) => ({
+        type: "document",
+        beg: 0,
+        end: value.length,
+        children: [
+          {
+            type: "paragraph",
+            beg: 0,
+            end: value.length,
+            children: [{ type: "text", beg: 0, end: value.length, content: value }],
+          },
+        ],
+      }));
+    const document = parseNativeMarkdownWithSkillTokens(source, parse);
+    const runs = nativeMarkdownDocumentRuns(document, [
+      { name, displayName: "Expected skill" },
+      { name: "Review Tools", displayName: "Wrong skill" },
+    ]);
+    const chips = runs.filter((run) => run.skillName);
+    expect(chips.map((run) => run.skillName)).toEqual([name]);
+    expect(
+      nativeMarkdownContextCopyRanges([{ run: chips[0]!, text: "\uFFFC", inlineImageLength: 0 }]),
+    ).toEqual([{ start: 0, end: 1, text: serializeComposerSkillToken(name) }]);
+    expect(runs.map((run) => run.text).join("")).toBe(source);
+  });
+});
 
 describe("nativeMarkdownTextRuns", () => {
   it("distinguishes video and pull-request context from generic file and review chips", () => {
@@ -398,6 +538,36 @@ describe("nativeMarkdownDocumentRuns", () => {
       },
       { text: " for this.", role: "body" },
     ]);
+  });
+
+  it("decorates and copies the full multiword skill name", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", children: [{ type: "text", content: 'Use $"Poteto Mode" next' }] },
+      ],
+    };
+    expect(
+      nativeMarkdownDocumentRuns(node, [{ name: "Poteto Mode", displayName: "Poteto workflow" }]),
+    ).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: '$"Poteto Mode"',
+        role: "body",
+        skillName: "Poteto Mode",
+        skillLabel: "Poteto workflow",
+      },
+      { text: " next", role: "body" },
+    ]);
+    expect(
+      nativeMarkdownContextCopyRanges([
+        {
+          run: { text: "Poteto workflow", skillName: "Poteto Mode" },
+          text: "",
+          inlineImageLength: 1,
+        },
+      ]),
+    ).toEqual([{ start: 0, end: 1, text: '$"Poteto Mode"' }]);
   });
 
   it("decorates known skill references inside blockquotes", () => {

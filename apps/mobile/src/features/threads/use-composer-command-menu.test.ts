@@ -24,6 +24,25 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it.each(["$pot", "/skill:pot"])(
+    "selects a multiword skill from %s as one token",
+    (draftMessage) => {
+      const result = resolveComposerCommandSelection({
+        draftMessage,
+        trigger: { rangeStart: 0, rangeEnd: draftMessage.length },
+        item: {
+          id: "skill:Poteto Mode",
+          type: "skill",
+          label: "Poteto Mode",
+          description: "Use the Poteto workflow",
+          skill: { name: "Poteto Mode", path: "/skills/poteto-mode/SKILL.md", enabled: true },
+        },
+        allowInteractionMode: true,
+      });
+      expect(result).toEqual({ text: '$"Poteto Mode" ', cursor: 15, interactionMode: null });
+    },
+  );
+
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

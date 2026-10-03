@@ -18,11 +18,12 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
+import {
+  collectComposerSkillTokens,
+  replaceComposerSkillTokens,
+} from "@t3tools/shared/composerInlineTokens";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const SKILL_MENTION_PATTERN =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
-const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source, "u");
 const MAX_SKILL_DEPTH = 10;
 const MAX_SKILL_BYTES = ByteSize.bytes(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;
@@ -277,14 +278,15 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
 
 /** Cursor invokes Agent Skills with `/name`; T3 composers insert `$name`. */
 export function hasCursorSkillMention(prompt: string): boolean {
-  return HAS_SKILL_MENTION_PATTERN.test(prompt);
+  return collectComposerSkillTokens(prompt).length > 0;
 }
 
 export function rewriteCursorSkillMentions(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): string {
-  return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
-    skillNames.has(name) ? `${prefix}/${name}` : match,
+  return replaceComposerSkillTokens(prompt, (token) =>
+    // Whitespace would turn the rest of the catalog name into command arguments.
+    !/\s/u.test(token.value) && skillNames.has(token.value) ? `/${token.value}` : token.source,
   );
 }

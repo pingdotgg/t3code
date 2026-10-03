@@ -77,7 +77,7 @@ import {
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { collectComposerSkillTokens } from "@t3tools/shared/composerInlineTokens";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
@@ -775,14 +775,11 @@ const commandOf = (text: string) => {
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
 
-/** Whether a prompt names any skill at all, before the directory's skills are read. */
-const SKILL_MENTION = new RegExp(SKILL_MENTION_PATTERN.source, "u");
-
 /** The workspace skills a prompt names with the composer's `$skill` tokens. */
 const skillsNamed = (text: string, known: ReadonlySet<string>) => [
   ...new Set(
-    [...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) =>
-      known.has(match[2] ?? "") ? [match[2]!] : [],
+    collectComposerSkillTokens(text).flatMap((token) =>
+      known.has(token.value) ? [token.value] : [],
     ),
   ),
 ];
@@ -3519,16 +3516,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command });
         }
       }
-      const skills = SKILL_MENTION.test(text)
-        ? skillsNamed(
-            text,
-            yield* client.skill.list({ location }).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.map((list) => new Set(list.data.map((skill) => skill.id))),
-              Effect.orElseSucceed(() => new Set<string>()),
-            ),
-          )
-        : [];
+      const skills =
+        collectComposerSkillTokens(text).length > 0
+          ? skillsNamed(
+              text,
+              yield* client.skill.list({ location }).pipe(
+                Effect.timeout(INVENTORY_TIMEOUT),
+                Effect.map((list) => new Set(list.data.map((skill) => skill.id))),
+                Effect.orElseSucceed(() => new Set<string>()),
+              ),
+            )
+          : [];
       if (!sending()) return;
       return yield* client.session
         .prompt({

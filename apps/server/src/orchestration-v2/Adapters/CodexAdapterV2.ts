@@ -28,7 +28,7 @@ import {
   ProviderDriverKind,
   type ProviderSetupError,
 } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { replaceComposerSkillTokens } from "@t3tools/shared/composerInlineTokens";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -419,7 +419,7 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  * runs; currency amounts like `€20` do not match and stay prose.
  */
 export function codexSkillMentionText(text: string): string {
-  return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+  return replaceComposerSkillTokens(text, (token) => `$${token.value}`);
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;

@@ -79,6 +79,10 @@
       "types": "./src/codexMarkdownDirectives.ts",
       "default": "./src/codexMarkdownDirectives.ts"
     },
+    "./skill-markdown-syntax": {
+      "types": "./src/skillMarkdownSyntax.ts",
+      "default": "./src/skillMarkdownSyntax.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"

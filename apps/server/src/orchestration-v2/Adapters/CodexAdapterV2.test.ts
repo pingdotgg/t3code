@@ -1326,6 +1326,10 @@ describe("CodexAdapterV2 skill mentions", () => {
       ["first line\n₹ship it", "first line\n$ship it"],
       ["𑿝review then €2spec", "$review then $2spec"],
       ["$review", "$review"],
+      ['Use $"Poteto Mode" then $2spec with $20k', "Use $Poteto Mode then $2spec with $20k"],
+      ['€"Poteto Mode"', "$Poteto Mode"],
+      ['use $"quote\\\"skill"', 'use $quote"skill'],
+      ['use $"line\\nbreak"', "use $line\nbreak"],
       ["costs €20", "costs €20"],
       ["€5k", "€5k"],
       ["budget €100M or €1e6", "budget €100M or €1e6"],
@@ -2174,7 +2178,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
-  it.effect("sends currency-sigil skill mentions to Codex as $ mentions", () =>
+  it.effect("sends complete quoted skill names to Codex on start and steer", () =>
     Effect.gen(function* () {
       const nativeThreadId = "skill-sigil-thread";
       const nativeTurnId = "skill-sigil-turn";
@@ -2184,8 +2188,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ...codexReplayPreamble({
             nativeThreadId,
             nativeTurnId,
-            prompt: "€review do it",
-            sentPrompt: "$review do it",
+            prompt: '€"Poteto Mode" do it',
+            sentPrompt: "$Poteto Mode do it",
           }),
           {
             type: "expect_outbound",
@@ -2195,7 +2199,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               method: "turn/steer",
               params: {
                 expectedTurnId: nativeTurnId,
-                input: [{ type: "text", text: "then $ship it" }],
+                input: [{ type: "text", text: "then $Another Skill it" }],
                 threadId: nativeThreadId,
               },
             },
@@ -2213,7 +2217,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerThread: harness.providerThread,
         now: yield* DateTime.now,
         attemptId: RunAttemptId.make("skill-sigil-attempt"),
-        text: "€review do it",
+        text: '€"Poteto Mode" do it',
       });
       yield* harness.runtime.startTurn(turnInput);
       yield* harness.runtime.steerTurn({
@@ -2227,7 +2231,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         message: {
           ...turnInput.message,
           messageId: MessageId.make("message-skill-sigil-steer"),
-          text: "then £ship it",
+          text: 'then £"Another Skill" it',
         },
       });
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
