@@ -109,7 +109,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
-  /** Wakes since checks last started over. Watching stops at a limit, so bots cannot loop it. */
+  /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;

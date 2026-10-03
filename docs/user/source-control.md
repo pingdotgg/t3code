@@ -185,7 +185,7 @@ Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_p
 the thread is active, the server checks the pull request every minute and wakes the agent when checks
 finish on the latest commit, someone else comments or reviews, or the branch starts to conflict.
 Comments from your own account do not wake it. Watching ends when the pull request merges or closes,
-or after 10 wakes without a new push or check run. To start or stop it yourself, use the row menu in the **Linked
+or after 10 wakes in a row that bring only comments. To start or stop it yourself, use the row menu in the **Linked
 pull requests** panel, or long-press the review in the mobile Git overview.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked

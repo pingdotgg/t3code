@@ -7,8 +7,8 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Wakes allowed before checks start over (a push or a rerun), so a chatty bot cannot loop an
- * agent that is only replying to it.
+ * Wakes in a row that bring only new comments. A check result, a conflict, or a push resets the
+ * count, so this only stops a chatty bot looping an agent that is replying to it.
  */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 const LISTED_ITEMS = 10;
@@ -21,7 +21,12 @@ export type PullRequestWatchChange =
       /** Checks still running; a later report follows once they finish. */
       readonly running: number;
     }
-  | { readonly kind: "checks-passed"; readonly count: number }
+  | {
+      readonly kind: "checks-passed";
+      readonly count: number;
+      /** Finished without a verdict, which on GitLab can mean a manual job waits on someone. */
+      readonly neutral: ReadonlyArray<PullRequestCheck>;
+    }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "conflicting" };
 
@@ -77,7 +82,11 @@ export function evaluatePullRequestWatch(
   } else if (outcome !== null && outcome !== "pending" && outcome !== checks) {
     changes.push(
       outcome === "passing"
-        ? { kind: "checks-passed", count: detail.checks.length }
+        ? {
+            kind: "checks-passed",
+            count: detail.checks.length,
+            neutral: detail.checks.filter((check) => check.status === "neutral"),
+          }
         : {
             kind: "checks-failed",
             failed: detail.checks.filter(isFailedCheck),
@@ -114,7 +123,14 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
-  const wakes = (restarted ? 0 : watch.wakes) + (changes.length > 0 ? 1 : 0);
+  const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
+  const wakes = commentsOnly
+    ? (restarted ? 0 : watch.wakes) + 1
+    : changes.length > 0
+      ? 0
+      : restarted
+        ? 0
+        : watch.wakes;
   return {
     changes,
     next: {
@@ -126,7 +142,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
     },
-    exhausted: changes.length > 0 && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
+    exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
 }
 
@@ -160,7 +176,12 @@ function changeLines(
       ];
     case "checks-passed":
       return [
-        `- All ${change.count} ${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
+        `- All ${change.count} ${change.count === 1 ? "check" : "checks"} finished without a failure${context.commit}.`,
+        ...listed(
+          change.neutral,
+          (check) =>
+            `  - ${check.name} (neutral, may be waiting on someone)${check.url ? ` ${check.url}` : ""}`,
+        ),
       ];
     case "remarks":
       return [
@@ -202,7 +223,7 @@ export function pullRequestWatchMessage(input: {
     ...changes.flatMap((change) => changeLines(change, context)),
     "",
     exhausted
-      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} updates without a new push or check run. Call watch_pull_request to watch it again.`
+      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
       : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. Call unwatch_pull_request when you no longer need updates.",
   ].join("\n");
   const failed = changes.some(

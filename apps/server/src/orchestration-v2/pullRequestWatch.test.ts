@@ -102,7 +102,7 @@ describe("evaluatePullRequestWatch", () => {
     // A rerun that passes on the same head is news too.
     const rerun = detail({ checks: [check("lint", "success"), check("test", "success")] });
     assert.deepEqual(evaluatePullRequestWatch(failed.next, rerun, noRemarks).changes, [
-      { kind: "checks-passed", count: 2 },
+      { kind: "checks-passed", count: 2, neutral: [] },
     ]);
   });
 
@@ -181,6 +181,17 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(clean.next, conflicting, noRemarks).changes, [
       { kind: "conflicting" },
     ]);
+  });
+
+  it("does not spend the comment wake limit on check results", () => {
+    const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
+    const result = evaluatePullRequestWatch(
+      tired,
+      detail({ checks: [check("lint", "failure")] }),
+      noRemarks,
+    );
+    assert.isFalse(result.exhausted);
+    assert.equal(result.next.wakes, 0);
   });
 
   it("stops after the wake limit unless the head moves", () => {
