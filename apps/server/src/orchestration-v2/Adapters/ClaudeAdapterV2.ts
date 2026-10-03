@@ -3066,8 +3066,17 @@ export function makeClaudeAdapterV2(
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
-        // Claude 5 task tools edit one list per session, across turns.
-        const claudeTasks = new Map<string, ClaudeTask>();
+        // Claude 5 task tools edit one list per native thread, across turns.
+        // Rollback drops a thread's list; forks get a new native thread.
+        const claudeTasksByNativeThread = new Map<string, Map<string, ClaudeTask>>();
+        const claudeTasksFor = (nativeThreadId: string) => {
+          let tasks = claudeTasksByNativeThread.get(nativeThreadId);
+          if (tasks === undefined) {
+            tasks = new Map();
+            claudeTasksByNativeThread.set(nativeThreadId, tasks);
+          }
+          return tasks;
+        };
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
         );
@@ -6163,7 +6172,7 @@ export function makeClaudeAdapterV2(
               parentToolUseId === null &&
               !isClaudeToolResultError(toolResult) &&
               applyClaudeTaskToolResult(
-                claudeTasks,
+                claudeTasksFor(liveQuery.nativeThreadId),
                 toolCall.toolName,
                 claudeNativeToolInputValue(toolCall.input),
                 claudeNativeToolOutputValue(output),
@@ -6174,7 +6183,7 @@ export function makeClaudeAdapterV2(
                 context,
                 nativeItemId: `claude-tasks:${context.providerTurnId}`,
                 kind: "todo_list",
-                steps: claudeTaskSteps(claudeTasks),
+                steps: claudeTaskSteps(claudeTasksFor(liveQuery.nativeThreadId)),
               }).pipe(Effect.orDie);
             }
           }
@@ -7680,6 +7689,7 @@ export function makeClaudeAdapterV2(
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
+              claudeTasksByNativeThread.delete(nativeThreadId);
               const now = yield* DateTime.now;
 
               if (rollbackInput.target.type === "thread_start") {

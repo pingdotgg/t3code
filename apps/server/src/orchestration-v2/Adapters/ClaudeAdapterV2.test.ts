@@ -12,6 +12,7 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   ChatImageAttachment,
+  CheckpointId,
   ClaudeSettings,
   EnvironmentId,
   MessageId,
@@ -2056,6 +2057,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
+    // Close ends the CLI's stream and the next open reads a new queue, as
+    // after a rollback or fork restarts the process.
+    readonly reopenAfterClose?: boolean;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
   }) =>
@@ -2065,7 +2069,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
-      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      let sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
         const processed = yield* Deferred.make<void>();
@@ -2128,7 +2132,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
-                close: options?.close?.(sdkMessages) ?? Effect.void,
+                close: options?.reopenAfterClose
+                  ? Queue.shutdown(sdkMessages).pipe(
+                      Effect.andThen(Queue.unbounded<SDKMessage>()),
+                      Effect.map((next) => {
+                        sdkMessages = next;
+                      }),
+                    )
+                  : (options?.close?.(sdkMessages) ?? Effect.void),
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -2176,7 +2187,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtime,
         providerThread,
         threadId,
-        sdkMessages,
+        get sdkMessages() {
+          return sdkMessages;
+        },
         offerAndWait,
         offeredMessages,
         permissionModeChanges,
@@ -3139,7 +3152,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect("projects Claude 5 task tools as a todo list", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
+        const harness = yield* makeWakeHarnessWithOptions({ reopenAfterClose: true });
         const now = yield* DateTime.now;
         const assistantTool = (uuid: string, tool: Record<string, unknown>) =>
           claudeSdkFrame({
@@ -3300,6 +3313,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ["Inspect", "completed"],
           ["Ship", "pending"],
         ]);
+
+        // A rollback drops the list, so the next task is not shown beside stale ones.
+        const rolledBack = yield* harness.runtime.rollbackThread({
+          providerThread: harness.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-claude-task-tools"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: rolledBack.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-task-tools-3"),
+            text: "Start over.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          assistantTool("00000000-0000-4000-8000-000000000621", {
+            id: "tool-task-create-3",
+            name: "TaskCreate",
+            input: { subject: "Retry", description: "Retry" },
+          }),
+          toolResult(
+            "00000000-0000-4000-8000-000000000622",
+            "tool-task-create-3",
+            "Task #1 created successfully: Retry",
+            { task: { id: "1", subject: "Retry" } },
+          ),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000623",
+            result: "Retrying.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(stepsOf([...todoPlans().values()].at(-1)), [["Retry", "pending"]]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
