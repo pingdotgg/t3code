@@ -16,7 +16,6 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName, resolveWindowTitle } from "../branding.logic";
-import { isElectron } from "../env";
 import { useWindowTitleContextStore } from "../windowTitleStore";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
