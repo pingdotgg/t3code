@@ -1047,7 +1047,8 @@ export const ProviderRegistryLive = Layer.effect(
           Effect.flatMap(withAppearance),
         ),
       getProviderMaintenanceCapabilitiesForInstance,
-      setProviderMaintenanceActionState,
+      setProviderMaintenanceActionState: (input) =>
+        setProviderMaintenanceActionState(input).pipe(Effect.flatMap(withAppearance)),
       get streamChanges() {
         // Stamped as each list is consumed, so it always carries the latest appearance.
         return Stream.fromPubSub(changesPubSub).pipe(Stream.mapEffect(withAppearance));

@@ -2585,6 +2585,17 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               badgeLabel: undefined,
             });
 
+            // Maintenance responses carry the same appearance as reads.
+            const maintained = yield* registry.setProviderMaintenanceActionState({
+              instanceId: ProviderInstanceId.make("claude_kimi"),
+              action: "update",
+              state: null,
+            });
+            assert.strictEqual(
+              maintained.find((provider) => provider.instanceId === "claude_kimi")?.badgeLabel,
+              "KI",
+            );
+
             // The registry restyles in place and announces a change.
             const restyledList = yield* registry.streamChanges.pipe(
               Stream.filter((list) =>
