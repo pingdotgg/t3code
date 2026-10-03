@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -42,12 +43,70 @@ const database = SqlitePersistenceMemory;
 const testLayer = Layer.mergeAll(
   database,
   ProjectionStore.layer.pipe(Layer.provide(database)),
+  EffectOutbox.layer.pipe(Layer.provide(database)),
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.makeLayer([adapter]),
     { databaseLayer: database, runEffectWorker: false },
   ),
 );
+
+for (const terminalCommand of ["thread.archive", "thread.delete"] as const) {
+  it.effect(`rejects prepared-run.release after ${terminalCommand}`, () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:terminal-preparation");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-terminal-preparation"),
+        threadId,
+        projectId: ProjectId.make("project:terminal-preparation"),
+        title: "Preparing thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("prepare-terminal-message"),
+        threadId,
+        messageId: MessageId.make("preparing-input"),
+        text: "Prepare workspace",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: terminalCommand,
+        commandId: CommandId.make("close-terminal-preparation"),
+        threadId,
+      });
+      const before = yield* projections.getThreadProjection(threadId);
+      const runId = before.runs[0]!.id;
+      const commandId = CommandId.make("release-terminal-preparation");
+      const error = yield* orchestrator
+        .dispatch({
+          type: "prepared-run.release",
+          commandId,
+          threadId,
+          runId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(error.cause, `Thread ${threadId} is not active.`);
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+    }).pipe(Effect.provide(testLayer)),
+  );
+}
 
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
