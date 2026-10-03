@@ -48,7 +48,7 @@ import { RunId, ThreadId } from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
-  computerUseToolTitle,
+  dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
@@ -540,7 +540,7 @@ function itemSummary(
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
-    (item.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : undefined) ??
+    (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
     item.title?.trim();
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
