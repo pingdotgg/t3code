@@ -299,6 +299,75 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("falls back to known CLI directories on macOS when neither probe returns a PATH", () =>
+    Effect.gen(function* () {
+      // The Finder-launch environment: no SHELL, and the bare PATH launchd hands a .app.
+      const env: NodeJS.ProcessEnv = {
+        HOME: "/Users/test",
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+      });
+
+      assert.equal(
+        env.PATH,
+        "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/Users/test/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      );
+    }),
+  );
+
+  it.effect("falls back to known CLI directories on linux when the login shell is silent", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { HOME: "/home/test", PATH: "/usr/bin:/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => "",
+      });
+
+      assert.equal(
+        env.PATH,
+        "/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/home/test/.local/bin:/usr/bin:/bin",
+      );
+    }),
+  );
+
+  it.effect("omits the known CLI directories when the login shell reports a PATH", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", HOME: "/Users/test", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/Users/test/.rvm/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.PATH, "/Users/test/.rvm/bin:/usr/bin");
+    }),
+  );
+
+  it.effect("omits the known CLI directories when only launchctl reports a PATH", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", HOME: "/Users/test", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.command === "/bin/launchctl"
+            ? "/usr/local/opt/bin:/usr/bin"
+            : "",
+      });
+
+      assert.equal(env.PATH, "/usr/local/opt/bin:/usr/bin");
+    }),
+  );
+
   it.effect("loads PowerShell profile environment on Windows", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
