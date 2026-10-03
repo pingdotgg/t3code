@@ -6,6 +6,7 @@ import type {
   DiffSnapshot,
   DiffState,
   OrchestrationGetTurnDiffResult,
+  OrchestrationGetTurnDiffStateInput,
   TurnDiffScope,
 } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
@@ -13,7 +14,10 @@ import { Effect, Layer } from "effect";
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { CheckpointDiffQueryLive } from "../../checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
-import { CheckpointDiffQuery } from "../../checkpointing/Services/CheckpointDiffQuery.ts";
+import {
+  CheckpointDiffQuery,
+  type TurnDiffPathsInput,
+} from "../../checkpointing/Services/CheckpointDiffQuery.ts";
 import { DiffStateQuery, type DiffStateQueryShape } from "../Services/DiffStateQuery.ts";
 
 const MAX_DIFF_SIZE = 4_375_000;
@@ -164,7 +168,7 @@ function toFileDelta(input: {
 const make = Effect.gen(function* () {
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
 
-  const getTurnDiffState: DiffStateQueryShape["getTurnDiffState"] = (input) => {
+  const getTurnDiffState = (input: OrchestrationGetTurnDiffStateInput & TurnDiffPathsInput) => {
     const scope = input.scope ?? "snapshot";
     return checkpointDiffQuery.getTurnDiff({ ...input, scope }).pipe(
       Effect.map((result) => toReadyDiffState({ result, scope })),
@@ -197,7 +201,7 @@ const make = Effect.gen(function* () {
     );
 
   const getTurnDiffFileDelta: DiffStateQueryShape["getTurnDiffFileDelta"] = (input) =>
-    getTurnDiffState(input).pipe(
+    getTurnDiffState({ ...input, paths: [input.path] }).pipe(
       Effect.map((state) => {
         const delta = toFileDelta({ state, path: input.path });
         if (delta) {

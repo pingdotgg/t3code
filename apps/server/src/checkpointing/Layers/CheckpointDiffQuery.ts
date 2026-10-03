@@ -12,6 +12,7 @@ import {
 } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
 import { checkpointBaselineRefForThreadTurn, checkpointRefForThreadTurn } from "../Utils.ts";
+import { MAX_TURN_SCOPED_PATHS } from "../TurnScopedFiles.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
   CheckpointDiffQuery,
@@ -45,6 +46,7 @@ function resolveCheckpointRange(input: {
     | ProjectionThreadCheckpointContext["checkpoints"][number]["checkpointRef"]
     | undefined;
   const diffPaths = new Set<string>();
+  let attributionComplete = true;
 
   for (const checkpoint of input.threadContext.checkpoints) {
     maxTurnCount = Math.max(maxTurnCount, checkpoint.checkpointTurnCount);
@@ -67,6 +69,17 @@ function resolveCheckpointRange(input: {
       checkpoint.checkpointTurnCount > input.fromTurnCount &&
       checkpoint.checkpointTurnCount <= input.toTurnCount
     ) {
+      // A turn whose cumulative summary shows changes it cannot attribute has an
+      // unreliable turnFiles filter: the summary failed, no file-change activity
+      // matched, or touched-path attribution hit its cap. Filtering the range by
+      // the remaining turns' paths would silently drop this turn's work, so drop
+      // the filter and return the unfiltered range diff.
+      if (
+        checkpoint.files.length > 0 &&
+        (checkpoint.turnFiles.length === 0 || checkpoint.turnFiles.length >= MAX_TURN_SCOPED_PATHS)
+      ) {
+        attributionComplete = false;
+      }
       for (const file of checkpoint.turnFiles) {
         addDiffPath(diffPaths, file);
       }
@@ -92,7 +105,7 @@ function resolveCheckpointRange(input: {
         ? undefined
         : fallbackFromCheckpointRef,
     toCheckpointRef,
-    diffPaths: [...diffPaths],
+    diffPaths: attributionComplete ? [...diffPaths] : undefined,
   };
 }
 
@@ -149,6 +162,8 @@ const make = Effect.gen(function* () {
         scope: input.scope,
         threadContext: threadContext.value,
       });
+      const resolvedPaths = input.paths ?? range.diffPaths;
+
       if (input.toTurnCount > range.maxTurnCount) {
         return yield* new CheckpointUnavailableError({
           threadId: input.threadId,
@@ -199,7 +214,7 @@ const make = Effect.gen(function* () {
           ...(input.ignoreWhitespace === undefined
             ? {}
             : { ignoreWhitespace: input.ignoreWhitespace }),
-          paths: range.diffPaths,
+          ...(resolvedPaths === undefined ? {} : { paths: resolvedPaths }),
           ...(threadContext.value.workspaceBinding == null
             ? {}
             : { workspaceBinding: threadContext.value.workspaceBinding }),

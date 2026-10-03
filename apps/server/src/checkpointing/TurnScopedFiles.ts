@@ -12,6 +12,8 @@ const TURN_SCOPED_ACTIVITY_KINDS = new Set(["tool.updated", "tool.completed"]);
 const FILE_CHANGE_TOOL_KINDS = new Set(["edit", "write", "delete", "move"]);
 const MAX_TURN_SCOPED_PATHS = 500;
 
+export { MAX_TURN_SCOPED_PATHS };
+
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Readonly<Record<string, unknown>>)
@@ -39,6 +41,8 @@ export interface DeriveTurnScopedCheckpointFilesInput {
 export interface DeriveTurnScopedCheckpointFilesResult {
   readonly agentTouchedPaths: ReadonlyArray<string>;
   readonly turnFiles: ReadonlyArray<OrchestrationCheckpointFile>;
+  /** True when touched-path attribution hit MAX_TURN_SCOPED_PATHS and is incomplete. */
+  readonly truncated: boolean;
 }
 
 export function deriveTurnScopedCheckpointFiles(
@@ -90,5 +94,6 @@ export function deriveTurnScopedCheckpointFiles(
   return {
     agentTouchedPaths: [...touched],
     turnFiles,
+    truncated: touched.size >= MAX_TURN_SCOPED_PATHS,
   };
 }

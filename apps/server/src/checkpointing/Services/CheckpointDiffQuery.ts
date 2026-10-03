@@ -20,6 +20,11 @@ import type { CheckpointServiceError } from "../Errors.ts";
 /**
  * CheckpointDiffQueryShape - Service API for checkpoint diff queries.
  */
+export interface TurnDiffPathsInput {
+  /** Restricts the diff to these repo-relative paths, overriding range attribution. */
+  readonly paths?: ReadonlyArray<string> | undefined;
+}
+
 export interface CheckpointDiffQueryShape {
   /**
    * Read the patch diff for a single turn checkpoint transition.
@@ -27,7 +32,7 @@ export interface CheckpointDiffQueryShape {
    * Verifies checkpoint availability in both projection state and filesystem.
    */
   readonly getTurnDiff: (
-    input: OrchestrationGetTurnDiffInput,
+    input: OrchestrationGetTurnDiffInput & TurnDiffPathsInput,
   ) => Effect.Effect<OrchestrationGetTurnDiffResult, CheckpointServiceError>;
 
   /**
