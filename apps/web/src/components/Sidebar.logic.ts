@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
@@ -910,9 +911,10 @@ export function resolveThreadRowClassName(input: {
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan. Waiting
-// (runtime status "idle") is the agent stopped with background tasks still
-// open: not the user's turn yet, so it renders grey like working, not as a
-// false Done.
+// (runtime status "idle") is the agent stopped with background work that will
+// wake it (subagents, monitors): not the user's turn yet, so it renders grey
+// like working, not as a false Done. Commands it left running, such as a dev
+// server, do not hold the thread; it reads as ready.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
 export type SidebarThreadStatus =
@@ -1007,8 +1009,8 @@ export function shouldShowSidebarV2Duration(status: SidebarThreadStatus): boolea
 }
 
 /** Working beta: threads busy with work that does not need the user fold into
-    the Working shelf: a running run, or one stopped with background tasks
-    still open. Approvals, questions, plan prompts, and failures stay in the
+    the Working shelf: a running run, or one stopped with background work
+    that will wake it. Approvals, questions, plan prompts, and failures stay in the
     inbox. */
 export function isSidebarThreadWorking(thread: ThreadStatusInput): boolean {
   const status = resolveSidebarThreadStatus(thread);
@@ -1209,7 +1211,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) {
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",

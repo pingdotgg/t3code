@@ -236,18 +236,21 @@ export function deriveThreadRuntime(
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
-  const hasPendingBackgroundTasks =
+  // Same rule as the shell runtime: only background work that holds the
+  // completion parks the thread at idle; a dev server left running does not.
+  const backgroundWorkHoldsRun = backgroundWorkHoldsCompletion(
     derivePendingBackgroundWork({
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
-    }).length > 0;
+    }),
+  );
   return {
     status: usageLimitedRun
       ? "failed"
-      : hasPendingBackgroundTasks && latestRunProjection?.status !== "failed"
+      : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
         : (activityRun?.status ?? "idle"),
     activeRunId,
