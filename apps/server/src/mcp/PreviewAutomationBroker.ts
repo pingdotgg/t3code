@@ -47,6 +47,12 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
   /** Background metadata reads must not change the agent's current tab. */
   readonly updateCurrentTab?: boolean;
+  /**
+   * Unanswered primary operations still drop the host. Optional reads, such as
+   * the page-icon status lookup, pass false so a short deadline cannot evict
+   * the only desktop browser.
+   */
+  readonly disconnectOnTimeout?: boolean;
   /** Capture the routed tab before another request changes the current assignment. */
   readonly onTargetTab?: (tabId: PreviewTabId | undefined) => void;
 }
@@ -614,9 +620,13 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
-            // An unanswered request invalidates this connection. Do not replay
-            // actions: the client may have applied them before becoming unreachable.
-            yield* disconnect(connection.clientId, connection.queue, true);
+            // An unanswered primary request invalidates this connection. Do not
+            // replay actions: the client may have applied them before becoming
+            // unreachable. Optional reads leave the host registered; pending
+            // cleanup still drops a reply that arrives after this deadline.
+            if (input.disconnectOnTimeout !== false) {
+              yield* disconnect(connection.clientId, connection.queue, true);
+            }
             return yield* new PreviewAutomationTimeoutError(requestContext);
           }),
         onSome: (value) => Effect.succeed(value as A),

@@ -6,8 +6,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -209,6 +211,70 @@ it.effect.each([
       expect(snapshot.content).toEqual([
         { type: "text", text: `Preview snapshot failed: ${advice}` },
       ]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps the preview host when optional page metadata times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const metadataSeen = yield* Deferred.make<void>();
+      let ignoredMetadata = false;
+      const page = {
+        available: true,
+        visible: true,
+        tabId,
+        url: "http://example.test/",
+        title: "Example",
+        loading: false,
+      };
+      const events = yield* broker.connect({
+        clientId: "mcp-metadata-timeout-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        // The post-click icon lookup is the only status call with this budget.
+        if (event.request.operation === "status" && event.request.timeoutMs === 500) {
+          if (!ignoredMetadata) {
+            ignoredMetadata = true;
+            return Deferred.succeed(metadataSeen, undefined);
+          }
+        }
+        return broker.respond({
+          clientId: "mcp-metadata-timeout-client",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: event.request.operation === "click" ? {} : page,
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const click = yield* server
+        .callTool({ name: "preview_click", arguments: { x: 1, y: 1 } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(metadataSeen);
+      yield* TestClock.adjust(500);
+      const clicked = yield* Fiber.join(click);
+      expect(clicked.isError).toBe(false);
+      expect(clicked.structuredContent).toEqual({});
+
+      const status = yield* server
+        .callTool({ name: "preview_status", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(status.isError).toBe(false);
+      expect(status.structuredContent).toMatchObject({ available: true, tabId });
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

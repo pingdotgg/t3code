@@ -85,6 +85,10 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       input: {},
       timeoutMs: 500,
       updateCurrentTab: false,
+      // The icon lookup is best-effort. Its 500ms deadline must not disconnect
+      // the only desktop host, or the next preview tool reports that no browser
+      // is available.
+      disconnectOnTimeout: false,
       ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
     })
     .pipe(Effect.orElseSucceed(() => null));

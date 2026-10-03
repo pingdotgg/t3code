@@ -1348,6 +1348,53 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
   ),
 );
 
+it.effect("keeps the host when an optional status read times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const metadataReceived = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      yield* Stream.runForEach(yield* broker.connect(makeHost()), (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        operations.push(event.request.operation);
+        if (event.request.timeoutMs === 500) {
+          return Deferred.succeed(metadataReceived, undefined);
+        }
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: { available: true },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const metadata = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "status",
+          input: {},
+          timeoutMs: 500,
+          updateCurrentTab: false,
+          disconnectOnTimeout: false,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(metadataReceived);
+      yield* TestClock.adjust(500);
+      expect(yield* Fiber.join(metadata)).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+      });
+
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toEqual({
+        available: true,
+      });
+      expect(operations).toEqual(["status", "status"]);
+    }),
+  ),
+);
+
 it.effect("discards buffered actions before completing an evicted host stream", () =>
   Effect.scoped(
     Effect.gen(function* () {
