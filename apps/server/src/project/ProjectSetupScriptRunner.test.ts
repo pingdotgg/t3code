@@ -1,6 +1,7 @@
 import { assert, it, vi } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -117,3 +118,60 @@ it.effect("resolves setup scripts through the standalone project service", () =>
     yield* listener({ type: "closed", threadId: "thread-1", terminalId: "setup-setup" });
   }).pipe(Effect.provide(layer));
 });
+
+it.effect.each(["failure", "defect"] as const)(
+  "closes the setup terminal and unsubscribes when writing ends with a %s",
+  (failureType) => {
+    const writeFailure = new TerminalManager.TerminalWriteError({
+      threadId: "thread-failed",
+      terminalId: "setup-setup",
+      terminalPid: 123,
+      cause: new Error("write failed"),
+    });
+    const close = vi.fn(() => Effect.void);
+    const unsubscribe = vi.fn();
+    const layer = ProjectSetupScriptRunner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(TerminalManager.TerminalManager)({
+            open: () => Effect.succeed({} as never),
+            write: () =>
+              failureType === "failure" ? Effect.fail(writeFailure) : Effect.die(writeFailure),
+            close,
+            subscribe: () => Effect.succeed(unsubscribe),
+          }),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const result = yield* runner
+        .runForThread({
+          threadId: "thread-failed",
+          worktreePath: "/repo-worktree",
+          project: {
+            id: ProjectId.make("project:setup-write-failure"),
+            workspaceRoot: "/repo",
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "vp install",
+                icon: "configure",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+      assert.equal(unsubscribe.mock.calls.length, 1);
+      assert.deepEqual(close.mock.calls[0], [
+        { threadId: "thread-failed", terminalId: "setup-setup", deleteHistory: true },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);

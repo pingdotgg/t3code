@@ -2340,13 +2340,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "thread.metadata.update" &&
-      command.expectedWorktreePath !== undefined &&
-      command.expectedWorktreePath !== thread.worktreePath
+      ((command.expectedWorktreePath !== undefined &&
+        command.expectedWorktreePath !== thread.worktreePath) ||
+        (command.expectedBranch !== undefined && command.expectedBranch !== thread.branch))
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
+        cause: `Thread ${command.threadId} workspace binding changed before the metadata update could be applied.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {

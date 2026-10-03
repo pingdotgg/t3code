@@ -424,8 +424,16 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
-        // Nothing will ever settle the completion if the command never ran.
-        Effect.tapError(() => Effect.sync(() => observed?.unsubscribe())),
+        // No caller receives the terminal id when writing fails, so unwind
+        // the shell here before launch cleanup removes its workspace.
+        Effect.onError(() =>
+          Effect.sync(() => observed?.unsubscribe()).pipe(
+            Effect.andThen(
+              terminalManager.close({ threadId: input.threadId, terminalId, deleteHistory: true }),
+            ),
+            Effect.ignoreCause,
+          ),
+        ),
       );
 
     // A clean run leaves only an idle prompt behind; its output stays in the

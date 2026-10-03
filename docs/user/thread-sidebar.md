@@ -13,6 +13,13 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+If preparing a new worktree fails before the agent starts, T3 Code closes its setup
+terminal and removes the new worktree. The thread and its messages stay visible.
+Messages queued during preparation then run from the project's root directory.
+To try again in a separate worktree, start a new thread with **New worktree**.
+An existing worktree you selected stays in place. If removing a failed worktree
+fails, it stays linked to the thread so you can inspect or remove it.
+
 ### Start without a project
 
 A thread does not need a project. To start one without a project, click **or
@@ -131,7 +138,8 @@ runs a command, such as a dev server, stays open.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
-thread. Work in progress, pending questions or approvals, and live background work
+thread. A thread with no messages or runs becomes inactive from its creation time.
+Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
