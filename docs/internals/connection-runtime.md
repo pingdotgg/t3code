@@ -16,12 +16,14 @@ client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
-A healthy socket is never replaced. Foregrounding, an explicit retry, and an
-offline report probe the established session, and only a failed probe
-reconnects. Offline reports are often wrong, for example for a loopback server.
-A long mobile background suspension probes with a short timeout, because the OS
-can kill a socket without reporting closure. Foregrounding also wakes a pending
-retry immediately and leaves an ordinary in-flight attempt alone.
+Foregrounding, an explicit retry, and an offline report probe the established
+session, and only a failed probe reconnects. Offline reports are often wrong, for
+example for a loopback server. A long mobile background suspension is the one
+exception: it replaces the session at once, because the OS can kill a socket
+without reporting closure, and a probe would hold a dead socket in "Resuming"
+until it times out. That fresh attempt runs even while the network reports
+offline. Foregrounding also wakes a pending retry immediately and
+leaves an ordinary in-flight attempt alone.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration

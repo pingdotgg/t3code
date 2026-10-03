@@ -696,6 +696,42 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("replaces the session on a long resume while the network reports offline", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        probe: () => Ref.update(probeCount, (count) => count + 1),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      // A wrong offline report: the probe answers, so the session stays.
+      yield* harness.setNetworkStatus("offline");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(probeCount)) > 0) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      // The replacement connects although the network still reports offline.
+      yield* harness.wake("application-active-reconnect");
+      const replaced = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(replaced.attempt).toBe(1);
+      expect(yield* Ref.get(probeCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
+  );
+
   it.effect(
     "releases a session that stops answering while offline and reconnects when online",
     () =>
@@ -959,11 +995,9 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("restarts the retry ladder when a long resume finds a dead session", () =>
+  it.effect("restarts the retry ladder when a long resume replaces a connected session", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        probe: (attempt) => (attempt === 2 ? Effect.fail(transient("Stale.")) : Effect.void),
-      });
+      const harness = yield* makeHarness();
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
@@ -1042,7 +1076,7 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("keeps a healthy mobile session after a long background resume", () =>
+  it.effect("immediately replaces a mobile session after a long background resume", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);
       const harness = yield* makeHarness({
@@ -1057,18 +1091,18 @@ describe("EnvironmentSupervisor", () => {
         (state) => state.phase === "connected" && state.generation === 1,
       );
       yield* harness.wake("application-active-reconnect");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(probeCount)) > 0) break;
-        yield* Effect.yieldNow;
-      }
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
 
-      expect(yield* Ref.get(probeCount)).toBe(1);
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* Ref.get(probeCount)).toBe(0);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
   );
 
-  it.effect("replaces a mobile session whose resume probe stalls", () =>
+  it.effect("replaces a mobile session when a long resume interrupts an active probe", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
@@ -1083,9 +1117,7 @@ describe("EnvironmentSupervisor", () => {
       );
       yield* harness.wake("application-active-probe");
       yield* Effect.yieldNow;
-      // A second resume while the probe runs does not start another one.
       yield* harness.wake("application-active-reconnect");
-      yield* TestClock.adjust("3 seconds");
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
@@ -1093,7 +1125,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
-    }).pipe(Effect.provide(TestClock.layer())),
+    }),
   );
 
   it.effect("reconnects immediately when the session closes during a resume probe", () =>
@@ -1110,7 +1142,7 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("application-active-reconnect");
+      yield* harness.wake("application-active-probe");
       yield* Deferred.await(probeStarted);
       // The OS reports the suspended socket's close before the probe answers.
       yield* harness.closeLatestSession();
