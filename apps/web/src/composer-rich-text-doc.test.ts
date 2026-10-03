@@ -2,6 +2,7 @@ import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { EditorState } from "@tiptap/pm/state";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,6 +15,7 @@ import {
   flatToPm,
   pmToFlat,
   serializeEditorDoc,
+  surroundSelectionWithMark,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -359,5 +361,48 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
+  });
+
+  it.each([
+    ["`", "say `hello` now"],
+    ["*", "say *hello* now"],
+    ["_", "say *hello* now"],
+  ])("styles a selection surrounded with %s", (marker, expected) => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson("say hello now", (name) => ({ label: name, description: null })),
+    );
+    // "hello" sits at document offsets 4-9, one past the paragraph opening.
+    const tr = surroundSelectionWithMark(EditorState.create({ doc }), 5, 10, marker);
+    expect(tr && serializeEditorDoc(tr.doc).value).toBe(expected);
+  });
+
+  it.each([
+    ["paragraphs", "one\ntwo", 1, 8],
+    ["a hard break", null, 1, 8],
+  ])("leaves a selection across %s to literal wrapping", (_, value, from, to) => {
+    const doc = value
+      ? ProseMirrorNode.fromJSON(
+          schema,
+          buildDocJson(value, (name) => ({ label: name, description: null })),
+        )
+      : schema.node("doc", null, [
+          schema.node("paragraph", null, [
+            schema.text("one"),
+            schema.node("hardBreak"),
+            schema.text("two"),
+          ]),
+        ]);
+    expect(surroundSelectionWithMark(EditorState.create({ doc }), from, to, "`")).toBeNull();
+  });
+
+  it("leaves surrounding to literal characters in plain mode", () => {
+    const doc = ProseMirrorNode.fromJSON(
+      plainSchema,
+      buildDocJson("say hello now", (name) => ({ label: name, description: null }), {
+        styling: false,
+      }),
+    );
+    expect(surroundSelectionWithMark(EditorState.create({ doc }), 5, 10, "`")).toBeNull();
   });
 });
