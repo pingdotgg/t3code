@@ -1,4 +1,14 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2Run } from "@t3tools/contracts";
+import {
+  EventId,
+  MessageId,
+  NodeId,
+  ProviderThreadId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
@@ -104,6 +114,152 @@ describe("threadHistoryMerge", () => {
     expect(merged).toBe(projection);
     expect(merged.turnItems).toEqual([currentItem]);
     expect(merged.visibleTurnItems).toEqual([]);
+  });
+
+  it("does not resurrect an absent older local item after live run rollback", () => {
+    const rolledBackRunId = RunId.make("run-rollback-absent");
+    const interruptRunId = RunId.make("run-interrupt-page");
+    const interruptNodeId = NodeId.make("node-interrupt-page");
+    const liveRun = {
+      id: rolledBackRunId,
+      threadId: v2ThreadId,
+      ordinal: 1,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("message-rollback-absent"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "running" as const,
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    } satisfies OrchestrationV2Run;
+    const interruptRun = {
+      ...liveRun,
+      id: interruptRunId,
+      ordinal: 2,
+      userMessageId: MessageId.make("message-interrupt-page"),
+      rootNodeId: interruptNodeId,
+    };
+    const inherited = {
+      ...row(0),
+      visibility: "inherited" as const,
+      sourceThreadId: ThreadId.make("thread-parent"),
+    };
+    const recent = row(5);
+    const staleRolledBack = {
+      ...row(1),
+      item: { ...row(1).item, runId: rolledBackRunId },
+    };
+    const validOlder = row(2);
+    const requestItem = {
+      id: TurnItemId.make("item-interrupt-request"),
+      type: "run_interrupt_request" as const,
+      threadId: v2ThreadId,
+      runId: interruptRunId,
+      nodeId: interruptNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 3,
+      status: "completed" as const,
+      title: null,
+      message: "Stopping",
+      startedAt: NOW,
+      completedAt: NOW,
+      updatedAt: NOW,
+    };
+    const resultItem = {
+      id: TurnItemId.make("item-interrupt-result"),
+      type: "run_interrupt_result" as const,
+      threadId: v2ThreadId,
+      runId: interruptRunId,
+      nodeId: interruptNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 4,
+      status: "completed" as const,
+      title: null,
+      message: "Stopped",
+      startedAt: NOW,
+      completedAt: NOW,
+      updatedAt: NOW,
+    };
+    const partial = {
+      ...v2Projection,
+      runs: [liveRun, interruptRun],
+      attempts: [
+        {
+          id: RunAttemptId.make("attempt-interrupt-page"),
+          runId: interruptRunId,
+          attemptOrdinal: 1,
+          rootNodeId: interruptNodeId,
+          providerInstanceId: v2Projection.thread.providerInstanceId,
+          providerThreadId: ProviderThreadId.make("provider-thread-page"),
+          providerTurnId: null,
+          reason: "initial" as const,
+          status: "superseded" as const,
+          startedAt: NOW,
+          completedAt: NOW,
+        },
+      ],
+      turnItems: [recent.item],
+      visibleTurnItems: [
+        { ...inherited, position: 0 },
+        { ...recent, position: 1 },
+      ],
+    };
+    const rolledBack = applyOrchestrationV2ProjectionEvent(partial, {
+      id: EventId.make("event-run-rolled-back"),
+      type: "run.updated",
+      threadId: v2ThreadId,
+      runId: rolledBackRunId,
+      occurredAt: NOW,
+      payload: { ...liveRun, status: "rolled_back", completedAt: NOW },
+    });
+    if (rolledBack === null) {
+      throw new Error("expected live run.updated to apply");
+    }
+
+    const merged = mergeOlderHistoryIntoProjection(rolledBack, [
+      staleRolledBack,
+      validOlder,
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: v2ThreadId,
+        sourceItemId: requestItem.id,
+        item: requestItem,
+      },
+      {
+        position: 1,
+        visibility: "local",
+        sourceThreadId: v2ThreadId,
+        sourceItemId: resultItem.id,
+        item: resultItem,
+      },
+    ]);
+
+    expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual([
+      "item-2",
+      "item-interrupt-request",
+      "item-interrupt-result",
+      "item-0",
+      "item-5",
+    ]);
+    expect(merged.visibleTurnItems[3]?.visibility).toBe("inherited");
+    expect(merged.turnItems.map((item) => String(item.id))).toEqual([
+      "item-5",
+      "item-2",
+      "item-interrupt-request",
+      "item-interrupt-result",
+    ]);
   });
 
   it("marks history expanded after a successful page", () => {

@@ -3,7 +3,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ThreadHistoryMeta = {
   readonly historyCursor: string | null;
@@ -78,6 +78,13 @@ export function mergeOlderHistoryIntoProjection(
   for (const item of projection.turnItems) {
     turnItemById.set(String(item.id), item);
   }
+  // Include the incoming page so a request/result pair in one fetch is visible
+  // together; live runs/attempts still hide rolled-back history.
+  const isHistoryItemVisible = createOrchestrationV2TurnItemVisibility({
+    runs: projection.runs,
+    attempts: projection.attempts,
+    items: [...projection.turnItems, ...olderItems.map((entry) => entry.item)],
+  });
   const prepended: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
     let row = pageRow;
@@ -95,17 +102,12 @@ export function mergeOlderHistoryIntoProjection(
         if (currentItem.type !== "run_interrupt_request") {
           continue;
         }
-        if (
-          !isOrchestrationV2TurnItemVisible({
-            item: currentItem,
-            runs: projection.runs,
-            attempts: projection.attempts,
-            items: projection.turnItems,
-          })
-        ) {
+        if (!isHistoryItemVisible(currentItem)) {
           continue;
         }
         row = { ...row, item: currentItem };
+      } else if (!isHistoryItemVisible(row.item)) {
+        continue;
       }
     }
     existingKeys.add(key);
