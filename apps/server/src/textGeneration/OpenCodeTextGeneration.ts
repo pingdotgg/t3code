@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -28,6 +29,10 @@ import {
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+
+// Matches the other text-generation providers: a wedged OpenCode server
+// must not hold the caller forever.
+const OPENCODE_TIMEOUT_MS = 180_000;
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -332,6 +337,19 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)
         : serverOwner.withServer(runAgainstServer);
     const rawOutput = yield* serverOutput.pipe(
+      Effect.timeoutOption(OPENCODE_TIMEOUT_MS),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: input.operation,
+                detail: "OpenCode request timed out.",
+              }),
+            ),
+          onSome: (value) => Effect.succeed(value),
+        }),
+      ),
       Effect.catchTags({
         OpenCodeRuntimeError: (cause) =>
           Effect.fail(

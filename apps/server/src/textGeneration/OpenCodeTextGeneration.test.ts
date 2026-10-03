@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -609,6 +610,31 @@ it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
           yield* advanceIdleClock;
 
           expect(runtimeMock.state.closeCalls).toEqual([]);
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    );
+    it.effect("fails with a timeout error when the OpenCode server never answers", () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          // The SDK promise never settles: the server accepted the session
+          // but the prompt call is wedged.
+          runtimeMock.state.promptResult = new Promise(() => {}) as unknown as NonNullable<
+            typeof runtimeMock.state.promptResult
+          >;
+
+          const child = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.forkChild);
+          // Spin until the wedged prompt call is in flight, so the clock
+          // adjustment below cannot run before the timeout is armed.
+          while (runtimeMock.state.promptUrls.length === 0) {
+            yield* Effect.yieldNow;
+          }
+          yield* TestClock.adjust(181_000);
+          const error = yield* Fiber.join(child).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(TextGenerationError);
+          expect(error.operation).toBe("generateCommitMessage");
+          expect(error.detail).toContain("timed out");
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     );
