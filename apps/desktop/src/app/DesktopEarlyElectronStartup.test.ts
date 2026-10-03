@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
 } from "./DesktopEarlyElectronStartup.ts";
@@ -119,5 +120,86 @@ describe("DesktopEarlyElectronStartup", () => {
     });
 
     assert.equal(preference, "gnome-libsecret");
+  });
+});
+
+describe("Linux device scale across update relaunches", () => {
+  const input = {
+    env: { T3CODE_HOME: "/isolated" },
+    homeDirectory: "/home/user",
+    joinPath: NodePath.posix.join,
+  };
+
+  it("restores the exact explicit scale on a subsequent launch without arguments", () => {
+    let saved = "";
+    const applied: Array<[string, string]> = [];
+    const launch = (explicit: string | null) =>
+      restoreEarlyLinuxDeviceScaleFactor({
+        ...input,
+        commandLine: {
+          hasSwitch: () => explicit !== null,
+          getSwitchValue: () => explicit ?? "",
+          appendSwitch: (name, value) => applied.push([name, value]),
+        },
+        readFileString: () => saved,
+        writeFileString: (path, value) => {
+          assert.equal(path, "/isolated/userdata/linux-device-scale-factor");
+          saved = value;
+        },
+      });
+    launch("1.75");
+    assert.deepEqual(applied, []);
+    launch(null);
+    assert.deepEqual(applied, [["force-device-scale-factor", "1.75"]]);
+    launch("1");
+    launch(null);
+    assert.deepEqual(applied.at(-1), ["force-device-scale-factor", "1"]);
+  });
+
+  for (const value of ["", "garbage", "0", "-1", "Infinity", "NaN"]) {
+    it(`ignores invalid persisted scale ${JSON.stringify(value)}`, () => {
+      const applied: Array<[string, string]> = [];
+      restoreEarlyLinuxDeviceScaleFactor({
+        ...input,
+        commandLine: {
+          hasSwitch: () => false,
+          getSwitchValue: () => "",
+          appendSwitch: (name, scale) => applied.push([name, scale]),
+        },
+        readFileString: () => value,
+        writeFileString: () => assert.fail("unexpected write"),
+      });
+      assert.deepEqual(applied, []);
+    });
+  }
+
+  it("preserves explicit switches even when persistence fails", () => {
+    restoreEarlyLinuxDeviceScaleFactor({
+      ...input,
+      commandLine: {
+        hasSwitch: () => true,
+        getSwitchValue: () => "2",
+        appendSwitch: () => assert.fail("explicit scale overridden"),
+      },
+      readFileString: () => assert.fail("explicit scale must take precedence"),
+      writeFileString: () => {
+        throw new Error("read-only");
+      },
+    });
+  });
+
+  it("keeps default scaling when state is missing", () => {
+    restoreEarlyLinuxDeviceScaleFactor({
+      ...input,
+      commandLine: {
+        hasSwitch: () => false,
+        getSwitchValue: () => "",
+        appendSwitch: () => assert.fail("default scale overridden"),
+      },
+      readFileString: () => {
+        throw new Error("missing");
+      },
+      writeFileString: () => assert.fail("unexpected write"),
+    });
   });
 });
