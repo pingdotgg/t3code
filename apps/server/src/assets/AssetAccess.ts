@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  GitLabUploadReference,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
@@ -85,6 +86,12 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("gitlab-upload"),
+    reference: GitLabUploadReference,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
@@ -153,6 +160,7 @@ const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
 export type ResolvedAsset =
+  | { readonly kind: "gitlab-upload"; readonly reference: GitLabUploadReference }
   | {
       readonly kind: "file";
       readonly path: string;
@@ -681,6 +689,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "gitlab-upload": {
+      claims = {
+        version: 1,
+        kind: "gitlab-upload",
+        reference: input.resource.reference,
+        expiresAt,
+      };
+      fileName = input.resource.reference.fileName;
+      break;
+    }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
       if (fetchUrl === null) {
@@ -794,6 +812,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return faviconPath === claims.filePath
       ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
       : null;
+  }
+
+  if (claims.kind === "gitlab-upload") {
+    return { kind: "gitlab-upload", reference: claims.reference } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "github-media") {

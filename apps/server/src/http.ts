@@ -29,6 +29,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import * as GitLabUploadMedia from "./assets/GitLabUploadMedia.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -408,6 +409,14 @@ export const assetRouteLayer = HttpRouter.add(
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (asset.kind === "gitlab-upload") {
+      const media = yield* GitLabUploadMedia.GitLabUploadMedia;
+      return yield* media.respond(
+        asset.reference,
+        request.headers,
+        request.method === "HEAD" ? "HEAD" : "GET",
+      );
     }
     if (asset.kind === "github-media") {
       return yield* githubMediaResponse(asset, request.headers).pipe(

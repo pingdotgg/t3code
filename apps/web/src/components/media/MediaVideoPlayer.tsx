@@ -10,6 +10,7 @@ import { MediaActions, type MediaActionSource } from "./MediaActions";
 interface MediaVideoPlayerProps {
   readonly src: string | null;
   readonly label: string;
+  readonly fallbackSrc?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
@@ -31,6 +32,7 @@ interface MediaVideoPlayerProps {
 export function MediaVideoPlayer({
   src: latestSrc,
   label,
+  fallbackSrc,
   sourceFailed = false,
   originalUrl,
   revision = null,
@@ -50,11 +52,16 @@ export function MediaVideoPlayer({
     src: string;
     revision: string | null;
   } | null>(null);
+  const [failedPrimarySrc, setFailedPrimarySrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [preloadedSrc, setPreloadedSrc] = useState<string | null>(null);
-  const src = playbackSource?.src ?? latestSrc;
+  const primarySrc = playbackSource?.src ?? latestSrc;
+  const src =
+    primarySrc !== null && failedPrimarySrc === primarySrc && fallbackSrc
+      ? fallbackSrc
+      : primarySrc;
   const sourceRevision = playbackSource === null ? revision : playbackSource.revision;
   const failed = src !== null ? failedSrc === src : sourceFailed;
 
@@ -120,6 +127,7 @@ export function MediaVideoPlayer({
       await onRetry?.();
       setPlaybackSource(null);
       setFailedSrc(null);
+      setFailedPrimarySrc(null);
       setLoadAttempt((current) => current + 1);
     } catch {
       setFailedSrc(src);
@@ -186,7 +194,9 @@ export function MediaVideoPlayer({
           onPause={refreshPausedRevision}
           onEnded={refreshPausedRevision}
           onError={() => {
-            if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
+            if (fallbackSrc && src === fallbackSrc) setFailedSrc(src);
+            else if (fallbackSrc && src !== fallbackSrc) setFailedPrimarySrc(primarySrc);
+            else if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
             else setFailedSrc(src);
           }}
         />

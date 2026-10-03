@@ -1,5 +1,6 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
+import { gitlabUploadSource, type GitLabUploadContext } from "@t3tools/shared/gitlabUploads";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
@@ -15,40 +16,40 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
+  gitlabUploads?: GitLabUploadContext | undefined;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
 /**
- * A video GitHub hosts for the repository. It plays through a signed asset URL the server
- * fetches with the repository's GitHub credential, which is what a private repository's
+ * A repository upload plays through a signed asset URL the server
+ * fetches with its hosting credential, which is what a private repository's
  * uploads need; the URL is re-signed on retry, so a stale one recovers without a reload.
  */
-function PullRequestGitHubVideo({
+function PullRequestAssetVideo({
   environmentId,
-  cwd,
+  resource,
   url,
   fetchUrl,
 }: {
   environmentId: EnvironmentId;
-  cwd: string;
+  resource: AssetResource;
   /** What the body authored, which is what "Open original" should reach. */
   url: string;
-  /** The canonical GitHub media URL: a `blob` link addresses the page, not the bytes. */
+  /** Direct media URL without a fragment, also used when signing is unavailable. */
   fetchUrl: string;
 }) {
-  const resource = useMemo<AssetResource>(
-    () => ({ _tag: "github-media", cwd, url: fetchUrl }),
-    [cwd, fetchUrl],
-  );
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
-  // A server too old to sign this resource, or one with no route to GitHub, still leaves a
+  // A server too old to sign this resource, or one with no route to the host, still leaves a
   // public repository's video playing exactly as it did before.
   const src =
     assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
+      fallbackSrc={
+        resource._tag === "gitlab-upload" ? fetchUrl + markdownImageSourceFragment(url) : undefined
+      }
       originalUrl={url}
       label="Pull request video"
       className="w-full"
@@ -73,8 +74,8 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
+  const segments = splitPullRequestBody(text, context?.gitlabUploads);
   const repositoryUrl = context?.repositoryUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
@@ -101,18 +102,27 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+              gitlabUploads={context?.gitlabUploads}
             />
           );
         }
         const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const gitlabUpload =
+          segment.media === "video" && context?.gitlabUploads
+            ? gitlabUploadSource(segment.url, context.gitlabUploads)
+            : null;
+        if (githubMediaUrl !== null || gitlabUpload !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestAssetVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
-              cwd={cwd}
+              resource={
+                gitlabUpload !== null
+                  ? { _tag: "gitlab-upload", reference: gitlabUpload.reference }
+                  : { _tag: "github-media", cwd, url: githubMediaUrl! }
+              }
               url={segment.url}
-              fetchUrl={githubMediaUrl}
+              fetchUrl={gitlabUpload?.url.split("#", 1)[0] ?? githubMediaUrl!}
             />
           );
         }

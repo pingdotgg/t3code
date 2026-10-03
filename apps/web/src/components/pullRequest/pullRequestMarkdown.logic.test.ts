@@ -3,6 +3,22 @@ import { describe, expect, it } from "vite-plus/test";
 import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 describe("pull request body segmentation", () => {
+  it("plays a repository-relative GitLab upload embedded as a video", () => {
+    const path = "/uploads/66dbcd21ec5d24ed6ea225176098d52b/demo.mp4#t=2";
+    expect(
+      splitPullRequestBody(`<video src="${path}"></video>`, {
+        repositoryUrl: "https://gitlab.example.com/team/project",
+      }),
+    ).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: `https://gitlab.example.com/team/project${path}`,
+        media: "video",
+      },
+    ]);
+  });
+
   it("keeps a plain body as a single markdown run", () => {
     expect(splitPullRequestBody("## What changed\n\nSome prose.")).toEqual([
       { id: "markdown:0", kind: "markdown", text: "## What changed\n\nSome prose." },

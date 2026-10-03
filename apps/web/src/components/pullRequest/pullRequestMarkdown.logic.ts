@@ -1,3 +1,4 @@
+import { gitlabUploadSource, type GitLabUploadContext } from "@t3tools/shared/gitlabUploads";
 import {
   findAndReplaceText,
   type MarkdownNode,
@@ -64,7 +65,10 @@ function attachmentFromLine(line: string): { url: string; media: "video" | "unkn
  * uploaded attachment. Fenced code is copied through untouched so a snippet that happens to
  * contain a link is never lifted out of it.
  */
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+export function splitPullRequestBody(
+  body: string,
+  gitlabUploads?: GitLabUploadContext,
+): ReadonlyArray<PullRequestBodySegment> {
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let openFence: string | null = null;
@@ -127,12 +131,16 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
       ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
       : undefined;
-    if (source !== undefined && isWebUrl(source)) {
+    const resolvedSource =
+      source !== undefined && gitlabUploads
+        ? (gitlabUploadSource(source, gitlabUploads)?.url ?? source)
+        : source;
+    if (resolvedSource !== undefined && isWebUrl(resolvedSource)) {
       flushMarkdown();
       segments.push({
         id: `attachment:${segments.length}`,
         kind: "attachment",
-        url: source,
+        url: resolvedSource,
         // The author wrote the tag, so this one is a video whatever the URL looks like.
         media: "video",
       });

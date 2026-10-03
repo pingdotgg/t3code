@@ -745,8 +745,15 @@ export function PullRequestDetailPanel({
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const markdownContext = useMemo(
-    () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
-    [detail?.provider, repositoryUrl, threadRef],
+    () => ({
+      repositoryUrl: detail?.provider === "github" ? repositoryUrl : null,
+      gitlabUploads:
+        detail?.provider === "gitlab" && repositoryUrl !== null
+          ? { repositoryUrl, host: reference.host }
+          : undefined,
+      threadRef,
+    }),
+    [detail?.provider, reference.host, repositoryUrl, threadRef],
   );
   const authorProfileUrl =
     detail?.provider === "github" &&

@@ -1156,6 +1156,26 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("signs an exact GitLab upload and rejects expired or altered grants", () =>
+    Effect.gen(function* () {
+      const reference = {
+        origin: "http://gl.here",
+        project: "42",
+        secret: "66dbcd21ec5d24ed6ea225176098d52b",
+        fileName: "my image.png",
+      };
+      const signed = yield* issueAssetUrl({ resource: { _tag: "gitlab-upload", reference } });
+      const suffix = signed.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const name = suffix.slice(separator + 1);
+      expect(yield* resolveAsset(token, name)).toEqual({ kind: "gitlab-upload", reference });
+      expect(yield* resolveAsset(`x${token}`, name)).toBeNull();
+      yield* TestClock.adjust("61 minutes");
+      expect(yield* resolveAsset(token, name)).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("serves GitHub-hosted pull request media through the repository's credential", () =>
     Effect.gen(function* () {
       const resolve = (relativeUrl: string) => {
