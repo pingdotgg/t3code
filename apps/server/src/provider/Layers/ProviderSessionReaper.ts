@@ -36,19 +36,14 @@ function sessionKeepsTurnActive(
 /**
  * Why a projection/provider mismatch must not be treated as a lost session.
  *
- * `getReadModel()` reflects commands the single command worker has already
- * committed, while `listSessions()` reflects the adapter's in-memory session,
- * which flips to idle *before* the adapter emits the matching terminal event
- * (`finishTurn` clears `activeTurnId` and stamps `updatedAt`, then offers
- * `turn.completed` to its bounded queue). So the projection trails the provider
- * by however long the terminal event takes to arrive — not just to reach
- * orchestration, but to reach the liveness ledger at all. Reaping on a bare
- * mismatch interrupts healthy turns that already finished and shows the user
- * "Provider session was lost unexpectedly."
+ * `listSessions()` reflects the adapter's in-memory session, which flips to idle
+ * *before* the adapter emits the matching terminal event. The projection trails
+ * it by however long that event takes to arrive, so reaping on a bare mismatch
+ * interrupts healthy turns and shows the user "Provider session was lost
+ * unexpectedly."
  *
- * Both holds are time-bounded. A projection that genuinely never converges — a
- * rejected terminal command, a snapshot restore — must not be able to disable
- * the reaper's only recovery path permanently.
+ * Both holds are time-bounded, so a projection that never converges — a rejected
+ * terminal command, a snapshot restore — cannot disable the recovery path.
  */
 type MismatchHoldReason = "provider_reported_turn_settled" | "projection_advanced";
 
@@ -262,10 +257,9 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
               observedActiveTurnId: activeTurnId,
             });
             if (holdReason !== null) {
-              // Info, not Debug: the server defaults to Info, so a Debug hold is
-              // invisible in server.log. A hold means the reaper deliberately did
-              // not act on a thread the projection calls running, which is the
-              // exact event someone debugging a stuck thread needs to see.
+              // Info, not Debug (the server defaults to Info): a hold means the
+              // reaper deliberately skipped a thread the projection calls
+              // running, which is what someone debugging a stuck thread needs.
               yield* Effect.logInfo("provider.session.reaper.held-stale-active-turn", {
                 threadId: binding.threadId,
                 provider: binding.provider,

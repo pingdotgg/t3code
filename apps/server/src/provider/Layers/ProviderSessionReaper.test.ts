@@ -209,12 +209,9 @@ describe("ProviderSessionReaper", () => {
     };
 
     const orchestrationEngine: OrchestrationEngineShape = {
-      // Each sweep reads the projection twice: once for its snapshot and once more
-      // immediately before reaping. Startup also reads it once to reconcile
-      // orphaned background agents, so from call 3 onward the odd calls are the
-      // pre-reap re-reads. Tests that need the re-read to disagree with the
-      // snapshot therefore see `readModel` on even calls and
-      // `readModelAfterSweep` on odd calls from 3 onward.
+      // Each sweep reads the projection twice (snapshot, then a re-read before
+      // reaping); startup reads it once more to reconcile orphaned background
+      // agents. So odd calls from 3 onward are the pre-reap re-reads.
       getReadModel: () => {
         if (input.readModelAfterSweep === undefined) return Effect.succeed(input.readModel);
         readModelCalls += 1;
@@ -741,10 +738,9 @@ describe("ProviderSessionReaper", () => {
     });
   });
 
-  // Regression: a healthy turn that finished seconds ago was interrupted with
-  // "Provider session was lost unexpectedly." because the adapter had already
-  // flipped its in-memory session to idle while the durable projection still
-  // named the turn active. The provider's terminal event was merely queued.
+  // Regression: a healthy turn that had already finished was interrupted with
+  // "Provider session was lost unexpectedly." because the adapter's session went
+  // idle before the projection saw the queued terminal event.
   it("holds a stale active turn the provider already reported as settled", async () => {
     const threadId = ThreadId.make("thread-reaper-settled-turn");
     const turnId = TurnId.make("turn-reaper-settled-turn");
@@ -783,9 +779,8 @@ describe("ProviderSessionReaper", () => {
   });
 
   it("stops holding a settled turn once the hold window expires", async () => {
-    // A projection that never converges (rejected terminal command, snapshot
-    // restore) must not be able to hold the reaper off forever just because
-    // the provider reported the turn settled once.
+    // A projection that never converges must not be able to hold the reaper off
+    // forever just because the provider reported the turn settled once.
     const threadId = ThreadId.make("thread-reaper-settled-turn-expired");
     const turnId = TurnId.make("turn-reaper-settled-turn-expired");
     const now = new Date().toISOString();
