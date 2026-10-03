@@ -1192,6 +1192,8 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
+  // Matches the diff panel's Changes view. Older servers only report uncommitted totals.
+  const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1936,12 +1938,8 @@ export default function GitActionsControl({
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className="flex-1 text-left">Changes</span>
           <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-success">
-              +{gitStatusForActions?.workingTree.insertions ?? 0}
-            </span>
-            <span className="text-destructive">
-              -{gitStatusForActions?.workingTree.deletions ?? 0}
-            </span>
+            <span className="text-success">+{changesTotals?.insertions ?? 0}</span>
+            <span className="text-destructive">-{changesTotals?.deletions ?? 0}</span>
           </span>
         </ThreadDetailsControl>
       ) : null}

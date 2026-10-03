@@ -14,16 +14,29 @@ describe("diffPanelStore", () => {
     }),
   );
 
-  it("defaults each thread to working tree changes without requiring git status", () => {
+  it("defaults each thread to Changes without requiring git status", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
-    ).toEqual({ kind: "unstaged" });
+    ).toEqual({ kind: "branch", baseRef: null });
   });
 
-  it("defaults to working tree changes before a thread is selected", () => {
+  it("defaults to Changes before a thread is selected", () => {
     expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, null)).toEqual({
-      kind: "unstaged",
+      kind: "branch",
+      baseRef: null,
     });
+  });
+
+  it("keeps a custom base when a generic open selects Changes again", () => {
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(THREAD_REF, "origin/release");
+    store.selectGitScope(THREAD_REF, "branch");
+    store.selectTurn(THREAD_REF, RunId.make("turn-1"));
+    store.selectGitScope(THREAD_REF, "branch");
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/release" });
   });
 
   it("preserves an explicit branch selection", () => {
