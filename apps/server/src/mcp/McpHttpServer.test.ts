@@ -229,7 +229,7 @@ it.effect("tells the agent how to fall back when no desktop app can run the snap
 );
 
 it.effect.each([
-  { mode: "default", input: {}, images: true },
+  { mode: "default", input: {}, images: false },
   { mode: "explicit image", input: { includeImage: true }, images: true },
   { mode: "text only", input: { includeImage: false }, images: false },
 ])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images }) =>
@@ -336,12 +336,7 @@ it.effect.each([
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(nextDefault.content.map((content) => content.type)).toEqual([
-        "text",
-        "text",
-        "text",
-        "image",
-      ]);
+      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "text"]);
       expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
@@ -371,43 +366,56 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("saves the snapshot PNG on request and reports its path", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const inputs = yield* serveSnapshots("mcp-save-client", snapshotResult);
+it.effect.each([{}, { includeImage: false }, { includeImage: true }])(
+  "saves the snapshot PNG independently of inline image inclusion %#",
+  (imageOptions) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const inputs = yield* serveSnapshots("mcp-save-client", snapshotResult);
 
-      const snapshot = yield* callSnapshot({ save: true });
+        const snapshot = yield* callSnapshot({ save: true, ...imageOptions });
+        const includesImage = "includeImage" in imageOptions && imageOptions.includeImage === true;
+        expect(snapshot.content.some((part) => part.type === "image")).toBe(includesImage);
 
-      expect(snapshot.isError).toBe(false);
-      // The browser never receives the server-only `save` flag.
-      expect(inputs).toEqual([{}]);
-      const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
-      const screenshotPath = structured.screenshotPath;
-      expect(typeof screenshotPath).toBe("string");
-      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
-      expect(path.basename(screenshotPath!)).toMatch(
-        /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
-      );
-      expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
-      const [, text] = snapshot.content;
-      expect(text?.type === "text" ? text.text : "").toContain(screenshotPath);
+        expect(snapshot.isError).toBe(false);
+        // The browser never receives the server-only `save` flag.
+        expect(inputs).toEqual([{}]);
+        const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
+        const screenshotPath = structured.screenshotPath;
+        expect(typeof screenshotPath).toBe("string");
+        expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
+        expect(path.basename(screenshotPath!)).toMatch(
+          /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
+        );
+        expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
+        expect(
+          snapshot.content.some(
+            (part) => part.type === "text" && part.text.includes(screenshotPath!),
+          ),
+        ).toBe(true);
+        if (!includesImage) {
+          expect(snapshot.structuredContent).toEqual({ url: snapshotResult.url, screenshotPath });
+          expect(snapshot.content).toHaveLength(1);
+        }
 
-      const unsaved = yield* callSnapshot({});
-      expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
+        const unsaved = yield* callSnapshot({});
+        expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
 
-      // A save without the image skips the page dump.
-      const pathOnly = yield* callSnapshot({ save: true, includeImage: false });
-      const saved = pathOnly.structuredContent as { readonly screenshotPath: string };
-      expect(saved).toEqual({ url: snapshotResult.url, screenshotPath: expect.any(String) });
-      expect(Buffer.from(yield* fileSystem.readFile(saved.screenshotPath)).toString()).toBe("png");
-      const [only, ...others] = pathOnly.content;
-      expect(others).toEqual([]);
-      expect(only?.type === "text" ? decodeJsonText(only.text) : null).toEqual(saved);
-    }),
-  ).pipe(Effect.provide(TestLayer)),
+        // A save without the image skips the page dump.
+        const pathOnly = yield* callSnapshot({ save: true, includeImage: false });
+        const saved = pathOnly.structuredContent as { readonly screenshotPath: string };
+        expect(saved).toEqual({ url: snapshotResult.url, screenshotPath: expect.any(String) });
+        expect(Buffer.from(yield* fileSystem.readFile(saved.screenshotPath)).toString()).toBe(
+          "png",
+        );
+        const [only, ...others] = pathOnly.content;
+        expect(others).toEqual([]);
+        expect(only?.type === "text" ? decodeJsonText(only.text) : null).toEqual(saved);
+      }),
+    ).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("reports a tagged error when the screenshot cannot be saved", () =>
@@ -821,7 +829,7 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(snapshot.isError).toBe(false);
-      expect(snapshot.content.some((content) => content.type === "image")).toBe(true);
+      expect(snapshot.content.some((content) => content.type === "image")).toBe(false);
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
