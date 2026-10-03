@@ -695,6 +695,8 @@ export const make = Effect.gen(function* () {
         let byteLength = 0;
         const received: Float32Array[] = [];
         let usedCpuFallback = false;
+        // Keep client revisions independent of native streams, which restart on CPU fallback.
+        let revision = 0;
         let busy = false;
         const run = <A>(work: () => Promise<A>) =>
           attemptSpeech(operation, async () => {
@@ -724,6 +726,7 @@ export const make = Effect.gen(function* () {
                 const update = await streamModel.feed(pcm);
                 return {
                   ...update,
+                  revision: ++revision,
                   text: update.text
                     ? {
                         committed: correct(update.text.committed),
@@ -754,6 +757,7 @@ export const make = Effect.gen(function* () {
                 if (!update) throw cause;
                 return {
                   ...update,
+                  revision: ++revision,
                   text: update.text
                     ? {
                         committed: correct(update.text.committed),

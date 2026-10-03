@@ -774,6 +774,28 @@ it.effect("replays streaming audio on CPU after an accelerated feed crashes", ()
   }),
 );
 
+it.effect("keeps client revisions increasing across CPU replay and subsequent feeds", () =>
+  Effect.gen(function* () {
+    const text = { committed: "", tentative: "hello" };
+    native.feed
+      .mockResolvedValueOnce({ revision: 10, text })
+      .mockRejectedValueOnce(new Error("worker stopped"))
+      .mockResolvedValueOnce({ revision: 1, text })
+      .mockResolvedValueOnce({ revision: 2, text })
+      .mockResolvedValueOnce({ revision: 2, text });
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      expect(yield* stream.feed(pcm())).toEqual({ revision: 1, text });
+      expect(yield* stream.feed(pcm())).toEqual({ revision: 2, text });
+      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+      expect(native.feed).toHaveBeenCalledTimes(4);
+      expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text });
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  }),
+);
+
 it.effect("reports a selected GPU streaming failure without replaying on CPU", () =>
   Effect.gen(function* () {
     native.feed.mockRejectedValueOnce(new Error("GPU failed"));
