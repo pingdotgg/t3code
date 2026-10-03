@@ -13,6 +13,7 @@ import {
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
+  orchestrationV2RunWorkStartedAt,
   type ThreadId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -213,6 +214,9 @@ export function deriveThreadRuntime(
   const usageLimitedRun = presentedUsageLimitRun(projection);
   const latestRunProjection = presentedLatestRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
+  const liveActivityRun = latestMatchingRun(projection, (run) =>
+    ACTIVITY_RUN_STATUSES.has(run.status),
+  );
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
@@ -232,9 +236,9 @@ export function deriveThreadRuntime(
         : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
-      activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)
-        ? (activityRun.startedAt ?? activityRun.requestedAt)
-        : null,
+      liveActivityRun === null
+        ? null
+        : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
