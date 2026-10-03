@@ -1,13 +1,19 @@
 import type { PullRequestReviewThread } from "@t3tools/contracts";
 
-// A fence of three or more backticks or tildes, info string `suggestion`, closed by the same run.
+// A fence of three or more backticks or tildes, info string `suggestion`, closed by a run of the
+// same character at least as long, as CommonMark closes one.
 const SUGGESTION_FENCE =
-  /^([ \t]*)(`{3,}|~{3,})[ \t]*suggestion[ \t]*\r?\n([\s\S]*?)^\1?\2[ \t]*$/gmu;
+  /^([ \t]*)((`|~)\3{2,})[ \t]*suggestion[ \t]*\r?\n([\s\S]*?)^[ \t]*\2\3*[ \t]*$/gmu;
+
+// The fence's body without its trailing newline, and without the indentation the fence itself
+// sits at, which belongs to the comment's markdown rather than to the code.
+const suggestionText = (indent: string, text: string) =>
+  text.replace(/\r?\n$/u, "").replace(new RegExp(`^[ \\t]{0,${indent.length}}`, "gmu"), "");
 
 /** The replacement text of every ```suggestion block in a review comment, in order. */
 export function parseReviewSuggestions(body: string): string[] {
   return [...body.matchAll(SUGGESTION_FENCE)].map((match) =>
-    (match[3] ?? "").replace(/\r?\n$/u, ""),
+    suggestionText(match[1] ?? "", match[4] ?? ""),
   );
 }
 
@@ -19,16 +25,19 @@ export function parseReviewSuggestions(body: string): string[] {
 export function suggestionFencesAsDiff(body: string): string {
   if (!body.includes("suggestion")) return body;
   let index = 0;
-  return body.replace(SUGGESTION_FENCE, (_match, indent: string, fence: string, text: string) => {
-    const content = text.replace(/\r?\n$/u, "");
-    const lines = content.length === 0 ? ["- (removes these lines)"] : content.split(/\r?\n/u);
-    const added = content.length === 0 ? lines : lines.map((line) => `+${line}`);
-    return [
-      `${indent}${fence}diff suggestion=${index++}`,
-      ...added.map((line) => `${indent}${line}`),
-      `${indent}${fence}`,
-    ].join("\n");
-  });
+  return body.replace(
+    SUGGESTION_FENCE,
+    (_match, indent: string, fence: string, _char: string, text: string) => {
+      const content = suggestionText(indent, text);
+      const lines = content.length === 0 ? ["- (removes these lines)"] : content.split(/\r?\n/u);
+      const added = content.length === 0 ? lines : lines.map((line) => `+${line}`);
+      return [
+        `${indent}${fence}diff suggestion=${index++}`,
+        ...added.map((line) => `${indent}${line}`),
+        `${indent}${fence}`,
+      ].join("\n");
+    },
+  );
 }
 
 /** The suggestion index a fence's meta names, as written by `suggestionFencesAsDiff`. */

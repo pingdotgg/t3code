@@ -76,6 +76,7 @@ function SuggestionActions({
     reportFailure: false,
   });
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const [pending, setPending] = useState(false);
 
   const branch = status.data?.refName ?? null;
@@ -94,7 +95,8 @@ function SuggestionActions({
         environmentId,
         input: {
           ...reference,
-          changeType: "change",
+          // Only the head side is read, which also covers a file the pull request adds.
+          changeType: "new",
           oldPath: thread.path,
           newPath: thread.path,
         },
@@ -103,6 +105,18 @@ function SuggestionActions({
         head._tag === "Success" ? sliceFileLines(head.value.newContents, range) : null;
       if (expected === null) {
         toastManager.add({ type: "error", title: "Could not read these lines from the host" });
+        return;
+      }
+      // The branch shown can lag a checkout switched since, so it is read again before writing.
+      const current = await refreshStatus({ environmentId, input: { cwd } });
+      if (current._tag === "Failure" || current.value.refName !== headBranch) {
+        toastManager.add({
+          type: "error",
+          title:
+            current._tag === "Failure"
+              ? "Could not read the checkout's branch"
+              : `Check out ${headBranch} to apply this suggestion`,
+        });
         return;
       }
       const written = await writeFile({
