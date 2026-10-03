@@ -69,9 +69,23 @@ describe("evaluatePullRequestWatch", () => {
     const failing = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
     const failed = evaluatePullRequestWatch(running.next, failing, noRemarks);
     assert.deepEqual(failed.changes, [
-      { kind: "checks-failed", failed: [check("lint", "failure")] },
+      { kind: "checks-failed", failed: [check("lint", "failure")], running: 1 },
     ]);
     assert.deepEqual(evaluatePullRequestWatch(failed.next, failing, noRemarks).changes, []);
+
+    // The final result follows once the rest finish, so a second failure is not lost.
+    const finished = detail({ checks: [check("lint", "failure"), check("test", "failure")] });
+    const final = evaluatePullRequestWatch(failed.next, finished, noRemarks);
+    assert.deepEqual(final.changes, [
+      {
+        kind: "checks-failed",
+        failed: [check("lint", "failure"), check("test", "failure")],
+        running: 0,
+      },
+    ]);
+    // Rerunning one of them is not news until the rerun finishes.
+    const rerunning = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
+    assert.deepEqual(evaluatePullRequestWatch(final.next, rerunning, noRemarks).changes, []);
 
     // A push that fails the same way before a pass ever sees it pending is still news.
     const pushed = detail({ ...failing, headSha: "bbbbbbbbbb" });
@@ -84,6 +98,15 @@ describe("evaluatePullRequestWatch", () => {
     const rerun = detail({ checks: [check("lint", "success"), check("test", "success")] });
     assert.deepEqual(evaluatePullRequestWatch(failed.next, rerun, noRemarks).changes, [
       { kind: "checks-passed", count: 2 },
+    ]);
+  });
+
+  it("reports a check that needs someone's action", () => {
+    const blocked = detail({
+      checks: [check("lint", "success"), check("deploy", "action-required")],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), blocked, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("deploy", "action-required")], running: 0 },
     ]);
   });
 

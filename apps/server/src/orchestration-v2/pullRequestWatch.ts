@@ -15,7 +15,12 @@ const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
 export type PullRequestWatchChange =
-  | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
+  | {
+      readonly kind: "checks-failed";
+      readonly failed: ReadonlyArray<PullRequestCheck>;
+      /** Checks still running; a later report follows once they finish. */
+      readonly running: number;
+    }
   | { readonly kind: "checks-passed"; readonly count: number }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "conflicting" };
@@ -29,18 +34,18 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
+// "action-required" is a finished check that needs someone, so the agent hears about it.
 const isFailedCheck = (check: PullRequestCheck) =>
-  check.status === "failure" || check.status === "cancelled";
+  check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
+const isRunningCheck = (check: PullRequestCheck) => check.status === "pending";
 
 function checksOutcome(
   checks: ReadonlyArray<PullRequestCheck>,
-): "passing" | "failing" | "pending" | null {
+): "passing" | "failing" | "failed" | "pending" | null {
   if (checks.length === 0) return null;
-  if (checks.some(isFailedCheck)) return "failing";
-  if (checks.some((check) => check.status === "pending" || check.status === "action-required")) {
-    return "pending";
-  }
-  return "passing";
+  const running = checks.some(isRunningCheck);
+  if (checks.some(isFailedCheck)) return running ? "failing" : "failed";
+  return running ? "pending" : "passing";
 }
 
 /**
@@ -65,11 +70,22 @@ export function evaluatePullRequestWatch(
     (watch.checks !== null && (outcome === "pending" || outcome === null));
 
   let checks = restarted ? null : watch.checks;
-  if ((outcome === "failing" || outcome === "passing") && outcome !== checks) {
+  // An early failure is reported while other checks run, and the final result once they finish.
+  // A rerun that leaves another failure in place is not news until it finishes.
+  if (
+    outcome !== null &&
+    outcome !== "pending" &&
+    outcome !== checks &&
+    !(checks === "failed" && outcome === "failing")
+  ) {
     changes.push(
-      outcome === "failing"
-        ? { kind: "checks-failed", failed: detail.checks.filter(isFailedCheck) }
-        : { kind: "checks-passed", count: detail.checks.length },
+      outcome === "passing"
+        ? { kind: "checks-passed", count: detail.checks.length }
+        : {
+            kind: "checks-failed",
+            failed: detail.checks.filter(isFailedCheck),
+            running: detail.checks.filter(isRunningCheck).length,
+          },
     );
     checks = outcome;
   }
@@ -138,8 +154,12 @@ function changeLines(
   switch (change.kind) {
     case "checks-failed":
       return [
-        `- Checks failed${context.commit}:`,
-        ...listed(change.failed, (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`),
+        `- Checks failed${context.commit}${change.running > 0 ? ` (${change.running} still running)` : ""}:`,
+        ...listed(
+          change.failed,
+          (check) =>
+            `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`,
+        ),
       ];
     case "checks-passed":
       return [

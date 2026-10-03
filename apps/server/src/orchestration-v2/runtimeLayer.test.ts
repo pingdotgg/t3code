@@ -2395,7 +2395,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
       assert.deepEqual(
         { headSha: watch?.headSha, checks: watch?.checks, wakes: watch?.wakes },
-        { headSha: "abc1234def", checks: "failing", wakes: 1 },
+        { headSha: "abc1234def", checks: "failed", wakes: 1 },
       );
     }),
   );
