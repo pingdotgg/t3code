@@ -95,6 +95,19 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS: "",
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
+// Pushes legitimately outlive the 30s default command timeout (a dedicated
+// test guards a 31s push), but an unbounded push parks the fiber forever: with
+// no tty a credential prompt blocks on a stdin nothing will ever write to,
+// and a blackholed connection emits no progress to notice. Ten minutes stays
+// generous for large packs while failing fast instead of prompting.
+const GIT_PUSH_TIMEOUT_MS = 600_000;
+const GIT_PUSH_ENV = Object.freeze({
+  GCM_INTERACTIVE: "never",
+  GIT_ASKPASS: "",
+  GIT_TERMINAL_PROMPT: "0",
+  SSH_ASKPASS: "",
+  SSH_ASKPASS_REQUIRE: "never",
+} satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
@@ -2125,7 +2138,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        { timeoutMs: GIT_PUSH_TIMEOUT_MS, env: GIT_PUSH_ENV },
       );
       return {
         status: "pushed" as const,
@@ -2190,7 +2203,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        { timeoutMs: GIT_PUSH_TIMEOUT_MS, env: GIT_PUSH_ENV },
       );
       return {
         status: "pushed" as const,
@@ -2243,7 +2256,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
           ["push", "-u", remoteName, `HEAD:refs/heads/${publishBranch}`],
-          { timeoutMs: null },
+          { timeoutMs: GIT_PUSH_TIMEOUT_MS, env: GIT_PUSH_ENV },
         );
         return {
           status: "pushed" as const,
@@ -2257,7 +2270,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
-        { timeoutMs: null },
+        { timeoutMs: GIT_PUSH_TIMEOUT_MS, env: GIT_PUSH_ENV },
       );
       return {
         status: "pushed" as const,
@@ -2267,7 +2280,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], {
+      timeoutMs: GIT_PUSH_TIMEOUT_MS,
+      env: GIT_PUSH_ENV,
+    });
     return {
       status: "pushed" as const,
       branch,

@@ -3342,6 +3342,93 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("runs pushes non-interactively so credential prompts fail fast", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const pushCommands = yield* Queue.unbounded<ChildProcess.Command>();
+        const capturingSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "push") {
+              yield* Queue.offer(pushCommands, command);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capturingSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+
+        yield* driver.pushCurrentBranch(cwd, null);
+
+        const push = yield* Queue.take(pushCommands);
+        assert.isTrue(ChildProcess.isStandardCommand(push));
+        if (ChildProcess.isStandardCommand(push)) {
+          assert.equal(push.options.env?.["GIT_TERMINAL_PROMPT"], "0");
+          assert.equal(push.options.env?.["GIT_ASKPASS"], "");
+          assert.equal(push.options.env?.["GCM_INTERACTIVE"], "never");
+        }
+      }),
+    );
+
+    it.effect("fails a stalled push instead of parking the fiber forever", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const pushStarted = yield* Deferred.make<void>();
+        const stalledHandle = () =>
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        const stalledPushSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "push") {
+              yield* Deferred.succeed(pushStarted, undefined);
+              return stalledHandle();
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, stalledPushSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+
+        const pushing = yield* driver
+          .pushCurrentBranch(cwd, null)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        // Wait until the push itself is in flight; advancing the clock earlier
+        // would trip the 30s default timeouts on the real setup commands.
+        yield* Deferred.await(pushStarted);
+        yield* TestClock.adjust("11 minutes");
+        const error = yield* Fiber.join(pushing).pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          detail: "Git command timed out.",
+        });
+      }),
+    );
+
     it.effect(
       "pushes upstream branches to the remote branch name, not the upstream shorthand",
       () =>
