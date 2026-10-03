@@ -371,7 +371,7 @@ export const make = Effect.gen(function* () {
           return;
         yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Preserve branch and path: ProviderCommandReactor recreates the checkout
+        // Preserve branch and path: ProviderTurnStartService recreates the checkout
         // from that branch when the thread is resumed.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(

@@ -487,6 +487,7 @@ jobs:
         test,
         test_web,
         test_server,
+        transfer-report,
         rust,
         mobile_native_changes,
         mobile_native_static_analysis,

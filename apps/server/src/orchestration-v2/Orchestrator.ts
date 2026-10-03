@@ -8029,32 +8029,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      /*
-       * TODO(interrupt-hardening): before shipping, make these interrupt
-       * semantics explicit in tests and policy.
-       *
-       * Current behavior:
-       * - emit a `run_interrupt_request` item as user intent;
-       * - call the provider interrupt RPC;
-       * - keep the run active and continue ingesting provider chunks;
-       * - let RunExecutionService emit `run_interrupt_result` only if the
-       *   provider later reports terminal status `interrupted`.
-       *
-       * Known scenarios we do not fully harden yet:
-       * - provider accepts interrupt, then emits more chunks before terminal;
-       * - provider accepts interrupt, then completes normally instead;
-       * - provider accepts interrupt but never terminalizes;
-       * - user queues, steers, or starts another message while the interrupted
-       *   provider turn is still active.
-       *
-       * Likely policy:
-       * - queue should wait behind the still-active provider turn;
-       * - explicit steer may target the active turn if provider steering is
-       *   supported;
-       * - starting a new root turn before provider terminalization should be
-       *   an explicit policy decision because it can weaken native-item
-       *   correlation.
-       */
+      // Open interrupt edge cases are tracked in https://github.com/pingdotgg/t3code/issues/15013.
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,

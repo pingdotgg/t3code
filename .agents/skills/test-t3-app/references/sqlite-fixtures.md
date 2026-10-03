@@ -4,7 +4,9 @@ Load this reference only when inspecting or seeding local T3 state directly.
 
 ## Select the correct database
 
-When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/state.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/statev2.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+
+The server copies the V1 `state.sqlite` into `statev2.sqlite` only when `statev2.sqlite` is missing. After the first start, edits to `state.sqlite` change nothing.
 
 Start the target runtime once before seeding so all migrations have run. Use an isolated base directory. Stop the server before writes to avoid racing application state or an active projection.
 
@@ -23,7 +25,7 @@ Inspect current columns before writing a fixture:
 ```bash
 node apps/server/scripts/t3-sqlite-state.ts query \
   --base-dir <base-dir> \
-  --sql "PRAGMA table_info(projection_threads)"
+  --sql "PRAGMA table_info(orchestration_v2_projection_threads)"
 ```
 
 Apply a SQL fixture from a file:
@@ -38,21 +40,10 @@ Use one statement per invocation for both `query` and `exec`; the helper wraps w
 
 ## Seed projection data carefully
 
-The web UI primarily reads these projection tables:
+Clients read projects from `projection_projects` and everything else from the `orchestration_v2_projection_*` tables: threads, runs, messages, turn items, runtime requests, plans, and provider sessions. The older `projection_thread*` tables hold V1 history, which the server imports once per thread at startup; later edits there do not reach the UI.
 
-- `projection_projects`
-- `projection_threads`
-- `projection_thread_messages`
-- `projection_thread_activities`
-- `projection_thread_sessions`
-- `projection_turns`
-- `projection_pending_approvals`
-- `projection_thread_proposed_plans`
+Most V2 rows carry a `payload_json` that must decode against the schemas in `packages/contracts/src/orchestrationV2.ts`. The safest start is a row the app wrote itself: create a thread through the UI, copy its rows, and edit them. Keep identifiers unique, timestamps as ISO strings, and related project, thread, and run IDs consistent.
 
-Inspect `PRAGMA table_info(<table>)` and the current migrations under `apps/server/src/persistence/Migrations/` before constructing inserts. Keep identifiers unique, timestamps as ISO strings, JSON columns valid, and related project/thread/turn IDs consistent.
-
-For a substantial current example, inspect `seedDatabase` in `scripts/mobile-showcase-environment.ts`. Adapt its column set to the target database instead of assuming copied SQL remains current.
-
-Direct projection writes are appropriate for ephemeral visual states, edge-case counts, long titles, activity lists, and similar UI fixtures. They do not create a coherent orchestration event history. Do not modify `orchestration_events` unless the test specifically exercises projector internals, and do not use direct projection writes to claim backend business behavior works.
+Direct projection writes are appropriate for ephemeral visual states, edge-case counts, long titles, long timelines, and similar UI fixtures. They do not create a coherent event history. Leave the event log (`orchestration_events`) unchanged, and do not use direct projection writes to claim backend business behavior works.
 
 Use the app's commands or APIs for behavior tests. Use `node apps/server/src/bin.ts auth ...` for auth state rather than editing `auth_pairing_links` or `auth_sessions`.

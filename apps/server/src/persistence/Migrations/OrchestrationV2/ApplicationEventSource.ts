@@ -30,7 +30,7 @@ interface ProjectProjectionRow {
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-// Event-store setup and V1 project baseline composed by migration 050.
+// Event-store setup and V1 project baseline composed by migration 055.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
