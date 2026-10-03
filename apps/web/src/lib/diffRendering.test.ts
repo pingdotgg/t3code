@@ -1,4 +1,5 @@
-import { hydratePartialDiff } from "@pierre/diffs";
+import { toHtml } from "hast-util-to-html";
+import { getSharedHighlighter, hydratePartialDiff, renderDiffWithHighlighter } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
@@ -242,6 +243,55 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
+  });
+
+  it("highlights a Svelte hunk inside the block it sits in", async () => {
+    const patch = [
+      "diff --git a/App.svelte b/App.svelte",
+      "--- a/App.svelte",
+      "+++ b/App.svelte",
+      "@@ -5,3 +5,3 @@",
+      "   let count = $state(0);",
+      '-  const label = "count";',
+      '+  const label = "total";',
+      "   function increment() {",
+      "@@ -20,3 +20,3 @@",
+      " <main>",
+      "-  <p>{label}</p>",
+      '+  <p class="label">{label}</p>',
+      " </main>",
+      "@@ -40,4 +40,4 @@",
+      "   p {",
+      "-    color: red;",
+      "+    color: blue;",
+      "   }",
+      " </style>",
+    ].join("\n");
+
+    const parsed = getRenderablePatch(patch, "review");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+    const file = parsed.files[0]!;
+    expect(file.hunks.map((hunk) => hunk.grammarContextCode)).toEqual([
+      '<script lang="ts">\n',
+      undefined,
+      "<style>\n",
+    ]);
+
+    const highlighter = await getSharedHighlighter({
+      langs: ["svelte"],
+      themes: ["pierre-dark"],
+      preferredHighlighter: "shiki-wasm",
+    });
+    const { code } = renderDiffWithHighlighter(file, highlighter, {
+      theme: "pierre-dark",
+      useTokenTransformer: false,
+      tokenizeMaxLineLength: 1000,
+      lineDiffType: "none",
+      maxLineDiffLength: 1000,
+    });
+    const colors = new Set(toHtml(code.additionLines[0]!).match(/color:[^;"]+/g));
+    expect(colors.size).toBeGreaterThan(2);
   });
 });
 

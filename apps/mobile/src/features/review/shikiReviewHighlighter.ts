@@ -72,7 +72,7 @@ const loadedLanguages = new Set<string>([
   "yaml",
 ]);
 const languageLoadingPromises = new Map<string, Promise<boolean>>();
-const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
+const languageImports: Partial<Record<string, () => Promise<LoadedLanguageModule>>> = {
   javascript: () => import("@shikijs/langs/javascript"),
   typescript: () => import("@shikijs/langs/typescript"),
   jsx: () => import("@shikijs/langs/jsx"),
@@ -316,25 +316,24 @@ function resolveLanguageAlias(language: string): string {
   return languageAliases[normalized] ?? normalized;
 }
 
+/** The grammar to highlight a file with, or `"text"` when there is none to load for it. */
+export function resolveReviewLanguage(path: string, languageHint: string | null = null) {
+  const detectedLanguage = languageHint ?? getFiletypeFromFileName(path);
+  const candidate = detectedLanguage ? resolveLanguageAlias(detectedLanguage) : "text";
+  return candidate in languageImports ? candidate : "text";
+}
+
+/** Imports the grammar module for a language from `resolveReviewLanguage`. */
+export function importReviewLanguage(language: string) {
+  return languageImports[language]?.();
+}
+
 function resolveLoadedLanguageFromPath(
   path: string,
   languageHint: string | null = null,
 ): string | null {
-  const detectedLanguage = languageHint ?? getFiletypeFromFileName(path);
-  if (!detectedLanguage) {
-    return "text";
-  }
-
-  const candidate = resolveLanguageAlias(detectedLanguage);
-  if (candidate === "text" || candidate === "ansi") {
-    return "text";
-  }
-
-  if (!(candidate in languageImports)) {
-    return "text";
-  }
-
-  return loadedLanguages.has(candidate) ? candidate : null;
+  const language = resolveReviewLanguage(path, languageHint);
+  return loadedLanguages.has(language) ? language : null;
 }
 
 async function loadSingleLanguage(
@@ -357,7 +356,7 @@ async function loadSingleLanguage(
 
   const loadingPromise = (async () => {
     try {
-      const languageModule = (await importer()) as LoadedLanguageModule;
+      const languageModule = await importer();
       await highlighter.loadLanguage(languageModule.default);
       loadedLanguages.add(language);
       return true;
@@ -376,36 +375,14 @@ async function resolveLanguageFromPath(
   path: string,
   languageHint: string | null = null,
 ): Promise<string> {
-  const loadedLanguage = resolveLoadedLanguageFromPath(path, languageHint);
-  if (loadedLanguage) {
-    return loadedLanguage;
-  }
-
-  const detectedLanguage = languageHint ?? getFiletypeFromFileName(path);
-  if (!detectedLanguage) {
-    return "text";
-  }
-
-  const candidate = resolveLanguageAlias(detectedLanguage);
-  if (candidate === "text" || candidate === "ansi") {
-    return "text";
-  }
-
-  if (!(candidate in languageImports)) {
-    return "text";
-  }
-
-  if (loadedLanguages.has(candidate)) {
-    return candidate;
+  const language = resolveReviewLanguage(path, languageHint);
+  if (loadedLanguages.has(language)) {
+    return language;
   }
 
   const highlighter = await getHighlighter();
-  const loaded = await loadSingleLanguage(highlighter, candidate);
-  if (!loaded) {
-    return "text";
-  }
-
-  return candidate;
+  const loaded = await loadSingleLanguage(highlighter, language);
+  return loaded ? language : "text";
 }
 
 type RawHighlightedLine = ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>;

@@ -213,6 +213,128 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			const hasThemes = this.highlighter != null && areThemesAttached(options.theme);
  			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
  			const canHighlight = !forcePlainText && hasLangs;
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -213,6 +213,12 @@ interface Hunk {
+    * depending on the patch.
+    */
+   noEOFCRAdditions: boolean;
++  /**
++   * Code tokenized ahead of a partial diff's hunk, without being rendered, so a
++   * hunk inside an embedded block (a component's `<script>`) starts in that
++   * block's grammar state.
++   */
++  grammarContextCode?: string;
+ }
+ /**
+  * Metadata and content for a single file's diff.  Think of this as a JSON
+diff --git a/dist/utils/renderDiffWithHighlighter.js b/dist/utils/renderDiffWithHighlighter.js
+--- a/dist/utils/renderDiffWithHighlighter.js
++++ b/dist/utils/renderDiffWithHighlighter.js
+@@ -94,7 +94,7 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			}
+ 		}
+ 	});
+-	for (const bucket of buckets.values()) {
++	for (const [bucketIndex, bucket] of buckets) {
+ 		if (bucket.deletionContent.length === 0 && bucket.additionContent.length === 0) continue;
+ 		const deletionFile = {
+ 			name: diff.prevName ?? diff.name,
+@@ -113,7 +113,10 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			additionDecorations: bucket.additionDecorations,
+ 			highlighter,
+ 			options,
+-			languageOverride: forcePlainText ? "text" : diff.lang
++			languageOverride: forcePlainText ? "text" : diff.lang,
++			// Partial hunks are tokenized apart from the file around them; a hunk inside an embedded block
++			// carries the code that opens it so the grammar starts in the right state.
++			grammarContextCode: shouldGroupAll || forcePlainText ? void 0 : diff.hunks[bucketIndex]?.grammarContextCode
+ 		});
+ 		if (shouldGroupAll) {
+ 			code.deletionLines = deletionLines;
+@@ -216,7 +219,7 @@ function createBucket() {
+ 		additionSegments: []
+ 	};
+ }
+-function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
++function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, grammarContextCode, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
+ 	const deletionLang = languageOverride ?? getFiletypeFromFileName(deletionFile.name);
+ 	const additionLang = languageOverride ?? getFiletypeFromFileName(additionFile.name);
+ 	const { state, transformers } = createTransformerWithState(options.useTokenTransformer);
+@@ -229,7 +232,8 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 			decorations: void 0,
+ 			defaultColor: false,
+ 			cssVariablePrefix: formatCSSVariablePrefix("token"),
+-			tokenizeTimeLimit: 0
++			tokenizeTimeLimit: 0,
++			grammarContextCode
+ 		} : {
+ 			...options,
+ 			lang: "text",
+@@ -238,7 +242,8 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 			decorations: void 0,
+ 			defaultColor: false,
+ 			cssVariablePrefix: formatCSSVariablePrefix("token"),
+-			tokenizeTimeLimit: 0
++			tokenizeTimeLimit: 0,
++			grammarContextCode
+ 		};
+ 	})();
+ 	return {
+diff --git a/dist/worker/worker.js b/dist/worker/worker.js
+--- a/dist/worker/worker.js
++++ b/dist/worker/worker.js
+@@ -1368,7 +1368,7 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			}
+ 		}
+ 	});
+-	for (const bucket of buckets.values()) {
++	for (const [bucketIndex, bucket] of buckets) {
+ 		if (bucket.deletionContent.length === 0 && bucket.additionContent.length === 0) continue;
+ 		const deletionFile = {
+ 			name: diff.prevName ?? diff.name,
+@@ -1387,7 +1387,10 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			additionDecorations: bucket.additionDecorations,
+ 			highlighter,
+ 			options,
+-			languageOverride: forcePlainText ? "text" : diff.lang
++			languageOverride: forcePlainText ? "text" : diff.lang,
++			// Partial hunks are tokenized apart from the file around them; a hunk inside an embedded block
++			// carries the code that opens it so the grammar starts in the right state.
++			grammarContextCode: shouldGroupAll || forcePlainText ? void 0 : diff.hunks[bucketIndex]?.grammarContextCode
+ 		});
+ 		if (shouldGroupAll) {
+ 			code.deletionLines = deletionLines;
+@@ -1490,7 +1493,7 @@ function createBucket() {
+ 		additionSegments: []
+ 	};
+ }
+-function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
++function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, grammarContextCode, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
+ 	const deletionLang = languageOverride ?? getFiletypeFromFileName(deletionFile.name);
+ 	const additionLang = languageOverride ?? getFiletypeFromFileName(additionFile.name);
+ 	const { state, transformers } = createTransformerWithState(options.useTokenTransformer);
+@@ -1503,7 +1506,8 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 			decorations: void 0,
+ 			defaultColor: false,
+ 			cssVariablePrefix: formatCSSVariablePrefix("token"),
+-			tokenizeTimeLimit: 0
++			tokenizeTimeLimit: 0,
++			grammarContextCode
+ 		} : {
+ 			...options,
+ 			lang: "text",
+@@ -1512,7 +1516,8 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 			decorations: void 0,
+ 			defaultColor: false,
+ 			cssVariablePrefix: formatCSSVariablePrefix("token"),
+-			tokenizeTimeLimit: 0
++			tokenizeTimeLimit: 0,
++			grammarContextCode
+ 		};
+ 	})();
+ 	return {
 diff --git a/package.json b/package.json
 index ff61c90..1e170e5 100644
 --- a/package.json

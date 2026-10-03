@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { parseDiffFromFile } from "@pierre/diffs";
+import { getFiletypeFromFileName, parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { inferEmbeddedGrammarContext } from "@t3tools/shared/embeddedGrammarContext";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const DIFF_THEME_NAMES = {
@@ -163,6 +164,38 @@ function compactPartialHunkOffsets(file: FileDiffMetadata): FileDiffMetadata {
   };
 }
 
+/** Read lazily, so a language without embedded blocks never walks its hunks. */
+function* lineRange(lines: readonly string[], start: number, count: number) {
+  for (let index = start; index < start + count; index += 1) {
+    const line = lines[index];
+    if (line !== undefined) yield line;
+  }
+}
+
+/**
+ * Pierre highlights a partial file one hunk at a time, so each hunk carries the context its
+ * embedded block needs. Read from the old side, or the new side for a hunk that only adds. The
+ * context follows from the patch alone, so the patch-derived cache key still holds.
+ */
+function withEmbeddedGrammarContext(file: FileDiffMetadata) {
+  if (!file.isPartial) return file;
+
+  const language = file.lang ?? getFiletypeFromFileName(file.name);
+  const hunks = file.hunks.map((hunk) => {
+    const fromDeletions = hunk.deletionCount > 0;
+    const grammarContextCode = inferEmbeddedGrammarContext(
+      language,
+      fromDeletions ? hunk.deletionStart : hunk.additionStart,
+      fromDeletions
+        ? lineRange(file.deletionLines, hunk.deletionLineIndex, hunk.deletionCount)
+        : lineRange(file.additionLines, hunk.additionLineIndex, hunk.additionCount),
+    );
+    return grammarContextCode === undefined ? hunk : { ...hunk, grammarContextCode };
+  });
+
+  return hunks.some((hunk, index) => hunk !== file.hunks[index]) ? { ...file, hunks } : file;
+}
+
 export function getRenderablePatch(
   patch: string | undefined,
   cacheScope = "diff-panel",
@@ -180,7 +213,9 @@ export function getRenderablePatch(
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
-      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
+      return withEmbeddedGrammarContext(
+        options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered,
+      );
     });
     if (files.length > 0) {
       return { kind: "files", files, sourceFiles };

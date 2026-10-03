@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
+import { buildReviewParsedDiff } from "../review/reviewModel";
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
 import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
@@ -220,6 +222,41 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
     expect(highlighted.tokensByRowId[additionRow.id]).toEqual(
       standalone.tokensByRowId[additionRow.id],
     );
+  });
+
+  it("highlights a Svelte hunk that starts inside its script block", async () => {
+    const { rows, files } = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [
+          "diff --git a/src/Nav.svelte b/src/Nav.svelte",
+          "--- a/src/Nav.svelte",
+          "+++ b/src/Nav.svelte",
+          "@@ -4,3 +4,3 @@",
+          '   import Link from "./Link.svelte";',
+          "-  let count: number = 0;",
+          "+  let count: number = $state(0);",
+          " </script>",
+        ].join("\n"),
+        "svelte-script-hunk",
+      ),
+    );
+    const result = await highlightNativeReviewDiffVisibleRows({
+      rows,
+      files,
+      scheme: "dark",
+      engine: "javascript",
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+    });
+    const scriptRows = rows.filter((row) => row.content?.startsWith("  let count"));
+
+    expect(scriptRows).toHaveLength(2);
+    for (const row of scriptRows) {
+      const colors = new Set(result.tokensByRowId[row.id]?.map((token) => token.color));
+      colors.delete(null);
+      expect(colors.size).toBeGreaterThan(1);
+    }
   });
 });
 
