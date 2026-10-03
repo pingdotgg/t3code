@@ -156,6 +156,7 @@ describe("ProviderSessionReaper", () => {
     readonly listSessionsImplementation?: ProviderServiceShape["listSessions"];
     readonly sweepIntervalMs?: number;
     readonly settledTurnHoldMs?: number;
+    readonly terminalEventInFlightMs?: number;
     /** Provider runtime events replayed into the liveness ledger before the reaper starts. */
     readonly observedRuntimeEvents?: ReadonlyArray<ProviderRuntimeEvent>;
     /** Overrides the projection the reaper's pre-dispatch re-read observes. */
@@ -255,6 +256,9 @@ describe("ProviderSessionReaper", () => {
       ...(input.settledTurnHoldMs === undefined
         ? {}
         : { settledTurnHoldMs: input.settledTurnHoldMs }),
+      ...(input.terminalEventInFlightMs === undefined
+        ? {}
+        : { terminalEventInFlightMs: input.terminalEventInFlightMs }),
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
@@ -780,6 +784,116 @@ describe("ProviderSessionReaper", () => {
     scope = null;
 
     expect(harness.dispatchedCommands).toEqual([]);
+  });
+
+  // The window upstream of the ledger: `finishTurn` clears `activeTurnId` and
+  // stamps the session, then OFFERS `turn.completed` to its bounded adapter
+  // queue. `ProviderService` consumes each adapter with a single sequential
+  // `Stream.runForEach`, so a blocked `publish` on an earlier event stops the
+  // terminal event reaching the ledger at all. A sweep landing in that window
+  // sees a mismatched session and no settled observation. This exercises the
+  // real condition — no settle recorded, no prepopulated ledger.
+  it("holds a stale active turn while the terminal event is still queued upstream", async () => {
+    const threadId = ThreadId.make("thread-reaper-terminal-in-flight");
+    const turnId = TurnId.make("turn-reaper-terminal-in-flight");
+    const now = new Date().toISOString();
+    const justReleasedSession: ProviderSession = {
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId,
+      // `finishTurn` cleared activeTurnId and stamped updatedAt microseconds
+      // ago; the terminal event is still in the adapter's queue.
+      createdAt: now,
+      updatedAt: new Date().toISOString(),
+    };
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      settledTurnHoldMs: 0,
+      terminalEventInFlightMs: 60_000,
+      activeSessions: [justReleasedSession],
+      // Deliberately empty: the terminal event has not been recorded.
+      observedRuntimeEvents: [],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-terminal-in-flight");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands).toEqual([]);
+  });
+
+  it("stops holding once the terminal event is no longer plausibly in flight", async () => {
+    // A projection that never converges must still recover: once the adapter
+    // session has been quiet past the in-flight window, there is no upstream
+    // explanation left and the thread must be reapable.
+    const threadId = ThreadId.make("thread-reaper-terminal-in-flight-expired");
+    const turnId = TurnId.make("turn-reaper-terminal-in-flight-expired");
+    const now = new Date().toISOString();
+    const staleReleasedSession: ProviderSession = {
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId,
+      createdAt: now,
+      // Released long ago; the terminal event is long since recorded or lost.
+      updatedAt: new Date(Date.now() - 600_000).toISOString(),
+    };
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      settledTurnHoldMs: 0,
+      terminalEventInFlightMs: 1_000,
+      activeSessions: [staleReleasedSession],
+      observedRuntimeEvents: [],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-terminal-in-flight-expired");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands.length).toBeGreaterThan(0);
+    expect(harness.dispatchedCommands.at(-1)).toMatchObject({
+      type: "thread.session.set",
+      session: { status: "interrupted" },
+    });
   });
 
   it("stops holding a settled turn once the hold window expires", async () => {

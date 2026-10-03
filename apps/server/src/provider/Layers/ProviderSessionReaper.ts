@@ -19,6 +19,7 @@ import { ProviderService } from "../Services/ProviderService.ts";
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_SETTLED_TURN_HOLD_MS = 10 * 60 * 1000;
+const DEFAULT_TERMINAL_EVENT_IN_FLIGHT_MS = 15 * 1000;
 const LEGACY_RESTART_PROVIDER_SESSION_ERROR = "Provider session is no longer active.";
 const PROVIDER_SESSION_LOST_ERROR = "Provider session was lost unexpectedly.";
 
@@ -39,22 +40,39 @@ function sessionKeepsTurnActive(
  * `getReadModel()` reflects commands the single command worker has already
  * committed, while `listSessions()` reflects the adapter's in-memory session,
  * which flips to idle *before* the adapter emits the matching terminal event
- * (`finishTurn` clears `activeTurnId`, then emits `turn.completed`, in adjacent
- * statements). So the projection trails the provider by however long the
- * terminal event takes to reach it — seconds under load, since the bounded
- * runtime bus and the single command worker both sit downstream. Reaping on a
- * bare mismatch interrupts healthy turns that already finished and shows the
- * user "Provider session was lost unexpectedly."
+ * (`finishTurn` clears `activeTurnId` and stamps `updatedAt`, then offers
+ * `turn.completed` to its bounded queue). So the projection trails the provider
+ * by however long the terminal event takes to arrive — not just to reach
+ * orchestration, but to reach the liveness ledger at all. Reaping on a bare
+ * mismatch interrupts healthy turns that already finished and shows the user
+ * "Provider session was lost unexpectedly."
  *
  * Both holds are time-bounded. A projection that genuinely never converges — a
  * rejected terminal command, a snapshot restore — must not be able to disable
  * the reaper's only recovery path permanently.
  */
-type MismatchHoldReason = "provider_reported_turn_settled" | "projection_advanced";
+type MismatchHoldReason =
+  | "provider_reported_turn_settled"
+  | "provider_session_just_released_turn"
+  | "projection_advanced";
 
 const mismatchHoldReason = (input: {
   readonly settledTurnAgeMs: number | null;
+  /**
+   * Age of the adapter session itself, or `null` when the provider no longer
+   * lists one. `updateProviderSession` stamps `updatedAt` in the same call that
+   * clears `activeTurnId`, so a session that just released the turn proves the
+   * terminal event is still queued upstream of the ledger. Deliberately not
+   * derived from the ledger: the ledger is precisely what lags in this window.
+   *
+   * `null` while the provider still reports the session as `running`: every path
+   * that clears `activeTurnId` also moves the session out of `running` in the
+   * same call, so a running session means no terminal event is in flight and a
+   * turn-id mismatch there is a genuinely stuck thread.
+   */
+  readonly providerSessionAgeMs: number | null;
   readonly settledTurnHoldMs: number;
+  readonly terminalEventInFlightMs: number;
   readonly projectedActiveTurnId: string | null;
   readonly observedActiveTurnId: string;
 }): MismatchHoldReason | null => {
@@ -63,6 +81,17 @@ const mismatchHoldReason = (input: {
   // long as that explanation stays plausible.
   if (input.settledTurnAgeMs !== null && input.settledTurnAgeMs < input.settledTurnHoldMs) {
     return "provider_reported_turn_settled";
+  }
+  // The adapter released the turn microseconds ago and its terminal event has
+  // not been recorded yet. `Stream.runForEach` consumes each adapter
+  // sequentially, so a blocked `publish` on an earlier event stops later events
+  // reaching the ledger at all; this window is upstream of the settle signal and
+  // cannot be closed from the ledger alone.
+  if (
+    input.providerSessionAgeMs !== null &&
+    input.providerSessionAgeMs < input.terminalEventInFlightMs
+  ) {
+    return "provider_session_just_released_turn";
   }
   // The turn the projection names changed while this sweep was deciding.
   if (input.projectedActiveTurnId !== input.observedActiveTurnId) return "projection_advanced";
@@ -120,6 +149,11 @@ export interface ProviderSessionReaperLiveOptions {
    * projection can hold off the reaper before it is treated as a genuine loss.
    */
   readonly settledTurnHoldMs?: number;
+  /**
+   * How recently the adapter may have released the turn for the terminal event
+   * to still be considered in flight upstream of the liveness ledger.
+   */
+  readonly terminalEventInFlightMs?: number;
 }
 
 const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =>
@@ -138,6 +172,10 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       0,
       options?.settledTurnHoldMs ?? DEFAULT_SETTLED_TURN_HOLD_MS,
     );
+    const terminalEventInFlightMs = Math.max(
+      0,
+      options?.terminalEventInFlightMs ?? DEFAULT_TERMINAL_EVENT_IN_FLIGHT_MS,
+    );
     const startupSweepPending = yield* Ref.make(true);
     const startupReconciled = yield* Ref.make(false);
     const startupSweepIncludesInactive = yield* Ref.make(false);
@@ -145,6 +183,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       inactivityThresholdMs,
       sweepIntervalMs,
       settledTurnHoldMs,
+      terminalEventInFlightMs,
     });
 
     const reconcileOrphanedBackgroundAgents = Effect.gen(function* () {
@@ -255,9 +294,18 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
             )?.session?.activeTurnId;
             const settledTurnAgeMs =
               settledAtMs === undefined ? null : Math.max(0, now - settledAtMs);
+            const providerSessionUpdatedAtMs =
+              activeSession === undefined || activeSession.status === "running"
+                ? Number.NaN
+                : Date.parse(activeSession.updatedAt);
+            const providerSessionAgeMs = Number.isNaN(providerSessionUpdatedAtMs)
+              ? null
+              : Math.max(0, now - providerSessionUpdatedAtMs);
             const holdReason = mismatchHoldReason({
               settledTurnAgeMs,
+              providerSessionAgeMs,
               settledTurnHoldMs,
+              terminalEventInFlightMs,
               projectedActiveTurnId: currentActiveTurnId ?? null,
               observedActiveTurnId: activeTurnId,
             });
@@ -275,6 +323,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
                 activeProviderSessionTurnId: activeSession?.activeTurnId ?? null,
                 projectedActiveTurnId: currentActiveTurnId ?? null,
                 settledTurnAgeMs,
+                providerSessionAgeMs,
               });
               continue;
             }
