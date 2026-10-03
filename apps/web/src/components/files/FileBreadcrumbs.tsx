@@ -22,6 +22,7 @@ import { cn } from "~/lib/utils";
 import { isAbsolutePath } from "~/terminal-links";
 
 import {
+  breadcrumbPathOf,
   type FileBreadcrumb,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
@@ -304,7 +305,8 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
     () => fileBreadcrumbs(props.projectName, props.trail),
     [props.projectName, props.trail],
   );
-  const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === props.relativePath);
+  const currentPath = breadcrumbPathOf(props.relativePath);
+  const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
   return (
     <nav aria-label="File path" className="flex h-full">

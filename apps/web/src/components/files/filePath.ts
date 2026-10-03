@@ -37,6 +37,14 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
 }
 
 /**
+ * `relativePath` written the way its own crumb names it, so a link with a
+ * trailing or repeated separator still finds its crumb.
+ */
+export function breadcrumbPathOf(relativePath: string): string {
+  return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
+}
+
+/**
  * Whether a host folder crumb names a directory the server can list. A UNC
  * server (`\\server`) is not one; its shares (`\\server\share`) are.
  */

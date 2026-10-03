@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  breadcrumbPathOf,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
   fileBreadcrumbs,
@@ -45,6 +46,22 @@ describe("fileBreadcrumbs", () => {
       "\\\\server\\share",
       "\\\\server\\share\\report.md",
     ]);
+  });
+});
+
+describe("breadcrumbPathOf", () => {
+  it.each([
+    ["", ""],
+    ["src", "src"],
+    ["src/", "src"],
+    ["src//components", "src/components"],
+    ["/tmp/t3-demo/", "/tmp/t3-demo"],
+    ["/", "/"],
+    ["C:\\Users\\me\\", "C:\\Users\\me"],
+    ["C:\\", "C:\\"],
+    ["\\\\server\\share\\", "\\\\server\\share"],
+  ])("writes %j as its crumb names it", (path, expected) => {
+    expect(breadcrumbPathOf(path)).toBe(expected);
   });
 });
 
