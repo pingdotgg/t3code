@@ -27,10 +27,14 @@ import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as Sqlite from "../persistence/Layers/Sqlite.ts";
+import { initialCodexScanState, parseCodexRecord } from "./usageTranscripts.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -88,6 +92,9 @@ const serviceLayers = (input: {
   readonly platform?: NodeJS.Platform;
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
+    Layer.provideMerge(
+      CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.SqlitePersistenceMemory)),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
@@ -121,7 +128,221 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
+const codexRates = {
+  "gpt-6-astra": {
+    input_cost_per_token: 0,
+    input_cost_per_token_priority: 0,
+    input_cost_per_token_ultrafast: 0,
+    output_cost_per_token: 1,
+    output_cost_per_token_priority: 2,
+    output_cost_per_token_ultrafast: 6,
+  },
+};
+
+const codexUsage = (outputTokens: number) => ({
+  type: "event_msg",
+  timestamp: "2026-08-01T10:00:00Z",
+  payload: { type: "token_count", info: { last_token_usage: { output_tokens: outputTokens } } },
+});
+const codexContext = (turnId: string) => ({
+  type: "turn_context",
+  payload: { model: "gpt-6-astra", turn_id: turnId },
+});
+const codexMeta = (modelProvider: string | undefined = "openai") => ({
+  type: "session_meta",
+  payload: { id: "native-session", model_provider: modelProvider },
+});
+const jsonLines = (lines: readonly unknown[]) =>
+  lines.map((line) => encodeUnknownJsonString(line)).join("\n") + "\n";
+const summaryCost = (summary: { buckets: readonly { costUsd: number }[] }) =>
+  summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
+
+const seedCodexAttempt = (input: {
+  id?: string;
+  sessionId?: string;
+  turnId?: string;
+  model?: string;
+  options?: readonly { id: string; value: string | boolean }[];
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const id = input.id ?? "initial";
+    const attemptId = `attempt-${id}`;
+    const providerThreadId = `provider-thread-${id}`;
+    const selection = {
+      instanceId: "codex",
+      model: input.model ?? "gpt-6-astra",
+      options: input.options ?? [],
+    };
+    yield* sql`INSERT INTO orchestration_v2_projection_run_attempts ${sql.insert({
+      attempt_id: attemptId,
+      thread_id: `thread-${id}`,
+      run_id: `run-${id}`,
+      attempt_ordinal: 1,
+      root_node_id: `node-${id}`,
+      provider: "codex",
+      provider_thread_id: providerThreadId,
+      provider_turn_id: `provider-turn-${id}`,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({
+        nativeThreadId: input.sessionId ?? "native-session",
+      }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns ${sql.insert({
+      provider_turn_id: `provider-turn-${id}`,
+      thread_id: `thread-${id}`,
+      provider_thread_id: providerThreadId,
+      node_id: `node-${id}`,
+      run_attempt_id: attemptId,
+      ordinal: 1,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({
+        nativeTurnRef: {
+          driver: "codex",
+          nativeId: input.turnId ?? "native-turn",
+          strength: "strong",
+        },
+      }),
+    })}`;
+    for (const [index, modelSelection] of [
+      selection,
+      { ...selection, options: [{ id: "serviceTier", value: "ultrafast" }] },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        event_id: `event-${id}-${index}`,
+        aggregate_kind: "thread",
+        stream_id: `thread-${id}`,
+        stream_version: index,
+        event_type: "run.updated",
+        occurred_at: "2026-08-01T10:00:00Z",
+        actor_kind: "system",
+        metadata_json: "{}",
+        application_event_version: 2,
+        payload_json: encodeUnknownJsonString({
+          id: `run-${id}`,
+          activeAttemptId: attemptId,
+          status: "running",
+          modelSelection,
+        }),
+      })}`;
+    }
+  });
+
+describe("Codex usage history", () => {
+  const historyLayer = CodexUsageHistory.layer.pipe(
+    Layer.provideMerge(Sqlite.SqlitePersistenceMemory),
+  );
+  const record = () => {
+    const state = initialCodexScanState();
+    parseCodexRecord(codexMeta(), state);
+    parseCodexRecord(codexContext("native-turn"), state);
+    return parseCodexRecord(codexUsage(1), state)!;
+  };
+
+  it.effect.each([
+    { options: [{ id: "serviceTier", value: "priority" }], speed: "fast" },
+    { options: [{ id: "serviceTier", value: "ultrafast" }], speed: "ultrafast" },
+    { options: [{ id: "fastMode", value: true }], speed: "fast" },
+    { options: [], speed: "standard" },
+  ])("uses the attempt's first running selection: $speed ($options)", ({ options, speed }) =>
+    Effect.gen(function* () {
+      yield* seedCodexAttempt({ options });
+      const usage = record();
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      assert.strictEqual((yield* history.resolve([usage])).get(usage), speed);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect.each([
+    { name: "another native session", seed: { sessionId: "different-session" } },
+    { name: "another native turn", seed: { turnId: "different-turn" } },
+    { name: "another model", seed: { model: "gpt-5.6-sol" } },
+  ])("does not use a selection for $name", ({ seed }) =>
+    Effect.gen(function* () {
+      yield* seedCodexAttempt({ ...seed, options: [{ id: "serviceTier", value: "priority" }] });
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      assert.strictEqual((yield* history.resolve([record()])).size, 0);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect("rejects duplicate native turn mappings before narrowing by model", () =>
+    Effect.gen(function* () {
+      yield* seedCodexAttempt({ options: [{ id: "serviceTier", value: "priority" }] });
+      yield* seedCodexAttempt({ id: "duplicate", model: "another-model" });
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      assert.strictEqual((yield* history.resolve([record()])).size, 0);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect("keeps usage unresolved without a retained V2 run attempt", () =>
+    Effect.gen(function* () {
+      yield* seedCodexAttempt({ options: [{ id: "serviceTier", value: "priority" }] });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_provider_turns SET run_attempt_id = NULL`;
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      assert.strictEqual((yield* history.resolve([record()])).size, 0);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+});
+
 describe("UsageService", () => {
+  it.live(
+    "recovers an initial Codex tier after history arrives and persists it across tail growth and cleanup",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sessions = NodePath.join(home, "codex", "sessions");
+        const transcript = NodePath.join(sessions, "initial.jsonl");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          // Both a committed record and an unterminated tail need repair.
+          await NodeFSP.writeFile(
+            transcript,
+            jsonLines([codexMeta(), codexContext("native-turn"), codexUsage(1)]) +
+              encodeUnknownJsonString(codexUsage(2)),
+          );
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          assert.strictEqual(summaryCost(yield* service.readSummary(WINDOW)), 3);
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO temporarily_unavailable_events`;
+          assert.strictEqual(summaryCost(yield* service.readSummary(WINDOW)), 3);
+          yield* sql`ALTER TABLE temporarily_unavailable_events RENAME TO orchestration_events`;
+          yield* seedCodexAttempt({ options: [{ id: "serviceTier", value: "priority" }] });
+          assert.strictEqual(summaryCost(yield* service.readSummary(WINDOW)), 6);
+          // A resolved warm cache no longer needs the database evidence.
+          yield* sql`DELETE FROM orchestration_events`;
+          assert.strictEqual(summaryCost(yield* service.readSummary(WINDOW)), 6);
+          const restarted = yield* UsageService.make;
+          assert.strictEqual(summaryCost(yield* restarted.readSummary(WINDOW)), 6);
+          yield* sql`DELETE FROM orchestration_v2_projection_provider_turns`;
+          yield* sql`DELETE FROM orchestration_v2_projection_run_attempts`;
+          yield* seedCodexAttempt({ options: [{ id: "serviceTier", value: "priority" }] });
+          // Complete the old tail and start an unrelated turn: inferred Fast
+          // must not enter the parser's carried-forward native settings state.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              "\n" + jsonLines([codexContext("later-turn"), codexUsage(3)]),
+            ),
+          );
+          assert.strictEqual(summaryCost(yield* restarted.readSummary(WINDOW)), 9);
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          const afterCleanup = yield* UsageService.make;
+          assert.strictEqual(summaryCost(yield* afterCleanup.readSummary(WINDOW)), 9);
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-initial-tier",
+              home,
+              settings,
+              ratesDocument: codexRates,
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
   it.live.each([
     { explicitDefault: true, label: "explicit" },
     { explicitDefault: false, label: "legacy" },
@@ -789,23 +1010,27 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
-    "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
-    () =>
+  it.live.each([4, 5])(
+    "upgrades a v%s cache: reprices live Codex tiers, keeps deleted rollouts, leaves the old cache intact",
+    (version) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
         const sessions = NodePath.join(home, "codex", "sessions");
         const rollout = (sessionId: string, outputTokens: number) =>
           [
-            { type: "session_meta", payload: { id: sessionId } },
-            { type: "turn_context", payload: { model: "gpt-6-astra" } },
-            {
-              type: "event_msg",
-              payload: {
-                type: "thread_settings_applied",
-                thread_settings: { service_tier: "ultrafast" },
-              },
-            },
+            { type: "session_meta", payload: { id: sessionId, model_provider: "openai" } },
+            { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "native-turn" } },
+            ...(version === 4
+              ? [
+                  {
+                    type: "event_msg",
+                    payload: {
+                      type: "thread_settings_applied",
+                      thread_settings: { service_tier: "ultrafast" },
+                    },
+                  },
+                ]
+              : []),
             {
               type: "event_msg",
               timestamp: "2026-08-01T10:00:00Z",
@@ -827,21 +1052,28 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
-          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+          const legacyPath = NodePath.join(
+            stateDir,
+            version === 4 ? "usage-scan-cache.json" : "usage-scan-cache-v5.json",
+          );
+          yield* seedCodexAttempt({
+            sessionId: "live",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
           yield* (yield* UsageService.make).readSummary(WINDOW);
 
-          // Rewrite the cache as a v4 server left it: every Codex record at
-          // speed 0 (standard), and no tier in the reducer state.
+          // Old caches priced unresolved Codex records as standard and lost
+          // the native turn evidence needed for historical attribution.
           const legacy = yield* Effect.promise(async () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
             };
             for (const file of Object.values(document.files)) {
               file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
-              delete file.cs.speed;
+              if (version === 4) delete file.cs.speed;
             }
-            const text = encodeUnknownJsonString({ ...document, version: 4 });
+            const text = encodeUnknownJsonString({ ...document, version });
             await NodeFSP.writeFile(legacyPath, text);
             await NodeFSP.rm(cachePath);
             await NodeFSP.rm(deleted);
@@ -850,13 +1082,13 @@ describe("UsageService", () => {
 
           const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
           // The live rollout re-parses at the ultrafast rate (10 x 6); the
-          // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
+          // deleted one keeps its saved usage at the standard rate (20 x 1).
           assert.strictEqual(totalOutputTokens(summary), 30);
           assert.strictEqual(
             summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
             80,
           );
-          // A v4 server sharing this state directory still finds its own cache.
+          // An older server sharing this state directory still finds its cache.
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -864,7 +1096,7 @@ describe("UsageService", () => {
         }).pipe(
           Effect.provide(
             serviceLayers({
-              prefix: "usage-service-v4-upgrade-test",
+              prefix: `usage-service-v${version}-upgrade-test`,
               home,
               settings,
               ratesDocument: {

@@ -29,6 +29,8 @@ export interface UsageRecord {
   readonly reportedCostUsd: number | null;
   /** Only Claude Code and Codex record a speed; other providers are `standard`. */
   readonly speed: UsageSpeed;
+  /** Native turn to resolve against immutable T3 history when initial settings are absent. */
+  readonly unresolvedCodexTurnId?: string;
   /**
    * Key for cross-file de-duplication, or `null` when the record is inherently
    * unique and needs no dedup.
@@ -186,6 +188,9 @@ export interface CodexScanState {
   sessionId: string;
   lastUsageSignature: string | null;
   sawSessionMeta: boolean;
+  modelProvider: string;
+  turnId: string;
+  sawThreadSettings: boolean;
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
   forkCopyAnchorMs: number;
@@ -198,6 +203,9 @@ export function initialCodexScanState(): CodexScanState {
     sessionId: "",
     lastUsageSignature: null,
     sawSessionMeta: false,
+    modelProvider: "",
+    turnId: "",
+    sawThreadSettings: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
   };
@@ -259,6 +267,9 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["model_provider"] === "string") {
+      state.modelProvider = payloadRecord["model_provider"];
+    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;
@@ -269,10 +280,12 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    state.turnId = typeof payloadRecord["turn_id"] === "string" ? payloadRecord["turn_id"] : "";
     return null;
   }
 
   if (payloadType === "thread_settings_applied") {
+    state.sawThreadSettings = true;
     const settings = payloadRecord["thread_settings"];
     if (typeof settings === "object" && settings !== null) {
       state.speed = codexSpeed((settings as Record<string, unknown>)["service_tier"]);
@@ -339,6 +352,12 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     speed: state.speed,
+    ...(!state.sawThreadSettings &&
+    state.modelProvider === "openai" &&
+    state.sessionId.length > 0 &&
+    state.turnId.length > 0
+      ? { unresolvedCodexTurnId: state.turnId }
+      : {}),
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,

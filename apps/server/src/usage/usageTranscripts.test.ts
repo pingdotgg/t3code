@@ -148,6 +148,135 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
   });
 
+  it("retains exact turn evidence only before native settings are available", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: "native-session", model_provider: "openai" },
+      }),
+      state,
+    );
+    parseCodexLine(
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-6-astra", turn_id: "native-turn" },
+      }),
+      state,
+    );
+    expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)).toMatchObject({
+      speed: "standard",
+      sessionId: "native-session",
+      unresolvedCodexTurnId: "native-turn",
+    });
+    parseCodexLine(
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "thread_settings_applied", thread_settings: {} },
+      }),
+      state,
+    );
+    expect(parseCodexLine(tokenCount(100, 0, 2, 0), state)).not.toHaveProperty(
+      "unresolvedCodexTurnId",
+    );
+  });
+
+  it.each(["default", "standard", "priority", "ultrafast", undefined])(
+    "never overrides native settings with historical evidence (%s)",
+    (tier) => {
+      const state = initialCodexScanState();
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "native-session", model_provider: "openai" },
+        }),
+        state,
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id: "first-turn" },
+        }),
+        state,
+      );
+      const initial = parseCodexLine(tokenCount(100, 0, 1, 0), state);
+      parseCodexLine(
+        JSON.stringify({
+          type: "event_msg",
+          payload: { type: "thread_settings_applied", thread_settings: { service_tier: tier } },
+        }),
+        state,
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id: "next-turn" },
+        }),
+        state,
+      );
+      const next = parseCodexLine(tokenCount(100, 0, 2, 0), state);
+      expect(initial).toMatchObject({ speed: "standard", unresolvedCodexTurnId: "first-turn" });
+      expect(next).not.toHaveProperty("unresolvedCodexTurnId");
+      expect(next?.speed).toBe(
+        tier === "priority" ? "fast" : tier === "ultrafast" ? "ultrafast" : "standard",
+      );
+    },
+  );
+
+  it.each(["openai_token_sharing", "other", undefined])(
+    "does not infer a tier without direct OpenAI provenance (%s)",
+    (modelProvider) => {
+      const state = initialCodexScanState();
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "own-session", model_provider: modelProvider },
+        }),
+        state,
+      );
+      // Copied ancestor metadata must not change the file's own provider.
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "ancestor", model_provider: "openai" },
+        }),
+        state,
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id: "native-turn" },
+        }),
+        state,
+      );
+      const record = parseCodexLine(tokenCount(100, 0, 1, 0), state);
+      expect(record).toMatchObject({ speed: "standard", sessionId: "own-session" });
+      expect(record).not.toHaveProperty("unresolvedCodexTurnId");
+    },
+  );
+
+  it("does not reuse a previous turn ID when the next context omits it", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: "native-session", model_provider: "openai" },
+      }),
+      state,
+    );
+    parseCodexLine(
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-6-astra", turn_id: "native-turn" },
+      }),
+      state,
+    );
+    parseCodexLine(turnContext, state);
+    expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)).not.toHaveProperty(
+      "unresolvedCodexTurnId",
+    );
+  });
+
   it("carries the service tier from the latest thread settings", () => {
     const settings = (thread_settings: Record<string, unknown>) =>
       JSON.stringify({

@@ -54,6 +54,7 @@ import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -65,11 +66,12 @@ import {
   dedupeWithinFile,
   encodeScanCache,
   LEGACY_SCAN_CACHE_FILE_NAME,
+  PREVIOUS_SCAN_CACHE_FILE_NAME,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -160,6 +162,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const codexHistory = yield* CodexUsageHistory.CodexUsageHistory;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -172,6 +175,7 @@ export const make = Effect.gen(function* () {
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
   const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const previousScanCachePath = path.join(config.stateDir, PREVIOUS_SCAN_CACHE_FILE_NAME);
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
@@ -372,7 +376,8 @@ export const make = Effect.gen(function* () {
         );
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+        document = yield* readDocument(previousScanCachePath);
+        if (document === null) document = yield* readDocument(legacyScanCachePath);
         // Write the migrated cache to its own file on the next scan.
         cacheDirty = document !== null;
       }
@@ -741,6 +746,55 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    const unresolved: UsageRecord[] = [];
+    for (const entry of fileCache.values()) {
+      if (entry.provider !== "codex") continue;
+      for (const batch of [entry.records, entry.tailRecords]) {
+        for (const record of batch) {
+          if (
+            record.unresolvedCodexTurnId !== undefined &&
+            record.timestampMs >= windowStartMs &&
+            record.timestampMs < windowEndMs
+          ) {
+            unresolved.push(record);
+          }
+        }
+      }
+    }
+    const resolvedTiers = yield* codexHistory.resolve(unresolved).pipe(
+      // No match or a failed read remains unresolved, so a later scan can use
+      // history that committed after the transcript (even without file growth).
+      Effect.catchTags({
+        CodexUsageHistoryReadError: () => Effect.succeed(new Map<UsageRecord, UsageSpeed>()),
+      }),
+    );
+    const correctedRecords = new Map<UsageRecord, UsageRecord>();
+    for (const [record, speed] of resolvedTiers) {
+      const { unresolvedCodexTurnId: _unresolvedCodexTurnId, ...resolvedRecord } = record;
+      correctedRecords.set(record, { ...resolvedRecord, speed });
+    }
+    if (correctedRecords.size > 0) {
+      for (const [filePath, entry] of fileCache) {
+        if (
+          entry.provider !== "codex" ||
+          !(
+            entry.records.some((record) => correctedRecords.has(record)) ||
+            entry.tailRecords.some((record) => correctedRecords.has(record))
+          )
+        )
+          continue;
+        fileCache.set(filePath, {
+          ...entry,
+          records: entry.records.map((record) => correctedRecords.get(record) ?? record),
+          tailRecords: entry.tailRecords.map((record) => correctedRecords.get(record) ?? record),
+        });
+      }
+      cacheDirty = true;
+    }
+
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -790,7 +844,8 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         const codexEventOccurrences = new Map<string, number>();
-        for (const record of file.records) {
+        for (const rawRecord of file.records) {
+          const record = correctedRecords.get(rawRecord) ?? rawRecord;
           let usageRecord = record;
           if (record.provider === "codex" && record.sessionId.length > 0) {
             // Match moved rollout copies without collapsing repeated equal events
@@ -905,4 +960,4 @@ export const make = Effect.gen(function* () {
   return { readSummary, refreshRates } as const;
 });
 
-export const layer = Layer.effect(UsageService, make);
+export const layer = Layer.effect(UsageService, make).pipe(Layer.provide(CodexUsageHistory.layer));

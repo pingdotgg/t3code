@@ -8,7 +8,7 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { initialCodexScanState, type UsageRecord } from "./usageTranscripts.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -56,6 +56,54 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("round trips unresolved Codex evidence and its incremental state", () => {
+    const cache: ScanCache = new Map([
+      [
+        "/codex.jsonl",
+        {
+          size: 80,
+          mtimeMs: 400,
+          provider: "codex",
+          records: [record({ provider: "codex", unresolvedCodexTurnId: "native-turn" })],
+          tailRecords: [record({ provider: "codex", unresolvedCodexTurnId: "native-tail" })],
+          position: position({
+            codexState: {
+              ...initialCodexScanState(),
+              modelProvider: "openai",
+              turnId: "native-turn",
+            },
+          }),
+        },
+      ],
+    ]);
+    expect(decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(cache))))).toEqual(cache);
+  });
+
+  it.each([4, 5])("preserves v%s saved speeds while forcing only Codex to reparse", (version) => {
+    const cache = cacheWith([["/claude.jsonl", 100, [record({ speed: "fast" })]]]);
+    cache.set("/codex.jsonl", {
+      size: 80,
+      mtimeMs: 400,
+      provider: "codex",
+      records: [
+        record({ provider: "codex", speed: "fast" }),
+        record({ provider: "codex", speed: "ultrafast" }),
+      ],
+      tailRecords: [],
+      position: position({ codexState: initialCodexScanState() }),
+    });
+    const restored = decodeScanCache(
+      JSON.parse(JSON.stringify({ ...encodeScanCache(cache), version })),
+    );
+    expect(restored.get("/claude.jsonl")).toEqual(cache.get("/claude.jsonl"));
+    expect(restored.get("/codex.jsonl")?.records.map((record) => record.speed)).toEqual([
+      "fast",
+      "ultrafast",
+    ]);
+    expect(restored.get("/codex.jsonl")?.size).toBe(-1);
+    expect(restored.get("/codex.jsonl")?.position.resumeOffset).toBe(0);
+  });
+
   it("restores records unchanged", () => {
     const original = cacheWith([
       [
@@ -90,6 +138,9 @@ describe("scan cache round trip", () => {
           sessionId: "session-c",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
+          modelProvider: "openai",
+          turnId: "turn-c",
+          sawThreadSettings: true,
           suppressingForkCopies: false,
           forkCopyAnchorMs: 0,
         },

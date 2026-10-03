@@ -48,8 +48,8 @@ const claude = (id = "m1", output = 99) => ({
   },
 });
 const codex = [
-  { type: "session_meta", timestamp, payload: { id: "s1" } },
-  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol" } },
+  { type: "session_meta", timestamp, payload: { id: "s1", model_provider: "openai" } },
+  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol", turn_id: "turn-1" } },
   {
     type: "event_msg",
     timestamp,

@@ -108,6 +108,8 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
       id: true,
       session_id: true,
       model: true,
+      model_provider: true,
+      turn_id: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },

@@ -1,8 +1,8 @@
 /**
  * Durable per-file scan cache.
  *
- * Transcripts are append-only and a file that has not changed can never yield
- * different usage, so parsed records are keyed by `(size, mtime)` and reused.
+ * Transcripts are append-only, so parsed tokens are keyed by `(size, mtime)`
+ * and reused. Unresolved Codex tiers can still acquire historical evidence.
  * Without this every server restart re-parses the whole window: roughly 3.5s
  * for a 30-day scan here, against ~11ms to reload this cache.
  *
@@ -26,16 +26,18 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: unresolved initial Codex tiers retain their native turn for exact history lookup.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * A v6 server reads v5, then the legacy (v4) file when its own file is missing.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const PREVIOUS_SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
 export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
 
 /** Serialised as the index into this list. */
@@ -79,6 +81,7 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   speed: number,
+  unresolvedCodexTurnId?: string,
 ];
 
 interface SerializedFile {
@@ -131,6 +134,9 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     record.dedupeKey,
     record.reportedCostUsd,
     SPEEDS.indexOf(record.speed),
+    ...(record.unresolvedCodexTurnId === undefined
+      ? ([] as const)
+      : ([record.unresolvedCodexTurnId] as const)),
   ];
 
   const files: Record<string, SerializedFile> = {};
@@ -207,6 +213,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         speedIndex,
+        unresolvedCodexTurnId,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -220,7 +227,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning) ||
-        speed === undefined
+        speed === undefined ||
+        (unresolvedCodexTurnId !== undefined && typeof unresolvedCodexTurnId !== "string")
       ) {
         return null;
       }
@@ -239,6 +247,9 @@ export function decodeScanCache(document: unknown): ScanCache {
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
+        ...(version >= 6 && provider === "codex" && unresolvedCodexTurnId !== undefined
+          ? { unresolvedCodexTurnId }
+          : {}),
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
@@ -269,7 +280,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    // v4 Codex records predate service tiers, so they all priced as standard.
+    // Old Codex records lost the distinction between native and missing tiers.
     // Keep them, because the rollout may be gone, but make a live rollout
     // re-parse whole: no file has size -1, and a zero position cannot resume.
     const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
@@ -311,6 +322,9 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     typeof state.sessionId !== "string" ||
     (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
     typeof state.sawSessionMeta !== "boolean" ||
+    typeof state.modelProvider !== "string" ||
+    typeof state.turnId !== "string" ||
+    typeof state.sawThreadSettings !== "boolean" ||
     typeof state.suppressingForkCopies !== "boolean" ||
     typeof state.forkCopyAnchorMs !== "number" ||
     !Number.isFinite(state.forkCopyAnchorMs)
@@ -323,6 +337,9 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     sessionId: state.sessionId,
     lastUsageSignature: state.lastUsageSignature ?? null,
     sawSessionMeta: state.sawSessionMeta,
+    modelProvider: state.modelProvider,
+    turnId: state.turnId,
+    sawThreadSettings: state.sawThreadSettings,
     suppressingForkCopies: state.suppressingForkCopies,
     forkCopyAnchorMs: state.forkCopyAnchorMs,
   };
