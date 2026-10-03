@@ -17,14 +17,23 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
+stable_asset_name='T3-Code-x86_64.AppImage'
+legacy_asset_name="T3-Code-${version}-x86_64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
+asset_name="$(jq -r --arg stable "$stable_asset_name" --arg legacy "$legacy_asset_name" '
+  def has_valid_digest: (.digest // "") | test("^sha256:[0-9a-f]{64}$");
+  if any(.assets[]; .name == $stable and has_valid_digest) then $stable
+  elif any(.assets[]; .name == $legacy and has_valid_digest) then $legacy
+  else empty
+  end
+' <<<"$release_json")"
 asset_digest="$(jq -r --arg name "$asset_name" \
   '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
 appimage_sha256="${asset_digest#sha256:}"
 
 if [[ ! "$appimage_sha256" =~ ^[0-9a-f]{64}$ ]]; then
-  echo "Release $tag is missing $asset_name or its SHA-256 digest." >&2
+  echo "Release $tag has no supported AppImage asset with a SHA-256 digest." >&2
+  echo "Expected $stable_asset_name or $legacy_asset_name." >&2
   exit 1
 fi
 
@@ -39,6 +48,7 @@ cd "$package_dir"
 sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
+  -e "s/^_appimage_asset=.*/_appimage_asset='$asset_name'/" \
   -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
   -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD

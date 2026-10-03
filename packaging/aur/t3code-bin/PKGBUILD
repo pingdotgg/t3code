@@ -44,8 +44,9 @@ conflicts=('t3code')
 options=('!debug' '!strip')
 
 _appimage="T3-Code-${pkgver}-x86_64.AppImage"
+_appimage_asset="T3-Code-${pkgver}-x86_64.AppImage"
 source=(
-  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/$_appimage"
+  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/$_appimage_asset"
   "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${pkgver}/LICENSE"
 )
 sha256sums=(

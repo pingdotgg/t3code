@@ -191,6 +191,7 @@ export class DesktopUpdates extends Context.Service<
 >()("@t3tools/desktop/updates/DesktopUpdates") {}
 
 const {
+  logDebug: logUpdaterDebug,
   logInfo: logUpdaterInfo,
   logWarning: logUpdaterWarning,
   logError: logUpdaterError,
@@ -643,6 +644,9 @@ export const make = Effect.gen(function* () {
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
             { concurrency: "unbounded" },
           );
+          // The last trace line before the process hands off to the installer; without it a
+          // failed install leaves no evidence after "update downloaded" (see #10685).
+          yield* logUpdaterInfo("installing update", { version: expectedVersion });
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -936,6 +940,22 @@ export const make = Effect.gen(function* () {
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
+      // electron-updater only logs through this sync callback. Without it the download
+      // internals and the AppImage install steps never reach the trace (see #10685).
+      yield* electronUpdater.setLogger({
+        info: (message) => {
+          runEffect(logUpdaterInfo(message));
+        },
+        warn: (message) => {
+          runEffect(logUpdaterWarning(message));
+        },
+        error: (message) => {
+          runEffect(logUpdaterError(message));
+        },
+        debug: (message) => {
+          runEffect(logUpdaterDebug(message));
+        },
+      });
 
       if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
         yield* logUpdaterInfo(
