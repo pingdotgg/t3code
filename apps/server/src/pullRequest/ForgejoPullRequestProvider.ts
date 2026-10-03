@@ -62,6 +62,11 @@ const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =
 // Review IDs differ from the issue-comment IDs used by Forgejo's reactions API.
 const reviewCommentId = (review: typeof ForgejoReview.Type) =>
   /#issuecomment-([1-9]\d*)$/.exec(review.html_url ?? "")?.[1];
+// Forgejo's web merge form offers to delete the head branch only when the viewer can: not in a
+// fork they cannot push to, and never a default branch. Branch protection is not on the pull
+// request, so a protected branch is left to the merge's own refusal.
+const headBranchDeletable = (pr: typeof ForgejoPullRequest.Type) =>
+  pr.head.repo?.permissions?.push === true && pr.head.ref !== pr.head.repo.default_branch;
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
@@ -428,11 +433,49 @@ export const make = Effect.gen(function* () {
     runAction: (input) => {
       switch (input.action) {
         case "merge":
-          return write({
-            ...input,
-            path: `${pullPath(input)}/merge`,
-            method: "POST",
-            body: { Do: input.mergeMethod ?? "merge" },
+          return Effect.gen(function* () {
+            // Forgejo's merge endpoint ignores the repository's deletion default, so it is read
+            // first. An unreadable setting must not count as disabled, and must not read as the
+            // host refusing the merge either.
+            const settingsUnavailable = (error: PullRequestProviderError) =>
+              new PullRequestProviderError({
+                provider: "forgejo",
+                operation: "merge",
+                reason: error.reason,
+                detail: `The pull request was not merged because its branch deletion setting could not be read. ${error.detail}`,
+                ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                cause: error,
+              });
+            const repo = yield* getRepo(input).pipe(Effect.mapError(settingsUnavailable));
+            const pr = repo.default_delete_branch_after_merge
+              ? yield* getPull(input).pipe(Effect.mapError(settingsUnavailable))
+              : null;
+            const deleteBranch = pr !== null && headBranchDeletable(pr);
+            yield* write({
+              ...input,
+              path: `${pullPath(input)}/merge`,
+              method: "POST",
+              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+            }).pipe(
+              // Forgejo deletes the branch only after the merge has landed, and reports a refused
+              // deletion (a protected branch, say) as the whole request failing.
+              Effect.catch((error) =>
+                deleteBranch
+                  ? getPull(input).pipe(
+                      Effect.matchEffect({
+                        onFailure: () => Effect.fail(error),
+                        onSuccess: (merged) =>
+                          merged.merged
+                            ? Effect.logWarning(
+                                "Forgejo merged the pull request but kept its head branch",
+                                { detail: error.detail },
+                              )
+                            : Effect.fail(error),
+                      }),
+                    )
+                  : Effect.fail(error),
+              ),
+            );
           });
         case "close":
         case "reopen":
