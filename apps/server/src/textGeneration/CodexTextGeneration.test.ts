@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -11,11 +11,16 @@ import * as Scope from "effect/Scope";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  ProviderInstanceId,
+  type ServerProviderModel,
+  TextGenerationError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import { makeCodexTextGeneration, resolveCodexTextGenerationModel } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -137,6 +142,7 @@ function withFakeCodexEnv<A, E, R>(
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
+    defaultModel?: string;
     managedRuntime?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -154,6 +160,7 @@ function withFakeCodexEnv<A, E, R>(
           slug,
           name: slug,
           isCustom: false,
+          ...(slug === input.defaultModel ? { isDefault: true } : {}),
           capabilities: null,
         })),
       ),
@@ -190,6 +197,26 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Bedrock title");
           }),
       ),
+  );
+  it.effect("falls back to a listed model when the account's catalog omits the request", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Fallback title" }),
+        models: ["gpt-5.6-luna", "gpt-6-astra"],
+        defaultModel: "gpt-6-astra",
+        requireArg: "--model gpt-6-astra",
+        forbidArg: "--model gpt-6-luna",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
+          });
+          expect(result.title).toBe("Fallback title");
+        }),
+    ),
   );
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
@@ -764,4 +791,43 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         }),
     ),
   );
+});
+
+describe("resolveCodexTextGenerationModel", () => {
+  const model = (slug: string, extra: Partial<ServerProviderModel> = {}): ServerProviderModel => ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: null,
+    ...extra,
+  });
+
+  it("keeps the requested model when the account lists it", () => {
+    expect(
+      resolveCodexTextGenerationModel(
+        [model("gpt-6-astra", { isDefault: true }), model("gpt-6-luna")],
+        "gpt-6-luna",
+      ),
+    ).toBe("gpt-6-luna");
+  });
+
+  it("sends the request unchanged when there is no snapshot to check", () => {
+    expect(resolveCodexTextGenerationModel([], "gpt-6-luna")).toBe("gpt-6-luna");
+  });
+
+  it("falls back to the first current listed model without a default", () => {
+    expect(
+      resolveCodexTextGenerationModel(
+        [model("gpt-5.5", { isLegacy: true }), model("gpt-5.6-luna")],
+        "gpt-6-luna",
+      ),
+    ).toBe("gpt-5.6-luna");
+  });
+
+  it("uses a custom model only when it was requested", () => {
+    const models = [model("my-proxy-model", { isCustom: true }), model("gpt-6-astra")];
+
+    expect(resolveCodexTextGenerationModel(models, "my-proxy-model")).toBe("my-proxy-model");
+    expect(resolveCodexTextGenerationModel(models, "gpt-6-luna")).toBe("gpt-6-astra");
+  });
 });

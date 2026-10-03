@@ -40,6 +40,29 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * Picks the model `codex exec` should run for text generation. The requested
+ * slug wins when the instance's snapshot lists it (exactly or by family). A
+ * slug the snapshot omits is one this account can't run, such as the
+ * `gpt-6-luna` default on a ChatGPT login, so it falls back to the instance
+ * default, then the first listed model. With no snapshot the request is sent
+ * as-is.
+ */
+export function resolveCodexTextGenerationModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  requestedModel: string,
+): string {
+  const listed = models.filter((candidate) => !candidate.isCustom);
+  return (
+    models.find((candidate) => candidate.slug === requestedModel)?.slug ??
+    listed.find((candidate) => codexModelFamily(candidate.slug) === requestedModel)?.slug ??
+    listed.find((candidate) => candidate.isDefault)?.slug ??
+    listed.find((candidate) => !candidate.isLegacy)?.slug ??
+    listed[0]?.slug ??
+    requestedModel
+  );
+}
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -210,13 +233,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const effectiveConfig = resolved?.config ?? codexConfig;
       const effectiveEnvironment = resolved?.environment ?? resolvedEnvironment;
       const models = yield* getModels;
-      const requestedModel = modelSelection.model;
-      const model =
-        models.find((candidate) => candidate.slug === requestedModel)?.slug ??
-        models.find(
-          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
-        )?.slug ??
-        requestedModel;
+      const model = resolveCodexTextGenerationModel(models, modelSelection.model);
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
