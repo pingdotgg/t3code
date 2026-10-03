@@ -16,6 +16,39 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
+// UTF-8 byte size of decoded remainder before join/parse. 128 MiB sits above
+// observed Codex diffs (~49M characters) and Effect ndjson's 16 MiB default,
+// and well below a V8 heap-threatening line. Tests inject a smaller ceiling.
+const MAX_INCOMING_MESSAGE_BYTES = 128 * 1024 * 1024;
+
+// Counts UTF-8 bytes for `chunk.slice(from, to)` without allocating the
+// encoded copy, and stops early once the total exceeds `limit`. Unpaired
+// surrogates match TextEncoder's replacement-character output (3 bytes),
+// so the returned count matches `utf8.encode(fragment).byteLength` whenever
+// it stays within `limit`.
+const countUtf8Bytes = (chunk: string, from: number, to: number, limit: number): number => {
+  let bytes = 0;
+  for (let i = from; i < to; i++) {
+    const code = chunk.charCodeAt(i);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < to) {
+      const next = chunk.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        i += 1;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+    if (bytes > limit) return bytes;
+  }
+  return bytes;
+};
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -39,6 +72,7 @@ export interface CodexAppServerPatchedProtocolOptions {
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
+  readonly maxIncomingMessageBytes?: number;
   readonly logger?: (event: CodexAppServerProtocolLogEvent) => Effect.Effect<void, never>;
   readonly onNotification?: (
     notification: CodexAppServerIncomingNotification,
@@ -164,7 +198,21 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       yield* Queue.sliding<CodexAppServerIncomingRequest>(MAX_BUFFERED_RAW_MESSAGES);
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
+    const maxIncomingMessageBytes = options.maxIncomingMessageBytes ?? MAX_INCOMING_MESSAGE_BYTES;
+    if (!Number.isInteger(maxIncomingMessageBytes) || maxIncomingMessageBytes < 0) {
+      return yield* Effect.die(
+        new Error(
+          `Codex App Server maxIncomingMessageBytes must be a finite non-negative integer; received ${String(options.maxIncomingMessageBytes)}.`,
+        ),
+      );
+    }
     const remainder: Array<string> = [];
+    let remainderBytes = 0;
+    // Tracks a trailing carriage return whose partner \n may arrive in a later
+    // chunk. Kept out of `remainderBytes` so a CRLF-framed message that would
+    // exactly fill `maxIncomingMessageBytes` still fits after the terminator
+    // is stripped, matching LF-framed behavior at the limit.
+    let pendingCr = false;
     const terminationHandled = yield* Ref.make(false);
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
@@ -395,29 +443,111 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     };
 
+    // Append into the existing remainder entry so fragmented input scales with
+    // payload bytes, not chunk count (one entry per byte would exhaust the heap
+    // at the 128 MiB ceiling before the size check could fail).
+    const appendRemainder = (fragment: string) => {
+      if (remainder.length === 0) {
+        remainder.push(fragment);
+      } else {
+        remainder[remainder.length - 1] += fragment;
+      }
+    };
+
     yield* options.stdio.stdin.pipe(
       Stream.interruptWhen(Deferred.await(terminationSignal)),
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           const lines: Array<string> = [];
           let start = 0;
-          for (
-            let newline = chunk.indexOf("\n");
-            newline !== -1;
-            newline = chunk.indexOf("\n", start)
-          ) {
-            remainder.push(chunk.slice(start, newline));
-            lines.push(remainder.join("").replace(/\r$/, ""));
+          const retainRange = (from: number, to: number) => {
+            if (from >= to) return true;
+            const limit = maxIncomingMessageBytes - remainderBytes;
+            const fragmentLength = countUtf8Bytes(chunk, from, to, limit);
+            if (fragmentLength > limit) {
+              remainder.length = 0;
+              remainderBytes = 0;
+              pendingCr = false;
+              return false;
+            }
+            appendRemainder(chunk.slice(from, to));
+            remainderBytes += fragmentLength;
+            return true;
+          };
+          // A chunk can already hold complete messages before the fragment that
+          // crosses the limit. Deliver those lines, then fail. Leave the
+          // oversized fragment itself unparsed.
+          const failAfterCollectedLines = () =>
+            Effect.forEach(lines, handleLine, { discard: true }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new CodexError.CodexAppServerTransportError({
+                    operation: "read-input-stream",
+                    cause: new Error(
+                      `Incoming message exceeded ${String(maxIncomingMessageBytes)} bytes.`,
+                    ),
+                  }),
+                ),
+              ),
+            );
+          if (pendingCr) {
+            // Empty decodeText chunks must not commit the deferred \r; the
+            // partner \n may still arrive in a later chunk.
+            if (chunk.length === 0) return Effect.void;
+            if (chunk.charCodeAt(0) === 0x0a) {
+              // Previous chunk's trailing \r plus this chunk's leading \n form
+              // a CRLF terminator; neither byte is charged against the limit.
+              pendingCr = false;
+              lines.push(remainder.join(""));
+              remainder.length = 0;
+              remainderBytes = 0;
+              start = 1;
+            } else {
+              // The deferred \r is line content after all; commit its byte now.
+              pendingCr = false;
+              if (remainderBytes + 1 > maxIncomingMessageBytes) {
+                remainder.length = 0;
+                remainderBytes = 0;
+                return Effect.fail(
+                  new CodexError.CodexAppServerTransportError({
+                    operation: "read-input-stream",
+                    cause: new Error(
+                      `Incoming message exceeded ${String(maxIncomingMessageBytes)} bytes.`,
+                    ),
+                  }),
+                );
+              }
+              appendRemainder("\r");
+              remainderBytes += 1;
+            }
+          }
+          while (start < chunk.length) {
+            const newline = chunk.indexOf("\n", start);
+            if (newline === -1) break;
+            const hasCr = newline > start && chunk.charCodeAt(newline - 1) === 0x0d;
+            const rangeEnd = hasCr ? newline - 1 : newline;
+            if (!retainRange(start, rangeEnd)) {
+              return failAfterCollectedLines();
+            }
+            lines.push(remainder.join(""));
             remainder.length = 0;
+            remainderBytes = 0;
             start = newline + 1;
           }
           // Keep unfinished lines in fragments so each chunk is scanned only once.
           if (start < chunk.length) {
-            remainder.push(chunk.slice(start));
+            // Defer a trailing \r; only the next chunk (or stream end) reveals
+            // whether it is a CRLF terminator or literal content.
+            const endsWithCr = chunk.charCodeAt(chunk.length - 1) === 0x0d;
+            const rangeEnd = endsWithCr ? chunk.length - 1 : chunk.length;
+            if (!retainRange(start, rangeEnd)) {
+              return failAfterCollectedLines();
+            }
+            if (endsWithCr) pendingCr = true;
           }
-          return lines;
-        }).pipe(Effect.flatMap((lines) => Effect.forEach(lines, handleLine, { discard: true }))),
+          return Effect.forEach(lines, handleLine, { discard: true });
+        }),
       ),
       Effect.matchEffect({
         onFailure: (error) =>
@@ -425,12 +555,31 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
+            if (pendingCr) {
+              // The stream ended before \n arrived, so the deferred \r is
+              // literal content on the final line and must be charged.
+              pendingCr = false;
+              appendRemainder("\r");
+              remainderBytes += 1;
+            }
+            if (remainderBytes > maxIncomingMessageBytes) {
+              remainder.length = 0;
+              remainderBytes = 0;
+              return Effect.fail(
+                new CodexError.CodexAppServerTransportError({
+                  operation: "read-input-stream",
+                  cause: new Error(
+                    `Incoming message exceeded ${String(maxIncomingMessageBytes)} bytes.`,
+                  ),
+                }),
+              );
+            }
             const line = remainder.join("");
             remainder.length = 0;
-            return line;
+            remainderBytes = 0;
+            return handleLine(line);
           }).pipe(
-            Effect.flatMap(handleLine),
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
