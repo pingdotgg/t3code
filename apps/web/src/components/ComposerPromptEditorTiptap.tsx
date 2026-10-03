@@ -1,11 +1,11 @@
-import { Extension, Node, wrappingInputRule, type JSONContent } from "@tiptap/core";
-import { TaskList } from "@tiptap/extension-task-list";
+import { Extension, InputRule, Node, wrappingInputRule, type JSONContent } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { splitBlockKeepMarks } from "@tiptap/pm/commands";
+import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import type { ResolvedPos } from "@tiptap/pm/model";
 import type {
   AssistantCitation,
   ComposerContextClipboardFragment,
@@ -45,17 +45,30 @@ import {
 } from "~/composer-editor-mentions";
 import {
   buildDocJson,
+  ComposerBlockExtensions,
+  ComposerCodeBlockExtension,
+  ComposerListExtensions,
   buildTiptapContent,
   collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
+  ComposerTaskListExtension,
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
   pmToFlat,
   serializeEditorDoc,
+  serializeSelection,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
+import {
+  convertCodeFenceOnEnter,
+  exitCodeBlockOnTrailingBlankLines,
+  indentCodeBlock,
+  indentedNewlineInCodeBlock,
+  selectionInOneCodeBlock,
+} from "~/composer-code-block";
+import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
@@ -63,6 +76,7 @@ import {
   markAsClipboardEdit,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import { FileTagChipContent } from "./chat/FileTagChip";
@@ -80,6 +94,8 @@ import {
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
+import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
@@ -489,6 +505,9 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
   let range: StyledRange | null = null;
   let openLength = 0;
   for (const run of map.runs) {
+    // A fence is drawn as a block, not revealed a character at a time, so its
+    // delimiters never become marker widgets.
+    if (run.nodeName === "codeBlock") continue;
     if (run.openLen > 0) {
       range ??= { from: run.pmPos, to: run.pmPos, markers: [] };
       range.markers.push({
@@ -514,6 +533,145 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
     }
   }
   return ranges;
+}
+
+/**
+ * A typed marker becomes a list item that remembers the marker it was typed
+ * with, so the stored Markdown keeps `*` or `3)` rather than a canonical `-`.
+ *
+ * `- ` alone is not enough for a dash: it waits for the first character after
+ * the space, which it carries into the new item. That is what lets the GFM
+ * task gesture `- [ ] ` or `- [x] ` be typed whole and reach the task rule,
+ * instead of being cut off by an instant bullet. A `- ` left on its own is
+ * still a bullet the next time the draft is rebuilt.
+ */
+function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList"): InputRule {
+  return new InputRule({
+    find,
+    handler: ({ state, range, match, chain }) => {
+      const marker = match.groups?.marker ?? "-";
+      const space = match.groups?.space ?? " ";
+      const carried = match.groups?.carried ?? "";
+      const $from = state.doc.resolve(range.from);
+      if ($from.parent.type.name !== "paragraph" || hasAncestor($from, "blockquote")) return null;
+      const command = chain()
+        .deleteRange(range)
+        .wrapInList(
+          listType,
+          listType === "orderedList" ? { start: Number.parseInt(marker, 10) || 1 } : {},
+        )
+        .updateAttributes("listItem", { marker, space });
+      (carried ? command.insertContent(carried) : command).run();
+      return undefined;
+    },
+  });
+}
+
+/**
+ * `[ ] ` at the start of an existing bullet item turns it into a task, for
+ * items that were already a list when the checkbox was wanted. New tasks are
+ * typed whole, `- [ ] `, and reach the task rule directly.
+ */
+const bulletToTaskInputRule = new InputRule({
+  find: /^\[([ xX])\] $/,
+  handler: ({ state, range, match, chain }) => {
+    const $from = state.doc.resolve(range.from);
+    const item = $from.node(-1);
+    if ($from.parent.type.name !== "paragraph" || item?.type.name !== "listItem") return null;
+    // Any bullet converts; the task grammar only knows `-`, so a `*` or `+`
+    // item comes back out as `- [ ]`.
+    if (!["-", "*", "+"].includes((item.attrs as { marker?: string }).marker ?? "")) return null;
+    const indent = typeof item.attrs.indent === "string" ? item.attrs.indent : "";
+    chain()
+      .deleteRange(range)
+      .toggleList("taskList", "taskItem")
+      .updateAttributes("taskItem", { checked: (match[1] ?? " ").toLowerCase() === "x", indent })
+      .run();
+    return undefined;
+  },
+});
+
+function hasAncestor($pos: ResolvedPos, name: string): boolean {
+  for (let depth = $pos.depth; depth > 0; depth -= 1) {
+    if ($pos.node(depth).type.name === name) return true;
+  }
+  return false;
+}
+
+/**
+ * `> ` at the start of a top-level paragraph opens a quote. Not inside a list:
+ * a quote holds prose lines, and a list item is not one.
+ */
+const blockquoteInputRule = new InputRule({
+  find: /^>(\s)$/,
+  handler: ({ state, range, match, chain }) => {
+    const $from = state.doc.resolve(range.from);
+    if ($from.parent.type.name !== "paragraph" || $from.depth !== 1) return null;
+    chain()
+      .deleteRange(range)
+      .wrapIn("blockquote", { prefix: `>${match[1] ?? " "}` })
+      .run();
+    return undefined;
+  },
+});
+
+/**
+ * `---` becomes a rule as the third dash lands; `***` and `___` need a space
+ * after them so typing bold or an underscore is not interrupted, matching
+ * Tiptap's own rule. Only at a top-level paragraph: the list and quote
+ * serializers have no line to write a rule into. The typed characters are
+ * kept as the rule's source, and `setHorizontalRule` adds a paragraph after a
+ * rule at the end so the caret has somewhere to go.
+ */
+const horizontalRuleInputRule = new InputRule({
+  find: /^(---|\*\*\*|___)\s?$/,
+  handler: ({ state, range, match, chain }) => {
+    const source = match[0] ?? "---";
+    if (!source.startsWith("---") && !/\s$/.test(source)) return null;
+    const $from = state.doc.resolve(range.from);
+    if ($from.parent.type.name !== "paragraph" || $from.depth !== 1) return null;
+    chain()
+      .deleteRange(range)
+      .setHorizontalRule()
+      .command(({ tr }) => {
+        // The rule is the block before the caret's paragraph.
+        const $pos = tr.selection.$from;
+        const index = $pos.index(0) - 1;
+        if (index < 0) return true;
+        const rulePos = $pos.posAtIndex(index, 0);
+        const rule = tr.doc.nodeAt(rulePos);
+        if (rule?.type.name === "horizontalRule") {
+          tr.setNodeMarkup(rulePos, undefined, { ...rule.attrs, source });
+        }
+        return true;
+      })
+      .run();
+    return undefined;
+  },
+});
+
+/**
+ * `# ` through `###### ` at a top-level paragraph make a heading. The space
+ * is required, which is exactly what keeps `#1234` a pull request reference
+ * with its picker rather than a heading. Not inside lists or quotes, whose
+ * serializers have no line for one.
+ */
+const headingInputRule = new InputRule({
+  find: /^(#{1,6})(\s)$/,
+  handler: ({ state, range, match, chain }) => {
+    const $from = state.doc.resolve(range.from);
+    if ($from.parent.type.name !== "paragraph" || $from.depth !== 1) return null;
+    chain()
+      .deleteRange(range)
+      .setNode("heading", { level: match[1]?.length ?? 1, space: match[2] ?? " " })
+      .run();
+    return undefined;
+  },
+});
+
+/** Whether the caret sits inside a fenced code block. */
+function isInCodeBlock(view: EditorView): boolean {
+  return view.state.selection.$from.parent.type.spec.code === true;
 }
 
 const MarkerPluginKey = new PluginKey("composer-rich-markers");
@@ -762,16 +920,16 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       expandedCursor: nextExpandedCursor,
       contextIds: map.contextIds,
     };
-    const cursorAdjacentToMention =
+    // A fence holds no chips, so nothing in it should summon the mention or
+    // command menu: `@` in code is a decorator, not a file. Suppressing the
+    // trigger here also keeps the store from inserting a link the block can
+    // only show as literal text, which the store would then count as a chip.
+    const inCodeBlock = updated.state.selection.$from.parent.type.spec.code === true;
+    const suppressTrigger =
+      inCodeBlock ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
-    onChangeRef.current(
-      nextValue,
-      nextCursor,
-      nextExpandedCursor,
-      cursorAdjacentToMention,
-      map.contextIds,
-    );
+    onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, map.contextIds);
   }, []);
 
   const editorAttributes = useMemo(
@@ -833,7 +991,75 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ...(richText
           ? [
               ComposerCodeExtension,
-              TaskList,
+              ComposerCodeBlockExtension.extend({
+                addNodeView() {
+                  return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
+                    // The header holds the language picker. Tiptap only shields
+                    // events aimed at the button element itself, so a click on
+                    // its icon or label would reach ProseMirror and move the
+                    // selection; keep every header event away from the editor.
+                    stopEvent: ({ event }) =>
+                      event.target instanceof Element &&
+                      event.target.closest(".chat-markdown-codeblock-header") !== null,
+                  });
+                },
+                // Tiptap's own ``` + space rule would open a fence inside a
+                // list item or quote, where the serializer has no line for
+                // it. Enter on a fence line covers the gesture at top level.
+                addInputRules() {
+                  return [];
+                },
+              }),
+              composerCodeBlockHighlight({
+                resolveTheme: () =>
+                  resolveDiffThemeName(
+                    document.documentElement.classList.contains("dark") ? "dark" : "light",
+                  ),
+              }),
+              ...ComposerBlockExtensions.map((extension) =>
+                extension.name === "blockquote"
+                  ? extension.extend({
+                      addInputRules() {
+                        return [blockquoteInputRule];
+                      },
+                    })
+                  : extension.name === "horizontalRule"
+                    ? extension.extend({
+                        addInputRules() {
+                          return [horizontalRuleInputRule];
+                        },
+                      })
+                    : extension.name === "heading"
+                      ? extension.extend({
+                          addInputRules() {
+                            return [headingInputRule];
+                          },
+                        })
+                      : extension,
+              ),
+              ...ComposerListExtensions.map((extension) =>
+                extension.name === "listItem"
+                  ? extension
+                  : extension.extend({
+                      addInputRules() {
+                        return this.name === "bulletList"
+                          ? [
+                              listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
+                              listMarkerInputRule(
+                                /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
+                                "bulletList",
+                              ),
+                            ]
+                          : [
+                              listMarkerInputRule(
+                                /^(?<marker>\d+[.)])(?<space>\s)$/,
+                                "orderedList",
+                              ),
+                            ];
+                      },
+                    }),
+              ),
+              ComposerTaskListExtension,
               ComposerTaskItemExtension.extend({
                 addInputRules() {
                   return [
@@ -842,6 +1068,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                       type: this.type,
                       getAttributes: (match) => ({ checked: match[1]?.toLowerCase() === "x" }),
                     }),
+                    bulletToTaskInputRule,
                   ];
                 },
               }),
@@ -969,11 +1196,55 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             event.preventDefault();
             return true;
           }
+          // Inside a fence Tab belongs to the code, not to the composer's
+          // focus order or its autocomplete.
+          if (
+            event.key === "Tab" &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            selectionInOneCodeBlock(view.state)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            return indentCodeBlock(view.state, event.shiftKey ? "out" : "in", (tr) =>
+              view.dispatch(tr),
+            );
+          }
+          // A fence is multi-line by definition, so Enter and Shift+Enter
+          // belong to the code rather than to sending or splitting: inside a
+          // block they make a line (a generic split would cut the fence in
+          // two), and on a line that is only an opening fence they open the
+          // block. Sending from inside a fence is still Cmd/Ctrl+Enter, which
+          // falls through.
+          if (
+            event.key === "Enter" &&
+            richText &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.isComposing
+          ) {
+            if (selectionInOneCodeBlock(view.state)) {
+              event.preventDefault();
+              event.stopPropagation();
+              const dispatch = (tr: typeof view.state.tr) => view.dispatch(tr.scrollIntoView());
+              return (
+                exitCodeBlockOnTrailingBlankLines(view) ||
+                indentedNewlineInCodeBlock(view.state, dispatch) ||
+                newlineInCode(view.state, dispatch)
+              );
+            }
+            if (convertCodeFenceOnEnter(view.state, (tr) => view.dispatch(tr))) {
+              event.preventDefault();
+              event.stopPropagation();
+              return true;
+            }
+          }
           const handler = onCommandKeyDownRef.current;
           if (event.key === "Enter") {
             const instance = editorHolder.current;
             const isTaskItem = richText && (instance?.isActive("taskItem") ?? false);
-            const handled = handler?.("Enter", event, isTaskItem) ?? false;
+            const isListItem = richText && (instance?.isActive("listItem") ?? false);
+            const handled = handler?.("Enter", event, isTaskItem || isListItem) ?? false;
             if (handled) {
               event.preventDefault();
               event.stopPropagation();
@@ -988,6 +1259,32 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                   instance.commands.liftListItem("taskItem")))
             ) {
               return true;
+            }
+            if (
+              richText &&
+              instance &&
+              hasAncestor(view.state.selection.$from, "blockquote") &&
+              view.state.selection.$from.parent.content.size === 0 &&
+              instance.commands.lift("blockquote")
+            ) {
+              return true;
+            }
+            if (isListItem && instance) {
+              const item = view.state.selection.$from.node(-1);
+              const marker = typeof item?.attrs.marker === "string" ? item.attrs.marker : "-";
+              const isOrdered = /^\d+[.)]$/.test(marker);
+              if (
+                instance.commands.splitListItem(
+                  "listItem",
+                  isOrdered
+                    ? { marker: nextOrderedMarkerText(marker), space: " " }
+                    : { space: " " },
+                ) ||
+                (view.state.selection.$from.parent.content.size === 0 &&
+                  instance.commands.liftListItem("listItem"))
+              ) {
+                return true;
+              }
             }
             // Split the paragraph so a single newline visibly advances the caret.
             return splitBlockKeepMarks(view.state, (tr) => {
@@ -1037,6 +1334,19 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           const pastedText = clipboardData.getData("text/plain");
           if (!pastedText) return false;
           event.preventDefault();
+          // A fence takes the clipboard verbatim. Running the markdown path
+          // here would split the block on newlines, nest a pasted fence and
+          // build chips the code block's schema cannot hold anyway.
+          if (isInCodeBlock(view)) {
+            const { from, to } = view.state.selection;
+            view.dispatch(
+              markAsClipboardEdit(
+                view.state.tr.insertText(pastedText, from, to),
+                "paste",
+              ).scrollIntoView(),
+            );
+            return true;
+          }
           const importFragment = importFragmentRef.current;
           let text = importFragment
             ? importPastedComposerText(clipboardData, importFragment)
@@ -1060,18 +1370,30 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           const editorInstance = editorHolder.current;
           if (editorInstance) {
-            insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
-              // Tagged on the same transaction insertContent builds, so the
-              // paste is one undo step of its own.
-              editorInstance
-                .chain()
-                .command(({ tr }) => {
-                  markAsClipboardEdit(tr, "paste");
-                  return true;
-                })
-                .insertContent(content)
-                .run();
-            });
+            // Inside a list item or quote, pasted block markup has nowhere to
+            // go: it stays literal lines the next rebuild reads back. Inline
+            // marks still apply.
+            const $paste = view.state.selection.$from;
+            const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
+              hasAncestor($paste, name),
+            );
+            insertMarkdownParagraphs(
+              text,
+              skillLabelFor,
+              { styling: richText, blocks: !nested },
+              (content) => {
+                // Tagged on the same transaction insertContent builds, so the
+                // paste is one undo step of its own.
+                editorInstance
+                  .chain()
+                  .command(({ tr }) => {
+                    markAsClipboardEdit(tr, "paste");
+                    return true;
+                  })
+                  .insertContent(content)
+                  .run();
+              },
+            );
             scrollTiptapCaretIntoView(editorInstance);
           }
           return true;
@@ -1313,15 +1635,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       const clipboardData = event.clipboardData;
       const { from, to } = editor.state.selection;
       if (from === to) return;
-      const { doc, schema } = editor.state;
-      const slice = doc.slice(from, to);
-      const first = slice.content.firstChild;
-      const content = first?.isInline
-        ? schema.nodes.paragraph!.create(null, slice.content)
-        : first?.type.name === "taskItem"
-          ? schema.nodes.taskList!.create(null, slice.content)
-          : slice.content;
-      const text = serializeEditorDoc(doc.type.create(null, content)).value;
+      const text = serializeSelection(editor.state.doc, from, to);
       const contextIds = Array.from(new Set(collectInlineContextIds(text)));
       const fragment = contextIds.length > 0 ? build?.(contextIds) : null;
       event.preventDefault();
@@ -1425,7 +1739,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options: { styling: boolean },
+  options: { styling: boolean; blocks?: boolean },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);
