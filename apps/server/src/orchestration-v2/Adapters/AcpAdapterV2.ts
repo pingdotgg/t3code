@@ -6155,6 +6155,10 @@ export function makeAcpAdapterV2(
                   driver,
                   detail: `ACP driver cannot load or resume session ${sessionId}`,
                 });
+          // Loading a session does not establish continuity with its last prompt here.
+          yield* Ref.update(promptUsageBySessionId, (current) =>
+            new Map(current).set(activated.sessionId, null),
+          );
           rememberTerminalEnvironment(activated.sessionId, threadId);
           return activated;
         });
@@ -6754,6 +6758,7 @@ export function makeAcpAdapterV2(
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
+          yield* Ref.set(promptUsageBySessionId, new Map());
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
@@ -7749,6 +7754,9 @@ export function makeAcpAdapterV2(
                       sessionId,
                       acpMcpActivation(snapshotInput.providerThread.appThreadId, self),
                     );
+                    yield* Ref.update(promptUsageBySessionId, (current) =>
+                      new Map(current).set(activated.sessionId, null),
+                    );
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       snapshotInput.providerThread.appThreadId,
@@ -7821,6 +7829,22 @@ export function makeAcpAdapterV2(
                         yield* Ref.set(activeSessionSetup, candidate);
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
+                        yield* Ref.set(
+                          promptUsageBySessionId,
+                          new Map([
+                            [
+                              candidate.sessionId,
+                              {
+                                inputTokens: 0,
+                                outputTokens: 0,
+                                totalTokens: 0,
+                                cachedReadTokens: 0,
+                                cachedWriteTokens: 0,
+                                thoughtTokens: 0,
+                              },
+                            ],
+                          ]),
+                        );
                         yield* Ref.set(promptInstructionStates, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
@@ -7911,6 +7935,9 @@ export function makeAcpAdapterV2(
                   const forked = yield* runtime.forkSession(
                     sourceSessionId,
                     acpMcpActivation(forkInput.targetThreadId, self),
+                  );
+                  yield* Ref.update(promptUsageBySessionId, (current) =>
+                    new Map(current).set(forked.sessionId, null),
                   );
                   rememberTerminalEnvironment(forked.sessionId, forkInput.targetThreadId);
                   yield* Ref.set(activeSessionId, forked.sessionId);
