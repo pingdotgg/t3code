@@ -105,6 +105,19 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ClientSettings browser homepage", () => {
+  it("defaults to a blank tab for settings saved before the homepage existed", () => {
+    expect(decodeClientSettings({}).browserDefaultHomepage).toBe("");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("browserDefaultHomepage");
+  });
+
+  it("keeps a saved homepage through patches and persistence", () => {
+    const preference = { browserDefaultHomepage: "https://example.com/" };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

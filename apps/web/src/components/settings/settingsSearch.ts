@@ -653,6 +653,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["preview size width height device desktop mobile rotate"],
   },
   {
+    id: "browser-default-homepage",
+    title: "Browser homepage",
+    to: "/settings/integrations",
+    searchTerms: ["browser preview home page start url new tab blank"],
+  },
+  {
     id: "browser-default-zoom",
     title: "Default browser zoom",
     to: "/settings/integrations",

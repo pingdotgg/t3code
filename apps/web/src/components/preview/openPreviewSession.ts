@@ -11,6 +11,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   browserDefaultOpenProfileId,
+  browserDefaultOpenUrl,
   browserDefaultOpenViewport,
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
@@ -23,6 +24,7 @@ interface OpenPreviewSessionInput<E> {
     readonly input: PreviewOpenInput;
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
+  /** Overrides the configured homepage. */
   url?: string;
   /** Overrides the configured default; automation passes an explicit size. */
   viewport?: PreviewViewportSetting;
@@ -41,11 +43,12 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  const url = input.url ?? browserDefaultOpenUrl(defaults);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      ...(input.url === undefined ? {} : { url: input.url }),
+      ...(url === undefined ? {} : { url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
     },

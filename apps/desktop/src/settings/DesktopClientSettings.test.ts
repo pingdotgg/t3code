@@ -24,6 +24,7 @@ const clientSettings: ClientSettings = {
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
   browserDefaultZoomFactor: 1.25,
   browserDefaultAppearance: "dark",
+  browserDefaultHomepage: "https://example.com/",
   browserRecordingFrameRate: 60,
   browserLinkTarget: "app",
   browserAutoShowFloatingPreview: false,
