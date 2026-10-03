@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   NodeId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -17,6 +21,10 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import {
+  canDetachThreadProviderSession,
+  threadSupportsProviderHandoff,
+} from "./threadWorkflows.ts";
 
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const threadId = ThreadId.make("thread-reducer");
@@ -103,6 +111,59 @@ const emptyProjection = {
   visibleTurnItems: [],
   updatedAt: now,
 } as OrchestrationV2ThreadProjection;
+
+const detachedSessionId = ProviderSessionId.make("session-detached");
+const currentSessionId = ProviderSessionId.make("session-current");
+const staleProviderThreadId = ProviderThreadId.make("provider-thread-stale");
+const currentProviderThreadId = ProviderThreadId.make("provider-thread-current");
+const foreignProviderThreadId = ProviderThreadId.make("provider-thread-foreign");
+const queuedProviderThreadId = ProviderThreadId.make("provider-thread-queued");
+const currentSession = {
+  id: currentSessionId,
+  driver: "codex",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  status: "ready",
+  cwd: "/workspace",
+  model: "gpt-5.4",
+  capabilities: {
+    sessions: { supportsProviderSwitchingViaHandoff: true },
+  },
+  createdAt: now,
+  updatedAt: now,
+  lastError: null,
+} as OrchestrationV2ThreadProjection["providerSessions"][number];
+
+function providerThread(
+  input: Pick<
+    OrchestrationV2ProviderThread,
+    "id" | "appThreadId" | "providerSessionId" | "status" | "firstRunOrdinal" | "nativeThreadRef"
+  >,
+): OrchestrationV2ProviderThread {
+  return {
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    ownerNodeId: null,
+    nativeConversationHeadRef: null,
+    lastRunOrdinal: input.firstRunOrdinal,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    ...input,
+  };
+}
+
+function providerThreadUpdatedEvent(
+  payload: OrchestrationV2ProviderThread,
+): OrchestrationV2DomainEvent {
+  return {
+    id: EventId.make(`event-${String(payload.id)}`),
+    type: "provider-thread.updated",
+    threadId,
+    occurredAt: now,
+    payload,
+  };
+}
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
   it("keeps live token usage when the terminal provider turn omits it", () => {
@@ -310,6 +371,114 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
+  });
+
+  it("binds activeProviderThreadId on provider-thread.updated so workflows see the current session", () => {
+    const staleThread = providerThread({
+      id: staleProviderThreadId,
+      appThreadId: threadId,
+      providerSessionId: detachedSessionId,
+      status: "idle",
+      firstRunOrdinal: 1,
+      nativeThreadRef: null,
+    });
+    const currentThread = providerThread({
+      id: currentProviderThreadId,
+      appThreadId: threadId,
+      providerSessionId: currentSessionId,
+      status: "idle",
+      firstRunOrdinal: 2,
+      nativeThreadRef: {
+        driver: ProviderDriverKind.make("codex"),
+        nativeId: "native-current",
+        strength: "strong",
+      },
+    });
+    const projection = {
+      ...emptyProjection,
+      thread: { ...emptyProjection.thread, activeProviderThreadId: staleProviderThreadId },
+      runs: [run],
+      providerSessions: [currentSession],
+      providerThreads: [staleThread],
+    };
+    expect(canDetachThreadProviderSession(projection)).toBe(false);
+    expect(threadSupportsProviderHandoff(projection)).toBe(false);
+
+    const next = applyOrchestrationV2ProjectionEvent(
+      projection,
+      providerThreadUpdatedEvent(currentThread),
+    );
+
+    expect(next?.thread.activeProviderThreadId).toBe(currentProviderThreadId);
+    expect(next?.providerThreads.map((thread) => thread.id)).toEqual([
+      staleProviderThreadId,
+      currentProviderThreadId,
+    ]);
+    expect(canDetachThreadProviderSession(next!)).toBe(true);
+    expect(threadSupportsProviderHandoff(next!)).toBe(true);
+  });
+
+  it("does not steal activeProviderThreadId for a foreign app thread or queued placeholder", () => {
+    const staleThread = providerThread({
+      id: staleProviderThreadId,
+      appThreadId: threadId,
+      providerSessionId: detachedSessionId,
+      status: "idle",
+      firstRunOrdinal: 1,
+      nativeThreadRef: null,
+    });
+    const projection = {
+      ...emptyProjection,
+      thread: { ...emptyProjection.thread, activeProviderThreadId: staleProviderThreadId },
+      runs: [run],
+      providerSessions: [currentSession],
+      providerThreads: [staleThread],
+    };
+    const foreignThread = providerThread({
+      id: foreignProviderThreadId,
+      appThreadId: ThreadId.make("thread-other"),
+      providerSessionId: currentSessionId,
+      status: "idle",
+      firstRunOrdinal: 1,
+      nativeThreadRef: {
+        driver: ProviderDriverKind.make("codex"),
+        nativeId: "native-foreign",
+        strength: "strong",
+      },
+    });
+    const queuedPlaceholder = providerThread({
+      id: queuedProviderThreadId,
+      appThreadId: threadId,
+      providerSessionId: null,
+      status: "not_loaded",
+      firstRunOrdinal: null,
+      nativeThreadRef: null,
+    });
+
+    const afterForeign = applyOrchestrationV2ProjectionEvent(
+      projection,
+      providerThreadUpdatedEvent(foreignThread),
+    );
+    expect(afterForeign?.thread.activeProviderThreadId).toBe(staleProviderThreadId);
+    expect(afterForeign?.providerThreads.map((thread) => thread.id)).toEqual([
+      staleProviderThreadId,
+      foreignProviderThreadId,
+    ]);
+    expect(canDetachThreadProviderSession(afterForeign!)).toBe(false);
+    expect(threadSupportsProviderHandoff(afterForeign!)).toBe(false);
+
+    const afterQueued = applyOrchestrationV2ProjectionEvent(
+      afterForeign,
+      providerThreadUpdatedEvent(queuedPlaceholder),
+    );
+    expect(afterQueued?.thread.activeProviderThreadId).toBe(staleProviderThreadId);
+    expect(afterQueued?.providerThreads.map((thread) => thread.id)).toEqual([
+      staleProviderThreadId,
+      foreignProviderThreadId,
+      queuedProviderThreadId,
+    ]);
+    expect(canDetachThreadProviderSession(afterQueued!)).toBe(false);
+    expect(threadSupportsProviderHandoff(afterQueued!)).toBe(false);
   });
 });
 
