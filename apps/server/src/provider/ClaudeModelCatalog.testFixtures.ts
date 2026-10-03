@@ -73,7 +73,9 @@ export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
         name: "Claude Synthetic Thinking",
         isCustom: false,
         capabilities: {
-          optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" }],
+          optionDescriptors: [
+            { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+          ],
         },
       },
       runtime: {},
