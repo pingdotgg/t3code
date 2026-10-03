@@ -37,6 +37,7 @@ import {
   transcriptionCustomWords,
 } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
+import { isSpeechPlatformSupported } from "./platform.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -180,13 +181,6 @@ export class SpeechService extends Context.Service<
   }
 >()("t3/speech/SpeechService") {}
 
-function supported(platform: string, architecture: string): string | null {
-  const tuple = `${platform}-${architecture}`;
-  return new Set(["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64", "linux-arm64"]).has(tuple)
-    ? null
-    : `voice transcription is not available on ${tuple}`;
-}
-
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
@@ -196,7 +190,9 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const clock = yield* Clock.Clock;
   const now = () => Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000;
-  const unsupportedReason = supported(platform, architecture);
+  const unsupportedReason = isSpeechPlatformSupported(platform, architecture)
+    ? null
+    : `voice transcription is not available on ${platform}-${architecture}`;
   const modelDirectory = path.join(config.stateDir, "speech", "models");
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
