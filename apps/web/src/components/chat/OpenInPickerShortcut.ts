@@ -1,10 +1,10 @@
 import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect } from "react";
 
-import { usePreferredEditor } from "../../editorPreferences";
+import { useEditorOpening } from "../../editorPreferences";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
-import { shellEnvironment } from "../../state/shell";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { toastManager } from "../ui/toast";
 
 export function useOpenFavoriteEditorShortcut({
   enabled,
@@ -19,25 +19,28 @@ export function useOpenFavoriteEditorShortcut({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const { preferredEditor, openEditor } = useEditorOpening(environmentId, availableEditors);
 
   useEffect(() => {
     if (!enabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (!isOpenFavoriteEditorShortcut(event, keybindings)) return;
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
-      void openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor: preferredEditor,
-        },
+      void openEditor(openInCwd).then((result) => {
+        if (result._tag === "Failure") {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Unable to open editor",
+            description: error instanceof Error ? error.message : "Unknown error opening editor.",
+          });
+        }
       });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [enabled, environmentId, keybindings, openInCwd, openInEditorMutation, preferredEditor]);
+  }, [enabled, keybindings, openInCwd, openEditor, preferredEditor]);
 }

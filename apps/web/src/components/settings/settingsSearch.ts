@@ -867,6 +867,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
   {
+    id: "editor-opening",
+    title: "Editor opening",
+    to: "/settings/connections",
+    windowsOnly: true,
+    environmentOnly: true,
+    searchTerms: ["open files vscode visual studio code local wsl ubuntu distribution distro ssh"],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",

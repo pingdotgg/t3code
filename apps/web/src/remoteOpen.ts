@@ -11,6 +11,7 @@
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
+  isWslDistroName,
   type EditorId,
   type EnvironmentId,
   type RemoteOpenTarget,
@@ -22,10 +23,12 @@ import { useEffect, useMemo, useState } from "react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { isWindowsPlatform } from "~/lib/utils";
+import { useLocalWslEditor } from "~/localWslEditor";
 import { useEnvironmentPresentation } from "~/state/presentation";
 
 export interface RemoteOpenHost {
-  readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
+  readonly kind: "ssh-alias" | "wsl" | RemoteOpenTarget["kind"];
   readonly host: string;
 }
 
@@ -64,7 +67,17 @@ export function resolveRemoteOpenState(input: {
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
   readonly isDesktopRenderer: boolean;
+  readonly isWindowsClient?: boolean;
+  readonly localWslDistro?: string | null;
 }): RemoteOpenState {
+  if (
+    input.isWindowsClient &&
+    input.localWslDistro !== undefined &&
+    input.localWslDistro !== null &&
+    isWslDistroName(input.localWslDistro)
+  ) {
+    return { mode: "remote-links", host: { kind: "wsl", host: input.localWslDistro } };
+  }
   const { target } = input;
   // No catalog entry: keep today's exec behavior rather than guessing.
   if (target === null) {
@@ -98,6 +111,7 @@ export function resolveRemoteOpenState(input: {
 
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const [localWsl] = useLocalWslEditor(environmentId);
 
   return useMemo(() => {
     if (presentation === null) {
@@ -112,10 +126,12 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
         sshAlias,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        isWindowsClient: isWindowsPlatform(navigator.platform),
+        localWslDistro: localWsl?.distro ?? null,
       }),
       isResolved: true,
     };
-  }, [presentation]);
+  }, [presentation, localWsl]);
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
@@ -177,15 +193,15 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
  */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
-  if (bridge !== undefined) {
-    try {
+  try {
+    if (bridge !== undefined) {
       return await bridge.openExternal(url);
-    } catch {
-      return false;
     }
+    window.location.assign(url);
+    return true;
+  } catch {
+    return false;
   }
-  window.location.assign(url);
-  return true;
 }
 
 /**

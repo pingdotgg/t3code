@@ -1,6 +1,8 @@
 import { MAC_PERMISSION_SETTINGS_URLS } from "../permissions/MacPermission.ts";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
+  WSL_CAPABLE_EDITOR_IDS,
+  isWslDistroName,
   remoteSchemeForEditor,
   type SystemSettingsPane,
 } from "@t3tools/contracts";
@@ -11,8 +13,8 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
-// `zed://ssh/<host>/<path>`) must reach the OS handler; every other non-web
+// Editor deep links (`vscode://vscode-remote/ssh-remote+…`,
+// `vscode://vscode-remote/wsl+…`, `zed://ssh/<host>/<path>`) reach the OS handler; other non-web
 // scheme stays blocked.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
@@ -21,6 +23,19 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
     return scheme === undefined ? [] : [`${scheme}:`];
   }),
 );
+const WSL_EDITOR_PROTOCOLS = new Set(
+  WSL_CAPABLE_EDITOR_IDS.map((id) => `${remoteSchemeForEditor(id)}:`),
+);
+
+function isWslEditorUrl(url: URL): boolean {
+  const match = /^\/wsl\+([^/]+)\//.exec(url.pathname);
+  const distro = match?.[1];
+  return (
+    WSL_EDITOR_PROTOCOLS.has(url.protocol) &&
+    distro !== undefined &&
+    isWslDistroName(decodeURIComponent(distro))
+  );
+}
 
 // Zed's host sits in the first path segment, so it needs its own userinfo ban.
 const ZED_SSH_PATHNAME = /^\/[^/@:]+\/.*$/;
@@ -32,8 +47,8 @@ const isRemoteEditorUrl = (url: URL) =>
   (url.protocol === "zed:"
     ? url.host === "ssh" && ZED_SSH_PATHNAME.test(url.pathname)
     : url.host === "vscode-remote" &&
-      url.pathname.startsWith("/ssh-remote+") &&
-      url.pathname.length > "/ssh-remote+".length);
+      ((url.pathname.startsWith("/ssh-remote+") && url.pathname.length > "/ssh-remote+".length) ||
+        isWslEditorUrl(url)));
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {

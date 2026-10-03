@@ -14,6 +14,7 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
+import { useEditorOpening } from "./editorPreferences";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -116,6 +117,10 @@ export function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const { availableEditors: editorIds, openEditor } = useEditorOpening(
+    environmentId,
+    serverConfig?.availableEditors ?? [],
+  );
 
   return useMemo(() => {
     const availableEditors = serverConfig?.availableEditors ?? [];
@@ -131,7 +136,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
             : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
           : undefined,
       canOpenDefault: availableEditors.includes("file-manager"),
-      editorIds: availableEditors,
+      editorIds,
     };
 
     const activate = async (
@@ -148,10 +153,13 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : (action.slice("editor:".length) as EditorId);
       if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
-      const result = await openInEditor({
-        environmentId,
-        input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
-      });
+      const result =
+        action !== "open" && !reveal
+          ? await openEditor(absolutePath, editor, "file")
+          : await openInEditor({
+              environmentId,
+              input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
+            });
       if (result._tag !== "Failure") return;
       toastManager.add({
         type: "error",
@@ -190,7 +198,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       activate,
       show,
     };
-  }, [environmentId, openInEditor, serverConfig]);
+  }, [environmentId, openInEditor, serverConfig, editorIds, openEditor]);
 }
 
 /** Convenience callback for onContextMenu handlers. */

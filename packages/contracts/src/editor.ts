@@ -110,6 +110,36 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+/** Editors with Microsoft's WSL extension support. */
+export const WSL_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = ["vscode", "vscode-insiders"];
+
+export const WslDistroName = TrimmedNonEmptyString.check(Schema.isPattern(/^\w(?:[\w \-.]*\w)?$/));
+export const isWslDistroName = Schema.is(WslDistroName);
+
+/** Opens a path in a distro on the viewing Windows machine, without SSH. */
+export const buildWslOpenUrl = (input: {
+  readonly editor: EditorId;
+  readonly distro: string;
+  readonly absolutePath: string;
+  readonly isFile?: boolean;
+}): string | undefined => {
+  if (
+    !WSL_CAPABLE_EDITOR_IDS.includes(input.editor) ||
+    !isWslDistroName(input.distro) ||
+    !input.absolutePath.startsWith("/")
+  ) {
+    return undefined;
+  }
+  // VS Code's protocol handler identifies files by a trailing line position;
+  // an unpositioned path is opened as a folder, even when it has an extension.
+  const targetPath =
+    input.isFile && !/:\d+(?::\d+)?$/.test(input.absolutePath)
+      ? `${input.absolutePath}:1`
+      : input.absolutePath;
+  const encodedPath = targetPath.split("/").map(encodeURIComponent).join("/");
+  return `${remoteSchemeForEditor(input.editor)}://vscode-remote/wsl+${encodeURIComponent(input.distro)}${encodedPath}`;
+};
+
 /**
  * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
  * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the

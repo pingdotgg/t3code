@@ -77,6 +77,7 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { EditorOpeningSettings } from "./EditorOpeningSettings";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -3801,6 +3802,7 @@ export function ConnectionsSettings() {
         />
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
+      <EditorOpeningSettings environments={environments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
   );

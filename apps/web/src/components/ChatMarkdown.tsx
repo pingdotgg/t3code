@@ -127,11 +127,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useEditorOpening } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
@@ -2366,6 +2362,10 @@ function useChatMarkdownState({
     remoteOpen.state.mode,
     remoteOpen.isResolved,
   );
+  const canOpenInLocalWsl =
+    remoteOpen.isResolved &&
+    remoteOpen.state.mode === "remote-links" &&
+    remoteOpen.state.host.kind === "wsl";
   const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
@@ -2411,10 +2411,15 @@ function useChatMarkdownState({
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
-  const availableEditors = serverConfig?.availableEditors ?? [];
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const { preferredEditor, openEditor } = useEditorOpening(
+    environmentId,
+    serverConfig?.availableEditors ?? [],
+  );
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useCallback(
+    (targetPath: string) => openEditor(targetPath, undefined, "file"),
+    [openEditor],
+  );
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -2681,7 +2686,7 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canUseShellActions || canOpenInLocalWsl ? { onOpen: openInPreferredEditor } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2707,6 +2712,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOpenInLocalWsl,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
