@@ -35,6 +35,7 @@ import { layer as providerContinuationRequestsLayer } from "./ProviderContinuati
 import { workerLive as providerContinuationWorkerLive } from "./ProviderContinuationService.ts";
 import { layer as threadTitleRegenerationServiceLayer } from "./ThreadTitleRegenerationService.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
 import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
 import { layer as providerSwitchServiceLayer } from "./ProviderSwitchService.ts";
@@ -98,7 +99,14 @@ export const ProjectServiceLayerLive = projectServiceLayer.pipe(
 );
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
-  Layer.provide(Layer.mergeAll(eventSinkProvided, idAllocatorLayer, projectionStoreLayer)),
+  Layer.provide(
+    Layer.mergeAll(
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+      ThreadCommandExecutor.layer,
+    ),
+  ),
 );
 
 const checkpointServiceProvided = checkpointServiceLayer.pipe(Layer.provide(idAllocatorLayer));

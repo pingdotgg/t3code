@@ -12,9 +12,15 @@
  *
  * @module usageAggregation
  */
-import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  UsageBucket,
+  UsageCategoryCost,
+  UsageDay,
+  UsageResolution,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
-import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
@@ -41,15 +47,36 @@ function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
       day: "2-digit",
     });
   }
-  return (timestampMs) => format.format(new Date(timestampMs));
+  // Formatting once per quarter-hour slot keeps `Intl` (about 2µs a call) off
+  // the per-record path. A slot whose two ends fall on one day lies wholly in
+  // that day. Named zones put midnight on a quarter hour, so their slots never
+  // split; a fixed offset such as `+00:01` can, and records in a split slot are
+  // formatted exactly. `null` marks a split slot.
+  const days = new Map<number, string | null>();
+  return (timestampMs) => {
+    const slot = Math.floor(timestampMs / QUARTER_HOUR_MS);
+    let day = days.get(slot);
+    if (day === undefined) {
+      const first = format.format(new Date(slot * QUARTER_HOUR_MS));
+      const last = format.format(new Date((slot + 1) * QUARTER_HOUR_MS - 1));
+      day = first === last ? first : null;
+      days.set(slot, day);
+    }
+    return day ?? format.format(new Date(timestampMs));
+  };
 }
 
+const QUARTER_HOUR_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
 interface MutableBucket {
-  totals: UsageTokenTotals;
+  totals: { -readonly [K in keyof UsageTokenTotals]: number };
   costUsd: number;
   cacheSavingsUsd: number;
+  categoryCostUsd: UsageCategoryCost | null;
+  fastCostUsd: number;
+  ultrafastCostUsd: number;
+  speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -88,6 +115,14 @@ export class UsageAggregator {
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
+  #lastBucket: {
+    readonly day: string;
+    readonly hourIndex: number;
+    readonly provider: string;
+    readonly model: string;
+    readonly source: string;
+    readonly bucket: MutableBucket;
+  } | null = null;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
 
@@ -139,32 +174,37 @@ export class UsageAggregator {
       return false;
     }
 
-    const hourStart =
+    const hourIndex =
       this.#hourlyWindow === null
-        ? ""
-        : new Date(
-            this.#hourlyWindow.sinceTimeMs +
-              Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
-          ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${sourcePath ?? ""}`;
-    let bucket = this.#buckets.get(key);
-    if (bucket === undefined) {
-      bucket = {
-        totals: EMPTY_TOTALS,
-        costUsd: 0,
-        cacheSavingsUsd: 0,
-        records: 0,
-        unpricedRecords: 0,
-        providerReportedRecords: 0,
-        sessions: new Set<string>(),
-      };
-      this.#buckets.set(key, bucket);
-    }
+        ? -1
+        : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
+    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
-    bucket.totals = addTotals(bucket.totals, record.totals);
+    const totals = bucket.totals;
+    totals.uncachedInputTokens += record.totals.uncachedInputTokens;
+    totals.cachedInputTokens += record.totals.cachedInputTokens;
+    totals.cacheCreationTokens += record.totals.cacheCreationTokens;
+    totals.outputTokens += record.totals.outputTokens;
+    totals.reasoningTokens += record.totals.reasoningTokens;
     bucket.costUsd += priced.costUsd;
+    if (priced.categoryCostUsd !== null) {
+      const sum = bucket.categoryCostUsd;
+      const add = priced.categoryCostUsd;
+      bucket.categoryCostUsd =
+        sum === null
+          ? add
+          : {
+              input: sum.input + add.input,
+              cacheRead: sum.cacheRead + add.cacheRead,
+              cacheWrite: sum.cacheWrite + add.cacheWrite,
+              output: sum.output + add.output,
+            };
+    }
+    if (record.speed === "fast") bucket.fastCostUsd += priced.costUsd;
+    if (record.speed === "ultrafast") bucket.ultrafastCostUsd += priced.costUsd;
+    bucket.speedPremiumUsd += priced.speedPremiumUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
       record,
@@ -177,20 +217,86 @@ export class UsageAggregator {
     return true;
   }
 
+  /**
+   * Records arrive file by file in time order, so most land in the bucket the
+   * previous record used. Checking that first skips building and hashing a
+   * key string per record.
+   */
+  #bucketFor(
+    day: string,
+    hourIndex: number,
+    provider: string,
+    model: string,
+    source: string,
+  ): MutableBucket {
+    const last = this.#lastBucket;
+    if (
+      last !== null &&
+      last.day === day &&
+      last.hourIndex === hourIndex &&
+      last.provider === provider &&
+      last.model === model &&
+      last.source === source
+    ) {
+      return last.bucket;
+    }
+    const window = this.#hourlyWindow;
+    const hourStart =
+      window === null ? "" : new Date(window.sinceTimeMs + hourIndex * HOUR_MS).toISOString();
+    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}`;
+    let bucket = this.#buckets.get(key);
+    if (bucket === undefined) {
+      bucket = {
+        totals: { ...EMPTY_TOTALS },
+        costUsd: 0,
+        cacheSavingsUsd: 0,
+        categoryCostUsd: null,
+        fastCostUsd: 0,
+        ultrafastCostUsd: 0,
+        speedPremiumUsd: 0,
+        records: 0,
+        unpricedRecords: 0,
+        providerReportedRecords: 0,
+        sessions: new Set<string>(),
+      };
+      this.#buckets.set(key, bucket);
+    }
+    this.#lastBucket = { day, hourIndex, provider, model, source, bucket };
+    return bucket;
+  }
+
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
+      const category = bucket.categoryCostUsd;
+      const fastCostUsd = roundUsd(bucket.fastCostUsd);
+      const ultrafastCostUsd = roundUsd(bucket.ultrafastCostUsd);
+      const speedPremiumUsd = roundUsd(bucket.speedPremiumUsd);
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
         model,
         ...(sourcePath === "" ? {} : { sourcePath }),
-        totals: bucket.totals,
+        totals: { ...bucket.totals },
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
+        // Zero and unknown figures are omitted to keep payloads small.
+        ...(category === null
+          ? {}
+          : {
+              categoryCostUsd: {
+                input: roundUsd(category.input),
+                cacheRead: roundUsd(category.cacheRead),
+                cacheWrite: roundUsd(category.cacheWrite),
+                output: roundUsd(category.output),
+              },
+            }),
+        ...(fastCostUsd === 0 ? {} : { fastCostUsd }),
+        ...(ultrafastCostUsd === 0 ? {} : { ultrafastCostUsd }),
+        ...(speedPremiumUsd === 0 ? {} : { speedPremiumUsd }),
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
@@ -212,6 +318,14 @@ export class UsageAggregator {
       outOfWindow: this.#outOfWindow,
     };
   }
+}
+
+/**
+ * Rounds to micro-dollars. The split and speed figures need no more precision,
+ * and shorter numbers keep them cheap on the wire.
+ */
+function roundUsd(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
 }
 
 /**

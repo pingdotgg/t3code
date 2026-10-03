@@ -48,6 +48,7 @@ import {
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
+  orchestrationV2RunWorkStartedAt,
   RunId,
   CheckpointScopeId,
   ThreadId,
@@ -348,12 +349,12 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
   /**
    * Active (not deleted, not archived) threads with at least one pull request
-   * link, in shell snapshot order. Skips run, message and item reads.
+   * link, in shell snapshot order, or only `threadId` when given. Skips run,
+   * message and item reads.
    */
-  readonly getThreadsWithPullRequests: () => Effect.Effect<
-    ReadonlyArray<ProjectionThreadPullRequests>,
-    ProjectionStoreV2Error
-  >;
+  readonly getThreadsWithPullRequests: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -1368,7 +1369,8 @@ export function threadShellFromProjection(
     latestRunCompletedAt: latestRun?.completedAt ?? null,
     activeRunId: activeRun?.id ?? null,
     activityRunStatus: activityRun?.status ?? null,
-    activityRunStartedAt: activityRun?.startedAt ?? activityRun?.requestedAt ?? null,
+    activityRunStartedAt:
+      activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
@@ -4782,7 +4784,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS activity_run_status,
               (
-                SELECT COALESCE(json_extract(r.payload_json, '$.startedAt'), r.requested_at)
+                -- Mirrors orchestrationV2RunWorkStartedAt.
+                SELECT COALESCE(
+                  json_extract(r.payload_json, '$.workStartedAt'),
+                  json_extract(r.payload_json, '$.startedAt'),
+                  r.requested_at
+                )
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')
@@ -5126,12 +5133,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
-    const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = () =>
+    const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (
+      threadId,
+    ) =>
       Effect.gen(function* () {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json
           FROM orchestration_v2_projection_threads
-          WHERE deleted_at IS NULL
+          WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
             AND json_extract(payload_json, '$.archivedAt') IS NULL
             AND json_array_length(payload_json, '$.pullRequests') > 0
           ORDER BY updated_at ASC, thread_id ASC
@@ -5576,13 +5585,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 left.id.localeCompare(right.id),
             );
         }),
-      getThreadsWithPullRequests: () =>
+      getThreadsWithPullRequests: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>
             [...state.projections.values()]
               .map(({ thread }) => thread)
               .filter(
                 (thread) =>
+                  (threadId === undefined || thread.id === threadId) &&
                   thread.deletedAt === null &&
                   thread.archivedAt === null &&
                   (thread.pullRequests ?? []).length > 0,

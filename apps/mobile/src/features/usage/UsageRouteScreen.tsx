@@ -42,7 +42,7 @@ import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
-import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -360,6 +360,7 @@ export function UsageRouteScreen() {
                     onCursorEnabled={refreshAfterCursorEnable}
                   />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                  <CostSection merged={merged} />
                   <ModelsSection merged={merged} />
                 </>
               )}
@@ -685,6 +686,84 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         />
       </View>
     </SettingsSection>
+  );
+}
+
+function CostSection(props: { readonly merged: MergedUsage }) {
+  const { categoryCost, speedCost } = props.merged;
+  const colors = useUsageMixColors();
+  const byType = [
+    { label: "Input", value: categoryCost.input, color: colors.input },
+    { label: "Cache read", value: categoryCost.cacheRead, color: colors.cacheRead },
+    { label: "Cache write", value: categoryCost.cacheWrite, color: colors.cacheWrite },
+    { label: "Output", value: categoryCost.output, color: colors.output },
+    // Reported cost with no rates to split it, or from older servers. Below a
+    // cent it is rounding, not usage.
+    {
+      label: "Other",
+      value: categoryCost.unsplit >= 0.005 ? categoryCost.unsplit : 0,
+      color: colors.other,
+    },
+  ];
+  const bySpeed = [
+    { label: "Standard", value: speedCost.standard, color: colors.standard },
+    { label: "Fast", value: speedCost.fast, color: colors.fast },
+    { label: "Ultrafast", value: speedCost.ultrafast, color: colors.ultrafast },
+  ];
+  if (props.merged.costUsd <= 0) return null;
+
+  return (
+    <SettingsSection title="Cost">
+      <ShareBar label="By type" segments={byType} />
+      {speedCost.fast + speedCost.ultrafast > 0 ? (
+        <View className="border-t border-border-subtle">
+          <ShareBar
+            label="By speed"
+            segments={bySpeed}
+            aside={`${formatUsd(speedCost.premium)} premium`}
+          />
+        </View>
+      ) : null}
+    </SettingsSection>
+  );
+}
+
+/** One part-to-whole cost bar with its legend. Empty segments are left out. */
+function ShareBar(props: {
+  readonly label: string;
+  readonly segments: readonly { label: string; value: number; color: string }[];
+  readonly aside?: string;
+}) {
+  const visible = props.segments.filter((segment) => segment.value > 0);
+  if (visible.length === 0) return null;
+
+  return (
+    <View className="gap-3 p-4">
+      <View className="flex-row items-baseline justify-between gap-3">
+        <Text className="text-sm text-foreground-muted">{props.label}</Text>
+        {props.aside ? (
+          <Text className="text-sm tabular-nums text-foreground-muted">{props.aside}</Text>
+        ) : null}
+      </View>
+      <View className="h-2 flex-row gap-0.5">
+        {visible.map((segment) => (
+          <View
+            key={segment.label}
+            className="h-full rounded-sm"
+            style={{ flex: segment.value, backgroundColor: segment.color }}
+          />
+        ))}
+      </View>
+      <View className="flex-row flex-wrap gap-x-4 gap-y-1.5">
+        {visible.map((segment) => (
+          <View key={segment.label} className="flex-row items-center gap-1.5">
+            <View className="size-2 rounded-sm" style={{ backgroundColor: segment.color }} />
+            <Text className="text-sm text-foreground-muted">{segment.label}</Text>
+            <Text className="text-sm tabular-nums text-foreground">{formatUsd(segment.value)}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 

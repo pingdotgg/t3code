@@ -1,3 +1,5 @@
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import * as DateTime from "effect/DateTime";
 import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
@@ -23,7 +25,7 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { makeThreadShellFixture } from "../../test-fixtures";
+import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
@@ -36,6 +38,7 @@ import {
   resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
+  threadHasUnseenCompletion,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -160,9 +163,7 @@ describe("resolveThreadListV2Status", () => {
         makeThread({
           id: ThreadId.make("t"),
           title: "t",
-          pendingBackgroundTasks: [
-            { taskId: "bg-1", description: "Run Codex review", kind: "command" },
-          ],
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
           runtime: {
             status: "idle",
             activeRunId: null,
@@ -175,6 +176,28 @@ describe("resolveThreadListV2Status", () => {
       ),
     ).toBe("waiting");
   });
+
+  it.each([
+    { kind: "command", status: "ready" },
+    { kind: "monitor", status: "waiting" },
+  ] as const)(
+    "presents an unseen completion with a $kind roster as $status",
+    ({ kind, status }) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          latestRunId: RunId.make("run-background-completion"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+          lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+          pendingBackgroundTasks: [{ taskId: "background-work", kind }],
+        }),
+      );
+
+      expect(resolveThreadListV2Status(thread)).toBe(status);
+      expect(threadHasUnseenCompletion(thread)).toBe(true);
+    },
+  );
 
   it("resolves ready for quiescent threads", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(

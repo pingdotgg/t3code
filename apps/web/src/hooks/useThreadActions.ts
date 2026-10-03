@@ -219,6 +219,30 @@ function useMarkThreadUnread() {
   );
 }
 
+/**
+ * Clears a thread's Woke marker by recording a visit at the wake time.
+ * Servers with visited tracking own the watermark (thread.visit keeps the
+ * later of the stored and supplied values, so this syncs to every device);
+ * older servers keep the browser-local watermark.
+ */
+export function useAcknowledgeThreadWoke() {
+  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
+  return useCallback(
+    (target: ScopedThreadRef, wokeAt: string) => {
+      if (readEnvironmentSupportsVisitedTracking(target.environmentId)) {
+        void visitThreadMutation({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, visitedAt: wokeAt },
+        });
+        return;
+      }
+      markThreadVisited(scopedThreadKey(target), wokeAt);
+    },
+    [markThreadVisited, visitThreadMutation],
+  );
+}
+
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {

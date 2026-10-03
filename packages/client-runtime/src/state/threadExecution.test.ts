@@ -3,6 +3,9 @@ import {
   NodeId,
   MessageId,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderSessionId,
+  ProviderDriverKind,
   RunId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
@@ -15,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
@@ -94,6 +98,19 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, run("new", 2, "running")] }),
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
+  });
+
+  it("counts a wake run's activity from the start of the work it continues", () => {
+    const workStartedAt = DateTime.makeUnsafe("2026-07-28T09:20:00.000Z");
+    const wake = { ...run("wake", 2, "running"), workStartedAt };
+    expect(
+      deriveThreadRuntime({ ...v2Projection, runs: [run("prompt", 1, "completed"), wake] })
+        ?.activityStartedAt,
+    ).toBe("2026-07-28T09:20:00.000Z");
+    expect(
+      deriveThreadRuntime({ ...v2Projection, runs: [run("prompt", 1, "running")] })
+        ?.activityStartedAt,
+    ).toBe("2026-07-28T10:00:00.000Z");
   });
 
   it("keeps a subscription limit visible while later messages stay queued", () => {
@@ -478,16 +495,85 @@ describe("threadRuntimeCanArchive", () => {
 });
 
 describe("presentPendingBackgroundWork", () => {
+  it.each(["Subagent:", "Subagent:   "])(
+    "falls back to the subagent noun when %s has no display name",
+    (description) => {
+      const presentation = presentPendingBackgroundWork([
+        { taskId: "unnamed", kind: "subagent", description },
+      ]);
+
+      expect(presentation?.title).toBe("Waiting on a subagent");
+      expect(presentation?.items[0]?.label).toBe("subagent");
+    },
+  );
+
+  it.each([
+    "/root/luna_window_properties",
+    "Subagent: /root/luna_window_properties",
+    "/root/parent/luna_window_properties",
+  ])("uses the subagent display name for %s", (description) => {
+    const childThreadId = ThreadId.make("thread:luna");
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "luna", kind: "subagent", description, childThreadId },
+    ]);
+
+    expect(presentation).toEqual({
+      title: "Waiting on subagent Luna Window Properties",
+      items: [{ taskId: "luna", kind: "subagent", label: "Luna Window Properties", childThreadId }],
+      waiting: true,
+    });
+  });
+
+  it("formats subagent names in a mixed roster and preserves command descriptions", () => {
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "cmd", kind: "command", description: "/root/run_tests" },
+      { taskId: "luna", kind: "subagent", description: "/root/luna_window_properties" },
+      { taskId: "review", kind: "subagent", description: "Review src/math.ts" },
+    ]);
+
+    expect(presentation?.title).toBe("Waiting on 2 subagents and 1 command");
+    expect(presentation?.items.map((item) => item.label)).toEqual([
+      "Luna Window Properties",
+      "Review src/math.ts",
+      "/root/run_tests",
+    ]);
+  });
+
   it("names a single piece of work by kind", () => {
     expect(
       presentPendingBackgroundWork([
         { taskId: "a", kind: "subagent", description: "Review src/math.ts" },
       ])?.title,
     ).toBe("Waiting on subagent Review src/math.ts");
-    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "command" }])?.title).toBe(
-      "Waiting on a command",
+    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "monitor" }])?.title).toBe(
+      "Waiting on a monitor",
     );
     expect(presentPendingBackgroundWork([])).toBeNull();
+  });
+
+  // A command left running, such as a dev server, does not wake the agent.
+  it("says only commands are running, not waited on", () => {
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "dev", kind: "command", description: "Start the shared dev server" },
+      ]),
+    ).toMatchObject({ title: "Running: Start the shared dev server", waiting: false });
+    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "command" }])).toMatchObject({
+      title: "Running a command",
+      waiting: false,
+    });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "a", kind: "command", description: "vp run dev" },
+        { taskId: "b", kind: "command", description: "tailscale serve" },
+      ]),
+    ).toMatchObject({ title: "Running 2 commands", waiting: false });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "a", kind: "command", description: "vp run dev" },
+        { taskId: "b", kind: "monitor", description: "Watch PR checks" },
+      ]),
+    ).toMatchObject({ title: "Waiting on 1 command and 1 monitor", waiting: true });
   });
 
   it("groups work by kind, subagents first, and keeps each name", () => {
@@ -520,5 +606,74 @@ describe("presentPendingBackgroundWork", () => {
     expect(presentPendingBackgroundWork([{ taskId: "old", kind: "background_task" }])?.title).toBe(
       "Waiting on a background task",
     );
+  });
+});
+
+describe("provider-reported model selection", () => {
+  const selected = v2Projection.thread.modelSelection;
+  const reported = { ...selected, options: [{ id: "reasoningEffort", value: "default" }] };
+  const providerThread = {
+    id: ProviderThreadId.make("active"),
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: selected.instanceId,
+    providerSessionId: ProviderSessionId.make("session"),
+    appThreadId: v2Projection.thread.id,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle" as const,
+    firstRunOrdinal: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    nativeMetadata: { modelSelection: reported },
+  };
+  const projection = {
+    ...v2Projection,
+    thread: { ...v2Projection.thread, activeProviderThreadId: providerThread.id },
+    providerThreads: [providerThread],
+  };
+
+  it("reads only the active provider thread's reported selection", () => {
+    expect(deriveReportedModelSelection(projection)).toBe(reported);
+    expect(
+      deriveReportedModelSelection({
+        ...projection,
+        thread: { ...projection.thread, activeProviderThreadId: null },
+      }),
+    ).toBeNull();
+    expect(
+      deriveReportedModelSelection({
+        ...projection,
+        providerThreads: [
+          { ...providerThread, providerInstanceId: ProviderInstanceId.make("other") },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("shows the reported default in a subagent's effort label", () => {
+    const models = [
+      {
+        slug: selected.model,
+        name: selected.model,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "variant",
+              label: "Reasoning",
+              type: "select" as const,
+              options: [{ id: "high", label: "High" }],
+            },
+          ],
+        },
+      },
+    ];
+    const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
+    expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
+    expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
   });
 });

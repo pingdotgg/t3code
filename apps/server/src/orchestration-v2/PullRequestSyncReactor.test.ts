@@ -1,10 +1,16 @@
 import * as Stream from "effect/Stream";
 import {
+  EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
+  RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2Command as OrchestrationCommand,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationProjectShell,
   type PullRequestRef,
   type PullRequestStack,
@@ -171,6 +177,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
+  const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
 
   const summary: PullRequestService.PullRequestService["Service"]["summary"] = (
     input,
@@ -211,12 +218,17 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       // Mirrors the store's filter: active threads that have at least one link.
-      getThreadsWithPullRequests: () =>
+      getThreadsWithPullRequests: (threadId) =>
         Queue.offer(snapshotReads, undefined).pipe(
           Effect.andThen(Ref.get(snapshots)),
           Effect.map((snapshot) =>
             snapshot.threads
-              .filter((thread) => thread.archivedAt === null && thread.pullRequests.length > 0)
+              .filter(
+                (thread) =>
+                  (threadId === undefined || thread.id === threadId) &&
+                  thread.archivedAt === null &&
+                  thread.pullRequests.length > 0,
+              )
               .map((thread) => ({
                 id: thread.id,
                 projectId: thread.projectId,
@@ -233,7 +245,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
           Effect.andThen(Effect.die(new Error("pull request sync must not read the shell"))),
         ),
       dispatch,
-      streamDomainEvents: Stream.empty,
+      streamDomainEvents: Stream.fromQueue(domainEvents),
     }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
@@ -248,6 +260,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     linkCommands,
     summaryCalls,
     stackCalls,
+    domainEvents,
     layer: PullRequestSyncReactor.layer.pipe(Layer.provide(dependencies)),
   };
 });
@@ -271,6 +284,68 @@ const sweepAgain = Effect.fn("sweepPullRequestSyncHarness")(function* (
   yield* Queue.take(fixture.snapshotReads);
   yield* reactor.drain;
 });
+
+function runUpdated(
+  threadId: ThreadId,
+  status: OrchestrationV2Run["status"],
+): OrchestrationV2DomainEvent {
+  const runId = RunId.make(`run:${threadId}:1`);
+  const at = DateTime.makeUnsafe(NOW);
+  return {
+    type: "run.updated",
+    id: EventId.make(`event:${threadId}:${status}`),
+    threadId,
+    runId,
+    occurredAt: at,
+    payload: {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:${threadId}:1`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: at,
+      startedAt: at,
+      completedAt: at,
+      checkpointId: null,
+      contextHandoffId: null,
+    },
+  };
+}
+
+function commandRan(threadId: ThreadId, input: string): OrchestrationV2DomainEvent {
+  const runId = RunId.make(`run:${threadId}:1`);
+  const at = DateTime.makeUnsafe(NOW);
+  return {
+    type: "turn-item.updated",
+    id: EventId.make(`event:${threadId}:command`),
+    threadId,
+    runId,
+    occurredAt: at,
+    payload: {
+      id: TurnItemId.make(`item:${threadId}:command`),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "command_execution",
+      input,
+    },
+  };
+}
 
 /** What the reactor would have persisted, so the next sweep sees its own writes. */
 function applySync(
@@ -827,6 +902,62 @@ describe("PullRequestSyncReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
             [8],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads open links fresh only when a run that ran a merge command ends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const state = yield* Ref.make<PullRequestSummary["state"]>("open");
+        const invalidated = yield* Ref.make<ReadonlyArray<number>>([]);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("agent", { pullRequests: [makeLink(7, { state: "open" })] }),
+            makeThread("other", { pullRequests: [makeLink(9, { state: "open" })] }),
+          ]),
+          summary: (input) =>
+            Ref.get(state).pipe(
+              Effect.map((current) =>
+                makeSummary(input, current === "merged" ? { state: current, mergedAt: NOW } : {}),
+              ),
+            ),
+          invalidate: ({ reference }) =>
+            Ref.update(invalidated, (numbers) => [...numbers, reference?.number ?? -1]),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          // The agent merges from a shell during its turn, inside the summary cache window.
+          yield* Ref.set(state, "merged");
+          yield* Ref.set(fixture.summaryCalls, []);
+
+          yield* Queue.offerAll(fixture.domainEvents, [
+            // A run that only reads its pull request costs no host read when it ends.
+            commandRan(ThreadId.make("other"), "gh pr view 9"),
+            runUpdated(ThreadId.make("other"), "completed"),
+            commandRan(ThreadId.make("agent"), "gh pr merge 7 --squash 2>&1 | tail -3"),
+            runUpdated(ThreadId.make("agent"), "completed"),
+          ]);
+          // The agent thread's lookup, then the requested sweep.
+          yield* Queue.take(fixture.snapshotReads);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [7],
+          );
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => [
+              command.number,
+              command.snapshot.state,
+            ]),
+            [[7, "merged"]],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

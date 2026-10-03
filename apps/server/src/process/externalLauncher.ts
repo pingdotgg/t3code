@@ -28,13 +28,16 @@ import {
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -462,21 +465,21 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
 // the discovered set for a bounded window so repeat connects skip even the
 // per-command cache lookups in @t3tools/shared/shell.
 //
-// This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
-// first caller's Exit whatever it is, including an interrupt. Callers run this
-// on the connection fiber under a timeout (`resolveAvailableEditorsForConfig`),
-// so one client disconnecting mid-scan would cache the interrupt and replay it
-// to every later connect for the whole TTL, breaking `server.getConfig`
-// permanently. Storing only on success means an interrupted scan leaves the
-// cache untouched and the next connect simply rescans.
+// The scan runs on its own fiber in the service scope, and every caller awaits
+// that one scan. Callers apply a timeout (`resolveAvailableEditorsForConfig`)
+// and disconnect mid-connect; neither may cancel a scan other connects are
+// waiting on, or throw away work a slow host (a busy server at startup, a
+// long PATH) needs more than one connect to finish. A failed scan clears the
+// entry so the next caller starts over rather than replaying the failure.
 // Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
 // command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
 // adjustment cannot keep an expired entry alive.
 const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
 
 interface EditorDiscoveryCacheEntry {
-  readonly editors: ReadonlyArray<EditorId>;
-  readonly expiresAtNanos: bigint;
+  readonly scan: Deferred.Deferred<ReadonlyArray<EditorId>>;
+  /** Undefined while the scan is still running. */
+  readonly expiresAtNanos: bigint | undefined;
 }
 
 /**
@@ -760,27 +763,57 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
+  const scope = yield* Scope.Scope;
   const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
     Option.none(),
   );
-  const cachedAvailableEditors = Effect.gen(function* () {
-    const nowNanos = yield* Clock.currentTimeNanos;
-    const entry = yield* Ref.get(editorDiscoveryCache);
-    if (Option.isSome(entry) && entry.value.expiresAtNanos > nowNanos) {
-      return entry.value.editors;
-    }
-    const editors = yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
+  const runEditorDiscovery = (scan: Deferred.Deferred<ReadonlyArray<EditorId>>) =>
+    provideCommandResolutionServices(resolveAvailableEditors()).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.onExit((exit) =>
+        Effect.gen(function* () {
+          const expiresAtNanos = (yield* Clock.currentTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
+          yield* Ref.update(editorDiscoveryCache, (current) =>
+            Option.isNone(current) || current.value.scan !== scan
+              ? current
+              : Exit.isSuccess(exit)
+                ? Option.some({ scan, expiresAtNanos })
+                : Option.none(),
+          );
+          yield* Deferred.done(scan, exit);
+        }),
+      ),
+      Effect.interruptible,
+      Effect.forkIn(scope),
     );
-    yield* Ref.set(
+  // Claiming the cache entry and starting its scan must not be split by an
+  // interrupt, or the entry would wait on a scan that never runs.
+  const acquireEditorDiscovery = Effect.gen(function* () {
+    const nowNanos = yield* Clock.currentTimeNanos;
+    const [scan, isNewScan] = yield* Ref.modify(
       editorDiscoveryCache,
-      Option.some({
-        editors,
-        expiresAtNanos: nowNanos + EDITOR_DISCOVERY_CACHE_TTL_NANOS,
-      }),
+      (
+        current,
+      ): [
+        [EditorDiscoveryCacheEntry["scan"], boolean],
+        Option.Option<EditorDiscoveryCacheEntry>,
+      ] => {
+        if (
+          Option.isSome(current) &&
+          (current.value.expiresAtNanos === undefined || current.value.expiresAtNanos > nowNanos)
+        ) {
+          return [[current.value.scan, false], current];
+        }
+        const scan = Deferred.makeUnsafe<ReadonlyArray<EditorId>>();
+        return [[scan, true], Option.some({ scan, expiresAtNanos: undefined })];
+      },
     );
-    return editors;
-  });
+    if (isNewScan) {
+      yield* runEditorDiscovery(scan);
+    }
+    return scan;
+  }).pipe(Effect.uninterruptible);
+  const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
 
   return ExternalLauncher.of({
     resolveAvailableEditors: () => cachedAvailableEditors,
