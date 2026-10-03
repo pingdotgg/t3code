@@ -106,11 +106,11 @@ export function resolveProviderInstanceGlyphDriver(input: {
 
 /**
  * Font size for a badge label drawn as the glyph, as a fraction of the glyph's
- * width: short labels fill it, three characters still fit.
+ * width. Sized so the widest bold letters and emoji still fit on one line.
  */
 export function providerInstanceInitialsGlyphScale(label: string): number {
   const length = Array.from(label).length;
-  return length <= 1 ? 0.72 : length === 2 ? 0.54 : 0.4;
+  return length <= 1 ? 0.7 : length === 2 ? 0.46 : 0.32;
 }
 
 /** Whether an instance draws its badge label in place of a logo. */

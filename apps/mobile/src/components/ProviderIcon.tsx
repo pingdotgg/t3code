@@ -92,6 +92,8 @@ export function ProviderIcon(props: ProviderIconProps) {
     return (
       <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
         <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
           className={appearance?.accentColor ? undefined : "text-foreground-muted"}
           style={{
             fontSize,

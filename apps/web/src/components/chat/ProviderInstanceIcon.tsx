@@ -133,7 +133,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           aria-hidden
         >
           <span
-            className="font-bold leading-none tracking-tight"
+            className="font-bold leading-none whitespace-nowrap"
             style={{ fontSize: `${providerInstanceInitialsGlyphScale(badgeLabel) * 100}cqw` }}
           >
             {badgeLabel}
