@@ -7,6 +7,7 @@ import {
   PullRequestOperationError,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2Command as OrchestrationCommand,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -312,6 +313,36 @@ function runUpdated(
       completedAt: at,
       checkpointId: null,
       contextHandoffId: null,
+    },
+  };
+}
+
+function commandRan(threadId: ThreadId, input: string): OrchestrationV2DomainEvent {
+  const runId = RunId.make(`run:${threadId}:1`);
+  const at = DateTime.makeUnsafe(NOW);
+  return {
+    type: "turn-item.updated",
+    id: EventId.make(`event:${threadId}:command`),
+    threadId,
+    runId,
+    occurredAt: at,
+    payload: {
+      id: TurnItemId.make(`item:${threadId}:command`),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "command_execution",
+      input,
     },
   };
 }
@@ -877,7 +908,7 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("reads the open links of a thread fresh when its run ends", () =>
+  it.effect("reads open links fresh only when a run that ran a merge command ends", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -904,8 +935,14 @@ describe("PullRequestSyncReactor", () => {
           yield* Ref.set(state, "merged");
           yield* Ref.set(fixture.summaryCalls, []);
 
-          yield* Queue.offer(fixture.domainEvents, runUpdated(ThreadId.make("agent"), "completed"));
-          // The ended run's thread lookup, then the requested sweep.
+          yield* Queue.offerAll(fixture.domainEvents, [
+            // A run that only reads its pull request costs no host read when it ends.
+            commandRan(ThreadId.make("other"), "gh pr view 9"),
+            runUpdated(ThreadId.make("other"), "completed"),
+            commandRan(ThreadId.make("agent"), "gh pr merge 7 --squash 2>&1 | tail -3"),
+            runUpdated(ThreadId.make("agent"), "completed"),
+          ]);
+          // The agent thread's lookup, then the requested sweep.
           yield* Queue.take(fixture.snapshotReads);
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
