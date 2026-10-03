@@ -250,6 +250,12 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        providerAppearance: {
+          icon: provider?.icon ?? instanceConfig?.icon,
+          badgeLabel: provider?.badgeLabel ?? instanceConfig?.badgeLabel,
+          displayName: providerLabel,
+          accentColor: provider?.accentColor ?? instanceConfig?.accentColor,
+        },
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)
