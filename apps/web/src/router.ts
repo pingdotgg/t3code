@@ -1,8 +1,10 @@
 import { createRouter, RouterHistory } from "@tanstack/react-router";
 
+import { trackNavigationHistory } from "./navigationHistory";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter(history: RouterHistory) {
+  trackNavigationHistory(history);
   return createRouter({
     routeTree,
     history,
