@@ -53,6 +53,7 @@ import {
   GitIcon,
   GitLabIcon,
   ForgejoIcon,
+  PhabricatorIcon,
   JujutsuIcon,
   type Icon,
 } from "../Icons";
@@ -79,6 +80,7 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   github: GitHubIcon,
   gitlab: GitLabIcon,
   forgejo: ForgejoIcon,
+  phabricator: PhabricatorIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
 };

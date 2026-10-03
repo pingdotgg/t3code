@@ -67,6 +67,7 @@ export function PullRequestThreadDialog({
     [gitStatus?.sourceControlProvider],
   );
   const terminology = sourceControlPresentation.terminology;
+  const supportsWorktree = gitStatus?.sourceControlProvider?.kind !== "phabricator";
   const SourceControlIcon = sourceControlPresentation.Icon;
 
   useEffect(() => {
@@ -80,8 +81,14 @@ export function PullRequestThreadDialog({
     };
   }, [open]);
 
-  const parsedReference = parsePullRequestReference(reference);
-  const parsedDebouncedReference = parsePullRequestReference(debouncedReference);
+  const parsedReference = parsePullRequestReference(
+    reference,
+    gitStatus?.sourceControlProvider?.kind,
+  );
+  const parsedDebouncedReference = parsePullRequestReference(
+    debouncedReference,
+    gitStatus?.sourceControlProvider?.kind,
+  );
   const sourceControlScope = useMemo(
     () => ({
       environmentId,
@@ -202,7 +209,9 @@ export function PullRequestThreadDialog({
           </DialogTitle>
           <DialogDescription>
             Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            {supportsWorktree
+              ? " the draft thread in the main repo or in a dedicated worktree."
+              : " the draft thread in the main repo. Differential revisions require Local checkout with Arcanist."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -227,7 +236,7 @@ export function PullRequestThreadDialog({
                 }
                 event.preventDefault();
                 if (!isResolving && !preparePullRequestThreadAction.isPending) {
-                  void handleConfirm("worktree");
+                  void handleConfirm(supportsWorktree ? "worktree" : "local");
                 }
               }}
             />
@@ -292,6 +301,7 @@ export function PullRequestThreadDialog({
               void handleConfirm("worktree");
             }}
             disabled={
+              !supportsWorktree ||
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||

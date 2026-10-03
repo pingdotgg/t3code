@@ -45,6 +45,21 @@ Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
 glab auth login
 ```
 
+### Phabricator
+
+Install [Arcanist](https://secure.phabricator.com/book/phabricator/article/arcanist/) on the
+T3 Code server and authenticate with `arc install-certificate`. Set `phabricator.uri` in your
+project’s `.arcconfig` to the review server’s URL. The Git remote and review server must share
+a hostname. Phabricator and Phorge hostnames, and `/diffusion/` or `/source/` clone URLs, are
+recognized automatically; other hostnames use `.arcconfig` for detection.
+
+Open **Pull requests** to browse Differential revisions, read descriptions, and view patches.
+Listings cover the review host, since Differential IDs are shared across repositories. Link a
+`https://your-server/D123` URL to a thread to keep its status updated; the link dialog also accepts
+`D123` for a Phabricator project. Use Arcanist or the host’s website to create revisions and
+participate in reviews. T3 Code’s integration is read-only; checkout applies a revision with `arc patch`.
+Choose **Local** when checking out a revision. Differential worktree checkout is not supported.
+
 ### Bitbucket
 
 Open **Settings → Source Control**, expand **Bitbucket**, and choose how to sign in:

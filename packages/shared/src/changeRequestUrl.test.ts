@@ -188,3 +188,20 @@ describe("changeRequestUrlFor", () => {
     });
   });
 });
+
+it("tracks host-wide Differential revision URLs on arbitrary self-hosted domains", () => {
+  expect(parseChangeRequestUrl("https://reviews.example:8443/D42?diff=7#comment")).toEqual({
+    host: "reviews.example",
+    authority: "reviews.example:8443",
+    repository: "differential",
+    number: 42,
+  });
+  expect(parseChangeRequestUrl("https://reviews.example/D0")).toBeNull();
+  expect(parseChangeRequestUrl("https://reviews.example/D42other")).toBeNull();
+  expect(changeRequestUrlFor("phabricator", "reviews.example", "differential", 42)).toBe(
+    "https://reviews.example/D42",
+  );
+  expect(siblingPullRequestUrl("https://reviews.example/D42?diff=7", 43)).toBe(
+    "https://reviews.example/D43",
+  );
+});

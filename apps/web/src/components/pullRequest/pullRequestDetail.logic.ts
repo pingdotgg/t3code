@@ -135,6 +135,8 @@ export function pullRequestCheckoutCommand(
       }
       return `git clone --single-branch --branch ${headBranch} https://bitbucket.org/${headRepositoryNameWithOwner}.git t3code-pr-${number}`;
     }
+    case "phabricator":
+      return `arc patch D${number}`;
     case "unknown":
       return null;
   }
@@ -149,7 +151,13 @@ export function loadingPullRequestCheckoutCommand(
   const provider =
     identity?.provider ??
     (host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null);
-  if (provider !== "github" && provider !== "gitlab" && provider !== "azure-devops") return null;
+  if (
+    provider !== "github" &&
+    provider !== "gitlab" &&
+    provider !== "azure-devops" &&
+    provider !== "phabricator"
+  )
+    return null;
   if (identity?.provider !== undefined && host && pullRequestHostOf(identity, provider) !== host) {
     return null;
   }

@@ -156,6 +156,17 @@ describe("pull request checkout commands", () => {
     expect(loadingPullRequestCheckoutCommand(reference("github.com"), enterprise)).toBeNull();
   });
 
+  it("keeps Differential checkout available while detail is pending and checks the review host", () => {
+    const review = {
+      ...identity("phabricator", "reviews.example/source/repo"),
+      webUrl: "https://reviews.example:8443",
+    };
+    expect(loadingPullRequestCheckoutCommand(reference("reviews.example:8443"), review)).toBe(
+      "arc patch D42",
+    );
+    expect(loadingPullRequestCheckoutCommand(reference("other.example"), review)).toBeNull();
+  });
+
   it("does not infer a number-only command without a trusted provider", () => {
     expect(loadingPullRequestCheckoutCommand(reference(), undefined)).toBeNull();
     expect(

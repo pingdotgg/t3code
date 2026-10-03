@@ -1271,6 +1271,11 @@ const PROVIDER_REQUIREMENT: Partial<
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
   },
+  phabricator: {
+    missing: "Install Arcanist (`arc`) on the T3 Code server to track Differential revisions.",
+    unauthenticated:
+      "Authenticate Arcanist with `arc install-certificate` on the T3 Code server and retry.",
+  },
   forgejo: {
     missing:
       "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
@@ -1307,15 +1312,20 @@ export function pullRequestHostOf(
   identity:
     | {
         readonly canonicalKey?: string | undefined;
+        readonly webUrl?: string | undefined;
         readonly locator?: { readonly remoteUrl: string } | undefined;
       }
     | null
     | undefined,
   kind: SourceControlProviderKind,
 ): string {
-  if (kind === "forgejo") {
+  if (kind === "forgejo" || kind === "phabricator") {
     try {
-      const remote = new URL(identity?.locator?.remoteUrl ?? "");
+      const remote = new URL(
+        (kind === "phabricator" ? identity?.webUrl : undefined) ??
+          identity?.locator?.remoteUrl ??
+          "",
+      );
       if (remote.protocol === "http:" || remote.protocol === "https:")
         return remote.host.toLowerCase();
     } catch {

@@ -2354,15 +2354,24 @@ export const make = Effect.gen(function* () {
     };
     return yield* Effect.gen(function* () {
       const normalizedReference = normalizePullRequestReference(input.reference);
+      const provider = yield* sourceControlProvider(input.cwd);
+      if (input.mode === "worktree" && provider.kind === "phabricator") {
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd: input.cwd,
+          detail:
+            "Differential revisions do not support worktree checkout. Use Local to apply the revision with Arcanist.",
+        });
+      }
       const rootWorktreePath = yield* canonicalizeExistingPath(input.cwd);
-      const pullRequestSummary = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
+      const pullRequestSummary = yield* provider.getChangeRequest({
         cwd: input.cwd,
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
+        yield* provider.checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
           force: true,

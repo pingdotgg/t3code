@@ -527,6 +527,7 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unknown",
           account: Option.none(),
         },
+        { kind: "phabricator", status: "missing", auth: "unknown", account: Option.none() },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -665,6 +666,7 @@ Logged in to gitlab.com as gitlab-user
           account: Option.some("forgejo-user"),
           detail: Option.none(),
         },
+        { kind: "phabricator", auth: "unknown", account: Option.none(), detail: Option.none() },
       ],
     );
   }).pipe(Effect.provide(testLayer));

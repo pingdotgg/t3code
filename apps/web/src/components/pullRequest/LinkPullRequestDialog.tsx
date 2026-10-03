@@ -82,6 +82,7 @@ export function resolveLinkPullRequestInput(input: {
   readonly reference: string;
   readonly project: {
     readonly host: string;
+    readonly provider?: SourceControlProviderKind;
     readonly repository: string;
     readonly webUrl: (number: number) => string | null;
   } | null;
@@ -90,7 +91,7 @@ export function resolveLinkPullRequestInput(input: {
   const parsed =
     parseChangeRequestUrl(input.reference.trim()) !== null
       ? input.reference.trim()
-      : parsePullRequestReference(input.reference);
+      : parsePullRequestReference(input.reference, input.project?.provider);
   if (parsed === null) return null;
   const url = parseChangeRequestUrl(parsed);
   if (url !== null) {
@@ -136,18 +137,23 @@ function LinkPullRequestDialog({
     const identity = project?.repositoryIdentity;
     if (!project || !identity) return null;
     const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
+      identity.provider === "phabricator"
+        ? "differential"
+        : (identity.displayName ??
+          (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null));
     if (repository === null) return null;
     const kind = identity.provider as SourceControlProviderKind;
     const host = pullRequestHostOf(identity, kind);
     return {
       host,
+      provider: kind,
       repository,
       webUrl: (number: number) =>
-        kind === "forgejo" && identity.webUrl
-          ? `${identity.webUrl.replace(/\/+$/, "")}/pulls/${number}`
-          : changeRequestWebUrl(kind, host, repository, number, identity.locator.remoteUrl),
+        kind === "phabricator" && identity.webUrl
+          ? `${identity.webUrl.replace(/\/+$/, "")}/D${number}`
+          : kind === "forgejo" && identity.webUrl
+            ? `${identity.webUrl.replace(/\/+$/, "")}/pulls/${number}`
+            : changeRequestWebUrl(kind, host, repository, number, identity.locator.remoteUrl),
     };
   }, [environmentProjects, projectId]);
   const linking = usePullRequestLinking(threadRef.environmentId);

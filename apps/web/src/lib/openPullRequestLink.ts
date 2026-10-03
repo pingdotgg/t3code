@@ -46,7 +46,12 @@ function matchesChangeRequestAuthority(
 ): boolean {
   if (link.authority === undefined) return true;
   try {
-    const remote = new URL(project.repositoryIdentity?.locator.remoteUrl ?? "");
+    const identity = project.repositoryIdentity;
+    const remote = new URL(
+      (identity?.provider === "phabricator" ? identity.webUrl : undefined) ??
+        identity?.locator.remoteUrl ??
+        "",
+    );
     if (remote.protocol === "http:" || remote.protocol === "https:") {
       return remote.host.toLowerCase() === link.authority;
     }
@@ -83,9 +88,7 @@ export function findProjectForChangeRequest(
         canonicalRepositoryKey(`${link.host}/${link.repository}`.toLowerCase())
       );
     }
-    const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
+    const repository = sourceControlRepositorySelector(identity);
     return (
       repository !== null &&
       repository.toLowerCase() === link.repository.toLowerCase() &&
