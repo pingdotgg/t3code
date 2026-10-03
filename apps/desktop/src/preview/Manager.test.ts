@@ -2333,6 +2333,18 @@ describe("PreviewManager", () => {
         expect(Exit.isSuccess(retriedExit)).toBe(true);
         expect(capturePage).toHaveBeenCalledTimes(3);
 
+        // A compositor that throttles hidden windows can reject for over a second.
+        capturePage.mockClear();
+        for (let i = 0; i < 10; i++)
+          capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        const slowFiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(1_500);
+        const slowExit = yield* Fiber.join(slowFiber);
+        expect(Exit.isSuccess(slowExit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledTimes(11);
+
         // A persistent failure still surfaces once the retries are spent.
         capturePage.mockClear();
         const captureCause = new Error("capture failed");
