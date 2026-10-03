@@ -795,6 +795,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  // The menu portal sits outside the collapsed shell's inert subtree.
+  if (props.mode === "inline" && props.open === false && addSurfaceMenuOpen) {
+    setAddSurfaceMenuOpen(false);
+  }
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
     canScrollLeft: false,
