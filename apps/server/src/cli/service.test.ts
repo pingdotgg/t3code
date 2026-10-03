@@ -3,6 +3,7 @@ import { assert, expect, it } from "@effect/vitest";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,6 +14,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
+  formatServiceChange,
   formatServiceStatus,
   offerServiceDuringOnboarding,
   reconcileService,
@@ -40,6 +42,24 @@ it("reports the installed service version and host paths", () => {
       "  Logs: /home/me/.t3/userdata/logs/boot-service.log",
     ].join("\n"),
   );
+});
+
+it("does not claim a handed-off install has finished", () => {
+  const plan = {
+    program: ["/home/me/.t3/runtime/versions/0.0.30/t3", "__service-launcher"],
+    baseDir: "/home/me/.t3",
+    logPath: status.logPath,
+    unitPath: status.unitPath,
+  };
+  expect(formatServiceChange({ changed: true, previouslyInstalled: true, plan }, "0.0.30")).toBe(
+    `Updated T3 Code service with t3@0.0.30.\nLogs: ${status.logPath}`,
+  );
+  const handedOff = formatServiceChange(
+    { changed: true, previouslyInstalled: true, plan: { ...plan, handedOff: true } },
+    "0.0.30",
+  );
+  expect(handedOff).not.toContain("Updated");
+  expect(handedOff).toContain(`Result: ${status.logPath}`);
 });
 
 it("gives a direct repair command for a stale service", () => {
@@ -97,14 +117,17 @@ it("reports a newer installed service and tells the CLI to catch up to it", () =
 
 const newerServiceStatus = { ...status, current: false, installedVersion: "999.0.0" };
 
-function makeTestService(serviceStatus: BootService.BootServiceStatus) {
+function makeTestService(
+  serviceStatus: BootService.BootServiceStatus,
+  restartOutcome: "restarted" | "queued" = "restarted",
+) {
   const installOptions: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
   const restarts: Array<true> = [];
   const service = BootService.BootService.of({
     status: Effect.succeed(serviceStatus),
     restart: Effect.sync(() => {
       restarts.push(true);
-      return serviceStatus.installed;
+      return serviceStatus.installed ? restartOutcome : "skipped";
     }),
     install: (options) =>
       Effect.sync(() => {
@@ -142,6 +165,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
 
       expect(restarts).toEqual([true]);
       expect(installOptions).toEqual([]);
+    }),
+  );
+
+  it.effect("restart from inside the service says the restart is only queued", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const { service } = makeTestService({ ...status, installedVersion: "0.0.30" }, "queued");
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, service),
+      );
+      const lines: Array<string> = [];
+      const testConsole = {
+        ...globalThis.console,
+        log: (...args: ReadonlyArray<unknown>) => {
+          lines.push(args.map(String).join(" "));
+        },
+      } satisfies Console.Console;
+
+      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "restart",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcessEnvironment, {}),
+        Effect.provideService(Console.Console, testConsole),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      const output = lines.join("\n");
+      expect(output).not.toContain("Restarted");
+      expect(output).toContain("Queued a restart of the T3 Code service on t3@0.0.30");
+      expect(output).toContain(`Logs: ${status.logPath}`);
     }),
   );
 
@@ -246,7 +302,7 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
       Effect.provide(NodeServices.layer),
     );
 
-    expect(ready).toBe(false);
+    expect(ready).toBe("skipped");
     expect(installOptions).toEqual([]);
   }),
 );
@@ -262,7 +318,7 @@ it.effect("keeps onboarding successful when a newer version appears before insta
       ),
     );
 
-    expect(ready).toBe(false);
+    expect(ready).toBe("skipped");
   }),
 );
 
@@ -271,6 +327,6 @@ it.effect("keeps the manual-server fallback when background prerequisites fail",
     const ready = yield* recoverServiceOnboardingOffer(
       Effect.fail(new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" })),
     );
-    expect(ready).toBe(false);
+    expect(ready).toBe("skipped");
   }),
 );
