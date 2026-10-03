@@ -4367,6 +4367,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
+      // Ctrl+J / Ctrl+K belong to an open menu even while it has no items;
+      // with no menu they keep their native editing action.
+      if (event.key !== key) return menuIsActive;
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
     }
     if (submissionIntent) {

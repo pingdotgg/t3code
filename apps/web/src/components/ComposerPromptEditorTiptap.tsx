@@ -82,6 +82,7 @@ import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/provider
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
+import { listNavigationKeyFromEvent } from "../keybindings";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
@@ -997,7 +998,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             });
           }
           if (!handler) return false;
-          const handled = handler(event.key, event);
+          // Ctrl+J / Ctrl+K reach the composer as ArrowDown / ArrowUp on macOS.
+          const handled = handler(listNavigationKeyFromEvent(event) ?? event.key, event);
           if (handled) {
             event.preventDefault();
             event.stopPropagation();

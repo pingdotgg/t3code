@@ -1,4 +1,4 @@
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, it, vi } from "vite-plus/test";
 import {
   compileResolvedKeybindingsConfig,
   DEFAULT_RESOLVED_KEYBINDINGS,
@@ -19,6 +19,8 @@ import {
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
+  listNavigationKeyFromEvent,
+  redirectListNavigationKey,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -1070,6 +1072,104 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("listNavigationKeyFromEvent", () => {
+  it("maps Ctrl+J and Ctrl+K to down and up on macOS", () => {
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true }), "MacIntel"),
+      "ArrowDown",
+    );
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true }), "MacIntel"),
+      "ArrowUp",
+    );
+  });
+
+  it("matches the J key on non-Latin macOS layouts", () => {
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "о", code: "KeyJ", ctrlKey: true }), "MacIntel"),
+      "ArrowDown",
+    );
+  });
+
+  it("leaves Ctrl+J and Ctrl+K to the terminal and palette where mod is Ctrl", () => {
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true }), "Win32"));
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true }), "Linux x86_64"));
+  });
+
+  it("ignores Cmd, extra modifiers, bare letters, and keyup", () => {
+    const mac = "MacIntel";
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j", metaKey: true }), mac));
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true, shiftKey: true }), mac),
+    );
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true, altKey: true }), mac),
+    );
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j" }), mac));
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ type: "keyup", key: "j", ctrlKey: true }), mac),
+    );
+  });
+});
+
+describe("redirectListNavigationKey", () => {
+  function redirect(ariaExpanded: string | null) {
+    const dispatched: Array<{ type: string; key: string }> = [];
+    let prevented = false;
+    vi.stubGlobal(
+      "KeyboardEvent",
+      class extends Event {
+        key: string;
+        constructor(type: string, init: KeyboardEventInit) {
+          super(type, init);
+          this.key = init.key ?? "";
+        }
+      },
+    );
+    try {
+      const redirected = redirectListNavigationKey(
+        {
+          nativeEvent: event({ type: "keydown", key: "k", ctrlKey: true }),
+          currentTarget: {
+            getAttribute: (name) => (name === "aria-expanded" ? ariaExpanded : null),
+            dispatchEvent: (replayed) => {
+              dispatched.push({ type: replayed.type, key: (replayed as KeyboardEvent).key });
+              return true;
+            },
+          },
+          preventDefault: () => {
+            prevented = true;
+          },
+        },
+        "MacIntel",
+      );
+      return { redirected, prevented, dispatched };
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it("replays Ctrl+K as ArrowUp while the list is open", () => {
+    assert.deepStrictEqual(redirect("true"), {
+      redirected: true,
+      prevented: true,
+      dispatched: [{ type: "keydown", key: "ArrowUp" }],
+    });
+  });
+
+  it("replays Ctrl+K in inline lists, which have no expanded state", () => {
+    assert.isTrue(redirect(null).redirected);
+  });
+
+  it("keeps native Ctrl+K when the popup is closed", () => {
+    assert.deepStrictEqual(redirect("false"), {
+      redirected: false,
+      prevented: false,
+      dispatched: [],
+    });
   });
 });
 

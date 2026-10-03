@@ -3,6 +3,7 @@
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 
+import { redirectListNavigationKey } from "~/keybindings";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -15,6 +16,7 @@ function AutocompleteInput({
   showClear = false,
   startAddon,
   size,
+  onKeyDown,
   ...props
 }: Omit<AutocompletePrimitive.Input.Props, "size"> & {
   showTrigger?: boolean;
@@ -48,6 +50,10 @@ function AutocompleteInput({
         data-slot="autocomplete-input"
         render={<Input nativeInput size={sizeValue} />}
         {...props}
+        onKeyDown={(event) => {
+          if (redirectListNavigationKey(event)) return;
+          onKeyDown?.(event);
+        }}
       />
       {showTrigger && (
         <AutocompleteTrigger
