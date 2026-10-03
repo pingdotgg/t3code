@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import type { AntigravityAuthMethod, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -22,7 +24,22 @@ const AcpToken = Schema.Struct({
   refresh_token: Schema.String,
 });
 const decodeAcpToken = Schema.decodeEffect(Schema.fromJsonString(AcpToken));
-const AccessToken = Schema.Struct({ access_token: Schema.String });
+const AccessToken = Schema.Struct({
+  access_token: Schema.String,
+  id_token: Schema.optional(Schema.String),
+});
+const decodeIdTokenClaims = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ sub: Schema.String })),
+);
+
+function googleAccountFingerprint(idToken: string | undefined) {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return undefined;
+  const claims = decodeIdTokenClaims(Buffer.from(payload, "base64url").toString("utf8"));
+  return Option.isSome(claims)
+    ? NodeCrypto.createHash("sha256").update("antigravity\0").update(claims.value.sub).digest("hex")
+    : undefined;
+}
 
 const QuotaSummary = Schema.Struct({
   groups: Schema.optional(
@@ -44,7 +61,11 @@ const QuotaSummary = Schema.Struct({
   ),
 });
 
-function antigravityQuotaSummaryToLimits(summary: typeof QuotaSummary.Type, checkedAt: string) {
+function antigravityQuotaSummaryToLimits(
+  summary: typeof QuotaSummary.Type,
+  checkedAt: string,
+  credentialFingerprint: string | undefined,
+) {
   const windows = (summary.groups ?? []).flatMap((group) => {
     const scope = group.displayName?.replace(/\s+models$/i, "").trim();
     return (group.buckets ?? []).flatMap((bucket): ServerProviderUsageWindow[] => {
@@ -53,7 +74,7 @@ function antigravityQuotaSummaryToLimits(summary: typeof QuotaSummary.Type, chec
       if (!id || remaining === undefined || !Number.isFinite(remaining)) return [];
       const kind =
         bucket.window === "weekly" ? "weekly" : bucket.window === "monthly" ? "monthly" : "other";
-      const period = kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : undefined;
+      const period = kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : bucket.window;
       const reset = bucket.resetTime ? DateTime.make(bucket.resetTime) : Option.none();
       return [
         {
@@ -68,7 +89,10 @@ function antigravityQuotaSummaryToLimits(summary: typeof QuotaSummary.Type, chec
     });
   });
   return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
+    ? {
+        ...makeUsageLimits({ checkedAt, windows }),
+        ...(credentialFingerprint ? { credentialFingerprint } : {}),
+      }
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
@@ -110,7 +134,11 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummary)),
         );
-      return antigravityQuotaSummaryToLimits(summary, checkedAt);
+      return antigravityQuotaSummaryToLimits(
+        summary,
+        checkedAt,
+        googleAccountFingerprint(token.id_token),
+      );
     }).pipe(
       Effect.timeout("15 seconds"),
       Effect.orElseSucceed(() =>
