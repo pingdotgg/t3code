@@ -272,6 +272,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       ),
   });
 
+  const scope = yield* Effect.scope;
   const onSessionStarted = Effect.fn("AntigravityProvider.onSessionStarted")(function* (
     started: AcpSessionRuntimeStartResult,
     cwd?: string,
@@ -320,6 +321,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
+    if (before.draft.auth.status !== "authenticated" && options.readUsageLimits) {
+      yield* managed.refresh.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
+    }
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
