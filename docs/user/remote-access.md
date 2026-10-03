@@ -51,6 +51,19 @@ If a server is already running, generate a fresh link without restarting it:
 t3 pair
 ```
 
+If an existing reverse proxy exposes the server at a different address, use that
+public origin for the pairing link and QR code:
+
+```bash
+t3 pair --base-url https://my-host.my-tailnet.ts.net
+```
+
+The command still finds the running local server and creates the token there.
+It does not configure or probe your proxy. Use an absolute HTTP or HTTPS URL
+that reaches the client web origin (the web port for a development server).
+Pairing uses `/pair` at that origin; URL path prefixes are not retained. This
+flag cannot be combined with `--tailscale`.
+
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
 in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address

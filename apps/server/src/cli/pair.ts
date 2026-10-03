@@ -463,6 +463,32 @@ const labelFlag = Flag.String("label").pipe(
   Flag.optional,
 );
 
+const baseUrlFlag = Flag.String("base-url").pipe(
+  Flag.withSchema(
+    Schema.URLFromString.check(
+      Schema.makeFilter(
+        (url) =>
+          url.protocol === "http:" ||
+          url.protocol === "https:" ||
+          "--base-url must be an absolute HTTP or HTTPS URL.",
+      ),
+    ),
+  ),
+  Flag.withDescription(
+    "Public HTTP(S) origin for the pairing link and QR code; must reach the client web origin. Does not configure or probe the proxy. Cannot combine with --tailscale.",
+  ),
+  Flag.optional,
+);
+
+class ConflictingPairOptionsError extends Schema.TaggedError<ConflictingPairOptionsError>()(
+  "ConflictingPairOptionsError",
+  {},
+) {
+  override get message(): string {
+    return "--base-url cannot be combined with --tailscale.";
+  }
+}
+
 const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDescription(
     "Publish the server over Tailscale Serve HTTPS and pair through the tailnet URL.",
@@ -478,6 +504,7 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
 
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
+  baseUrl: baseUrlFlag,
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,
@@ -488,6 +515,9 @@ export const pairCommand = Command.make("pair", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      if (Option.isSome(flags.baseUrl) && flags.tailscale) {
+        return yield* new ConflictingPairOptionsError();
+      }
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       // Default to Warn so storage/migration chatter cannot bury the QR code;
       // an explicit --log-level still wins.
@@ -505,13 +535,20 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
       } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        pairingBaseUrl = Option.match(flags.baseUrl, {
+          onNone: () => resolveDirectPairingBaseUrl(target.state),
+          onSome: (url) => url.toString(),
+        });
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
             "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
           );
         }
-        if (target.variant === "dev" && target.state.devUrl === undefined) {
+        if (
+          Option.isNone(flags.baseUrl) &&
+          target.variant === "dev" &&
+          target.state.devUrl === undefined
+        ) {
           notes.push(
             "This dev server did not record its web URL; restart it so pairing can go through the web origin.",
           );
