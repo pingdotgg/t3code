@@ -704,7 +704,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [modelListContentSize, setModelListContentSize] = useState(
     () => filteredItemKeys.length * MODEL_LIST_ESTIMATED_ITEM_SIZE,
   );
-  const [searchMinHeight, setSearchMinHeight] = useState(0);
+  const [searchHeight, setSearchHeight] = useState(0);
   useLayoutEffect(
     () => modelListRef.current?.getState().listen("totalSize", setModelListContentSize),
     [],
@@ -830,8 +830,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <div
         ref={pickerContentRef}
         className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
-        // Don't shrink while searching, so the input stays put when the popover opens upward.
-        style={isSearching ? { minHeight: searchMinHeight } : undefined}
+        // Hold the height from when the search started; results scroll instead of resizing.
+        style={isSearching ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -907,8 +907,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               placeholder="Search models..."
               value={searchQuery}
               onChange={(e) => {
-                const height = pickerContentRef.current?.offsetHeight ?? 0;
-                setSearchMinHeight((min) => (isSearching ? Math.max(min, height) : height));
+                if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
                 setSearchQuery(e.target.value);
               }}
               onKeyDown={(e) => {
