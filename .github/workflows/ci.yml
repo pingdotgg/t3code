@@ -13,13 +13,16 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Blacksmith runners only exist under the pingdotgg org. Every job picks its
+# runner with `case(github.repository_owner == 'pingdotgg', <blacksmith>, <github-hosted>)`
+# so forks run the same CI on GitHub-hosted runners. New jobs should do the same.
 jobs:
   # Lint, typecheck, and the desktop build each get a runner so they run side by
   # side instead of one after another. The `Check` job at the end of this file
   # passes only when every other job does.
   lint:
     name: Lint
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -57,7 +60,7 @@ jobs:
 
   typecheck:
     name: Typecheck
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -83,7 +86,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -137,7 +140,7 @@ jobs:
   # per runner is unchanged.
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -201,7 +204,7 @@ jobs:
   # started last and ran alone for about 40s after everything else finished.
   test_web:
     name: Test Web
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -230,7 +233,7 @@ jobs:
   # split files by recorded duration (apps/server/src/testUtils/weightedShardSequencer.ts).
   test_server:
     name: Test Server ${{ matrix.shard }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-4vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -308,7 +311,7 @@ jobs:
   # for checks that take under 3s, on the critical path of every PR.
   rust:
     name: Rust
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-4vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -342,7 +345,7 @@ jobs:
   # the diff cannot be resolved, the lint runs.
   mobile_native_changes:
     name: Mobile Native Changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-2vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -420,7 +423,7 @@ jobs:
     # Skip only on an explicit "no": a gate job that failed or errored leaves the
     # output empty, and that must run the lint rather than silently skip it.
     if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-6vcpu-macos-26', 'macos-26') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -448,7 +451,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -493,7 +496,7 @@ jobs:
         mobile_native_static_analysis,
         release_smoke,
       ]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-2vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 5
     steps:
       - name: Require every job to pass
