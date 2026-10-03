@@ -118,6 +118,28 @@ async function setupDelegatedChild(
       createdAt: at,
     }),
   );
+  // A freshly created delegation is an *initial* dispatch: minted, but with no
+  // bound turn. `thread.session.set` only mints and binds the authoritative
+  // (dispatch, turn) pair — and only rotates the generation when a second turn
+  // replaces the first — once the assignment has actually arrived as the child's
+  // latest user message. Without this delivery every session set is ignored and
+  // the fence can never observe a bind or a replace.
+  await system.run(
+    system.engine.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("fence-deliver-assignment"),
+      threadId: childId,
+      message: {
+        messageId: MessageId.make("fence-assignment"),
+        role: "user",
+        text: "Investigate the fence.",
+        attachments: [],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: at,
+    }),
+  );
   return { projectId, parentId, childId };
 }
 

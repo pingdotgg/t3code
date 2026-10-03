@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type OrchestrationCommand,
+  type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
@@ -21,6 +22,8 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
+import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
+import { ProviderRuntimeLivenessLive } from "./ProviderRuntimeLiveness.ts";
 import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
@@ -152,9 +155,15 @@ describe("ProviderSessionReaper", () => {
     readonly activeSessions?: ReadonlyArray<ProviderSession>;
     readonly listSessionsImplementation?: ProviderServiceShape["listSessions"];
     readonly sweepIntervalMs?: number;
+    readonly settledTurnHoldMs?: number;
+    /** Provider runtime events replayed into the liveness ledger before the reaper starts. */
+    readonly observedRuntimeEvents?: ReadonlyArray<ProviderRuntimeEvent>;
+    /** Overrides the projection the reaper's pre-dispatch re-read observes. */
+    readonly readModelAfterSweep?: ReturnType<typeof makeReadModel>;
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
     const dispatchedCommands: OrchestrationCommand[] = [];
+    let readModelCalls = 0;
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
       (request) =>
         (input.stopSessionImplementation
@@ -164,6 +173,7 @@ describe("ProviderSessionReaper", () => {
             })) as ReturnType<ProviderServiceShape["stopSession"]>,
     );
 
+    let listSessionsCalls = 0;
     const providerService: ProviderServiceShape = {
       startSession: () => unsupported(),
       forkSession: () => unsupported(),
@@ -174,8 +184,11 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       sessionCommand: () => unsupported(),
       stopSession,
-      listSessions:
-        input.listSessionsImplementation ?? (() => Effect.succeed(input.activeSessions ?? [])),
+      listSessions: () =>
+        Effect.sync(() => {
+          listSessionsCalls += 1;
+          return input.listSessionsImplementation?.() ?? Effect.succeed(input.activeSessions ?? []);
+        }).pipe(Effect.flatten),
       prewarmSession: () => Effect.void,
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: (instanceId) => {
@@ -196,7 +209,18 @@ describe("ProviderSessionReaper", () => {
     };
 
     const orchestrationEngine: OrchestrationEngineShape = {
-      getReadModel: () => Effect.succeed(input.readModel),
+      // Each sweep reads the projection twice: once for its snapshot and once more
+      // immediately before reaping. Startup also reads it once to reconcile
+      // orphaned background agents, so from call 3 onward the odd calls are the
+      // pre-reap re-reads. Tests that need the re-read to disagree with the
+      // snapshot therefore see `readModel` on even calls and
+      // `readModelAfterSweep` on odd calls from 3 onward.
+      getReadModel: () => {
+        if (input.readModelAfterSweep === undefined) return Effect.succeed(input.readModel);
+        readModelCalls += 1;
+        const isPreReapReread = readModelCalls >= 3 && readModelCalls % 2 === 1;
+        return Effect.succeed(isPreReapReread ? input.readModelAfterSweep : input.readModel);
+      },
       readEvents: () => Stream.empty,
       dispatch: (command) =>
         Effect.sync(() => {
@@ -215,19 +239,69 @@ describe("ProviderSessionReaper", () => {
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(runtimeRepositoryLayer),
     );
+    const providerRuntimeLivenessLayer = Layer.effect(
+      ProviderRuntimeLiveness,
+      Effect.gen(function* () {
+        const liveness = yield* ProviderRuntimeLiveness;
+        for (const event of input.observedRuntimeEvents ?? []) {
+          yield* liveness.record(event);
+        }
+        return liveness;
+      }),
+    ).pipe(Layer.provide(ProviderRuntimeLivenessLive));
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,
       sweepIntervalMs: input.sweepIntervalMs ?? 60_000,
+      ...(input.settledTurnHoldMs === undefined
+        ? {}
+        : { settledTurnHoldMs: input.settledTurnHoldMs }),
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
       Layer.provideMerge(Layer.succeed(OrchestrationEngineService, orchestrationEngine)),
+      Layer.provideMerge(providerRuntimeLivenessLayer),
       Layer.provideMerge(NodeServices.layer),
     );
 
     runtime = ManagedRuntime.make(layer);
-    return { stopSession, stoppedThreadIds, dispatchedCommands };
+    return {
+      stopSession,
+      stoppedThreadIds,
+      dispatchedCommands,
+      /** Sweeps observed: the reaper calls `listSessions` once per sweep. */
+      sweeps: () => listSessionsCalls,
+    };
+  }
+
+  /** Persists the provider runtime binding the reaper sweeps over. */
+  async function persistRuntimeBinding(threadId: ThreadId, lastSeenAt: string, cursor: string) {
+    const repository = await runtime!.runPromise(Effect.service(ProviderSessionRuntimeRepository));
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt,
+        resumeCursor: { opaque: cursor },
+        runtimePayload: null,
+      }),
+    );
+  }
+
+  function settledTurnEvent(threadId: ThreadId, turnId: TurnId): ProviderRuntimeEvent {
+    return {
+      eventId: EventId.make(`evt-settled-${threadId}`),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId,
+      createdAt: new Date().toISOString(),
+      type: "turn.completed",
+      turnId,
+      payload: { state: "completed" },
+    } satisfies ProviderRuntimeEvent;
   }
 
   it("reaps stale persisted sessions without active turns", async () => {
@@ -665,6 +739,185 @@ describe("ProviderSessionReaper", () => {
         lastError: "Provider session was lost unexpectedly.",
       },
     });
+  });
+
+  // Regression: a healthy turn that finished seconds ago was interrupted with
+  // "Provider session was lost unexpectedly." because the adapter had already
+  // flipped its in-memory session to idle while the durable projection still
+  // named the turn active. The provider's terminal event was merely queued.
+  it("holds a stale active turn the provider already reported as settled", async () => {
+    const threadId = ThreadId.make("thread-reaper-settled-turn");
+    const turnId = TurnId.make("turn-reaper-settled-turn");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      settledTurnHoldMs: 60_000,
+      // The provider is idle, so the bare mismatch check would reap.
+      activeSessions: [],
+      observedRuntimeEvents: [settledTurnEvent(threadId, turnId)],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-settled-turn");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands).toEqual([]);
+  });
+
+  it("stops holding a settled turn once the hold window expires", async () => {
+    // A projection that never converges (rejected terminal command, snapshot
+    // restore) must not be able to hold the reaper off forever just because
+    // the provider reported the turn settled once.
+    const threadId = ThreadId.make("thread-reaper-settled-turn-expired");
+    const turnId = TurnId.make("turn-reaper-settled-turn-expired");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      // Any settle older than this no longer excuses the mismatch.
+      settledTurnHoldMs: 0,
+      activeSessions: [],
+      observedRuntimeEvents: [settledTurnEvent(threadId, turnId)],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-settled-turn-expired");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    // The startup sweep reconciles without an error banner; the recovered sweep
+    // is the one that must report the lost session.
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands.length).toBeGreaterThan(0);
+    expect(harness.dispatchedCommands.at(-1)).toMatchObject({
+      type: "thread.session.set",
+      session: { status: "interrupted", lastError: "Provider session was lost unexpectedly." },
+    });
+  });
+
+  it("holds a stale active turn whose terminal event omitted the turn id", async () => {
+    const threadId = ThreadId.make("thread-reaper-settled-turnless");
+    const turnId = TurnId.make("turn-reaper-settled-turnless");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      settledTurnHoldMs: 60_000,
+      activeSessions: [],
+      observedRuntimeEvents: [
+        {
+          eventId: EventId.make("evt-reaper-started"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          createdAt: now,
+          type: "turn.started",
+          turnId,
+          payload: {},
+        } satisfies ProviderRuntimeEvent,
+        // Terminal event with no turnId, as `ClaudeAdapter.completeTurn` emits
+        // when `context.turnState` is unset.
+        {
+          eventId: EventId.make("evt-reaper-settled-turnless"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          createdAt: now,
+          type: "turn.completed",
+          payload: { state: "completed" },
+        } satisfies ProviderRuntimeEvent,
+      ],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-settled-turnless");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands).toEqual([]);
+  });
+
+  it("holds a stale active turn whose projection advanced during the sweep", async () => {
+    const threadId = ThreadId.make("thread-reaper-projection-advanced");
+    const turnId = TurnId.make("turn-reaper-projection-advanced");
+    const now = new Date().toISOString();
+    const session = (activeTurnId: TurnId) => ({
+      threadId,
+      status: "running" as const,
+      providerName: "claudeAgent" as const,
+      runtimeMode: "full-access" as const,
+      activeTurnId,
+      lastError: null,
+      updatedAt: now,
+    });
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      activeSessions: [],
+      // The projection caught up between the sweep's snapshot and the pre-dispatch
+      // re-read: the turn finished and a different one is now active.
+      readModel: makeReadModel([{ id: threadId, session: session(turnId) }]),
+      readModelAfterSweep: makeReadModel([
+        { id: threadId, session: session(TurnId.make("turn-reaper-next")) },
+      ]),
+      observedRuntimeEvents: [],
+    });
+    await persistRuntimeBinding(threadId, now, "resume-projection-advanced");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands).toEqual([]);
   });
 
   it("clears stale active turns when the persisted runtime binding is already stopped", async () => {

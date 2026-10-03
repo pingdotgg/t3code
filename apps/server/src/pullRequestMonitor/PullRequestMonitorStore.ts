@@ -223,6 +223,16 @@ export interface PullRequestMonitorStoreApi {
       readonly monitorId: PullRequestMonitorId;
     };
   }) => Effect.Effect<ReadonlyArray<PullRequestMonitorRecord>, PullRequestMonitorError>;
+  readonly listPendingFeedbackPage: (input: {
+    readonly limit: number;
+    readonly before?: {
+      readonly updatedAt: string;
+      readonly monitorId: PullRequestMonitorId;
+    };
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly monitor: PullRequestMonitorRecord; readonly updatedAt: string }>,
+    PullRequestMonitorError
+  >;
   readonly listDue: (
     nowIso: string,
     limit: number,
@@ -490,6 +500,55 @@ export const make = Effect.gen(function* () {
         isPullRequestMonitorError(cause)
           ? cause
           : storeError("Failed to list enabled monitor page.", cause),
+      ),
+    );
+
+  const listPendingFeedbackPage: PullRequestMonitorStoreApi["listPendingFeedbackPage"] = (input) =>
+    (input.before
+      ? sql<MonitorRow & { readonly feedback_updated_at: string }>`
+          SELECT monitor.*
+            , feedback.updated_at AS feedback_updated_at
+          FROM pull_request_monitors AS monitor
+          JOIN pull_request_monitor_feedback_state AS feedback
+            ON feedback.monitor_id = monitor.monitor_id
+          WHERE feedback.pending_revision_ids_json <> '[]'
+            AND monitor.owner_thread_id IS NOT NULL
+            AND (
+              feedback.updated_at < ${input.before.updatedAt}
+              OR (
+                feedback.updated_at = ${input.before.updatedAt}
+                AND monitor.monitor_id < ${input.before.monitorId}
+              )
+            )
+          ORDER BY feedback.updated_at DESC, monitor.monitor_id DESC
+          LIMIT ${input.limit}
+        `
+      : sql<MonitorRow & { readonly feedback_updated_at: string }>`
+          SELECT monitor.*,
+            feedback.updated_at AS feedback_updated_at
+          FROM pull_request_monitors AS monitor
+          JOIN pull_request_monitor_feedback_state AS feedback
+            ON feedback.monitor_id = monitor.monitor_id
+          WHERE feedback.pending_revision_ids_json <> '[]'
+            AND monitor.owner_thread_id IS NOT NULL
+          ORDER BY feedback.updated_at DESC, monitor.monitor_id DESC
+          LIMIT ${input.limit}
+        `
+    ).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(
+          rows,
+          (row) =>
+            rowToRecord(row).pipe(
+              Effect.map((monitor) => ({ monitor, updatedAt: row.feedback_updated_at })),
+            ),
+          { concurrency: 1 },
+        ),
+      ),
+      Effect.mapError((cause) =>
+        isPullRequestMonitorError(cause)
+          ? cause
+          : storeError("Failed to list monitor feedback delivery page.", cause),
       ),
     );
 
@@ -1101,6 +1160,7 @@ export const make = Effect.gen(function* () {
     getByProjectRef,
     list,
     listEnabledPage,
+    listPendingFeedbackPage,
     listDue,
     insert,
     update,

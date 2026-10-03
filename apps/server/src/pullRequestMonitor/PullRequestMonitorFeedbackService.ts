@@ -129,6 +129,20 @@ function stableDeliveryIds(input: {
   return { batchKey, deliveryId, commandId, messageId };
 }
 
+function retargetDelivery(
+  delivery: PullRequestMonitorFeedbackDelivery,
+  ownerThreadId: ThreadId,
+): PullRequestMonitorFeedbackDelivery {
+  if (delivery.targetThreadId === ownerThreadId) return delivery;
+  const ownerKey = stableHash([delivery.batchKey, ownerThreadId]);
+  return {
+    ...delivery,
+    targetThreadId: ownerThreadId,
+    commandId: CommandId.make(`command:pr-monitor-feedback:${delivery.batchKey}:owner:${ownerKey}`),
+    messageId: MessageId.make(`message:pr-monitor-feedback:${delivery.batchKey}:owner:${ownerKey}`),
+  };
+}
+
 function eventSummary(event: PullRequestMonitorActionableEvent): string {
   const detail = event.detail ?? event.sourceId ?? event.kind;
   return `${event.kind}: ${detail}`.slice(0, 500);
@@ -589,8 +603,8 @@ export const layer = Layer.effect(
 
     const revalidateForDelivery = (monitor: PullRequestMonitorRecord) =>
       Effect.gen(function* () {
-        if (!monitor.enabled || monitor.status === "stopped" || monitor.status === "terminal") {
-          return yield* monitorError("Monitor is not active for delivery.");
+        if (monitor.status === "terminal") {
+          return yield* monitorError("Pull request is no longer open.");
         }
         if (!monitor.ownerThreadId) {
           return yield* monitorError("Monitor has no owner thread for delivery.");
@@ -653,9 +667,7 @@ export const layer = Layer.effect(
             validated.failure instanceof Error
               ? validated.failure.message
               : String(validated.failure);
-          const suppressedByRevalidation = /no longer open|no owner thread|not active/i.test(
-            message,
-          );
+          const suppressedByRevalidation = /no longer open/i.test(message);
           const terminal = suppressedByRevalidation || attemptCount >= MAX_DELIVERY_ATTEMPTS;
           if (suppressedByRevalidation) {
             yield* feedbackStore.setDeliveryCircuitState({
@@ -735,6 +747,17 @@ export const layer = Layer.effect(
             updatedAt: now,
           });
           return;
+        }
+
+        // A delivered batch can be retried after its owner changes. Use a new command
+        // identity for the new recipient so the old thread's receipt cannot swallow it.
+        const targetedDelivery = retargetDelivery(delivery, ownerThreadId);
+        if (targetedDelivery !== delivery) {
+          yield* feedbackStore.updateDelivery({
+            ...targetedDelivery,
+            nextAttemptAt: now,
+            receiptJson: null,
+          });
         }
 
         // Bounded events reconstructed from durable revision payloads.
@@ -825,8 +848,8 @@ export const layer = Layer.effect(
                       .map((revision) => revision.summary);
               return sendQueuedTurn({
                 threadId: ownerThreadId,
-                commandId: CommandId.make(`${delivery.commandId}${suffix}`),
-                messageId: MessageId.make(`${delivery.messageId}${suffix}`),
+                commandId: CommandId.make(`${targetedDelivery.commandId}${suffix}`),
+                messageId: MessageId.make(`${targetedDelivery.messageId}${suffix}`),
                 text: buildWakePrompt({
                   ...promptInput,
                   events: turnEvents,
@@ -866,7 +889,7 @@ export const layer = Layer.effect(
             updatedAt: now,
           });
           yield* feedbackStore.updateDelivery({
-            ...delivery,
+            ...targetedDelivery,
             status: attemptCount >= MAX_DELIVERY_ATTEMPTS ? "suppressed" : "failed",
             attemptCount,
             lastError: message.slice(0, 1000),
@@ -881,16 +904,16 @@ export const layer = Layer.effect(
         }
 
         yield* feedbackStore.updateDelivery({
-          ...delivery,
+          ...targetedDelivery,
           status: "delivered",
           attemptCount: delivery.attemptCount + 1,
           lastError: null,
           nextAttemptAt: null,
           deliveredAt: now,
           receiptJson: encodeUnknownJson({
-            deliveryId: delivery.id,
-            commandId: delivery.commandId,
-            messageId: delivery.messageId,
+            deliveryId: targetedDelivery.id,
+            commandId: targetedDelivery.commandId,
+            messageId: targetedDelivery.messageId,
             deliveredVia: "thread.queued-turn.create",
           }),
         });
@@ -908,11 +931,12 @@ export const layer = Layer.effect(
       const now = yield* isoNow();
       let before: { updatedAt: string; monitorId: PullRequestMonitorId } | undefined;
       while (true) {
-        const monitors = yield* monitorStore.listEnabledPage({
+        const pendingMonitors = yield* monitorStore.listPendingFeedbackPage({
           limit: 500,
           ...(before ? { before } : {}),
         });
-        for (const monitor of monitors) {
+        for (const pendingMonitor of pendingMonitors) {
+          const { monitor } = pendingMonitor;
           if (!monitor.ownerThreadId) continue;
           const state = yield* feedbackStore.getState(monitor.id);
           if (state.pendingRevisionIds.length === 0) continue;
@@ -958,10 +982,10 @@ export const layer = Layer.effect(
           });
         }
 
-        if (monitors.length < 500) break;
-        const last = monitors[monitors.length - 1];
+        if (pendingMonitors.length < 500) break;
+        const last = pendingMonitors[pendingMonitors.length - 1];
         if (!last) break;
-        before = { updatedAt: last.updatedAt, monitorId: last.id };
+        before = { updatedAt: last.updatedAt, monitorId: last.monitor.id };
       }
     }).pipe(Effect.ignore);
 
@@ -994,6 +1018,7 @@ export const layer = Layer.effect(
           if (!delivery) {
             return yield* monitorError(`Feedback delivery '${input.deliveryId}' was not found.`);
           }
+          if (delivery.status === "failed" || delivery.status === "suppressed") return;
           const now = yield* isoNow();
           yield* feedbackStore.updateDelivery({
             ...delivery,

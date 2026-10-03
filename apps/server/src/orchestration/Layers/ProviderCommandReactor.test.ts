@@ -702,7 +702,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-provider-authority-initial"),
         threadId: ThreadId.make("thread-1"),
         message: {
-          messageId: asMessageId("user-provider-authority-initial"),
+          messageId: asMessageId("assignment-provider-authority"),
           role: "user",
           text: "bind authority",
           attachments: [],
@@ -770,7 +770,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("injects a valid complete authority through the production event path", async () => {
-    const messageId = asMessageId("user-provider-authority-injected");
+    const messageId = asMessageId("assignment-provider-authority");
     const harness = await createHarness({
       delegation: {
         assignmentId: asMessageId("assignment-provider-authority"),
@@ -902,7 +902,7 @@ describe("ProviderCommandReactor", () => {
   ])(
     "rejects %s authority through the production event path before provider calls",
     async (_label, mutateAuthority) => {
-      const messageId = asMessageId("user-provider-authority-rejected");
+      const messageId = asMessageId("assignment-provider-authority");
       const harness = await createHarness({
         delegation: {
           assignmentId: asMessageId("assignment-provider-authority"),

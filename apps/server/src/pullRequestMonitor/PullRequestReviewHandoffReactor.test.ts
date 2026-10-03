@@ -297,6 +297,7 @@ const makeHarness = (options: {
   readonly pubsub?: PubSub.PubSub<OrchestrationEvent>;
   readonly publishOnReplayStart?: readonly OrchestrationEvent[];
   readonly autoMonitor?: boolean;
+  readonly monitorEnabled?: boolean | null;
   readonly initialCursor?: number;
   readonly getSettings?: () => Effect.Effect<{ autoMonitorPullRequestsOnCreate: boolean }, Error>;
   readonly submitFindings?: (
@@ -360,6 +361,22 @@ const makeHarness = (options: {
           }),
   } as unknown as OrchestrationEngineService["Service"]);
   const monitorLayer = Layer.succeed(PullRequestMonitorService, {
+    status: () =>
+      Effect.succeed({
+        monitor:
+          options.monitorEnabled === undefined || options.monitorEnabled === null
+            ? null
+            : ({
+                enabled: options.monitorEnabled,
+                status: options.monitorEnabled ? "monitoring" : "stopped",
+              } as never),
+        ownerCandidates: [],
+        latestSnapshot: null,
+        recentEvents: [],
+        openFeedback: [],
+        recentDeliveries: [],
+        recentReports: [],
+      }),
     submitFindings: (input: PullRequestMonitorSubmitFindingsInput) =>
       submit(input).pipe(
         Effect.tap(() => Effect.sync(() => calls.push(input))),
@@ -434,9 +451,54 @@ describe("PullRequestReviewHandoffReactor layer", () => {
     expect((result as { value?: number }).value).toBe(7);
   }, 20_000);
 
-  it("does nothing when the settings gate is off or the event does not qualify", async () => {
+  it("persists findings with monitoring disabled when automatic association monitoring is off", async () => {
+    const harness = makeHarness({ events: [makeEvent(3, parsed())], autoMonitor: false });
+    const result = await runWithLayer(
+      Effect.gen(function* () {
+        const delivered = yield* waitFor(() => harness.calls.length === 1);
+        expect(delivered).toBe(true);
+        return harness.cursorRows.get(REVIEW_HANDOFF_PROJECTOR);
+      }),
+      harness.layer,
+    );
+    expect(result._tag).toBe("Success");
+    expect(harness.calls[0]).toMatchObject({ startMonitoring: false });
+    expect((result as { value?: number }).value).toBe(3);
+  }, 20_000);
+
+  it("does not resume a stopped monitor as a side effect of delivering review findings", async () => {
+    const harness = makeHarness({
+      events: [makeEvent(4, parsed())],
+      autoMonitor: true,
+      monitorEnabled: false,
+    });
+    const result = await runWithLayer(
+      Effect.gen(function* () {
+        const delivered = yield* waitFor(() => harness.calls.length === 1);
+        expect(delivered).toBe(true);
+        return harness.cursorRows.get(REVIEW_HANDOFF_PROJECTOR);
+      }),
+      harness.layer,
+    );
+    expect(result._tag).toBe("Success");
+    expect(harness.calls[0]).toMatchObject({ startMonitoring: false });
+  }, 20_000);
+
+  it("starts monitoring when the setting allows it and no monitor exists", async () => {
+    const harness = makeHarness({ events: [makeEvent(4, parsed())], autoMonitor: true });
+    const result = await runWithLayer(
+      Effect.gen(function* () {
+        const delivered = yield* waitFor(() => harness.calls.length === 1);
+        expect(delivered).toBe(true);
+      }),
+      harness.layer,
+    );
+    expect(result._tag).toBe("Success");
+    expect(harness.calls[0]).toMatchObject({ startMonitoring: true });
+  }, 20_000);
+
+  it("does nothing when the review event does not qualify", async () => {
     for (const options of [
-      { events: [makeEvent(3, parsed())], autoMonitor: false },
       { events: [makeEvent(3, { status: "invalid-output", snapshot, issues: ["bad"] })] },
       { events: [makeEvent(3, parsed([]))] },
       { events: [makeNonReviewEvent(3)] },

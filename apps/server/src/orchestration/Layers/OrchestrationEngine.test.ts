@@ -344,6 +344,26 @@ describe("OrchestrationEngine", () => {
           }),
         );
       }
+      // The assignment is delivered as the child's first user message. Session
+      // binding only mints the authoritative (dispatch, turn) pair for an
+      // initial delegation once that message has arrived, so skipping it would
+      // leave the generation unproven and every child report stale.
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("deliver-child-assignment"),
+          threadId: childId,
+          message: {
+            messageId: MessageId.make("assignment"),
+            role: "user",
+            text: "Choose the migration approach.",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: at,
+        }),
+      );
       await system.run(
         system.engine.dispatch({
           type: "thread.session.set",
@@ -365,7 +385,14 @@ describe("OrchestrationEngine", () => {
       rejectQueue = true;
       await expect(system.run(system.engine.dispatch(report))).rejects.toThrow();
       let state = await system.run(system.engine.getReadModel());
-      expect(state.threads.find((entry) => entry.id === parentId)?.activities).toEqual([]);
+      // Delivering the assignment legitimately raised `child.lifecycle.started`
+      // on the parent, so assert the rejected report itself left no trace rather
+      // than that the parent has no activities at all.
+      expect(
+        state.threads
+          .find((entry) => entry.id === parentId)
+          ?.activities.filter((activity) => activity.kind === "child.lifecycle.reported"),
+      ).toEqual([]);
       expect(state.threads.find((entry) => entry.id === parentId)?.queuedTurns).toEqual([]);
       rejectQueue = false;
       await system.run(
