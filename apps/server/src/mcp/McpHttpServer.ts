@@ -18,6 +18,7 @@ import { PreviewAutomationError } from "@t3tools/contracts";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -679,8 +680,9 @@ const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit
   Layer.provide(PreviewControlsHandlersLive),
 );
 
-const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
+export const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
   Layer.provide(EnvironmentHandlersLive),
+  Layer.provide(ThreadCommandExecutor.layer),
 );
 
 const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
