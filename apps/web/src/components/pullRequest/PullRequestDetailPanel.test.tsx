@@ -1,29 +1,35 @@
 import {
   EnvironmentId,
   ProjectId,
+  GitManagerError,
   ThreadId,
   type ScopedThreadRef,
   type PullRequestDetailView,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
-  newThread: vi.fn(),
-  prepareThread: vi.fn(),
-  refresh: vi.fn(),
-  Wrapper: ({ children }: { children?: ReactNode }) => children,
-  Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
-    <>
-      {render}
-      {children}
-    </>
-  ),
-}));
+const { newThread, prepareThread, refresh, addToast, updateToast, Wrapper, Trigger } = vi.hoisted(
+  () => ({
+    newThread: vi.fn(),
+    prepareThread: vi.fn(),
+    refresh: vi.fn(),
+    addToast: vi.fn(),
+    updateToast: vi.fn(),
+    Wrapper: ({ children }: { children?: ReactNode }) => children,
+    Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
+      <>
+        {render}
+        {children}
+      </>
+    ),
+  }),
+);
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
@@ -66,7 +72,7 @@ vi.mock("~/state/usePullRequestStack", () => ({
     refresh,
   }),
 }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), update: vi.fn() } }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: addToast, update: updateToast } }));
 vi.mock("../ui/tooltip", () => ({
   TooltipProvider: Wrapper,
   Tooltip: Wrapper,
@@ -211,6 +217,8 @@ beforeEach(() => {
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
+  addToast.mockReset().mockReturnValue("checkout-toast");
+  updateToast.mockReset();
   prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
@@ -334,5 +342,43 @@ describe.each([
     } else {
       expect(newThread).toHaveBeenCalled();
     }
+  });
+});
+
+it("shows the server detail from the failed checkout", async () => {
+  const diagnostic = "This PR branch is already checked out in the main repo. Use Local.";
+  prepareThread.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(
+      new GitManagerError({
+        cwd: "/workspace",
+        operation: "preparePullRequestThread",
+        detail: diagnostic,
+      }),
+    ),
+  });
+  await act(async () => {
+    renderer = create(
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={detail}
+        context="page"
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />,
+    );
+  });
+  await click("In a separate worktree");
+  expect(updateToast).toHaveBeenCalledWith("checkout-toast", {
+    type: "error",
+    title: "Could not prepare the pull request checkout",
+    description: expect.stringContaining(diagnostic),
   });
 });
