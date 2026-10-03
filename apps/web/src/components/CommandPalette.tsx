@@ -77,6 +77,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -157,7 +158,9 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
+  buildCommandPaletteRows,
   enumerateCommandPaletteItems,
+  findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -174,7 +177,10 @@ import {
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
-import { CommandPaletteResults } from "./CommandPaletteResults";
+import {
+  CommandPaletteVirtualizedResults,
+  scrollCommandPaletteRowIntoView,
+} from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon, ForgejoIcon } from "./Icons";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
@@ -694,6 +700,15 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const resultListRef = useRef<LegendListRef | null>(null);
+  // Typing or entering a submenu clears the highlight. Base UI keeps its own on the
+  // first row, but the palette shows none until the user navigates, and the first
+  // ArrowDown lands on it.
+  const highlightClearedRef = useRef(false);
+  function clearTypedHighlight(): void {
+    highlightClearedRef.current = true;
+    setHighlightedItemValue(null);
+  }
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -1425,7 +1440,7 @@ function OpenCommandPaletteDialog(props: {
             ? {
                 source: match.source,
                 snippet: match.snippet,
-                query: threadSearchQuery,
+                query: threadSearch.query,
               }
             : undefined;
         },
@@ -1446,7 +1461,7 @@ function OpenCommandPaletteDialog(props: {
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
-      threadSearchQuery,
+      threadSearch.query,
       threads,
     ],
   );
@@ -1463,6 +1478,7 @@ function OpenCommandPaletteDialog(props: {
           ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
         },
       ]);
+      highlightClearedRef.current = true;
       setHighlightedItemValue(null);
       setQuery(view.initialQuery ?? "");
     },
@@ -1494,7 +1510,7 @@ function OpenCommandPaletteDialog(props: {
 
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
-    setHighlightedItemValue(null);
+    clearTypedHighlight();
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
@@ -2938,6 +2954,9 @@ function OpenCommandPaletteDialog(props: {
   } else if (isBrowsing) {
     displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
   }
+  const resultRows = buildCommandPaletteRows(displayedGroups);
+  const autoHighlightsFirstRow =
+    !isBrowsing && !isRemoteProjectCloneFlow && newProjectFlow === null;
 
   const inputPlaceholder =
     newProjectFlow !== null
@@ -3083,6 +3102,43 @@ function OpenCommandPaletteDialog(props: {
     if (event.key === "Backspace" && query === "" && isSubmenu) {
       event.preventDefault();
       popView();
+      return;
+    }
+
+    // Base UI ignores navigation keys with modifiers, so these fallbacks do too.
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
+    // Base UI only keeps a hidden highlight on the first row when it auto-highlights.
+    const firstItemValue = autoHighlightsFirstRow ? resultRows.itemValues[0] : undefined;
+    if (
+      event.key === "ArrowDown" &&
+      highlightClearedRef.current &&
+      firstItemValue &&
+      !event.nativeEvent.isComposing
+    ) {
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      event.preventDefault();
+      highlightClearedRef.current = false;
+      setHighlightedItemValue(firstItemValue);
+      scrollCommandPaletteRowIntoView(
+        resultListRef.current,
+        resultRows.rowIndexByItemIndex[0] ?? 0,
+      );
+      return;
+    }
+
+    // Base UI clicks the highlighted row on Enter, which does nothing once the
+    // virtualized list has unmounted it, so run the tracked highlight directly.
+    if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+      const highlightedItem = findHighlightedCommandPaletteItem(
+        displayedGroups,
+        highlightedItemValue ?? firstItemValue ?? null,
+      );
+      if (highlightedItem) {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+        event.stopPropagation();
+        executeItem(highlightedItem);
+      }
     }
   }
 
@@ -3349,9 +3405,7 @@ function OpenCommandPaletteDialog(props: {
     <CommandPaletteContent
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
       aria-label="Command palette"
-      autoHighlight={
-        isBrowsing || isRemoteProjectCloneFlow || newProjectFlow !== null ? false : "always"
-      }
+      autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
@@ -3387,8 +3441,16 @@ function OpenCommandPaletteDialog(props: {
         onKeyDown: handleKeyDown,
       }}
       mode="none"
-      onItemHighlighted={(value) => {
+      items={resultRows.itemValues}
+      virtualized
+      onItemHighlighted={(value, eventDetails) => {
+        if (eventDetails.reason === "none" && highlightClearedRef.current) return;
+        highlightClearedRef.current = false;
         setHighlightedItemValue(typeof value === "string" ? value : null);
+        const rowIndex = resultRows.rowIndexByItemIndex[eventDetails.index];
+        if (eventDetails.reason === "keyboard" && rowIndex !== undefined) {
+          scrollCommandPaletteRowIntoView(resultListRef.current, rowIndex);
+        }
       }}
       onValueChange={handleQueryChange}
       showBackHint={isSubmenu}
@@ -3426,8 +3488,9 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
-      <CommandPaletteResults
-        groups={displayedGroups}
+      <CommandPaletteVirtualizedResults
+        rows={resultRows.rows}
+        listRef={resultListRef}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
