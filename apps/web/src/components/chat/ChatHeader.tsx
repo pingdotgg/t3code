@@ -232,7 +232,9 @@ export const ChatHeader = memo(function ChatHeader({
     <div
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pr-10" : "pr-24",
+        // The details toggle keeps the native window-controls inset even when
+        // the right panel owns the titlebar. Truncate before its actual position.
+        rightPanelOpen ? "pr-(--workspace-thread-title-end-inset)" : "pr-24",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
