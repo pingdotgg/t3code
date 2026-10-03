@@ -342,6 +342,15 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const [backgroundStopRequest, setBackgroundStopRequest] = useState<{
+    threadKey: string;
+  } | null>(null);
+  const backgroundThreadKey = selectedThread
+    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+    : null;
+  if (backgroundStopRequest !== null && backgroundStopRequest.threadKey !== backgroundThreadKey) {
+    setBackgroundStopRequest(null);
+  }
   const loadEarlierHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
     reportFailure: false,
@@ -685,6 +694,23 @@ function ThreadRouteContent(
       },
     });
   }, [composer.interruptibleRunId, interruptThreadTurn, selectedThread]);
+
+  const handleStopBackgroundWork = useCallback(async () => {
+    if (!selectedThread) {
+      return;
+    }
+    const request = {
+      threadKey: scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    };
+    setBackgroundStopRequest(request);
+    await interruptThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id },
+    });
+    // Acceptance does not confirm termination. Allow retry while tasks remain,
+    // including when the interrupt fails, matching the web client's behavior.
+    setBackgroundStopRequest((current) => (current === request ? null : current));
+  }, [interruptThreadTurn, selectedThread]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -1066,6 +1092,8 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          stoppingBackgroundWork={backgroundStopRequest !== null}
+          onStopBackgroundWork={handleStopBackgroundWork}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
