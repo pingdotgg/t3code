@@ -9060,6 +9060,163 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  /**
+   * Replaces a cohort's delivery with one reserving its pending siblings, or
+   * releases it when none are pending. `accepted` names the results a provider
+   * just took, which become delivered. Returns the events to write, in order,
+   * and the new reservation.
+   */
+  const reserveNextDelegatedDelivery = (input: {
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "subagents">;
+    readonly parentRun: OrchestrationV2Run;
+    readonly cohort: OrchestrationV2DelegatedCompletionCohort;
+    readonly accepted?: ReadonlyArray<OrchestrationV2Subagent["id"]>;
+    /** While the parent is live, settled_only results keep waiting. */
+    readonly parentIsLive: boolean;
+    readonly now: DateTime.Utc;
+  }) =>
+    Effect.gen(function* () {
+      const { projection, parentRun, cohort, parentIsLive, now } = input;
+      const threadId = projection.thread.id;
+      const pendingTaskIds =
+        projection.thread.archivedAt === null && projection.thread.deletedAt === null
+          ? projection.subagents
+              .filter(
+                (task) =>
+                  task.origin === "app_owned" &&
+                  task.runId === parentRun.id &&
+                  task.completionDelivery?.state === "pending" &&
+                  isTerminalDelegatedTaskStatus(task.status) &&
+                  (!parentIsLive || task.completionWake === "always"),
+              )
+              .map((task) => task.id)
+          : [];
+      const nextDelivery =
+        pendingTaskIds.length === 0
+          ? null
+          : {
+              generation: cohort.nextGeneration,
+              messageId: yield* mapDelegatedCompletionError(
+                idAllocator.allocate.message({
+                  threadId,
+                  ordinal:
+                    (yield* mapDelegatedCompletionError(
+                      projectionStore.getMessageCount(threadId),
+                    )) + 1,
+                }),
+              ),
+              taskIds: pendingTaskIds,
+            };
+      const acceptedIds = new Set(input.accepted ?? []);
+      const pendingIds = new Set(pendingTaskIds);
+      const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = [];
+      for (const task of projection.subagents) {
+        const state = pendingIds.has(task.id)
+          ? "claimed"
+          : acceptedIds.has(task.id) && task.completionDelivery?.state === "claimed"
+            ? "delivered"
+            : undefined;
+        if (state === undefined) continue;
+        events.push({
+          type: "subagent.updated",
+          threadId,
+          runId: parentRun.id,
+          nodeId: task.id,
+          driver: task.driver,
+          providerInstanceId: task.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...task,
+            completionDelivery: { state, observedByRunId: null },
+            updatedAt: now,
+          },
+        });
+      }
+      events.push({
+        type: "run.updated",
+        threadId,
+        runId: parentRun.id,
+        providerInstanceId: parentRun.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...parentRun,
+          delegatedCompletion: {
+            ...cohort,
+            nextGeneration: cohort.nextGeneration + (nextDelivery === null ? 0 : 1),
+            delivery: nextDelivery,
+          },
+        },
+      });
+      return { events, nextDelivery };
+    });
+
+  /**
+   * A provider can reject every steer retry before its terminal event reaches
+   * the projection, leaving a delegated delivery reserved as a steer on a run
+   * that has since settled. Nothing else offers it again, and it blocks later
+   * siblings. Offer it as a wake; when the run already read every result in
+   * it, release it and reserve the pending siblings instead. A rolled-back
+   * run's deliveries stay discarded.
+   *
+   * Safe to repeat for one settlement, as a later terminal `run.updated` for the
+   * same run does. A release replaces the delivery, so the message and
+   * generation guard skips it next time. A repeated offer is dropped by the
+   * continuation worker and by message.dispatch once the wake has taken the
+   * message, and that wake also moves the message off this run.
+   */
+  const recoverSettledDelegatedSteers = (threadId: ThreadId, settledRun: OrchestrationV2Run) =>
+    Effect.gen(function* () {
+      if (settledRun.status === "rolled_back") return;
+      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageRunIds: [settledRun.id],
+        messageRoles: ["user"],
+      });
+      const steers = messages.filter(
+        (message) =>
+          message.delegatedCompletion !== undefined && message.id !== settledRun.userMessageId,
+      );
+      if (steers.length === 0) return;
+      const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "subagents"]);
+      // A rollback can commit between this terminal event and the thread lock.
+      if (projection.runs.find((run) => run.id === settledRun.id)?.status === "rolled_back") {
+        return;
+      }
+      for (const steer of steers) {
+        const ownership = steer.delegatedCompletion!;
+        const parentRun = projection.runs.find((run) => run.id === ownership.parentRunId);
+        const cohort = parentRun?.delegatedCompletion;
+        const delivery = cohort?.delivery;
+        if (
+          parentRun === undefined ||
+          parentRun.status === "rolled_back" ||
+          cohort?.disposition !== "open" ||
+          delivery == null ||
+          delivery.messageId !== steer.id ||
+          delivery.generation !== ownership.generation
+        ) {
+          continue;
+        }
+        if (delivery.taskIds.length > 0) {
+          yield* offerDelegatedCompletionDelivery(threadId, parentRun.id);
+          continue;
+        }
+        // The receiving run settled, so results pending behind this delivery are
+        // due a wake now, as in finalizeDelegatedCompletionDelivery. A message
+        // promoted from the queue since then must not hold settled_only ones.
+        const { events, nextDelivery } = yield* reserveNextDelegatedDelivery({
+          projection,
+          parentRun,
+          cohort,
+          parentIsLive: false,
+          now: yield* DateTime.now,
+        });
+        yield* writeSystemEvents(events);
+        if (nextDelivery !== null) {
+          yield* offerDelegatedCompletionDelivery(threadId, parentRun.id);
+        }
+      }
+    });
+
   const dispatchNotificationAccepted = Effect.fn("orchestrationV2.notificationAccepted")(function* (
     command: Extract<OrchestrationV2Command, { type: "notification.delivery.accept" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -9088,73 +9245,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       return;
     }
-    const parentIsLive = hasLiveRun(projection);
-    const pendingTaskIds =
-      projection.thread.archivedAt === null && projection.thread.deletedAt === null
-        ? projection.subagents
-            .filter(
-              (task) =>
-                task.origin === "app_owned" &&
-                task.runId === parentRun.id &&
-                task.completionDelivery?.state === "pending" &&
-                isTerminalDelegatedTaskStatus(task.status) &&
-                (!parentIsLive || task.completionWake === "always"),
-            )
-            .map((task) => task.id)
-        : [];
-    const nextDelivery =
-      pendingTaskIds.length === 0
-        ? null
-        : {
-            generation: cohort.nextGeneration,
-            messageId: yield* mapDelegatedCompletionError(
-              idAllocator.allocate.message({
-                threadId: command.threadId,
-                ordinal:
-                  (yield* mapDelegatedCompletionError(
-                    projectionStore.getMessageCount(projection.thread.id),
-                  )) + 1,
-              }),
-            ),
-            taskIds: pendingTaskIds,
-          };
-    const acceptedIds = new Set(delivery.taskIds);
-    const pendingIds = new Set(pendingTaskIds);
-    for (const task of projection.subagents) {
-      const state = pendingIds.has(task.id)
-        ? "claimed"
-        : acceptedIds.has(task.id) && task.completionDelivery?.state === "claimed"
-          ? "delivered"
-          : undefined;
-      if (state === undefined) continue;
-      yield* emitEvent({
-        type: "subagent.updated",
-        threadId: command.threadId,
-        runId: parentRun.id,
-        nodeId: task.id,
-        driver: task.driver,
-        providerInstanceId: task.providerInstanceId,
-        occurredAt: now,
-        payload: { ...task, completionDelivery: { state, observedByRunId: null }, updatedAt: now },
-      });
-    }
     // Provider acceptance drains this batch but does not acknowledge its results.
     // task_status owns acknowledgment.
-    yield* emitEvent({
-      type: "run.updated",
-      threadId: command.threadId,
-      runId: parentRun.id,
-      providerInstanceId: parentRun.providerInstanceId,
-      occurredAt: now,
-      payload: {
-        ...parentRun,
-        delegatedCompletion: {
-          ...cohort,
-          nextGeneration: cohort.nextGeneration + (nextDelivery === null ? 0 : 1),
-          delivery: nextDelivery,
-        },
-      },
+    const { events: reservationEvents } = yield* reserveNextDelegatedDelivery({
+      projection,
+      parentRun,
+      cohort,
+      accepted: delivery.taskIds,
+      parentIsLive: hasLiveRun(projection),
+      now,
     });
+    for (const event of reservationEvents) {
+      yield* emitEvent(event);
+    }
   });
 
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
@@ -9657,6 +9760,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : undefined,
         ),
       );
+      if (stored.event.type === "run.updated") {
+        yield* threadDispatch.withLock(
+          threadId,
+          recoverSettledDelegatedSteers(threadId, stored.event.payload),
+        );
+      }
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to react to terminal V2 run", {
