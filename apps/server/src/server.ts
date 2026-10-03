@@ -24,6 +24,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { ProjectionWorkflowRepositoryLive } from "./persistence/Layers/ProjectionWorkflows.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
+import { ProviderRuntimeLivenessLive } from "./provider/Layers/ProviderRuntimeLiveness.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
@@ -452,6 +453,11 @@ const AcceptanceOrchestrationLayerLive = OrchestrationLayerLive.pipe(
   Layer.provideMerge(CollaborativeAcceptanceCoordinatorLive),
 );
 
+const ProviderRuntimeSharedLayersLive = Layer.mergeAll(
+  ProviderEventLoggersLive,
+  ProviderRuntimeLivenessLive,
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
@@ -475,7 +481,19 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `ProviderService` (canonical stream, written after event normalization).
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
-  Layer.provideMerge(ProviderEventLoggersLive),
+  // Shared provider runtime singletons. Both are provided once at the runtime
+  // level so every consumer sees the same instances.
+  //
+  // `ProviderEventLoggersLive` owns the native/canonical NDJSON writers used by
+  // the per-instance drivers (written from inside each `<X>Adapter`) and by
+  // `ProviderService` (canonical stream, written after event normalization).
+  //
+  // `ProviderRuntimeLivenessLive` records what the provider runtime has
+  // observed per thread ahead of the durable projection. `ProviderService`
+  // writes it on the runtime-event funnel and `ProviderSessionReaper` reads it
+  // to tell a genuinely lost session apart from a terminal event still queued
+  // for the projection.
+  Layer.provideMerge(ProviderRuntimeSharedLayersLive),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and

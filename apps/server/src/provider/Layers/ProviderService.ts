@@ -50,6 +50,7 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import {
   ProviderSessionDirectory,
@@ -235,6 +236,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
   const analytics = yield* Effect.service(AnalyticsService);
+  const runtimeLiveness = yield* ProviderRuntimeLiveness;
   const eventLoggers = yield* ProviderEventLoggers;
   // Options-provided logger wins (test overrides); otherwise we take whatever
   // the `ProviderEventLoggers` tag exposes — `undefined` means "no canonical
@@ -373,6 +375,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
         }).pipe(
+          // Record liveness before publishing so a reconciler reading the
+          // ledger is never behind the durable projection for the same event:
+          // the runtime bus is bounded and applies backpressure, so the
+          // projection can lag this funnel by seconds under an event burst.
+          Effect.andThen(() => runtimeLiveness.record(canonicalEvent)),
           // The cursor persists before the terminal event publishes so a
           // subscriber acting on completion (or a crash right after it)
           // observes the fresh rollback boundary, not the previous one.

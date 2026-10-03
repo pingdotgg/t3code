@@ -8,6 +8,7 @@ import {
 import { Duration, Effect, Layer, Option, Ref, Schedule } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   ProviderSessionReaper,
@@ -17,6 +18,7 @@ import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_SETTLED_TURN_GRACE_MS = 30 * 1000;
 const LEGACY_RESTART_PROVIDER_SESSION_ERROR = "Provider session is no longer active.";
 const PROVIDER_SESSION_LOST_ERROR = "Provider session was lost unexpectedly.";
 
@@ -30,6 +32,43 @@ function sessionKeepsTurnActive(
   if (!session) return false;
   return session.activeTurnId === activeTurnId;
 }
+
+/**
+ * Why a projection/provider mismatch must not be treated as a lost session.
+ *
+ * `getReadModel()` reflects commands the single command worker has already
+ * committed, while `listSessions()` reflects the adapter's in-memory session,
+ * which flips to idle *before* the adapter emits the matching terminal event
+ * (`finishTurn` clears `activeTurnId`, then emits `turn.completed`). The
+ * runtime bus is bounded and applies backpressure, so the projection can trail
+ * that terminal event by seconds under an event burst. Reaping on a bare
+ * mismatch therefore interrupts healthy turns that already finished and shows
+ * the user "Provider session was lost unexpectedly."
+ */
+type MismatchHoldReason =
+  | "provider_reported_turn_settled"
+  | "provider_still_reporting"
+  | "projection_advanced";
+
+const mismatchHoldReason = (input: {
+  readonly settledTurn: boolean;
+  readonly silenceDurationMs: number | null;
+  readonly settledTurnGraceMs: number;
+  readonly projectedActiveTurnId: string | null;
+  readonly observedActiveTurnId: string;
+}): MismatchHoldReason | null => {
+  // The provider already gave this turn a terminal outcome, so the projection
+  // is behind rather than wrong. Wait for the in-flight command.
+  if (input.settledTurn) return "provider_reported_turn_settled";
+  // A terminal event for the active turn is probably still travelling. Adapters
+  // update their session before emitting, so this closes that window.
+  if (input.silenceDurationMs !== null && input.silenceDurationMs < input.settledTurnGraceMs) {
+    return "provider_still_reporting";
+  }
+  // The turn the projection names changed while this sweep was deciding.
+  if (input.projectedActiveTurnId !== input.observedActiveTurnId) return "projection_advanced";
+  return null;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,6 +115,12 @@ function findOrphanedBackgroundAgents(
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
+  /**
+   * How long the provider must have been silent for a thread before a
+   * projection/provider mismatch is treated as a lost session rather than a
+   * terminal event still in flight to the projection.
+   */
+  readonly settledTurnGraceMs?: number;
 }
 
 const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =>
@@ -83,15 +128,25 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
     const providerService = yield* ProviderService;
     const directory = yield* ProviderSessionDirectory;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const runtimeLiveness = yield* ProviderRuntimeLiveness;
 
     const inactivityThresholdMs = Math.max(
       1,
       options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
     );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
+    const settledTurnGraceMs = Math.max(
+      0,
+      options?.settledTurnGraceMs ?? DEFAULT_SETTLED_TURN_GRACE_MS,
+    );
     const startupSweepPending = yield* Ref.make(true);
     const startupReconciled = yield* Ref.make(false);
     const startupSweepIncludesInactive = yield* Ref.make(false);
+    yield* Effect.logInfo("provider.session.reaper.configured", {
+      inactivityThresholdMs,
+      sweepIntervalMs,
+      settledTurnGraceMs,
+    });
 
     const reconcileOrphanedBackgroundAgents = Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
@@ -191,6 +246,35 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           const activeSession = activeSessionsByThreadId.get(binding.threadId);
           if (!sessionKeepsTurnActive(activeSession, thread.session.activeTurnId)) {
             const activeTurnId = thread.session.activeTurnId;
+            const observation = yield* runtimeLiveness.observe(binding.threadId);
+            // Re-read the projection immediately before deciding: the sweep's
+            // snapshot can already be stale, and reaping a thread whose active
+            // turn changed is the exact failure this guard prevents.
+            const currentActiveTurnId = (yield* orchestrationEngine.getReadModel()).threads.find(
+              (candidate) => candidate.id === binding.threadId,
+            )?.session?.activeTurnId;
+            const holdReason = mismatchHoldReason({
+              settledTurn: observation?.settledTurnIds.has(activeTurnId) ?? false,
+              silenceDurationMs:
+                observation === null ? null : Math.max(0, now - observation.lastEventAtMs),
+              settledTurnGraceMs,
+              projectedActiveTurnId: currentActiveTurnId ?? null,
+              observedActiveTurnId: activeTurnId,
+            });
+            if (holdReason !== null) {
+              yield* Effect.logDebug("provider.session.reaper.held-stale-active-turn", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                activeTurnId,
+                reason: holdReason,
+                activeProviderSessionStatus: activeSession?.status ?? null,
+                activeProviderSessionTurnId: activeSession?.activeTurnId ?? null,
+                projectedActiveTurnId: currentActiveTurnId ?? null,
+                providerSilenceDurationMs:
+                  observation === null ? null : Math.max(0, now - observation.lastEventAtMs),
+              });
+              continue;
+            }
             const updatedAt = new Date().toISOString();
             const lastSeenMs = Date.parse(binding.lastSeenAt);
             const streamingAssistantMessages = thread.messages.filter(
@@ -232,6 +316,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
               provider: binding.provider,
               activeTurnId: thread.session.activeTurnId,
               idleDurationMs: Number.isNaN(lastSeenMs) ? null : now - lastSeenMs,
+              providerSilenceDurationMs:
+                observation === null ? null : Math.max(0, now - observation.lastEventAtMs),
               activeProviderSessionStatus: activeSession?.status ?? null,
               activeProviderSessionTurnId: activeSession?.activeTurnId ?? null,
               reason: isStartupSweep ? "server_restart" : "provider_session_mismatch",

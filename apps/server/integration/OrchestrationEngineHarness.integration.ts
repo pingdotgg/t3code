@@ -40,6 +40,7 @@ import { ProjectionPendingApprovalRepository } from "../src/persistence/Services
 import { WorkspaceOwnershipRepository } from "../src/persistence/Services/WorkspaceOwnership.ts";
 import { makeInstanceRegistryMock } from "../src/provider/testUtils/providerInstanceRegistryMock.ts";
 import { ProviderInstanceRegistry } from "../src/provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderRuntimeLivenessLive } from "../src/provider/Layers/ProviderRuntimeLiveness.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
@@ -294,12 +295,14 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(realCodexRegistry),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
+          Layer.provide(ProviderRuntimeLivenessLive),
         )
       : makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(fakeRegistry!),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
+          Layer.provide(ProviderRuntimeLivenessLive),
         );
 
     const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
@@ -310,6 +313,9 @@ export const makeOrchestrationIntegrationHarness = (
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
       checkpointStoreLayer,
+      // Shared by `ProviderService` (writes the ledger) and
+      // `ProviderSessionReaper` (reads it), mirroring the runtime-level wiring.
+      ProviderRuntimeLivenessLive,
       providerLayer,
       RuntimeReceiptBusTest,
     );
