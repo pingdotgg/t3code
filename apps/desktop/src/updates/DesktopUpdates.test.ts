@@ -474,6 +474,24 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("relaunches a .deb install itself instead of through electron-updater", () => {
+    const harness = makeHarness({ platform: "linux", packageType: "deb" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.include(harness.installSteps, "quitAndInstall(no-run)");
+        assert.include(harness.installSteps, "relaunch");
+        assert.notInclude(harness.installSteps, "quitAndInstall");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
       const stopping = yield* Deferred.make<void>();
