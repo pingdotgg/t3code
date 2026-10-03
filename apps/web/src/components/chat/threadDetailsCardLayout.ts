@@ -9,22 +9,25 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
-/** The card uses leftover space. It never changes the conversation's width. */
+/**
+ * The card pins to the top right while a readable chat lane fits beside it.
+ * The chat canvas decides whether chat moves over to make room.
+ */
 export function resolveThreadDetailsCardLayout({
   container,
-  chat,
+  lane,
   frame,
   overlapsDetailsCard = false,
 }: {
   container: { width: number; height: number };
-  chat: { left: number; width: number };
+  lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
 }) {
   const gap = 12;
-  const width = Math.min(312, container.width - chat.left - chat.width - gap * 2);
-  if (width < 240) return null;
+  const width = 312;
   const x = container.width - width - gap;
+  if (x - gap - lane.padding * 2 < lane.minChatWidth) return null;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.
   const height =

@@ -19,8 +19,11 @@ export interface ChatCanvasPreview {
 }
 
 const GAP = 12;
+// The workspace card floats in the right margin only while the centered chat
+// stays this far from it. Closer than this, the card looks stuck to the chat.
+const DETAILS_CARD_FLOAT_CLEARANCE = 96;
 
-/** Pure geometry shared by the conversation, composer, and floating preview. */
+/** Pure geometry shared by the conversation, composer, workspace card, and floating preview. */
 export function resolveChatCanvasLayout({
   container,
   preview,
@@ -38,9 +41,22 @@ export function resolveChatCanvasLayout({
   composerHeight?: number;
   detailsCard?: PreviewMiniPlayerObstacles["detailsCard"];
 }) {
-  const normalWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
-  const normalLeft = (container.width - normalWidth) / 2;
-  let chat = { left: normalLeft, width: normalWidth, insetStart: 0, insetEnd: 0 };
+  const centeredWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
+  // Without that clearance the card docks like a sidebar, and chat centers in
+  // the space to its left.
+  const laneRight =
+    detailsCard &&
+    (container.width + centeredWidth) / 2 + DETAILS_CARD_FLOAT_CLEARANCE > detailsCard.left
+      ? detailsCard.left - GAP
+      : container.width;
+  const normalWidth = Math.max(0, Math.min(maxChatWidth, laneRight - padding * 2));
+  const normalLeft = (laneRight - normalWidth) / 2;
+  let chat = {
+    left: normalLeft,
+    width: normalWidth,
+    insetStart: 0,
+    insetEnd: container.width - laneRight,
+  };
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {

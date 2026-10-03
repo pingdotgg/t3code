@@ -212,7 +212,12 @@ describe("chat canvas layout", () => {
         });
       };
       const density = (result: ReturnType<typeof layout>) => {
-        const card = resolveThreadDetailsCardLayout({ container, ...result });
+        const card = resolveThreadDetailsCardLayout({
+          container,
+          lane: { padding: 20, minChatWidth: 640 },
+          frame: result.frame,
+          overlapsDetailsCard: result.overlapsDetailsCard,
+        });
         return card
           ? resolveThreadDetailsCardDensity(card.height, { full: 327, compact: 182 })
           : "hidden";
@@ -249,5 +254,40 @@ describe("chat canvas layout", () => {
     expect(result.overlapsDetailsCard).toBe(true);
     expect(result.overlapsChat).toBe(true);
     expect(result.frame).toEqual({ x: 272, y: 396, width: 1300, height: 400 });
+  });
+});
+
+describe("workspace card docking", () => {
+  const withCard = (width: number, player: ChatCanvasPreview | null = null) =>
+    resolveChatCanvasLayout({
+      container: { width, height: 900 },
+      maxChatWidth: 736,
+      composerHeight: 180,
+      detailsCard: { left: width - 324, right: width - 12, bottom: 400 },
+      preview: player,
+    });
+  it("floats the card while the centered chat stays clear of it", () => {
+    expect(withCard(1576).chat).toEqual({ left: 420, width: 736, insetStart: 0, insetEnd: 0 });
+  });
+  it("docks the card and centers chat beside it once the margin is tight", () => {
+    expect(withCard(1575).chat).toEqual({
+      left: 251.5,
+      width: 736,
+      insetStart: 0,
+      insetEnd: 336,
+    });
+    expect(withCard(1411).chat).toMatchObject({ left: 169.5, width: 736 });
+  });
+  it("shrinks docked chat down to its readable width", () => {
+    expect(withCard(1100).chat).toEqual({ left: 20, width: 724, insetStart: 0, insetEnd: 336 });
+    expect(withCard(1016).chat).toMatchObject({ left: 20, width: 640 });
+  });
+  it("keeps docked chat in place when a new preview opens below the card", () => {
+    expect(withCard(1411, preview)).toEqual({
+      chat: { left: 169.5, width: 736, insetStart: 0, insetEnd: 336 },
+      frame: { x: 1079, y: 688, width: 320, height: 200 },
+      overlapsChat: false,
+      overlapsDetailsCard: false,
+    });
   });
 });
