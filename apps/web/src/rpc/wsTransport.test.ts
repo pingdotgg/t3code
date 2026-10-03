@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import { Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -791,6 +791,57 @@ describe("WsTransport", () => {
 
     unsubscribe();
     await transport.dispose();
+  });
+
+  it("delays preview host re-registration after normal stream completion", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const unsubscribe = transport.subscribe(
+      (client) =>
+        client[WS_METHODS.previewAutomationConnect]({
+          clientId: "preview-host",
+          environmentId: EnvironmentId.make("environment-1"),
+        }),
+      vi.fn(),
+      { completedRetryDelay: 1_000 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    const socket = getSocket();
+    socket.open();
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+    const firstRequest = JSON.parse(socket.sent[0] ?? "{}") as { id: string; tag: string };
+    expect(firstRequest.tag).toBe(WS_METHODS.previewAutomationConnect);
+
+    const streamRequestCount = () =>
+      socket.sent
+        .map((message) => JSON.parse(message) as { _tag?: string })
+        .filter((message) => message._tag === "Request").length;
+    vi.useFakeTimers();
+    try {
+      socket.serverMessage(
+        JSON.stringify({
+          _tag: "Exit",
+          requestId: firstRequest.id,
+          exit: { _tag: "Success", value: null },
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(streamRequestCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      for (let attempt = 0; attempt < 20 && streamRequestCount() < 2; attempt += 1) {
+        await Promise.resolve();
+      }
+      expect(streamRequestCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      unsubscribe();
+      await transport.dispose();
+    }
   });
 
   it("re-subscribes live stream listeners after an explicit transport reconnect", async () => {

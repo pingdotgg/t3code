@@ -26,6 +26,7 @@ import { recordWsDiagnostic } from "./wsDiagnostics";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
+  readonly completedRetryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
 }
 
@@ -135,6 +136,10 @@ export class WsTransport {
     const retryDelayMs = Duration.toMillis(
       Duration.fromInputUnsafe(options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS),
     );
+    const completedRetryDelayMs =
+      options?.completedRetryDelay === undefined
+        ? undefined
+        : Duration.toMillis(Duration.fromInputUnsafe(options.completedRetryDelay));
     let cancelCurrentStream: () => void = NOOP;
 
     const wake = () => {
@@ -216,6 +221,9 @@ export class WsTransport {
           cancelCurrentStream = runningStream.cancel;
           await runningStream.completed;
           cancelCurrentStream = NOOP;
+          if (completedRetryDelayMs !== undefined) {
+            await awaitRestartOrDelay(completedRetryDelayMs);
+          }
         } catch (error) {
           cancelCurrentStream = NOOP;
           if (!active || this.disposed) {
