@@ -6,7 +6,6 @@ import {
   DateTime,
   Duration,
   Effect,
-  Exit,
   Layer,
   Option,
   Result,
@@ -159,7 +158,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { withLogContext } from "./observability/LogContext.ts";
-import { outcomeFromExit } from "./observability/Attributes.ts";
+import { websocketDisconnectFields } from "./observability/Attributes.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "./provider/Services/ProviderService.ts";
 import { listCopilotPreconnectionCommands } from "./provider/copilotPreconnectionCommands.ts";
@@ -3409,14 +3408,33 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             Effect.logInfo("websocket connected", {
               userAgent: request.headers["user-agent"],
             }).pipe(
-              Effect.andThen(Effect.raceFirst(rpcWebSocketHttpEffect, waitUntilSessionInactive)),
-              Effect.onExit((exit) =>
-                Effect.logInfo("websocket disconnected", {
-                  durationMs: Date.now() - connectedAt,
-                  outcome: outcomeFromExit(exit),
-                  ...(Exit.isFailure(exit) ? { cause: Cause.pretty(exit.cause) } : {}),
-                }),
+              // Tag the winner: the session-expiry branch resolves to an
+              // ordinary 401 response, a *success* exit that is otherwise
+              // byte-identical to a clean client-initiated close. The flag
+              // lets `websocket disconnected` name the actual closer.
+              Effect.andThen(
+                Effect.raceFirst(
+                  rpcWebSocketHttpEffect.pipe(
+                    Effect.map((response) => ({
+                      response,
+                      endedBySessionExpiry: false as const,
+                    })),
+                  ),
+                  waitUntilSessionInactive.pipe(
+                    Effect.map((response) => ({
+                      response,
+                      endedBySessionExpiry: true as const,
+                    })),
+                  ),
+                ),
               ),
+              Effect.onExit((exit) =>
+                Effect.logInfo(
+                  "websocket disconnected",
+                  websocketDisconnectFields(exit, connectedAt),
+                ),
+              ),
+              Effect.map(({ response }) => response),
               withLogContext({ sessionId: session.sessionId, connectionId }),
             ),
           () =>
