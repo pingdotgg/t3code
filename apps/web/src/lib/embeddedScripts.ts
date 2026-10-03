@@ -107,7 +107,8 @@ const INTERPRETERS: Record<string, Interpreter> = {
   deno: {
     language: "typescript",
     inline: () => false,
-    valueOptions: new Set(["-c", "--config", "--import-map", "--ext", "--env-file"]),
+    // `--env-file` takes its optional path only as `--env-file=path`.
+    valueOptions: new Set(["-c", "--config", "--import-map", "--ext"]),
     stdin: "never",
     subcommand: "eval",
   },
@@ -359,6 +360,7 @@ function interpreterArgs(
   const scripts: ScriptArgument[] = [];
   const whole = (word: Word): ScriptArgument => ({ word, inValue: false });
   let optionsEnded = false;
+  let scriptFromFile = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     const flag = interpreter.ignoreCase ? arg.value.toLowerCase() : arg.value;
@@ -369,7 +371,13 @@ function interpreterArgs(
     if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
       // `--eval=code` and `--file=path` carry their value in the same word.
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
-      if (interpreter.scriptFileOptions?.has(name)) return { scripts, scriptFromFile: true };
+      if (interpreter.scriptFileOptions?.has(name)) {
+        if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
+        // SQL shells run `-f` files and `-c` statements alike, in order.
+        scriptFromFile = true;
+        if (value === undefined) index += 1;
+        continue;
+      }
       if (interpreter.inline(name)) {
         const next = args[index + 1];
         if (value !== undefined) scripts.push({ word: arg, inValue: true });
@@ -394,7 +402,7 @@ function interpreterArgs(
     scripts.push(...positionals.slice(interpreter.positionalScript).map(whole));
   }
   // SQL shells take databases as positional arguments, not script files.
-  if (interpreter.stdin === "always") return { scripts, scriptFromFile: false };
+  if (interpreter.stdin === "always") return { scripts, scriptFromFile };
   const first = positionals[0];
   return { scripts, scriptFromFile: first !== undefined && first.value !== "-" };
 }
