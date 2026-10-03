@@ -723,6 +723,9 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
   },
 ) {
   override get message(): string {
+    if (this.tabId !== undefined) {
+      return `No connected preview host can run ${this.operation} for tab ${this.tabId} in this thread. Reconnect the desktop that owns the tab and retry after it reports its live tabs. To deliberately start a new browser session, call preview_open with reuseExistingTab: false and no tabId.`;
+    }
     return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. Preview tools run in a T3 Code desktop app that is open and connected to this environment; a headless server has no browser of its own. Do not retry. To check a page, use a headless browser from the shell, such as Playwright, or curl, or ask the user to open this thread in the T3 Code desktop app.`;
   }
 }

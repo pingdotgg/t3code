@@ -85,17 +85,18 @@ interface PendingRequest {
 }
 
 /**
- * A lease pinning one provider session to one desktop runtime. It lives exactly
- * as long as the connection it names: `connectionId`/`queue` identity is what
- * makes a lease valid, so a disconnected or replaced host is dropped on the next
- * lookup. The lease deliberately has no clock of its own — it used to inherit
- * the MCP credential's expiry, which coupled host stickiness to an unrelated
- * auth deadline and could migrate a live session to another runtime mid-flow.
+ * A lease pinning one provider session to one desktop runtime. `connectionId`/
+ * `queue` identity is what makes a lease live. When its host disconnects, a
+ * lease with a tab keeps only that tab as its target, so the next call can go
+ * only to a host that reports owning that tab. The lease deliberately has no
+ * clock of its own. It used to inherit the MCP credential's expiry, which
+ * coupled host stickiness to an unrelated auth deadline and could migrate a
+ * live session to another runtime mid-flow.
  */
 interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
-  readonly connectionId: ClientConnection["connectionId"];
-  readonly queue: ClientConnection["queue"];
+  readonly connectionId?: ClientConnection["connectionId"];
+  readonly queue?: ClientConnection["queue"];
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
 }
@@ -134,7 +135,13 @@ const removeConnectionFromState = (
   const disconnected: PendingRequest[] = [];
   if (current.clients.get(clientId)?.queue === queue) clients.delete(clientId);
   for (const [assignmentKey, assignment] of assignments) {
-    if (assignment.queue === queue) assignments.delete(assignmentKey);
+    if (assignment.queue !== queue) continue;
+    if (assignment.tabId === undefined) {
+      assignments.delete(assignmentKey);
+    } else {
+      const { connectionId: _connectionId, queue: _queue, ...target } = assignment;
+      assignments.set(assignmentKey, target);
+    }
   }
   for (const [requestId, entry] of pending) {
     if (entry.queue !== queue) continue;
@@ -475,32 +482,36 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const route = yield* SynchronizedRef.modify(state, (current) => {
-      const assignments = new Map(
-        Array.from(current.assignments).filter(([, assignment]) => {
-          const connection = current.clients.get(assignment.clientId);
-          return (
-            connection?.connectionId === assignment.connectionId &&
-            connection.queue === assignment.queue
-          );
-        }),
-      );
+    const routeRequest = (current: BrokerState) => {
+      const assignments = new Map(current.assignments);
       const assignmentKey = hostAssignmentKey(input.scope);
       const assigned = assignments.get(assignmentKey);
       const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
-      const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
+      const hasLiveAssignment =
+        assignedConnection !== undefined &&
+        assignedConnection.environmentId === input.scope.environmentId &&
+        assignedConnection.connectionId === assigned?.connectionId &&
+        assignedConnection.queue === assigned.queue;
+      const createsTab =
+        input.operation === "open" &&
+        typeof input.input === "object" &&
+        input.input !== null &&
+        "reuseExistingTab" in input.input &&
+        input.input.reuseExistingTab === false;
+      const targetTabId =
+        input.tabId ?? (!hasLiveAssignment && createsTab ? undefined : assigned?.tabId);
       // Keep one provider session on one physical desktop runtime so a
       // multi-step browser interaction cannot jump between independent
       // Electron cookie/DOM state. A live assignment that predates an
       // operation is not silently moved to a newer client: the caller gets a
       // capability failure and can deliberately start a fresh provider
-      // session. A dead lease is pruned above and may fail over.
+      // session. A dead lease fails over only to a host that reports its tab.
       const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
         host.liveTabs.some(
           (tab) =>
             tab.threadId === input.scope.threadId &&
             (!visibleOnly || tab.visible === true) &&
-            (input.tabId === undefined || tab.tabId === input.tabId),
+            (targetTabId === undefined || tab.tabId === targetTabId),
         );
       const connection =
         hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
@@ -511,7 +522,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
                 .filter(
                   (host) =>
                     host.environmentId === input.scope.environmentId &&
-                    supportsOperation(host, input.operation),
+                    supportsOperation(host, input.operation) &&
+                    (targetTabId === undefined || ownsTargetTab(host)),
                 )
                 .sort(
                   (left, right) =>
@@ -521,18 +533,21 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
                     right.focusOrder - left.focusOrder,
                 )[0];
       if (!connection) {
-        if (!hasLiveAssignment) assignments.delete(assignmentKey);
-        return [undefined, { ...current, assignments }] as const;
+        return [
+          { connection: undefined, tabId: targetTabId },
+          { ...current, assignments },
+        ] as const;
       }
       const canReuseAssignedTab =
         assigned !== undefined &&
         assigned.connectionId === connection.connectionId &&
         assigned.queue === connection.queue;
+      const retainedTabId = canReuseAssignedTab ? assigned.tabId : targetTabId;
       assignments.set(assignmentKey, {
         clientId: connection.clientId,
         connectionId: connection.connectionId,
         queue: connection.queue,
-        ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
+        ...(retainedTabId === undefined ? {} : { tabId: retainedTabId }),
         ...(canReuseAssignedTab && assigned.tabSequence !== undefined
           ? { tabSequence: assigned.tabSequence }
           : {}),
@@ -540,7 +555,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
 
       const requestSequence = current.requestSequence;
       const requestId = `preview-${requestSequence}`;
-      const tabId = input.tabId ?? (canReuseAssignedTab ? assigned.tabId : undefined);
+      const tabId = targetTabId;
       const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
       const context: PreviewAutomationRequestErrorContext = {
         operation: input.operation,
@@ -561,14 +576,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
       ] as const;
-    });
-    if (!route) {
+    };
+    const route = yield* SynchronizedRef.modify<BrokerState, ReturnType<typeof routeRequest>[0]>(
+      state,
+      routeRequest,
+    );
+    if (!route.connection) {
       return yield* new PreviewAutomationNoAvailableHostError({
         operation: input.operation,
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
         providerSessionId: input.scope.providerSessionId,
         providerInstanceId: input.scope.providerInstanceId,
+        ...(route.tabId === undefined ? {} : { tabId: route.tabId }),
       });
     }
     const { connection, requestId, requestContext, requestSequence } = route;
