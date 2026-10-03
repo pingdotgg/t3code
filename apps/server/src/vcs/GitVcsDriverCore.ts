@@ -834,12 +834,52 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
+/**
+ * Git on Windows cannot create or delete a path longer than MAX_PATH (260)
+ * unless `core.longpaths` is set. The OS-level LongPathsEnabled setting does not
+ * cover it, and git leaves it off by default, so deep worktrees fail to check
+ * out and fail midway through removal.
+ *
+ * Passed through `GIT_CONFIG_*` rather than `-c` so argv stays the same on every
+ * platform and nothing is written to the user's config. The entry is appended
+ * after any inherited ones. Windows env names are case-insensitive, so the
+ * inherited count is found regardless of casing and updated under its own name.
+ * A count git would reject is left alone so git still reports it.
+ */
+export const windowsLongPathConfigEnv = (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  if (platform !== "win32") {
+    return {};
+  }
+  const countKey =
+    Object.keys(env).find((key) => key.toUpperCase() === "GIT_CONFIG_COUNT") ?? "GIT_CONFIG_COUNT";
+  const inherited = env[countKey];
+  if (
+    inherited !== undefined &&
+    inherited !== "" &&
+    // Git parses the count with strtoul: leading whitespace, an optional sign
+    // (only -0 is non-negative), digits, and nothing after them.
+    /^[ \t\r\n\v\f]*(?:\+?\d+|-0+)/.exec(inherited)?.[0] !== inherited
+  ) {
+    return {};
+  }
+  const count = inherited === undefined || inherited === "" ? 0 : Number.parseInt(inherited, 10);
+  return {
+    [countKey]: String(count + 1),
+    [`GIT_CONFIG_KEY_${count}`]: "core.longpaths",
+    [`GIT_CONFIG_VALUE_${count}`]: "true",
+  };
+};
+
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const hostPlatform = yield* HostProcessPlatform;
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -864,15 +904,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         );
+        const env = { ...process.env, ...input.env, ...trace2Monitor.env };
         const child = yield* commandSpawner
           .spawn(
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
-              env: {
-                ...process.env,
-                ...input.env,
-                ...trace2Monitor.env,
-              },
+              env: { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) },
             }),
           )
           .pipe(

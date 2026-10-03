@@ -35,6 +35,7 @@ import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
+  windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -3521,5 +3522,96 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+  });
+});
+
+describe("Windows long path configuration", () => {
+  const readGitConfig = Effect.fn("readGitConfig")(function* (
+    platform: NodeJS.Platform,
+    key: string,
+  ) {
+    const layer = GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfigLayer),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
+    );
+    return yield* Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir("git-longpath-test-");
+      const result = yield* driver.execute({
+        operation: "GitVcsDriverTest.readGitConfig",
+        cwd,
+        args: ["config", "--get", key],
+        // Replaces the suite's own core.longpaths=true so it cannot mask a
+        // missing injection. Entry 2 sits past the count and must stay unread.
+        env: {
+          GIT_CONFIG_COUNT: "2",
+          GIT_CONFIG_KEY_0: "user.name",
+          GIT_CONFIG_VALUE_0: "inherited-name",
+          GIT_CONFIG_KEY_1: "core.longpaths",
+          GIT_CONFIG_VALUE_1: "false",
+          GIT_CONFIG_KEY_2: "user.name",
+          GIT_CONFIG_VALUE_2: "outside-count",
+        },
+      });
+      return result.stdout.trim();
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("enables long paths for every Git command on Windows", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("win32", "core.longpaths"), "true");
+      assert.equal(yield* readGitConfig("win32", "user.name"), "inherited-name");
+    }),
+  );
+
+  it.effect("leaves Git config untouched on other platforms", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("linux", "core.longpaths"), "false");
+      assert.equal(yield* readGitConfig("linux", "user.name"), "inherited-name");
+    }),
+  );
+
+  it("extends an inherited count spelled in a different case", () => {
+    // Two spellings collapse to one on spawn (the uppercase one wins), so the
+    // count must be bumped under the spelling that is already there.
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { git_config_count: "2" }), {
+      git_config_count: "3",
+      GIT_CONFIG_KEY_2: "core.longpaths",
+      GIT_CONFIG_VALUE_2: "true",
+    });
+  });
+
+  it("appends after inherited entries, parsing the count as Git does", () => {
+    for (const [count, next] of [
+      [undefined, 0],
+      ["", 0],
+      ["0", 0],
+      ["-0", 0],
+      ["2", 2],
+      [" 2", 2],
+      ["+2", 2],
+      ["02", 2],
+    ] as const) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", count === undefined ? {} : { GIT_CONFIG_COUNT: count }),
+        {
+          GIT_CONFIG_COUNT: String(next + 1),
+          [`GIT_CONFIG_KEY_${next}`]: "core.longpaths",
+          [`GIT_CONFIG_VALUE_${next}`]: "true",
+        },
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
+  });
+
+  it("leaves a count Git would reject for Git to report", () => {
+    for (const count of ["nope", "2x", "-1", "1.5", "  ", "1 "]) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: count }),
+        {},
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
   });
 });
