@@ -91,12 +91,28 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cache: Map<string, SpawnExecutableCacheEntry>,
 ) => string | undefined;
+
+interface SpawnExecutableCacheEntry {
+  readonly path: string;
+  readonly expiresAt: number;
+}
+
+// Spawns often resolve the same CLI several times in one operation. Retain
+// positive PATH scans briefly, but check the selected file on every cache hit.
+export const SpawnExecutableCache = Context.Reference<Map<string, SpawnExecutableCacheEntry>>(
+  "@t3tools/shared/shell/SpawnExecutableCache",
+  { defaultValue: () => new Map() },
+);
+const SPAWN_EXECUTABLE_CACHE_TTL_MS = 1_000;
+const SPAWN_EXECUTABLE_CACHE_MAX_ENTRIES = 512;
 
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cache: Map<string, SpawnExecutableCacheEntry>,
 ): string | undefined {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
@@ -122,12 +138,36 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
+  const cacheKey = JSON.stringify([
+    platform,
+    readEnvPath(env),
+    windowsPathExtensions,
+    command,
+    process.cwd(),
+  ]);
+  const now = performance.now();
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) {
+    if (cached.expiresAt > now && isExecutable(cached.path)) return cached.path;
+    cache.delete(cacheKey);
+  }
+
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (isExecutable(candidatePath)) {
+        if (cache.size >= SPAWN_EXECUTABLE_CACHE_MAX_ENTRIES) {
+          const oldest = cache.keys().next().value;
+          if (oldest !== undefined) cache.delete(oldest);
+        }
+        cache.set(cacheKey, {
+          path: candidatePath,
+          expiresAt: now + SPAWN_EXECUTABLE_CACHE_TTL_MS,
+        });
+        return candidatePath;
+      }
     }
   }
   return undefined;
@@ -700,7 +740,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  const cache = yield* SpawnExecutableCache;
+  const resolvedCommand = resolveExecutable(command, platform, env, cache) ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
