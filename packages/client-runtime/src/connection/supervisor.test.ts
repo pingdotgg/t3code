@@ -696,6 +696,42 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("replaces the session on a long resume while the network reports offline", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        probe: () => Ref.update(probeCount, (count) => count + 1),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      // A wrong offline report: the probe answers, so the session stays.
+      yield* harness.setNetworkStatus("offline");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(probeCount)) > 0) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      // The replacement connects although the network still reports offline.
+      yield* harness.wake("application-active-reconnect");
+      const replaced = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(replaced.attempt).toBe(1);
+      expect(yield* Ref.get(probeCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
+  );
+
   it.effect(
     "releases a session that stops answering while offline and reconnects when online",
     () =>

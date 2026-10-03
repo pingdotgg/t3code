@@ -21,7 +21,8 @@ session, and only a failed probe reconnects. Offline reports are often wrong, fo
 example for a loopback server. A long mobile background suspension is the one
 exception: it replaces the session at once, because the OS can kill a socket
 without reporting closure, and a probe would hold a dead socket in "Resuming"
-until it times out. Foregrounding also wakes a pending retry immediately and
+until it times out. That fresh attempt runs even while the network reports
+offline. Foregrounding also wakes a pending retry immediately and
 leaves an ordinary in-flight attempt alone.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
