@@ -1,16 +1,24 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  type ServerSettingsError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ProjectSettings from "../../../project/ProjectSettingsService.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import { newCommandId, readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
-function projectFailure(error: Project.ProjectServiceError) {
-  if (error._tag === "ProjectOperationError") return unavailable();
+function projectFailure(error: Project.ProjectServiceError | ServerSettingsError) {
+  if (error._tag === "ProjectOperationError" || error._tag === "ServerSettingsError")
+    return unavailable();
   const message =
     error._tag === "ProjectNotFoundError"
       ? "The project was not found."
@@ -22,7 +30,7 @@ function projectFailure(error: Project.ProjectServiceError) {
 
 const access = Effect.gen(function* () {
   yield* readCaller();
-  return yield* Project.ProjectService;
+  return yield* ProjectSettings.ProjectSettingsService;
 });
 const mutation = Effect.gen(function* () {
   const { caller } = yield* readMutationCaller();
@@ -118,8 +126,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
   t3_project_list: (input) =>
     Effect.gen(function* () {
       const projects = yield* access;
-      const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
-      const rows = snapshot.projects.filter((project) => project.deletedAt === null);
+      const rows = yield* projects.listActive.pipe(Effect.mapError(unavailable));
       const start = input.cursor ?? 0,
         end = start + (input.limit ?? 20);
       return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
@@ -137,7 +144,8 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
     }),
   t3_project_create: ({ workspaceRoot, ...input }) =>
     Effect.gen(function* () {
-      const projects = yield* mutation;
+      yield* mutation;
+      const projects = yield* ProjectSettings.ProjectSettingsService;
       if (workspaceRoot === undefined) {
         // Project creation records no model default (only an update does), so
         // reject what this mode would otherwise drop silently.
@@ -180,7 +188,8 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
     }),
   t3_project_update: (input) =>
     Effect.gen(function* () {
-      const projects = yield* mutation;
+      yield* mutation;
+      const projects = yield* ProjectSettings.ProjectSettingsService;
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));

@@ -47,6 +47,7 @@ import {
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
+import * as ProjectSettingsService from "../project/ProjectSettingsService.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -685,6 +686,7 @@ const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
 
 const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
   Layer.provide(ProjectHandlersLive),
+  Layer.provide(ProjectSettingsService.layer),
 );
 
 const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
