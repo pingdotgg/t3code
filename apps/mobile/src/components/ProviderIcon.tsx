@@ -3,6 +3,7 @@ import { Path, Svg } from "react-native-svg";
 import { View } from "react-native";
 import {
   isProviderInstanceInitialsIcon,
+  providerInstanceInitialsGlyphScale,
   resolveProviderInstanceBadgeLabel,
   resolveProviderInstanceGlyphDriver,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -83,21 +84,23 @@ export function ProviderIcon(props: ProviderIconProps) {
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
   const appearance = props.appearance;
   if (isProviderInstanceInitialsIcon(appearance?.icon)) {
+    const label = resolveProviderInstanceBadgeLabel({
+      displayName: appearance?.displayName ?? "",
+      badgeLabel: appearance?.badgeLabel,
+    });
+    const fontSize = size * providerInstanceInitialsGlyphScale(label);
     return (
       <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
         <Text
           className={appearance?.accentColor ? undefined : "text-foreground-muted"}
           style={{
-            fontSize: size * 0.38,
+            fontSize,
             fontWeight: "700",
-            lineHeight: size * 0.5,
+            lineHeight: fontSize * 1.15,
             color: appearance?.accentColor,
           }}
         >
-          {resolveProviderInstanceBadgeLabel({
-            displayName: appearance?.displayName ?? "",
-            badgeLabel: appearance?.badgeLabel,
-          })}
+          {label}
         </Text>
       </View>
     );

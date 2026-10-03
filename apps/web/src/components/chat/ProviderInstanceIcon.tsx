@@ -3,6 +3,7 @@ import { type CSSProperties, memo } from "react";
 import {
   isProviderInstanceInitialsIcon,
   PROVIDER_INSTANCE_LOGO_ICONS,
+  providerInstanceInitialsGlyphScale,
   resolveProviderInstanceBadgeLabel,
   resolveProviderInstanceGlyphDriver,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -131,7 +132,10 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           )}
           aria-hidden
         >
-          <span className="font-bold leading-none tracking-tight" style={{ fontSize: "38cqw" }}>
+          <span
+            className="font-bold leading-none tracking-tight"
+            style={{ fontSize: `${providerInstanceInitialsGlyphScale(badgeLabel) * 100}cqw` }}
+          >
             {badgeLabel}
           </span>
         </span>

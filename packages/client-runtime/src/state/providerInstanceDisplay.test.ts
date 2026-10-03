@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   normalizeProviderAccentColor,
   providerInstanceInitials,
+  providerInstanceInitialsGlyphScale,
   resolveProviderInstanceBadgeLabel,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
@@ -81,6 +82,18 @@ describe("resolveProviderInstanceBadgeLabel", () => {
     expect(resolveProviderInstanceBadgeLabel({ displayName: "Kimi", badgeLabel: "🌙🌙🌙🌙" })).toBe(
       "🌙🌙🌙",
     );
+  });
+});
+
+describe("providerInstanceInitialsGlyphScale", () => {
+  it("shrinks the glyph text as the label grows", () => {
+    expect(providerInstanceInitialsGlyphScale("Z")).toBeGreaterThan(
+      providerInstanceInitialsGlyphScale("KI"),
+    );
+    expect(providerInstanceInitialsGlyphScale("KI")).toBeGreaterThan(
+      providerInstanceInitialsGlyphScale("KIM"),
+    );
+    expect(providerInstanceInitialsGlyphScale("🌙")).toBe(providerInstanceInitialsGlyphScale("Z"));
   });
 });
 
