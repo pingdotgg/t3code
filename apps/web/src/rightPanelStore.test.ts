@@ -553,6 +553,101 @@ describe("rightPanelStore", () => {
     ).toBe("files");
   });
 
+  it("walks a folder browser up and back down in one tab", () => {
+    const store = useRightPanelStore.getState();
+    const state = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.openFile(refA, "README.md");
+    store.openFile(refA, "apps/web/src");
+
+    store.navigateFolder(refA, "file:apps/web/src", "apps", "apps/web/src");
+    expect(state().activeSurfaceId).toBe("file:apps");
+    expect(state().surfaces).toEqual([
+      expect.objectContaining({ id: "file:README.md" }),
+      expect.objectContaining({
+        id: "file:apps",
+        relativePath: "apps",
+        folderTrail: "apps/web/src",
+      }),
+    ]);
+
+    // The workspace root is the files explorer, still holding the way back down.
+    store.navigateFolder(refA, "file:apps", "", "apps/web/src");
+    expect(state().surfaces.map((surface) => surface.id)).toEqual(["file:README.md", "files"]);
+    expect(state().surfaces[1]).toEqual({
+      id: "files",
+      kind: "files",
+      folderTrail: "apps/web/src",
+    });
+
+    // Reaching the end of the trail leaves no trail behind.
+    store.navigateFolder(refA, "files", "apps/web/src", "apps/web/src");
+    expect(state().activeSurfaceId).toBe("file:apps/web/src");
+    expect(state().surfaces[1]).toEqual({
+      id: "file:apps/web/src",
+      kind: "file",
+      relativePath: "apps/web/src",
+      revealLine: null,
+      revealRequestId: 1,
+    });
+  });
+
+  it("switches to a tab that already shows the folder instead of replacing it", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "apps");
+    store.openFile(refA, "apps/web/src", 12);
+
+    store.navigateFolder(refA, "file:apps/web/src", "apps", "apps/web/src");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("file:apps");
+    expect(state.surfaces).toEqual([
+      { id: "file:apps", kind: "file", relativePath: "apps", revealLine: null, revealRequestId: 1 },
+    ]);
+  });
+
+  it("keeps a file's tab when walking up from it, and comes back to it", () => {
+    const store = useRightPanelStore.getState();
+    const state = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.openFile(refA, "src/app.ts", 40);
+
+    store.navigateFolder(refA, "file:src/app.ts", "src", "src/app.ts", true);
+    expect(state().activeSurfaceId).toBe("file:src");
+    expect(state().surfaces).toEqual([
+      {
+        id: "file:src/app.ts",
+        kind: "file",
+        relativePath: "src/app.ts",
+        revealLine: 40,
+        revealRequestId: 1,
+      },
+      expect.objectContaining({ id: "file:src", folderTrail: "src/app.ts" }),
+    ]);
+
+    // The trail's end is the file: its tab comes back as it was, the folder tab goes.
+    store.navigateFolder(refA, "file:src", "src/app.ts", "src/app.ts");
+    expect(state().activeSurfaceId).toBe("file:src/app.ts");
+    expect(state().surfaces).toEqual([
+      {
+        id: "file:src/app.ts",
+        kind: "file",
+        relativePath: "src/app.ts",
+        revealLine: 40,
+        revealRequestId: 1,
+      },
+    ]);
+  });
+
+  it("ignores navigation from a tab that was closed", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "apps");
+    const before = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.navigateFolder(refA, "file:gone", "", "gone");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      before,
+    );
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");

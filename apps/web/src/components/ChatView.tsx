@@ -10407,6 +10407,18 @@ export default function ChatView(props: ChatViewProps) {
               : 0
           }
           onOpenFile={openFileSurface}
+          onNavigateFolder={(relativePath, folderTrail, keepSource) =>
+            useRightPanelStore
+              .getState()
+              .navigateFolder(
+                activeThreadRef,
+                renderedRightPanelSurface.id,
+                relativePath,
+                folderTrail,
+                keepSource,
+              )
+          }
+          folderTrail={renderedRightPanelSurface.folderTrail}
           onPendingChange={handleFilePendingChange}
           selectedFilePending={
             renderedRightPanelSurface.kind === "file" &&

@@ -52,7 +52,12 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
-  | { id: "files"; kind: "files" }
+  | {
+      id: "files";
+      kind: "files";
+      /** Set when breadcrumbs moved a folder browser up to the workspace root. */
+      folderTrail?: string;
+    }
   | {
       id: `file:${string}` | `attachment:${string}`;
       kind: "file";
@@ -63,6 +68,11 @@ export type RightPanelSurface =
       /** Present when the file lives in the thread's attachment store rather
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
+      /**
+       * Set when breadcrumbs moved a folder browser up from a deeper path: the
+       * deepest workspace path the breadcrumbs keep offering on the way back down.
+       */
+      folderTrail?: string;
     }
   | {
       /**
@@ -141,6 +151,19 @@ interface RightPanelStoreState {
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  /**
+   * Moves the folder browser in `surfaceId` to `relativePath` in place, so walking
+   * the breadcrumbs does not leave a tab behind per folder. `""` is the workspace
+   * root, which is the files explorer. `folderTrail` is kept for the way back down.
+   * `keepSource` opens the folder beside the source tab instead, for a file preview.
+   */
+  navigateFolder: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    relativePath: string,
+    folderTrail: string,
+    keepSource?: boolean,
+  ) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -439,6 +462,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     // Removed surfaces: plans render inline, agents in thread lineage.
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
+                    if (
+                      (surface.kind === "file" || surface.kind === "files") &&
+                      "folderTrail" in surface &&
+                      typeof surface.folderTrail !== "string"
+                    ) {
+                      const { folderTrail: _invalid, ...rest } = surface;
+                      surface = rest;
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -698,6 +729,34 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   )
                 : [...withoutStandaloneExplorer, surface],
             };
+          }),
+        ),
+      navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (index < 0) return current;
+            const trail = folderTrail === relativePath ? {} : { folderTrail };
+            const target: RightPanelSurface =
+              relativePath === ""
+                ? { ...singletonSurface("files"), ...trail }
+                : { ...fileSurface(relativePath, null, 1), ...trail };
+            const source = current.surfaces[index]!;
+            // A tab already showing the target wins, so its state is never replaced.
+            const existing = current.surfaces.some(
+              (surface, i) => i !== index && surface.id === target.id,
+            );
+            const surfaces = current.surfaces.flatMap((surface, i) => {
+              if (i === index) {
+                const kept = keepSource ? [source] : [];
+                return existing ? kept : [...kept, target];
+              }
+              // Like openFile: a file surface replaces the standalone explorer.
+              return !existing && target.kind === "file" && surface.kind === "files"
+                ? []
+                : [surface];
+            });
+            return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
           }),
         ),
       openAttachment: (ref, attachment) =>
