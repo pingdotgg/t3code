@@ -609,6 +609,28 @@ describe("OpenCode2 adapter", () => {
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2AppThread,
   });
+  /**
+   * The continuation turn the orchestrator starts for an offered wake: its
+   * message is the one the offer named, as `ProviderContinuationService` dispatches it.
+   */
+  const continuationTurn = (
+    thread: OrchestrationV2ProviderThread,
+    offer: ProviderContinuationRequest,
+    suffix = "wake",
+  ) => ({
+    ...withLineage(thread),
+    runId: RunId.make(`run:opencode2-adapter:${suffix}`),
+    runOrdinal: 2,
+    providerTurnOrdinal: 2,
+    attemptId: RunAttemptId.make(`attempt:opencode2-adapter:${suffix}`),
+    message: {
+      ...turnInput(thread).message,
+      messageId: offer.messageId!,
+      text: offer.detail ?? "",
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+    },
+  });
   const CHILD = "ses_f1485c529ffea4URrYruwEg0Ja";
   /**
    * The single reader of the runtime's events: resolves `attached` once the
@@ -3674,19 +3696,7 @@ describe("OpenCode2 adapter", () => {
       yield* Effect.gen(function* () {
         while (offers.length === 0) yield* Effect.yieldNow;
       }).pipe(Effect.timeout("2 seconds"), Effect.orDie);
-      yield* runtime.startTurn({
-        ...withLineage(thread),
-        runId: RunId.make("run:opencode2-adapter:wake"),
-        runOrdinal: 2,
-        providerTurnOrdinal: 2,
-        attemptId: RunAttemptId.make("attempt:opencode2-adapter:wake"),
-        message: {
-          ...turnInput(thread).message,
-          messageId: MessageId.make("message:opencode2-adapter:wake"),
-          createdBy: "agent" as const,
-          creationSource: "provider" as const,
-        },
-      });
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
       yield* Deferred.await(bothEnded);
       const [first, second] = turns;
       return { runtime, thread, first: first!, second: second! };
@@ -3751,6 +3761,107 @@ describe("OpenCode2 adapter", () => {
         [first.id],
       );
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("replays only its own background reply into a continuation turn", () =>
+    Effect.gen(function* () {
+      const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
+      const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
+      const report = (inboxID: string, child: string, text: string) =>
+        event("session.inbox.enqueued", {
+          inboxID,
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: `<subagent sessionID="${child}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+              description: "Sleep",
+              metadata: {
+                source: "subagent",
+                childID: child,
+                agent: "General",
+                state: "completed",
+              },
+            },
+            delivery: "steer",
+          },
+        });
+      const reply = (assistantMessageID: string, text: string) =>
+        event("session.text.ended", { sessionID: SESSION, assistantMessageID, ordinal: 0, text });
+      const offers: Array<ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        // The same turn starts a second background subagent.
+        event("session.tool.input.started", { ...toolB, name: "subagent" }),
+        event("session.tool.called", {
+          ...toolB,
+          name: "subagent",
+          input: { description: "Sleep", prompt: "sleep", background: true },
+          executed: false,
+        }),
+        event("session.created", { ...childCreated(CHILD_B), sessionID: CHILD_B }),
+        event("session.tool.progress", {
+          ...toolB,
+          metadata: { sessionID: CHILD_B, status: "running" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Each subagent's report wakes the parent into a reply OpenCode runs on its own.
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        report("msg_report_a", CHILD, "A_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
+        reply("msg_reply_a", "REPLY_A"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD_B }),
+        report("msg_report_b", CHILD_B, "B_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b" }),
+        reply("msg_reply_b", "REPLY_B"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const collected: Array<ProviderAdapterV2Event> = [];
+      const ended = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
+              yield* Deferred.succeed(ended, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Effect.gen(function* () {
+        while (offers.length < 2) yield* Effect.yieldNow;
+      }).pipe(Effect.timeout("2 seconds"), Effect.orDie);
+      // A's continuation was cancelled before it started; B's runs.
+      yield* runtime.startTurn(continuationTurn(thread, offers[1]!, "wake-b"));
+      yield* Deferred.await(ended);
+      const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: OPENCODE_PROVIDER,
+        nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake-b`,
+      });
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.providerTurnId === continuationId
+            ? [event.turnItem.text]
+            : [],
+        ),
+        ["REPLY_B"],
+      );
+      // Nothing is left held for a continuation that will never run.
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
   it.effect("ends a follow-up turn a steer joined exactly once", () =>
@@ -3830,19 +3941,7 @@ describe("OpenCode2 adapter", () => {
       yield* Effect.gen(function* () {
         while (offers.length === 0) yield* Effect.yieldNow;
       }).pipe(Effect.timeout("2 seconds"), Effect.orDie);
-      const followUp = {
-        ...withLineage(thread),
-        runId: RunId.make("run:opencode2-adapter:wake"),
-        runOrdinal: 2,
-        providerTurnOrdinal: 2,
-        attemptId: RunAttemptId.make("attempt:opencode2-adapter:wake"),
-        message: {
-          ...turnInput(thread).message,
-          messageId: MessageId.make("message:opencode2-adapter:wake"),
-          createdBy: "agent" as const,
-          creationSource: "provider" as const,
-        },
-      };
+      const followUp = continuationTurn(thread, offers[0]!);
       yield* runtime.startTurn(followUp);
       const followUpTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
         driver: OPENCODE_PROVIDER,

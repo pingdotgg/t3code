@@ -178,6 +178,25 @@ describe("ProviderContinuationService", () => {
     });
   });
 
+  it.effect("dispatches a wake under the message its adapter named", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const messageId = MessageId.make("message-provider-continuation-adapter-named");
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({ ...request(), messageId });
+        const command = (yield* Queue.take(dispatched)) as { readonly messageId: MessageId };
+        // The adapter matches the continuation run's message to the wake it holds.
+        assert.equal(command.messageId, messageId);
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
   it.effect("delivers a message_text wake as a real prompt, not a buffered wake", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

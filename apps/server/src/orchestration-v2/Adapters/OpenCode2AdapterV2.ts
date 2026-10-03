@@ -48,6 +48,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
+  type MessageId,
   type ModelSelection,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
@@ -299,6 +300,8 @@ interface SubagentCall {
  * the continuation turn T3 opens for it takes them.
  */
 interface Wake {
+  /** The message its continuation run starts from, which names the wake in that turn's input. */
+  readonly messageId: MessageId | undefined;
   readonly events: Array<OpenCode2StreamEvent>;
   running: boolean;
   /** The background subagents whose end it answers, as its turn's notification names them. */
@@ -1646,13 +1649,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      */
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
       const route = state.providerThread.appThreadId;
-      if (route === null) return;
+      if (route === null || wake.messageId === undefined) return;
       const notification = backgroundWorkNotification(wake.reports);
       yield* continuationRequests.offer({
         threadId: route,
         providerThreadId: state.providerThread.id,
         driver,
         detail: wake.detail,
+        messageId: wake.messageId,
         ...(notification === null ? {} : { notification }),
         dispatchIfCurrent: (dispatch) =>
           wake.dropped ? Effect.succeed(Option.none()) : Effect.map(dispatch, Option.some),
@@ -2331,7 +2335,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const onWake = Effect.fnUntraced(function* (state: ThreadState) {
       const { delivered, stopped } = yield* takeReports(state);
       if (stopped) return;
+      const route = state.providerThread.appThreadId;
       const wake: Wake = {
+        // Only a thread's wake is offered a continuation; the ordinal is display metadata.
+        messageId:
+          route === null
+            ? undefined
+            : yield* idAllocator.allocate.message({ threadId: route, ordinal: 0 }),
         events: [],
         running: true,
         reports: delivered.map((entry) => entry.report),
@@ -3365,8 +3375,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     /**
      * The continuation turn for an execution OpenCode started on its own: it
-     * takes the oldest one held and ends with it. One already taken (a user
-     * turn joined it) leaves nothing to run, so the turn ends at once.
+     * takes the wake it was dispatched for, named by its message, and ends
+     * with it. Wakes held before that one had their continuation cancelled or
+     * dropped before it started, so nothing will replay them: they are
+     * dropped. One already taken (a user turn joined it) leaves nothing to
+     * run, so the turn ends at once.
      */
     const runWake = Effect.fnUntraced(function* (
       state: ThreadState,
@@ -3375,8 +3388,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
-          const wake = state.wakes.shift();
-          if (wake === undefined) return yield* finishTurn(state, { status: "completed" });
+          const index = state.wakes.findIndex(
+            (held) => held.messageId === turnInput.message.messageId,
+          );
+          if (index < 0) return yield* finishTurn(state, { status: "completed" });
+          for (const skipped of state.wakes.splice(0, index)) skipped.dropped = true;
+          const wake = state.wakes.shift()!;
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
           // Its first report is where its history begins, so fork and rollback cut there.
