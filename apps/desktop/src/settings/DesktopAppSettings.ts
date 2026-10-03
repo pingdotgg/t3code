@@ -5,6 +5,7 @@ import {
   type DesktopUpdateChannel,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -421,8 +422,12 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   readonly defaultSettings: DesktopSettings;
   readonly suffix: string;
 }): Effect.fn.Return<void, DesktopSettingsWriteError> {
-  const directory = input.path.dirname(input.settingsPath);
-  const tempPath = `${input.settingsPath}.${process.pid}.${input.suffix}.tmp`;
+  const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
+    Effect.provideService(FileSystem.FileSystem, input.fileSystem),
+    Effect.provideService(Path.Path, input.path),
+  );
+  const directory = input.path.dirname(targetPath);
+  const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeDesktopSettingsJson(
     toDesktopSettingsDocument(input.settings, input.defaultSettings),
   ).pipe(
@@ -455,7 +460,7 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
         }),
     ),
   );
-  yield* input.fileSystem.rename(tempPath, input.settingsPath).pipe(
+  yield* input.fileSystem.rename(tempPath, targetPath).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopSettingsWriteError({
