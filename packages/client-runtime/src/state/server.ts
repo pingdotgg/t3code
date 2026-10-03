@@ -1280,6 +1280,20 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:run-now",
       tag: WS_METHODS.scheduledTasksRunNow,
     }),
+    rotateScheduledTaskWebhookToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:rotate-webhook-token",
+      tag: WS_METHODS.scheduledTasksRotateWebhookToken,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    listScheduledTaskWebhookDeliveries: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:list-webhook-deliveries",
+      tag: WS_METHODS.scheduledTasksListWebhookDeliveries,
+    }),
+    getScheduledTaskWebhookDelivery: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:get-webhook-delivery",
+      tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
+    }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,

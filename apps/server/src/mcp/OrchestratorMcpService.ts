@@ -203,6 +203,7 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    ...(task.webhook === undefined ? {} : { webhookUrl: task.webhook.url ?? task.webhook.path }),
   };
 }
 

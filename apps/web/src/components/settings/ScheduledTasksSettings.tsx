@@ -162,6 +162,7 @@ function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -312,7 +313,7 @@ function ScheduledTaskEnvironmentSection({
   const linkedTask = tasks?.find((task) => task.id === taskId);
   const openedLink = useRef(false);
   useEffect(() => {
-    if (!openedLink.current && linkedTask) {
+    if (!openedLink.current && linkedTask && linkedTask.schedule.type !== "webhook") {
       openedLink.current = true;
       onEdit(environment.environmentId, linkedTask);
     }
@@ -344,6 +345,12 @@ function ScheduledTaskEnvironmentSection({
             <SettingsRow
               title="Task unavailable"
               description="This task no longer exists or is outside the selected project scope."
+              role="status"
+            />
+          ) : linkedTask?.schedule.type === "webhook" ? (
+            <SettingsRow
+              title="Webhook tasks can't be edited here yet"
+              description="Update T3 Code to edit this task."
               role="status"
             />
           ) : null}
@@ -449,11 +456,12 @@ function ScheduledTaskRow({
               <MoreHorizontalIcon className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end">
-              <MenuItem onClick={onEdit}>
+              {/* Webhook tasks are not editable here yet; saving would drop their URL. */}
+              <MenuItem onClick={onEdit} disabled={task.schedule.type === "webhook"}>
                 <PencilIcon />
                 Edit
               </MenuItem>
-              <MenuItem onClick={() => void act("run")}>
+              <MenuItem onClick={() => void act("run")} disabled={task.schedule.type === "webhook"}>
                 <PlayIcon />
                 Run now
               </MenuItem>
