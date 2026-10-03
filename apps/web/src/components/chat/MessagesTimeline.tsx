@@ -5224,7 +5224,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
+          <TimelineRowTimestamp
+            createdAt={workEntry.createdAt}
+            timestampFormat={timestampFormat}
+            className={expanded ? "static" : undefined}
+          />
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
