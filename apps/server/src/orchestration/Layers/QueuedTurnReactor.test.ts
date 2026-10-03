@@ -1906,6 +1906,26 @@ describe("QueuedTurnReactor", () => {
     ).toMatchObject([{ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }]);
   });
 
+  it("keeps PR feedback pending while the parent has paused automatic nudges", async () => {
+    const model = queuedReadModel({
+      origin: {
+        kind: "pull-request-monitor",
+        repository: "acme/app",
+        number: 42,
+        deliveryId: "paused-parent-delivery",
+      },
+    });
+    const thread = model.threads[0]!;
+    const pausedParent = {
+      ...model,
+      threads: [{ ...thread, nudging: { paused: true } }],
+    };
+
+    const commands = await runReactor(pausedParent, monitorSnapshot("head-current"));
+
+    expect(commands).toEqual([]);
+  });
+
   it("dispatches a collaboration response past paused PR feedback", async () => {
     const model = queuedReadModel({
       origin: { kind: "pull-request-monitor", repository: "acme/app", number: 42 },

@@ -304,6 +304,9 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
           });
           continue;
         }
+        // Parent pause covers automatic PR remediation as well as child nudges;
+        // keep the durable feedback queued without letting it start a turn.
+        if (thread.nudging?.paused) continue;
         if (turn.failedAt !== null) {
           dispatchableTurns.push(turn);
           continue;

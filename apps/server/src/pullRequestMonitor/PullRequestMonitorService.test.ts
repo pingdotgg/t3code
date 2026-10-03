@@ -1976,6 +1976,76 @@ layer("PullRequestMonitorService", (it) => {
       }),
   );
 
+  it.effect("preserves a human owner selected while review findings are being submitted", () =>
+    Effect.gen(function* () {
+      const monitors = yield* PullRequestMonitorService;
+      const sql = yield* SqlClient.SqlClient;
+      const recoveredOwner = ThreadId.make("submit-findings-recovered-owner");
+      const explicitOwner = ThreadId.make("submit-findings-explicit-owner");
+      const reviewer = ThreadId.make("submit-findings-reviewer");
+      const reference = { projectId, repository: "acme/app", number: 78 } as const;
+      const association = {
+        number: reference.number,
+        url: `https://github.com/${reference.repository}/pull/${reference.number}`,
+      };
+      seedThread(recoveredOwner, "/tmp/recovered-owner", association);
+      seedThread(explicitOwner);
+      seedThread(reviewer);
+      currentSnapshot = sampleSnapshot({ number: reference.number, url: association.url });
+
+      const started = yield* monitors.start({ ...reference, ownerMode: "observe-only" });
+      assert.isNull(started.monitor.ownerThreadId);
+      monitorSnapshotHook = monitors
+        .transferOwnership({
+          monitorId: started.monitor.id,
+          toThreadId: explicitOwner,
+          reason: "human-owner-selection",
+        })
+        .pipe(
+          Effect.asVoid,
+          Effect.mapError(
+            () =>
+              new PullRequestOperationError({
+                operation: "monitorSnapshot",
+                detail: "Could not inject the concurrent owner selection.",
+              }),
+          ),
+        );
+
+      const submitted = yield* monitors
+        .submitFindings({
+          reference,
+          reviewThreadId: reviewer,
+          startMonitoring: false,
+          findings: [
+            {
+              key: "owner-race-finding",
+              title: "Keep the manual owner",
+              detail: "The recovery claim must not overwrite a human selection.",
+              severity: "major",
+            },
+          ],
+        })
+        .pipe(Effect.ensuring(Effect.sync(() => (monitorSnapshotHook = Effect.void))));
+      const persisted = yield* monitors.status({ monitorId: started.monitor.id });
+      const events = yield* sql<{
+        readonly from_thread_id: string | null;
+        readonly to_thread_id: string | null;
+      }>`
+        SELECT from_thread_id, to_thread_id
+        FROM pull_request_monitor_ownership_events
+        WHERE monitor_id = ${started.monitor.id}
+        ORDER BY created_at
+      `;
+
+      assert.strictEqual(submitted.ownerThreadId, explicitOwner);
+      assert.strictEqual(submitted.monitor.ownerThreadId, explicitOwner);
+      assert.strictEqual(persisted.monitor?.ownerThreadId, explicitOwner);
+      assert.strictEqual(persisted.monitor?.linkedReviewThreadId, reviewer);
+      assert.deepStrictEqual(events, [{ from_thread_id: null, to_thread_id: explicitOwner }]);
+    }),
+  );
+
   it.effect("preserves review findings without choosing between ambiguous active owners", () =>
     Effect.gen(function* () {
       const monitors = yield* PullRequestMonitorService;

@@ -1014,12 +1014,6 @@ export const layer = Layer.effect(
           });
         }
         const now = yield* isoNow();
-        const updated = {
-          ...monitorRecord,
-          linkedReviewThreadId: input.reviewThreadId,
-          ownerThreadId,
-          updatedAt: now,
-        };
         // Each finding becomes its own durable item/revision so the owner can disposition
         // them individually; delivery follows the normal debounced wake path.
         const findings = yield* feedback.ingestFindings({
@@ -1036,22 +1030,49 @@ export const layer = Layer.effect(
           ...(reviewedHeadSha === undefined ? {} : { reviewedHeadSha }),
           origin: input.origin ?? "reviewer",
         });
-        // Always use ownership-scoped SQL so concurrent poll updates cannot clobber the link.
-        yield* store.transferOwnershipAtomic({
-          monitorId: updated.id,
+        // Recovery can race an explicit transfer while the provider review is being read.
+        // Claim only if the owner still matches the record we based recovery on.
+        const claimed = yield* store.transferOwnershipAtomic({
+          monitorId: monitorRecord.id,
           ownerThreadId,
+          expectedOwnerThreadId: monitorRecord.ownerThreadId,
           linkedReviewThreadId: input.reviewThreadId,
           updatedAt: now,
           eventId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
           toThreadId: ownerThreadId,
           reason: input.summary?.slice(0, 500) ?? "review-handoff",
         });
+        if (!claimed) {
+          const current = yield* store.getById(monitorRecord.id);
+          if (current === null) {
+            return yield* monitorError("Monitor no longer exists after review handoff.", {
+              monitorId: monitorRecord.id,
+            });
+          }
+          // Keep the review link, but preserve the owner that won the concurrent transfer.
+          yield* store.transferOwnershipAtomic({
+            monitorId: current.id,
+            ownerThreadId: current.ownerThreadId,
+            expectedOwnerThreadId: current.ownerThreadId,
+            linkedReviewThreadId: input.reviewThreadId,
+            updatedAt: now,
+            eventId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+            toThreadId: current.ownerThreadId,
+            reason: input.summary?.slice(0, 500) ?? "review-handoff",
+          });
+        }
+        const submittedMonitor = yield* store.getById(monitorRecord.id);
+        if (submittedMonitor === null) {
+          return yield* monitorError("Monitor no longer exists after review handoff.", {
+            monitorId: monitorRecord.id,
+          });
+        }
         yield* notify;
-        yield* requestRecheck(updated);
+        yield* requestRecheck(submittedMonitor);
         return {
-          monitor: updated,
+          monitor: submittedMonitor,
           linkedReviewThreadId: input.reviewThreadId,
-          ownerThreadId,
+          ownerThreadId: submittedMonitor.ownerThreadId,
           monitoringStarted: startMonitoring,
           findings,
         };
