@@ -1,5 +1,7 @@
-import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useMemo } from "react";
+import type { AndroidMenuAction } from "../../components/MaterialMenuPopup";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
@@ -11,12 +13,13 @@ function checkedMenuState(checked: boolean) {
 }
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const { iconSize } = useAndroidControlSizing();
   // The list uses a fixed creation order and ignores sort/group options, so
   // the filter menu only carries the filters and the "customized" icon state
   // keys off those alone.
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
-  const menuActions = useMemo<MenuAction[]>(
+  const menuActions = useMemo<AndroidMenuAction[]>(
     () => [
       {
         id: "environment",
@@ -50,12 +53,28 @@ export function HomeHeader(props: HomeHeaderProps) {
                   id: `project:${project.key}`,
                   title: project.label,
                   state: checkedMenuState(props.selectedProjectKey === project.key),
+                  leading: project.representative ? (
+                    <ProjectFavicon
+                      environmentId={project.representative.environmentId}
+                      faviconPath={project.representative.faviconPath}
+                      projectIcon={project.representative.projectIcon}
+                      projectTitle={project.label}
+                      size={iconSize}
+                      workspaceRoot={project.representative.workspaceRoot}
+                    />
+                  ) : undefined,
                 })),
               ],
             },
-          ] satisfies MenuAction[])),
+          ] satisfies AndroidMenuAction[])),
     ],
-    [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [
+      iconSize,
+      props.environments,
+      props.projects,
+      props.selectedEnvironmentId,
+      props.selectedProjectKey,
+    ],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
