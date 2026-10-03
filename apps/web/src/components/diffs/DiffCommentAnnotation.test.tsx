@@ -21,7 +21,8 @@ describe("DiffCommentAnnotation", () => {
     expect(markup).not.toContain("font-mono");
     expect(markup).not.toContain("Local comment");
     expect(markup).not.toContain("on +78");
-    expect(markup).toContain("⌘/Ctrl Enter to send");
+    expect(markup).not.toContain("⌘/Ctrl");
+    expect(markup).toContain("Enter to send");
     expect(markup).toContain("Add a comment…");
     expect(markup).toContain(">Comment</button>");
     expect(markup).toContain("autofocus");
