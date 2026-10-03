@@ -14,7 +14,6 @@ import {
 import {
   formatShortcutLabel,
   isDiffToggleShortcut,
-  isRichTextBoldShortcut,
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
@@ -1087,35 +1086,6 @@ describe("isTerminalClearShortcut", () => {
     assert.isFalse(
       isTerminalClearShortcut(event({ type: "keyup", key: "l", ctrlKey: true }), "Linux"),
     );
-  });
-});
-
-describe("isRichTextBoldShortcut", () => {
-  it("matches Mod+B without extra modifiers", () => {
-    assert.isTrue(isRichTextBoldShortcut(event({ key: "b", metaKey: true })));
-    assert.isTrue(isRichTextBoldShortcut(event({ key: "B", ctrlKey: true })));
-  });
-
-  it("matches the B key on non-Latin layouts, like the sidebar toggle does", () => {
-    const cyrillicB = event({ key: "и", code: "KeyB", ctrlKey: true });
-    assert.isTrue(isRichTextBoldShortcut(cyrillicB));
-    assert.strictEqual(
-      resolveShortcutCommand(cyrillicB, DEFAULT_BINDINGS, { platform: "Win32" }),
-      "sidebar.toggle",
-    );
-  });
-
-  it("follows the letter a Latin layout types, not the physical key", () => {
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "x", code: "KeyB", ctrlKey: true })));
-    assert.isTrue(isRichTextBoldShortcut(event({ key: "b", code: "KeyN", ctrlKey: true })));
-  });
-
-  it("ignores shifted, alted, bare, and non-keydown presses", () => {
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "b", metaKey: true, shiftKey: true })));
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "b", metaKey: true, altKey: true })));
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "b" })));
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "i", metaKey: true })));
-    assert.isFalse(isRichTextBoldShortcut(event({ type: "keyup", key: "b", metaKey: true })));
   });
 });
 
