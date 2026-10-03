@@ -200,7 +200,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>
                   <span
-                    className="w-12 text-right text-3xs/4 text-muted-foreground/45 tabular-nums"
+                    className="min-w-12 text-right text-3xs/4 whitespace-nowrap text-muted-foreground/45 tabular-nums"
                     data-composer-task-duration="true"
                   >
                     {step.durationMs !== undefined
