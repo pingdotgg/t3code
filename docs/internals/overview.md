@@ -58,6 +58,13 @@ therefore means the intent committed, not that the provider, checkpoint, or othe
 finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
 a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
+A worktree handoff with a continuation records the workspace binding, continuation message and
+run, and provider detach effect in the same command transaction. The detach can execute immediately
+after commit, so recording the continuation afterward would let a delegated child publish its result
+too early. A planned exclusive workspace detach interrupts the old turn without a provider failure;
+the queued continuation can then start in the new workspace. Unexpected provider failures and
+explicit Stop retain queued messages until the user resumes them.
+
 The event log only keeps what live readers need: about a day of history for reconnect replay and
 command-id retries.
 [ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes

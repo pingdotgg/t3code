@@ -229,6 +229,12 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
     readonly detail?: string;
+    readonly reason?: "workspace_changed";
+    /**
+     * True for terminal detaches (thread archived or deleted): the thread's
+     * MCP credentials are revoked immediately instead of surviving for a
+     * potential re-attach.
+     */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
@@ -623,12 +629,20 @@ export const layerWithOptions = (
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         detail: string,
+        expectedDetach?: Pick<ProviderAdapter.ProviderAdapterSessionDetached, "threadId" | "reason">,
       ) {
-        const error = new ProviderAdapter.ProviderAdapterEventStreamError({
-          driver: entry.runtime.driver,
-          providerSessionId: entry.runtime.providerSessionId,
-          cause: detail,
-        });
+          const error =
+            expectedDetach === undefined
+              ? new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver: entry.runtime.driver,
+                  providerSessionId: entry.runtime.providerSessionId,
+                  cause: detail,
+                })
+              : new ProviderAdapter.ProviderAdapterSessionDetached({
+                  driver: entry.runtime.driver,
+                  providerSessionId: entry.runtime.providerSessionId,
+                  ...expectedDetach,
+                        });
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
         yield* Effect.forEach(
           subscribers.values(),
@@ -1130,6 +1144,7 @@ export const layerWithOptions = (
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
+        readonly expectedDetach?: Pick<ProviderAdapter.ProviderAdapterSessionDetached, "threadId" | "reason">;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1158,6 +1173,7 @@ export const layerWithOptions = (
                     yield* failSubscribers(
                       entry,
                       input.detail ?? `Provider session released: ${input.reason}.`,
+                      input.expectedDetach,
                     );
                   }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
@@ -3113,6 +3129,9 @@ export const layerWithOptions = (
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
+                ...(input.reason === undefined
+                  ? {}
+                  : { expectedDetach: { threadId: input.threadId, reason: input.reason } }),
               });
               return;
             }
