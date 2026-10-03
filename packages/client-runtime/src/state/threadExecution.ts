@@ -25,6 +25,7 @@ import {
   type ThreadRunSummary,
   type ThreadRuntimeSummary,
 } from "./models.ts";
+import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -301,7 +302,9 @@ export function presentPendingBackgroundWork(
         label:
           description === undefined || description.length === 0
             ? BACKGROUND_WORK_KINDS[task.kind].singular
-            : description,
+            : task.kind === "subagent"
+              ? formatSubagentDisplayTitle(description)
+              : description,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
     })
