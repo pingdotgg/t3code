@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Etag from "effect/unstable/http/Etag";
@@ -36,7 +37,10 @@ import {
   RelayEnvironmentAuth,
   RelayEnvironmentPrincipal,
   RelayApi,
+  RelayEnvironmentLinkUnavailableError,
+  RelayEnvironmentLinkRequest,
 } from "@t3tools/contracts/relay";
+import { relayProtectedErrorMessage } from "@t3tools/client-runtime/relay";
 import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
@@ -90,6 +94,96 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 };
+
+describe("managed endpoint provisioning errors", () => {
+  it.effect("returns the failed stage without exposing provider secrets through HTTP", () => {
+    const handlers = clientApi.pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(RelayDb.RelayTransactions, {}),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+          NodeCryptoLayer.layer,
+          Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
+          Layer.mock(EnvironmentLinker.EnvironmentLinker, {
+            link: () =>
+              Effect.fail(
+                new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+                  userId: "user-1",
+                  environmentId: "environment-1",
+                  stage: "ensure-tunnel",
+                  tunnelId: "private-tunnel-id",
+                  cause: new Error("private-provider-token"),
+                }),
+              ),
+          }),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(Devices.Devices, {}),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(RelayClientAuth, {
+          clientBearer: (effect) =>
+            Effect.provideService(effect, RelayClientPrincipal, {
+              userId: "user-1",
+              token: "test-token",
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+              Layer.provide(handlers),
+              Layer.provide(HttpServer.layerServices),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (app) => Effect.promise(() => app.dispose()),
+      );
+      const payload = yield* Schema.encodeEffect(
+        Schema.fromJsonString(RelayEnvironmentLinkRequest),
+      )({
+        proof: "test-proof",
+        notificationsEnabled: false,
+        liveActivitiesEnabled: false,
+        managedTunnelsEnabled: true,
+      });
+      const response = yield* Effect.promise(() =>
+        app.handler(
+          new Request("https://relay.example.test/v1/client/environment-links", {
+            method: "POST",
+            headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+            body: payload,
+          }),
+        ),
+      );
+      expect(response.status).toBe(503);
+      const body = yield* Effect.promise(() => response.json());
+      expect(body).toEqual({
+        _tag: "RelayEnvironmentLinkUnavailableError",
+        code: "environment_link_unavailable",
+        reason: "managed_endpoint_provisioning_failed",
+        provisioningStage: "ensure-tunnel",
+        traceId: expect.any(String),
+      });
+      const error = yield* Schema.decodeUnknownEffect(RelayEnvironmentLinkUnavailableError)(body);
+      expect(relayProtectedErrorMessage(error)).toBe(
+        "Relay cannot provision the managed endpoint (managed_endpoint_provisioning_failed). Failed stage: ensure-tunnel.",
+      );
+    }).pipe(Effect.scoped);
+  });
+});
 
 describe("device listing compatibility", () => {
   it.effect("keeps v1 iOS-only while v2 returns every platform for the same account", () => {

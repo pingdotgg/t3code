@@ -1,4 +1,7 @@
-import { RelayAuthInvalidError } from "@t3tools/contracts/relay";
+import {
+  RelayAuthInvalidError,
+  RelayEnvironmentLinkUnavailableError,
+} from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -9,6 +12,34 @@ import {
 } from "./errorPresentation.ts";
 
 describe("relayProtectedErrorMessage", () => {
+  it("includes the provisioning stage without losing the reason", () => {
+    const error = new RelayEnvironmentLinkUnavailableError({
+      code: "environment_link_unavailable",
+      reason: "managed_endpoint_provisioning_failed",
+      provisioningStage: "ensure-tunnel",
+      traceId: "trace-1",
+    });
+
+    expect(relayProtectedErrorMessage(error)).toBe(
+      "Relay cannot provision the managed endpoint (managed_endpoint_provisioning_failed). Failed stage: ensure-tunnel.",
+    );
+  });
+
+  it.each(["managed_endpoint_provisioning_failed", "managed_endpoint_not_configured"] as const)(
+    "preserves the message when an older relay omits the stage (%s)",
+    (reason) => {
+      const error = new RelayEnvironmentLinkUnavailableError({
+        code: "environment_link_unavailable",
+        reason,
+        traceId: "trace-1",
+      });
+
+      expect(relayProtectedErrorMessage(error)).toBe(
+        `Relay cannot provision the managed endpoint (${reason}).`,
+      );
+    },
+  );
+
   it("presents clock skew as one possible cause when the relay omits the reason", () => {
     const error = new RelayAuthInvalidError({
       code: "auth_invalid",
