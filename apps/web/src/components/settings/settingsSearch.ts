@@ -367,6 +367,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
+    id: "show-whitespace-characters",
+    title: "Show whitespace characters",
+    to: "/settings/general",
+    searchTerms: ["file diff spaces dots tabs arrows indentation markers editorconfig"],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/general",

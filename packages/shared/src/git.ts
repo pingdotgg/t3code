@@ -365,6 +365,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
 function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
   return {
     isRepo: status.isRepo,
+    ...(status.repositoryRoot ? { repositoryRoot: status.repositoryRoot } : {}),
     ...(status.sourceControlProvider
       ? { sourceControlProvider: status.sourceControlProvider }
       : {}),

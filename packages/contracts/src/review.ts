@@ -61,6 +61,8 @@ export type ReviewDiffFileContentsResult = typeof ReviewDiffFileContentsResult.T
 
 export const ReviewDiffPreviewResult = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  /** Diff paths are relative to this worktree root; cwd remains the requested read scope. */
+  repositoryRoot: Schema.optional(TrimmedNonEmptyString),
   generatedAt: Schema.DateTimeUtc,
   sources: Schema.Array(ReviewDiffPreviewSource),
 });

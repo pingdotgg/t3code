@@ -7,7 +7,7 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -83,6 +83,13 @@ interface AnnotatableCodeViewProps {
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
+  workspace?: {
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly repositoryRoot?: string | undefined;
+    readonly revision?: string | null;
+    readonly refreshToken?: string | number | null;
+  };
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
@@ -107,6 +114,7 @@ export function AnnotatableCodeView({
   sectionId,
   sectionTitle,
   composerDraftTarget,
+  workspace,
   options,
   viewerRef,
   className,
@@ -249,6 +257,7 @@ export function AnnotatableCodeView({
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
+      {...(workspace ? { workspace } : {})}
       {...(viewerRef ? { viewerRef } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}

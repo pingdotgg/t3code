@@ -891,6 +891,55 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
+it.effect("caches snapshot file queries by revision and refreshes through the existing RPC", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const client = {
+        [WS_METHODS.pullRequestsDiffFileContents]: (input: { readonly commit: string }) =>
+          Effect.sync(() => {
+            calls.push(input.commit);
+            return { oldContents: "", newContents: input.commit };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const input = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        changeType: "new",
+        oldPath: ".editorconfig",
+        newPath: ".editorconfig",
+        commit: "a".repeat(40),
+      } as const;
+      const first = atoms.diffFileContentsQuery({ environmentId: TARGET.environmentId, input });
+      const same = atoms.diffFileContentsQuery({
+        environmentId: TARGET.environmentId,
+        input: { ...input },
+      });
+      expect(first).toBe(same);
+      const read = (query: typeof first) => Effect.promise(() => executeAtomQuery(registry, query));
+      expect(yield* read(first)).toMatchObject({
+        _tag: "Success",
+        value: { newContents: input.commit },
+      });
+      yield* read(same);
+      expect(calls).toEqual([input.commit]);
+      const older = atoms.diffFileContentsQuery({
+        environmentId: TARGET.environmentId,
+        input: { ...input, commit: "b".repeat(40) },
+      });
+      expect(yield* read(older)).toMatchObject({
+        _tag: "Success",
+        value: { newContents: "b".repeat(40) },
+      });
+      registry.refresh(first);
+      yield* read(first);
+      expect(calls).toEqual([input.commit, "b".repeat(40), input.commit]);
+    }),
+  ),
+);
+
 it.effect("keeps hover previews fresh after edits and turns", () =>
   Effect.scoped(
     Effect.gen(function* () {

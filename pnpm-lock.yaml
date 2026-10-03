@@ -716,6 +716,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.2.6)
+      minimatch:
+        specifier: 10.2.5
+        version: 10.2.5
       react:
         specifier: 19.2.6
         version: 19.2.6

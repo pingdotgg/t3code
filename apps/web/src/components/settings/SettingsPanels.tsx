@@ -593,6 +593,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      ...(settings.showWhitespaceCharacters !== DEFAULT_UNIFIED_SETTINGS.showWhitespaceCharacters
+        ? ["Show whitespace characters"]
+        : []),
       ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
       ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
         ? ["Proactive panels"]
@@ -679,6 +682,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
       settings.diffIgnoreWhitespace,
+      settings.showWhitespaceCharacters,
       settings.diffLayout,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
@@ -789,6 +793,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      showWhitespaceCharacters: DEFAULT_UNIFIED_SETTINGS.showWhitespaceCharacters,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
@@ -2591,6 +2596,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
               }
               aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("show-whitespace-characters")}
+          description="Show spaces as dots and tabs as arrows in file and diff views. This does not change file contents or which diff changes are hidden."
+          resetAction={
+            settings.showWhitespaceCharacters !==
+            DEFAULT_UNIFIED_SETTINGS.showWhitespaceCharacters ? (
+              <SettingResetButton
+                label="show whitespace characters"
+                onClick={() =>
+                  updateSettings({
+                    showWhitespaceCharacters: DEFAULT_UNIFIED_SETTINGS.showWhitespaceCharacters,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showWhitespaceCharacters}
+              onCheckedChange={(checked) =>
+                updateSettings({ showWhitespaceCharacters: Boolean(checked) })
+              }
+              aria-label="Show whitespace characters"
             />
           }
         />

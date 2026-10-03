@@ -1177,6 +1177,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("local status exposes the repository root for a nested workspace without remotes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = NodePath.join(repoDir, "frontend");
+      yield* fileSystem.makeDirectory(cwd);
+      const { manager } = yield* makeManager();
+      const status = yield* manager.localStatus({ cwd });
+      expect(status.hasPrimaryRemote).toBe(false);
+      expect(status.repositoryRoot).toBe(
+        NodePath.normalize((yield* runGit(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim()),
+      );
+    }),
+  );
+
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

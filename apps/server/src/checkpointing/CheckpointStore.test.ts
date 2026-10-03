@@ -191,6 +191,62 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect.each([
+      { format: "patch", relative: false },
+      { format: "patch", relative: true },
+      { format: "numstat", relative: false },
+      { format: "numstat", relative: true },
+    ] as const)(
+      "keeps repository-relative $format paths from a nested workspace with diff.relative=$relative",
+      ({ format, relative }) =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["config", "diff.relative", String(relative)]);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const nested = NodePath.join(tmp, "packages", "nested");
+          yield* fileSystem.makeDirectory(nested, { recursive: true });
+          const filePath = NodePath.join(nested, "file.ts");
+          yield* writeTextFile(filePath, "export const value = 1;\n");
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const threadId = ThreadId.make(`checkpoint-relative-${format}-${relative}`);
+          const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+          const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+          yield* checkpointStore.captureCheckpoint({
+            cwd: tmp,
+            checkpointRef: fromCheckpointRef,
+          });
+          yield* writeTextFile(filePath, "export const value = 2;\n");
+          yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+          yield* checkpointStore.captureCheckpoint({
+            cwd: tmp,
+            checkpointRef: toCheckpointRef,
+          });
+
+          const diff = yield* checkpointStore.diffCheckpoints({
+            cwd: nested,
+            fromCheckpointRef,
+            toCheckpointRef,
+            ignoreWhitespace: false,
+            format,
+          });
+
+          if (format === "patch") {
+            expect(diff).toContain(
+              "diff --git a/packages/nested/file.ts b/packages/nested/file.ts",
+            );
+            expect(diff).toContain("+export const value = 2;");
+            expect(diff).toContain("diff --git a/README.md b/README.md");
+            expect(diff).toContain("+# changed");
+          } else {
+            expect(parseTurnDiffFilesFromNumstat(diff)).toEqual([
+              { path: "packages/nested/file.ts", additions: 1, deletions: 1 },
+              { path: "README.md", additions: 1, deletions: 1 },
+            ]);
+          }
+        }),
+    );
+
     it.effect("can hide indentation churn when changes wrap existing lines", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

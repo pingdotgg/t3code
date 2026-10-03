@@ -135,6 +135,16 @@ PR creation from Git actions continue to use the project's environment.
 For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
 declined pull request.
 
+### Tab width and whitespace
+
+On web and desktop, file previews and diffs use the applicable `.editorconfig` `tab_width`,
+falling back to `indent_size` and then two columns. Nested configurations and matching file
+sections override inherited settings. This only changes how existing tabs are displayed.
+
+Enable **Settings → General → Show whitespace characters** to distinguish spaces (dots) from
+tabs (arrows) in file previews and diffs, including pull request code reviews. It is off by default
+and is separate from **Hide whitespace changes**, which controls which edits appear in a diff.
+
 ### Mark files as viewed
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a

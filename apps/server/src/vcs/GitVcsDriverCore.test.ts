@@ -1089,6 +1089,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect.each(["nested", "nested-worktree"] as const)(
+      "returns the diff path root without a remote from a %s workspace",
+      (location) =>
+        Effect.gen(function* () {
+          const repository = yield* makeTmpDir();
+          yield* initRepoWithCommit(repository);
+          const cwd = location === "nested-worktree" ? yield* makeTmpDir() : repository;
+          if (location === "nested-worktree") {
+            yield* git(repository, ["worktree", "add", "--detach", cwd]);
+          }
+          yield* writeTextFile(cwd, "frontend/src/a.ts", "\tchanged\n");
+          yield* writeTextFile(cwd, "frontend/src/.editorconfig", "root=true\n[*]\ntab_width=8\n");
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const nestedCwd = path.join(cwd, "frontend");
+          assert.equal(yield* git(nestedCwd, ["remote"]), "");
+          const expectedRoot = path.normalize(
+            yield* git(nestedCwd, ["rev-parse", "--show-toplevel"]),
+          );
+          const preview = yield* driver.getReviewDiffPreview({ cwd: nestedCwd });
+          assert.equal(preview.cwd, nestedCwd);
+          assert.equal(preview.repositoryRoot, expectedRoot);
+          assert.include(
+            preview.sources
+              .find((source) => source.kind === "working-tree")!
+              .files!.map((file) => file.path),
+            "frontend/src/a.ts",
+          );
+          const status = yield* driver.status({ cwd: nestedCwd });
+          assert.isFalse(status.hasPrimaryRemote);
+          assert.equal(status.repositoryRoot, expectedRoot);
+          assert.equal((yield* driver.statusDetailsLocal(nestedCwd)).repositoryRoot, expectedRoot);
+        }),
+    );
+
     it.effect("loads repository-relative files from a nested project directory", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

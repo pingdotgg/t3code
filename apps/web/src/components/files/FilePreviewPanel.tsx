@@ -35,6 +35,13 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+import { useEditorConfigTabWidths } from "~/hooks/useEditorConfigTabWidths";
+import { DEFAULT_TAB_WIDTH } from "~/lib/editorConfig";
+import {
+  CODE_WHITESPACE_UNSAFE_CSS,
+  observeCodeWhitespace,
+  renderCodeWhitespace,
+} from "~/lib/codeWhitespace";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -67,6 +74,7 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import { createFileEditorFocusRestorer } from "./fileEditorFocus";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -553,6 +561,7 @@ interface EditableFileSurfaceProps {
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;
+  configRevision?: string | null;
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
@@ -562,7 +571,7 @@ interface FileSelectionOverride {
   range: SelectedLineRange | null;
 }
 
-function EditableFileSurface({
+export function EditableFileSurface({
   environmentId,
   cwd,
   relativePath,
@@ -571,10 +580,14 @@ function EditableFileSurface({
   resolvedTheme,
   revealRequestId,
   wordWrap,
+  configRevision,
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
+  const showWhitespace = useClientSettings((settings) => settings.showWhitespaceCharacters);
+  const tabWidths = useEditorConfigTabWidths(environmentId, cwd, [relativePath], configRevision);
+  const tabWidth = tabWidths.get(relativePath) ?? DEFAULT_TAB_WIDTH;
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
@@ -588,17 +601,21 @@ function EditableFileSurface({
   );
   const surfaceRef = useRef<HTMLDivElement>(null);
   const selectionFrameRef = useRef<number | null>(null);
+  const whitespaceObserverRef = useRef<(() => void) | null>(null);
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
     cwd,
     relativePath,
     onPendingChange,
   });
-  const editor = useMemo(
-    () =>
-      new Editor<FileCommentAnnotationGroup>({
+  const { editor, restoreEditorFocus } = useMemo(() => {
+    const restoreEditorFocus = createFileEditorFocusRestorer();
+    return {
+      restoreEditorFocus,
+      editor: new Editor<FileCommentAnnotationGroup>({
         persistState: true,
         persistStateStorage: "inMemory",
+        onAttach: restoreEditorFocus.onAttach,
         onChange: (file, nextLineAnnotations) => {
           setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
           saveCoordinator.change(file.contents);
@@ -626,8 +643,8 @@ function EditableFileSurface({
           }
         },
       }),
-    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
-  );
+    };
+  }, [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator]);
 
   useEffect(
     () => () => {
@@ -691,6 +708,19 @@ function EditableFileSurface({
       setSelectedRange,
     ],
   );
+
+  const updateAnnotationText = useCallback((entryId: string, text: string) => {
+    setLineAnnotations((current) =>
+      current.map((annotation) => ({
+        ...annotation,
+        metadata: {
+          entries: annotation.metadata.entries.map((entry) =>
+            entry.id === entryId ? { ...entry, text } : entry,
+          ),
+        },
+      })),
+    );
+  }, []);
 
   const beginComment = useCallback(
     (range: SelectedLineRange) => {
@@ -758,6 +788,15 @@ function EditableFileSurface({
 
   const handlePostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
+      if (phase === "unmount") restoreEditorFocus.onUnmount(fileContainer);
+      whitespaceObserverRef.current?.();
+      whitespaceObserverRef.current = null;
+      if (phase !== "unmount") {
+        renderCodeWhitespace(fileContainer, showWhitespace);
+        if (showWhitespace) {
+          whitespaceObserverRef.current = observeCodeWhitespace(fileContainer);
+        }
+      }
       onPostRender(fileContainer, instance, phase);
 
       if (selectionFrameRef.current !== null) {
@@ -772,8 +811,10 @@ function EditableFileSurface({
         instance.setSelectedLines(selectedRange, { notify: false });
       });
     },
-    [onPostRender, selectedRange],
+    [onPostRender, restoreEditorFocus, selectedRange, showWhitespace],
   );
+
+  useEffect(() => () => whitespaceObserverRef.current?.(), []);
 
   return (
     <EditProvider editor={editor}>
@@ -786,6 +827,9 @@ function EditableFileSurface({
           }}
         >
           <File<FileCommentAnnotationGroup>
+            // Pierre caches caret metrics on attachment. Remount only the view when tabs change;
+            // the persistent Editor retains the document, undo history and selections by cacheKey.
+            key={tabWidth}
             file={{
               name: relativePath,
               contents,
@@ -808,7 +852,7 @@ function EditableFileSurface({
               theme: resolveDiffThemeName(resolvedTheme),
               preferredHighlighter: PREFERRED_HIGHLIGHTER,
               themeType: resolvedTheme,
-              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+              unsafeCSS: `${FILE_LINK_REVEAL_UNSAFE_CSS}\n${CODE_WHITESPACE_UNSAFE_CSS}\n:host { --diffs-tab-size: ${tabWidth}; }`,
               onPostRender: handlePostRender,
             }}
             selectedLines={selectedRange}
@@ -821,6 +865,7 @@ function EditableFileSurface({
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
                     text={entry.text}
+                    onTextChange={(text) => updateAnnotationText(entry.id, text)}
                     onCancel={() => removeAnnotationEntry(entry.id)}
                     onComment={(text) => submitAnnotationEntry(entry.id, text)}
                     onDelete={() => removeAnnotationEntry(entry.id)}
@@ -1266,6 +1311,7 @@ export default function FilePreviewPanel({
               />
             ) : file.data.truncated || isHostFile ? (
               <SourceFilePreview
+                workspace={{ environmentId, cwd, revision: workspaceMutationId }}
                 name={relativePath}
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
@@ -1283,6 +1329,7 @@ export default function FilePreviewPanel({
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
+                  configRevision={workspaceMutationId}
                   onPostRender={onFilePostRender}
                   onPendingChange={onPendingChange}
                 />

@@ -7,12 +7,24 @@ import {
   type UncontrolledCodeViewProps,
 } from "@pierre/diffs/react";
 /* oxlint-enable eslint/no-restricted-imports */
-import type { Ref } from "react";
+import { useCallback, type Ref } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 
-import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
+import {
+  codeViewTabWidthsCSS,
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
+  resolveFileDiffPath,
+} from "~/lib/diffRendering";
+import { CODE_WHITESPACE_UNSAFE_CSS, renderCodeWhitespace } from "~/lib/codeWhitespace";
+import {
+  useEditorConfigTabWidths,
+  type PullRequestEditorConfigSource,
+} from "~/hooks/useEditorConfigTabWidths";
+import { useClientSettings } from "~/hooks/useSettings";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 
 const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
+${CODE_WHITESPACE_UNSAFE_CSS}
 :is(
   [data-line],
   [data-line-annotation],
@@ -271,6 +283,14 @@ type StyledDiffCodeViewProps<LAnnotation> = (
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation>>;
+  readonly workspace?: {
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly repositoryRoot?: string | undefined;
+    readonly revision?: string | null;
+    readonly refreshToken?: string | number | null;
+    readonly pullRequest?: PullRequestEditorConfigSource;
+  };
   /**
    * Appended to the shared stylesheet inside the viewer's shadow root, for a surface that has
    * to restyle chrome the viewer owns — such as replacing its per-file line counts.
@@ -284,8 +304,42 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   viewerRef,
   className,
   unsafeCSSExtra,
+  workspace,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const showWhitespace = useClientSettings((settings) => settings.showWhitespaceCharacters);
+  const paths = (props.items ?? props.initialItems ?? [])
+    .filter((item) => !item.collapsed)
+    .map((item) => (item.type === "diff" ? resolveFileDiffPath(item.fileDiff) : item.file.name));
+  const tabWidths = useEditorConfigTabWidths(
+    workspace?.environmentId ?? null,
+    workspace?.cwd ?? null,
+    paths,
+    workspace?.revision ?? null,
+    workspace?.refreshToken ?? null,
+    workspace?.repositoryRoot ?? workspace?.cwd ?? null,
+    workspace?.pullRequest ?? null,
+  );
+  const surfacePostRender = options?.onPostRender;
+  const onPostRender = useCallback<
+    NonNullable<StyledDiffCodeViewOptions<LAnnotation>["onPostRender"]>
+  >(
+    (node, _instance, phase, context) => {
+      if (phase !== "unmount") {
+        const item = context.item;
+        const path = item.type === "diff" ? resolveFileDiffPath(item.fileDiff) : item.file.name;
+        node.setAttribute("data-tab-width-path", encodeURIComponent(path));
+        renderCodeWhitespace(node, showWhitespace);
+      }
+      // Keep the file/diff overload correlated with its item context.
+      if (context.type === "diff") {
+        surfacePostRender?.(node, context.instance, phase, context);
+      } else {
+        surfacePostRender?.(node, context.instance, phase, context);
+      }
+    },
+    [surfacePostRender, showWhitespace],
+  );
   return (
     <DiffWorkerPoolProvider>
       <CodeView<LAnnotation>
@@ -300,9 +354,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
         }
         options={{
           ...options,
-          unsafeCSS: unsafeCSSExtra
-            ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
-            : DIFF_VIEW_UNSAFE_CSS,
+          onPostRender,
+          unsafeCSS: `${DIFF_VIEW_UNSAFE_CSS}\n${codeViewTabWidthsCSS(tabWidths)}\n${unsafeCSSExtra ?? ""}`,
           itemMetrics: {
             diffHeaderHeight: 32,
             hunkSeparatorHeight: 24,

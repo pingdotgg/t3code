@@ -69,6 +69,7 @@ export interface ExecuteGitResult {
 
 export interface GitStatusDetails {
   isRepo: boolean;
+  repositoryRoot?: VcsStatusResult["repositoryRoot"];
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   hasOriginRemote: boolean;
   isDefaultBranch: boolean;
@@ -1187,6 +1188,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
+          "--no-relative",
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",

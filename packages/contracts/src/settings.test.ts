@@ -329,6 +329,24 @@ describe("ClientSettings diff colors", () => {
   });
 });
 
+describe("ClientSettings whitespace characters", () => {
+  it("defaults off for new and existing settings", () => {
+    expect(decodeClientSettings({}).showWhitespaceCharacters).toBe(false);
+  });
+
+  it.each([true, false])("round-trips a saved choice of %s", (showWhitespaceCharacters) => {
+    const settings = decodeClientSettings({ showWhitespaceCharacters });
+    expect(encodeClientSettings(settings).showWhitespaceCharacters).toBe(showWhitespaceCharacters);
+    expect(decodeClientSettingsPatch({ showWhitespaceCharacters }).showWhitespaceCharacters).toBe(
+      showWhitespaceCharacters,
+    );
+  });
+
+  it("rejects non-boolean preferences", () => {
+    expect(() => decodeClientSettingsPatch({ showWhitespaceCharacters: "true" })).toThrow();
+  });
+});
+
 describe("ClientSettings chat width", () => {
   it("keeps the comfortable width for existing settings without a saved width", () => {
     expect(decodeClientSettings({}).chatWidth).toBe("comfortable");

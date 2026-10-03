@@ -1502,6 +1502,13 @@ function PullRequestCodeTab({
               rows absolutely, so it has to own that element — the thread diff panel hands it the
               same one. Scrolling from a parent instead leaves it painting over its neighbours. */}
           <StyledDiffCodeView<ReviewAnnotationGroup>
+            workspace={{
+              environmentId,
+              cwd: detail.workspaceRoot,
+              revision: detail.updatedAt,
+              refreshToken,
+              pullRequest: { reference, commit: commit ?? detail.headSha ?? null },
+            }}
             // Keep scrollbar space stable so file metadata and line numbers do not shift as a
             // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
             // interaction, but its native host outline clips and competes with the focus

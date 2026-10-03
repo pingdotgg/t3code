@@ -14,6 +14,14 @@ const renderingManagerUrl = new URL(
 const { clearRenderQueue } = (await import(/* @vite-ignore */ renderingManagerUrl.href)) as {
   clearRenderQueue(): void;
 };
+interface EditorMetrics {
+  init(this: EditorMetrics, root: HTMLElement): void;
+  measureTextWidth(text: string): number;
+}
+const textMeasureUrl = new URL("./editor/textMeasure.js", import.meta.resolve("@pierre/diffs"));
+const { Metrics } = (await import(/* @vite-ignore */ textMeasureUrl.href)) as {
+  Metrics: { prototype: EditorMetrics };
+};
 
 // Layout measurements are controlled here. The real reconciler, document and
 // renderer calculate positions. This does not simulate native CSS wrapping.
@@ -583,7 +591,7 @@ class EditorElement extends MeasuredElement {
   }
 }
 
-async function makeEditorFixture(lineCount: number) {
+async function makeEditorFixture(lineCount: number, persistState = false) {
   const { instance, file } = await makeFixture("wrap", lineCount);
   vi.stubGlobal("SVGSVGElement", EditorElement);
   vi.stubGlobal("Document", EditorElement);
@@ -594,11 +602,12 @@ async function makeEditorFixture(lineCount: number) {
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => {});
+  let tabSize = 2;
   vi.stubGlobal("getComputedStyle", () => ({
     paddingTop: "0px",
     fontSize: "13px",
     fontFamily: "monospace",
-    tabSize: "2",
+    tabSize: String(tabSize),
     lineHeight: "20px",
   }));
   vi.stubGlobal(
@@ -614,31 +623,34 @@ async function makeEditorFixture(lineCount: number) {
     controlledSelection: true,
     themeType: "dark",
   });
-  const content = new EditorElement();
-  content.dataset.content = "";
-  const gutter = new EditorElement();
-  gutter.dataset.gutter = "";
-  const code = new EditorElement();
-  code.dataset.code = "";
-  code.appendChild(gutter);
-  code.appendChild(content);
-  const shadow = new EditorElement();
-  shadow.appendChild(code);
-  const host = Object.assign(new EditorElement(), { shadowRoot: shadow });
   const highlighter = await getSharedHighlighter({
     themes: ["pierre-dark"],
     langs: ["text"],
     preferredHighlighter: "shiki-wasm",
   });
-  const editor = new Editor<undefined>();
+  const editor = new Editor<undefined>({ persistState, persistStateStorage: "inMemory" });
   editors.push(editor);
   editor.edit(instance);
-  editor.__syncRenderView(highlighter, measuredElement(host), file, undefined, {
-    startingLine: 0,
-    totalLines: 1,
-    bufferBefore: 0,
-    bufferAfter: 0,
-  });
+  const mountView = (nextFile: FileContents) => {
+    const content = new EditorElement();
+    content.dataset.content = "";
+    const gutter = new EditorElement();
+    gutter.dataset.gutter = "";
+    const code = new EditorElement();
+    code.dataset.code = "";
+    code.appendChild(gutter);
+    code.appendChild(content);
+    const shadow = new EditorElement();
+    shadow.appendChild(code);
+    const host = Object.assign(new EditorElement(), { shadowRoot: shadow });
+    editor.__syncRenderView(highlighter, measuredElement(host), nextFile, undefined, {
+      startingLine: 0,
+      totalLines: 1,
+      bufferBefore: 0,
+      bufferAfter: 0,
+    });
+  };
+  mountView(file);
   const append = (count: number) => {
     const lines = editor.getText().split("\n");
     const end = { line: lines.length - 1, character: lines.at(-1)!.length };
@@ -657,8 +669,44 @@ async function makeEditorFixture(lineCount: number) {
       },
     ]);
   };
-  return { instance, editor, append, remove };
+  const remountView = (nextTabSize: number) => {
+    const currentFile = editor.getFile();
+    if (!currentFile) throw new Error("Expected an attached file");
+    editor.cleanUp();
+    tabSize = nextTabSize;
+    editor.edit(instance);
+    mountView(currentFile);
+  };
+  return { instance, editor, append, remove, remountView };
 }
+
+describe("editor tab-width changes", () => {
+  it("remeasures tab stops on view remount without losing edits or undo history", async () => {
+    const measurement = vi.spyOn(Metrics.prototype, "init");
+    try {
+      const { editor, append, remountView } = await makeEditorFixture(3, true);
+      expect(measurement.mock.contexts.at(-1)!.measureTextWidth("\t")).toBe(16);
+      const original = editor.getText();
+      append(1);
+      const edited = editor.getText();
+      expect(editor.canUndo).toBe(true);
+      remountView(8);
+      expect(measurement.mock.contexts.at(-1)!.measureTextWidth("\t")).toBe(64);
+      expect(editor.getText()).toBe(edited);
+      expect(editor.canUndo).toBe(true);
+      editor.undo();
+      expect(editor.getText()).toBe(original);
+      editor.redo();
+      expect(editor.getText()).toBe(edited);
+      remountView(4);
+      expect(measurement.mock.contexts.at(-1)!.measureTextWidth("\t")).toBe(32);
+      expect(editor.getText()).toBe(edited);
+      expect(editor.canUndo).toBe(true);
+    } finally {
+      measurement.mockRestore();
+    }
+  });
+});
 
 describe("editor gutter-width changes", () => {
   it.each([

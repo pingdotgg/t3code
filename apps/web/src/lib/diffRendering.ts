@@ -14,6 +14,17 @@ export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
   return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
 }
 
+/** CSS changes tell Pierre to invalidate wrapped heights while retaining its scroll anchor. */
+export function codeViewTabWidthsCSS(widths: ReadonlyMap<string, number>): string {
+  return [...widths]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(
+      ([path, width]) =>
+        `:host([data-tab-width-path="${encodeURIComponent(path)}"]) { --diffs-tab-size: ${width}; }`,
+    )
+    .join("\n");
+}
+
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
 const FNV_PRIME_32 = 0x01000193;
 const SECONDARY_HASH_SEED = 0x9e3779b9;
