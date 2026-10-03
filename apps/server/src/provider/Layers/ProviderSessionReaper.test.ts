@@ -782,6 +782,63 @@ describe("ProviderSessionReaper", () => {
     expect(harness.dispatchedCommands).toEqual([]);
   });
 
+  it("holds a stale active turn whose terminal event omitted the turn id", async () => {
+    const threadId = ThreadId.make("thread-reaper-settled-turnless");
+    const turnId = TurnId.make("turn-reaper-settled-turnless");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      sweepIntervalMs: 100,
+      // Grace exhausted, so only the settled-turn signal can hold this.
+      settledTurnGraceMs: 0,
+      activeSessions: [],
+      observedRuntimeEvents: [
+        {
+          eventId: EventId.make("evt-reaper-started"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          createdAt: now,
+          type: "turn.started",
+          turnId,
+          payload: {},
+        } satisfies ProviderRuntimeEvent,
+        // Terminal event with no turnId, as `ClaudeAdapter.completeTurn` emits
+        // when `context.turnState` is unset.
+        {
+          eventId: EventId.make("evt-reaper-settled-turnless"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          createdAt: now,
+          type: "turn.completed",
+          payload: { state: "completed" },
+        } satisfies ProviderRuntimeEvent,
+      ],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    await persistRuntimeBinding(threadId, now, "resume-settled-turnless");
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await waitFor(() => harness.sweeps() >= 3);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+
+    expect(harness.dispatchedCommands).toEqual([]);
+  });
+
   it("holds a stale active turn while the provider is still reporting events", async () => {
     const threadId = ThreadId.make("thread-reaper-provider-active");
     const turnId = TurnId.make("turn-reaper-provider-active");

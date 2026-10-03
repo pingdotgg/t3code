@@ -32,53 +32,95 @@ const MAX_SETTLED_TURN_IDS = 8;
  */
 const OBSERVATION_TTL_MS = 2 * 60 * 60 * 1000;
 
+/**
+ * `record` runs on the ingestion funnel for every event, including every
+ * `content.delta`, so it must stay O(1). The TTL sweep over all entries is
+ * amortized behind this interval instead of running per event.
+ */
+const PRUNE_INTERVAL_MS = 60 * 1000;
+
 interface MutableObservation {
   lastEventAtMs: number;
-  readonly settledTurnIds: ReadonlySet<string>;
+  /**
+   * Turn the provider most recently announced with `turn.started`. Terminal
+   * events that omit `turnId` settle *this* turn, mirroring how
+   * `ProviderRuntimeIngestion` falls back to the session's active turn.
+   */
+  lastStartedTurnId: string | null;
+  settledTurnIds: Set<string>;
 }
 
-function settledTurnIdFor(event: ProviderRuntimeEvent): string | null {
-  if (!SETTLING_EVENT_TYPES.has(event.type)) return null;
-  return event.turnId ?? null;
+function newObservation(nowMs: number): MutableObservation {
+  return { lastEventAtMs: nowMs, lastStartedTurnId: null, settledTurnIds: new Set() };
 }
 
 const makeProviderRuntimeLiveness = Effect.gen(function* () {
-  const observations = yield* Ref.make(new Map<string, MutableObservation>());
+  interface LedgerState {
+    readonly entries: Map<string, MutableObservation>;
+    lastPruneAtMs: number;
+  }
 
+  const entriesRef = yield* Ref.make<LedgerState>({
+    entries: new Map<string, MutableObservation>(),
+    lastPruneAtMs: 0,
+  });
+
+  // Entries are mutated in place under `Ref.modify`, which is the single
+  // exclusive access point for this state, and `observe` copies the settled
+  // tail out before returning. Nothing else aliases these objects, so a
+  // per-event Map copy would be pure overhead on the hot path.
   const record: ProviderRuntimeLivenessShape["record"] = (event) =>
-    Ref.modify(observations, (entries): [void, Map<string, MutableObservation>] => {
+    Ref.modify(entriesRef, (state): [void, LedgerState] => {
       const nowMs = Date.now();
       const threadId = event.threadId;
-      const existing = entries.get(threadId);
-      const settledTurnId = settledTurnIdFor(event);
+      const observation = state.entries.get(threadId) ?? newObservation(nowMs);
 
-      const settledTurnIds = new Set(existing?.settledTurnIds ?? []);
-      if (settledTurnId !== null) {
-        // A resumed session can re-report a terminal event for a turn already
-        // in the tail; the set makes the repeat a no-op.
-        settledTurnIds.add(settledTurnId);
-        // Set iteration is insertion-ordered, so this drops the oldest ids.
-        while (settledTurnIds.size > MAX_SETTLED_TURN_IDS) {
-          const [oldest] = settledTurnIds;
-          if (oldest === undefined) break;
-          settledTurnIds.delete(oldest);
+      if (event.type === "turn.started" && event.turnId !== undefined) {
+        observation.lastStartedTurnId = event.turnId;
+      }
+
+      if (SETTLING_EVENT_TYPES.has(event.type)) {
+        // Adapters legitimately omit `turnId` on terminal events:
+        // `ClaudeAdapter.completeTurn` emits one whenever `context.turnState`
+        // is unset, and `CodexSessionRuntime.readRouteFields` returns
+        // `turnId: undefined` from its default branch for any unlisted method.
+        // `ProviderRuntimeIngestion` settles those against the session's active
+        // turn; the ledger has no projection access, so it settles the turn the
+        // provider last announced. Trusting `event.turnId` alone would leave
+        // those turns unrecorded and let the reaper interrupt a finished turn.
+        const settledTurnId = event.turnId ?? observation.lastStartedTurnId;
+        if (settledTurnId !== null) {
+          // A resumed session can re-report a terminal event for a turn already
+          // in the tail; the set makes the repeat a no-op.
+          observation.settledTurnIds.add(settledTurnId);
+          // Set iteration is insertion-ordered, so this drops the oldest ids.
+          while (observation.settledTurnIds.size > MAX_SETTLED_TURN_IDS) {
+            const [oldest] = observation.settledTurnIds;
+            if (oldest === undefined) break;
+            observation.settledTurnIds.delete(oldest);
+          }
         }
       }
 
-      const next = new Map(entries);
-      next.set(threadId, { lastEventAtMs: nowMs, settledTurnIds });
-      for (const [candidateThreadId, observation] of next) {
-        if (nowMs - observation.lastEventAtMs > OBSERVATION_TTL_MS) {
-          next.delete(candidateThreadId);
+      observation.lastEventAtMs = nowMs;
+      state.entries.set(threadId, observation);
+
+      if (nowMs - state.lastPruneAtMs >= PRUNE_INTERVAL_MS) {
+        state.lastPruneAtMs = nowMs;
+        for (const [candidateThreadId, candidate] of state.entries) {
+          if (nowMs - candidate.lastEventAtMs > OBSERVATION_TTL_MS) {
+            state.entries.delete(candidateThreadId);
+          }
         }
       }
-      return [undefined, next];
+
+      return [undefined, state];
     });
 
   const observe: ProviderRuntimeLivenessShape["observe"] = (threadId) =>
-    Ref.get(observations).pipe(
-      Effect.map((entries): ProviderThreadRuntimeObservation | null => {
-        const observation = entries.get(threadId);
+    Ref.get(entriesRef).pipe(
+      Effect.map((state): ProviderThreadRuntimeObservation | null => {
+        const observation = state.entries.get(threadId);
         if (observation === undefined) return null;
         return {
           lastEventAtMs: observation.lastEventAtMs,
@@ -88,10 +130,9 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
     );
 
   const forget: ProviderRuntimeLivenessShape["forget"] = (threadId) =>
-    Ref.update(observations, (entries) => {
-      const next = new Map(entries);
-      next.delete(threadId);
-      return next;
+    Ref.modify(entriesRef, (state): [void, LedgerState] => {
+      state.entries.delete(threadId);
+      return [undefined, state];
     });
 
   return { record, observe, forget } satisfies ProviderRuntimeLivenessShape;

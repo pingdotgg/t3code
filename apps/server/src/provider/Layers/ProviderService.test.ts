@@ -73,8 +73,6 @@ const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
 // Production provides the shared runtime-liveness ledger from the runtime
 // layer; tests build the service standalone, so supply it here.
-// Production provides the shared runtime-liveness ledger from the runtime
-// layer; tests build the service standalone, so supply it here.
 const makeProviderServiceLive = (options?: Parameters<typeof makeProviderServiceLiveBase>[0]) =>
   makeProviderServiceLiveBase(options).pipe(Layer.provide(ProviderRuntimeLivenessLive));
 

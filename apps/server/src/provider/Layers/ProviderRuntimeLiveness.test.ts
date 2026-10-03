@@ -67,6 +67,60 @@ describe("ProviderRuntimeLivenessLive", () => {
     );
   });
 
+  it("settles the last announced turn when a terminal event omits turnId", async () => {
+    // Real: `ClaudeAdapter.completeTurn` emits a turnId-less `turn.completed`
+    // whenever `context.turnState` is unset, and Codex's `readRouteFields`
+    // returns `turnId: undefined` from its default branch for unlisted methods.
+    // Trusting `event.turnId` alone would leave these turns unrecorded, so the
+    // reaper would interrupt a turn that finished cleanly.
+    const settled = await withLiveness((liveness) =>
+      Effect.gen(function* () {
+        yield* liveness.record(runtimeEvent({ type: "turn.started", turnId, payload: {} }));
+        yield* liveness.record(
+          runtimeEvent({ type: "turn.completed", payload: { state: "completed" } }),
+        );
+        return yield* liveness.observe(threadId);
+      }),
+    );
+
+    expect(settled?.settledTurnIds.has(turnId)).toBe(true);
+  });
+
+  it("settles nothing for a turnId-less terminal event with no announced turn", async () => {
+    // Without a `turn.started` there is no turn to attribute the outcome to;
+    // recording a guess would risk holding a genuinely lost session forever.
+    const settled = await withLiveness((liveness) =>
+      Effect.gen(function* () {
+        yield* liveness.record(
+          runtimeEvent({ type: "turn.completed", payload: { state: "completed" } }),
+        );
+        return yield* liveness.observe(threadId);
+      }),
+    );
+
+    expect(settled?.settledTurnIds.size).toBe(0);
+  });
+
+  it("prefers the event's own turnId over the last announced turn", async () => {
+    const otherTurnId = TurnId.make("turn-liveness-other-terminal");
+    const settled = await withLiveness((liveness) =>
+      Effect.gen(function* () {
+        yield* liveness.record(runtimeEvent({ type: "turn.started", turnId, payload: {} }));
+        yield* liveness.record(
+          runtimeEvent({
+            type: "turn.completed",
+            turnId: otherTurnId,
+            payload: { state: "completed" },
+          }),
+        );
+        return yield* liveness.observe(threadId);
+      }),
+    );
+
+    expect(settled?.settledTurnIds.has(otherTurnId)).toBe(true);
+    expect(settled?.settledTurnIds.has(turnId)).toBe(false);
+  });
+
   it("does not settle a turn from non-terminal events", async () => {
     const observation = await withLiveness((liveness) =>
       Effect.gen(function* () {
