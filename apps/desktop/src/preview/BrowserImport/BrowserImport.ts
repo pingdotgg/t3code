@@ -92,7 +92,16 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
 > {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
-  if (yield* isSourceRunning(definition, context)) return "browserRunning";
+  // POSIX Chromium cookie databases are read through SQLite's `VACUUM INTO`,
+  // which takes one consistent snapshot including committed WAL rows while
+  // the browser is open. Windows Chromium holds the database exclusively, and
+  // Firefox retains its existing cross-platform lock guard.
+  const mustBeClosed =
+    definition.engine === "firefox" ||
+    (definition.engine === "chromium" && context.platform === "win32");
+  if (mustBeClosed && (yield* isSourceRunning(definition, context))) {
+    return "browserRunning";
+  }
   // Safari's jar is found by `stat`, which TCC permits without Full Disk
   // Access — so a Safari that lists as ready may still refuse the read. Probe
   // the grant here, so the wizard can open on the permission step and a
