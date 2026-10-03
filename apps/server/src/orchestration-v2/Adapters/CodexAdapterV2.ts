@@ -693,11 +693,48 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+function needsCodexWorkspaceWriteConfig(runtimePolicy: ProviderAdapterV2RuntimePolicy): boolean {
+  return (
+    runtimePolicy.sandboxPolicy === undefined &&
+    codexRuntimeModeTurnDefaults(runtimePolicy.runtimeMode).sandboxPolicy.type === "workspaceWrite"
+  );
+}
+
+/**
+ * `turn/start` replaces the thread's sandbox policy, and Codex defaults omitted
+ * workspace-write fields to no network and no extra roots. Carry over the
+ * user's `sandbox_workspace_write` config so the mode does not discard it.
+ */
+function withWorkspaceWriteConfig(
+  policy: CodexSchema.V2TurnStartParams__SandboxPolicy,
+  config: CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite | null | undefined,
+): CodexSchema.V2TurnStartParams__SandboxPolicy {
+  if (policy.type !== "workspaceWrite" || config == null) {
+    return policy;
+  }
+  return {
+    ...policy,
+    ...(config.writable_roots === undefined ? {} : { writableRoots: config.writable_roots }),
+    ...(config.network_access === undefined ? {} : { networkAccess: config.network_access }),
+    ...(config.exclude_tmpdir_env_var === undefined
+      ? {}
+      : { excludeTmpdirEnvVar: config.exclude_tmpdir_env_var }),
+    ...(config.exclude_slash_tmp === undefined
+      ? {}
+      : { excludeSlashTmp: config.exclude_slash_tmp }),
+  };
+}
+
 export function buildCodexTurnStartParams(input: {
   readonly nativeThreadId: string;
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  /** `sandbox_workspace_write` from Codex's effective config (`config/read`). */
+  readonly workspaceWriteConfig?:
+    | CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite
+    | null
+    | undefined;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
@@ -712,7 +749,7 @@ export function buildCodexTurnStartParams(input: {
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
-        ? runtimeModeDefaults.sandboxPolicy
+        ? withWorkspaceWriteConfig(runtimeModeDefaults.sandboxPolicy, input.workspaceWriteConfig)
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const selectedEffort = getModelSelectionStringOptionValue(
       input.modelSelection,
@@ -1227,6 +1264,16 @@ export function codexThreadRuntimeParams(input: {
     },
   };
 }
+
+const decodeCodexWorkspaceWriteConfig = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    config: Schema.Struct({
+      sandbox_workspace_write: Schema.optionalKey(
+        Schema.NullOr(CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite),
+      ),
+    }),
+  }),
+);
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
   Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
@@ -5537,10 +5584,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ? yield* toCodexInput(turnInput)
                   : [];
               const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
+              // Decode only this table so unrelated config fields cannot fail the turn.
+              const workspaceWriteConfig = needsCodexWorkspaceWriteConfig(turnInput.runtimePolicy)
+                ? yield* client.raw
+                    .request("config/read", { cwd: turnInput.runtimePolicy.cwd })
+                    .pipe(
+                      Effect.flatMap(decodeCodexWorkspaceWriteConfig),
+                      Effect.map((response) => response.config.sandbox_workspace_write),
+                      Effect.timeout("5 seconds"),
+                      Effect.catch((cause) =>
+                        Effect.logWarning("Failed to read Codex workspace-write sandbox config.", {
+                          cause,
+                        }).pipe(Effect.as(undefined)),
+                      ),
+                    )
+                : undefined;
               const turnStartParams = yield* buildCodexTurnStartParams({
                 nativeThreadId: threadId,
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
+                workspaceWriteConfig,
                 modelSelection: turnInput.modelSelection,
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,

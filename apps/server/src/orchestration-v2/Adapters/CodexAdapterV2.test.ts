@@ -2376,6 +2376,176 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps configured workspace-write sandbox settings on Auto turns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "workspace-write-thread";
+        const nativeTurnId = "workspace-write-turn";
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "fetch" });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "workspace-write-config",
+          entries: [
+            ...entries.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "config/read",
+              frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+            },
+            {
+              type: "emit_inbound",
+              label: "config/read",
+              frame: {
+                id: 3,
+                result: {
+                  config: {
+                    sandbox_workspace_write: {
+                      writable_roots: ["/cache"],
+                      network_access: true,
+                      exclude_tmpdir_env_var: false,
+                      exclude_slash_tmp: false,
+                    },
+                  },
+                  origins: {},
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: {
+                id: 4,
+                method: "turn/start",
+                params: {
+                  threadId: nativeThreadId,
+                  input: [{ type: "text", text: "fetch" }],
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  approvalPolicy: "on-request",
+                  approvalsReviewer: "auto_review",
+                  sandboxPolicy: {
+                    type: "workspaceWrite",
+                    writableRoots: ["/cache"],
+                    networkAccess: true,
+                    excludeTmpdirEnvVar: false,
+                    excludeSlashTmp: false,
+                  },
+                  summary: "detailed",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/start",
+              frame: {
+                id: 4,
+                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("workspace-write-attempt"),
+            text: "fetch",
+          }),
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("starts the Auto turn when Codex never answers config/read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "config-read-timeout-thread";
+        const nativeTurnId = "config-read-timeout-turn";
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "fetch" });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "workspace-write-config-timeout",
+          entries: [
+            ...entries.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "config/read",
+              frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: {
+                id: 4,
+                method: "turn/start",
+                params: {
+                  threadId: nativeThreadId,
+                  input: [{ type: "text", text: "fetch" }],
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  approvalPolicy: "on-request",
+                  approvalsReviewer: "auto_review",
+                  sandboxPolicy: { type: "workspaceWrite" },
+                  summary: "detailed",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/start",
+              frame: {
+                id: 4,
+                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const started = yield* harness.runtime
+          .startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("config-read-timeout-attempt"),
+              text: "fetch",
+            }),
+            runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(started);
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
