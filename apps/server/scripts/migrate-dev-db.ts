@@ -6,10 +6,11 @@
  *
  * `vp run migrate-dev-db` from a worktree:
  *   1. Nukes `<worktree>/.t3/userdata/statev2.sqlite`.
- *   2. Snapshots the real db (read-only VACUUM INTO) and prunes it to the
- *      most recently updated projects and, per project, the most recent
- *      threads that have fully stopped. Working, settled, and monitored
- *      threads are skipped so the dev server never adopts live work.
+ *   2. Snapshots the real db (`~/.t3/userdata/statev2.sqlite`, read-only
+ *      VACUUM INTO) and prunes it to the most recently updated projects and,
+ *      per project, the most recent threads that have fully stopped. Working,
+ *      settled, and archived threads are skipped, and scheduled tasks and
+ *      queued effects are dropped, so the dev server never adopts live work.
  *      Auth sessions, pairing links, command receipts, and provider
  *      runtime rows are dropped — pair a fresh browser against dev.
  *   3. Runs migrations on the result. Because the clone carries the real
@@ -18,10 +19,9 @@
  *      the silent failure where two branches claim the same
  *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
  *
- * The event log (`orchestration_events`) is pruned per stream while
- * `sqlite_sequence` and `projection_state` carry over untouched, so new
- * events keep appending after the old high-water mark and projection
- * cursors never rewind.
+ * The event logs are pruned per thread while `sqlite_sequence` and the
+ * projection cursors carry over untouched, so new events keep appending
+ * after the old high-water mark and projection cursors never rewind.
  */
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -143,7 +143,7 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
 export interface RunMigrateDevDbInput {
   /** Isolated .t3 directory. Defaults to `<worktree>/.t3` of the cwd. */
   readonly baseDir?: string | undefined;
-  /** Source database. Defaults to `~/.t3/userdata/state.sqlite`. */
+  /** Source database. Defaults to `~/.t3/userdata/statev2.sqlite`. */
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
@@ -235,28 +235,21 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
 
-  // The shared db can carry monitor_json from a branch build even though no
-  // migration in this checkout creates it, so filter it only when present.
-  const threadColumns = yield* sql<{ name: string }>`
-    SELECT name FROM pragma_table_info('projection_threads')`;
-  const monitorFilter = threadColumns.some((column) => column.name === "monitor_json")
-    ? "AND t.monitor_json IS NULL"
-    : "";
-
-  // "Stopped" is the persisted subset of the UI's thread status: the session
-  // reached status 'stopped' and nothing marks the thread settled or
-  // monitored. The in-memory working/monitoring liveness never persists, so
-  // filtering the session status is sufficient.
-  yield* sql.unsafe(`CREATE TEMP TABLE stopped_threads AS
+  // "Stopped" means the V2 thread is not deleted, archived, or settled, and
+  // none of its runs is still in flight.
+  yield* sql`CREATE TEMP TABLE stopped_threads AS
     SELECT t.thread_id, t.project_id, t.updated_at
-    FROM projection_threads t
-    JOIN projection_thread_sessions s ON s.thread_id = t.thread_id
+    FROM orchestration_v2_projection_threads t
     WHERE t.deleted_at IS NULL
-      AND t.archived_at IS NULL
-      AND t.settled_at IS NULL
-      AND (t.settled_override IS NULL OR t.settled_override <> 'settled')
-      ${monitorFilter}
-      AND s.status = 'stopped'`).unprepared;
+      AND json_extract(t.payload_json, '$.deletedAt') IS NULL
+      AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+      AND json_extract(t.payload_json, '$.settledAt') IS NULL
+      AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+      AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs r
+        WHERE r.thread_id = t.thread_id
+          AND r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+      )`;
 
   // Projects with clonable threads outrank empty-but-recent ones: the point
   // of the exercise is thread data, not the project list.
@@ -286,23 +279,19 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     )
     WHERE recency_rank <= ${input.threadsPerProject}`;
 
+  // Every V2 table and every V1 table the lazy importer reads is keyed by
+  // thread_id, so one sweep covers both and new tables need no change here.
+  const threadTables = yield* sql<{ name: string }>`
+    SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+    WHERE m.type = 'table' AND c.name = 'thread_id'`;
+
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql`DELETE FROM projection_projects
         WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
-      yield* sql`DELETE FROM projection_threads
-        WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`;
-      for (const table of [
-        "projection_thread_messages",
-        "projection_thread_activities",
-        "projection_thread_sessions",
-        "projection_turns",
-        "projection_pending_approvals",
-        "projection_thread_proposed_plans",
-        "checkpoint_diff_blobs",
-      ]) {
+      for (const { name } of threadTables) {
         yield* sql.unsafe(
-          `DELETE FROM ${table} WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`,
+          `DELETE FROM "${name}" WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`,
         ).unprepared;
       }
       yield* sql`DELETE FROM orchestration_events
@@ -310,6 +299,10 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      // Pending work the dev server would otherwise pick up and run.
+      yield* sql`DELETE FROM scheduled_tasks`;
+      yield* sql`DELETE FROM orchestration_v2_effect_outbox`;
+      yield* sql`DELETE FROM orchestration_v2_thread_launch_workflows`;
       yield* sql`DELETE FROM orchestration_command_receipts`;
       yield* sql`DELETE FROM provider_session_runtime`;
       yield* sql`DELETE FROM auth_sessions`;
@@ -320,11 +313,12 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   const keptProjects = yield* sql<{ title: string; threads: number }>`
     SELECT
       p.title,
-      (SELECT COUNT(*) FROM projection_threads t WHERE t.project_id = p.project_id) AS threads
+      (SELECT COUNT(*) FROM orchestration_v2_projection_threads t
+        WHERE t.project_id = p.project_id) AS threads
     FROM projection_projects p
     ORDER BY p.updated_at DESC`;
   const [events] = yield* sql<{ count: number }>`
-    SELECT COUNT(*) AS count FROM orchestration_events`;
+    SELECT COUNT(*) AS count FROM orchestration_v2_events`;
 
   return {
     projects: keptProjects as ReadonlyArray<KeptProject>,
@@ -362,7 +356,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
 
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
   const sourcePath = path.resolve(
-    input.source ?? path.join(sharedHome, "userdata", "state.sqlite"),
+    input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite"),
   );
 
   const baseDir =
@@ -520,7 +514,7 @@ export const migrateDevDbCommand = Command.make(
     ),
     source: Flag.String("source").pipe(
       Flag.optional,
-      Flag.withDescription("Source database. Defaults to ~/.t3/userdata/state.sqlite."),
+      Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
     ),
   },
   ({ projects, threadsPerProject, baseDir, source }) =>

@@ -88,13 +88,16 @@ The most common defect in this repo is a change that works on the path you teste
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
-- Copy from `~/.t3/userdata` (the developer's real data, the most realistic test set) or `~/.t3/dev`. Worktree state lives at `<worktree>/.t3/userdata`.
-- Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
+- Copy from `~/.t3/userdata` (the developer's real data, the most realistic test set). Worktree state lives at `<worktree>/.t3/userdata`.
+- The server reads `statev2.sqlite`. It copies the V1 `state.sqlite` only when `statev2.sqlite` is missing, so copy and refresh `statev2.sqlite`.
+- `vp run migrate-dev-db` gives a small copy: a few recent projects and their stopped threads, with no scheduled tasks or auth sessions. Stop your dev server first.
+- For a full copy, snapshot with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file. Then clear the scheduled tasks, so your dev server does not run the developer's automations:
 
   ```bash
   mkdir -p .t3/userdata
-  rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
-  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
+  rm -f .t3/userdata/statev2.sqlite*  # VACUUM INTO refuses to overwrite
+  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/statev2.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/statev2.sqlite'\")"
+  bun -e "new (require('bun:sqlite').Database)('.t3/userdata/statev2.sqlite').run('DELETE FROM scheduled_tasks')"
   ```
 
   A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
@@ -108,7 +111,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
-- The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
+- The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 
 For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
@@ -120,7 +123,7 @@ For authorized mobile verification, a missing or outdated native client is a bui
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.
 - Upload PR evidence to GitHub. Never commit PR-only screenshots or assets such as `.github/pr-assets/`.
-- One concern per PR. If the description says "also", split it.
+- One request is one PR. Split it only when the maintainer asks. Outside contributions follow the stricter [one problem per PR](CONTRIBUTING.md#one-problem) rule.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
 
 ## Documentation
@@ -143,9 +146,9 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 ## How it works
 
-Clients send typed WebSocket requests. The server turns them into _commands_, a pure _decider_ turns commands into persisted _events_, and a _projector_ derives the read model the UI renders. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Side effects run in queue-backed _reactors_ that emit _receipts_ when milestones land. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
+Clients send typed WebSocket requests. The server turns them into _commands_. The _orchestrator_ (`apps/server/src/orchestration-v2/Orchestrator.ts`) serializes commands and decides _events_ without doing any I/O. The _event sink_ commits those events, the _projections_ the UI reads, the _command receipt_, and _outbox_ effects in one transaction. The _effect worker_ then runs the effects, such as starting a provider turn or capturing a checkpoint, and feeds results back as commands. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
 
-Full glossary with file links: `docs/internals/glossary.md`
+Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
 
 ## Where code lives
 
