@@ -28,7 +28,18 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, PubSub, Ref, Schema, SchemaIssue, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Layer,
+  Option,
+  PubSub,
+  Queue,
+  Ref,
+  Schema,
+  SchemaIssue,
+  Stream,
+} from "effect";
 
 import {
   increment,
@@ -63,6 +74,12 @@ import { withLogContext } from "../../observability/LogContext.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 const isModelSelection = Schema.is(ModelSelection);
+
+/** Adapter identity a runtime event was emitted by. */
+interface ProviderEventSource {
+  readonly instanceId: ProviderInstanceId;
+  readonly provider: ProviderDriverKind;
+}
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -256,6 +273,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.bounded<ProviderRuntimeEvent>(
     RUNTIME_EVENT_BUS_CAPACITY,
   );
+  // Liveness recording gets its own unbounded queue and its own fiber so it can
+  // never be stalled by backpressured delivery. See `processRuntimeEvent`.
+  const livenessQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  // Delivery carries the adapter identity because the Pi resume-cursor write
+  // below is provider-scoped and must run before that event publishes.
+  const dispatchQueue = yield* Queue.unbounded<[ProviderEventSource, ProviderRuntimeEvent]>();
+  yield* Effect.forkScoped(
+    Stream.fromQueue(livenessQueue).pipe(
+      Stream.runForEach((event) => runtimeLiveness.record(event)),
+    ),
+  );
 
   const getInstance = (instanceId: ProviderInstanceId) =>
     registry
@@ -363,10 +391,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
 
   const processRuntimeEvent = (
-    source: {
-      readonly instanceId: ProviderInstanceId;
-      readonly provider: ProviderDriverKind;
-    },
+    source: ProviderEventSource,
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
@@ -375,16 +400,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
         }).pipe(
-          // Record liveness before publishing so a reconciler reading the
-          // ledger is never behind the durable projection for the same event:
-          // the runtime bus is bounded and applies backpressure, so the
-          // projection can lag this funnel by seconds under an event burst.
-          Effect.andThen(() => runtimeLiveness.record(canonicalEvent)),
-          // The cursor persists before the terminal event publishes so a
-          // subscriber acting on completion (or a crash right after it)
-          // observes the fresh rollback boundary, not the previous one.
-          Effect.andThen(() => persistPiTurnResumeCursor(source, canonicalEvent)),
-          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          // Hand the event to BOTH consumers as non-blocking offers, then let
+          // each dedicated fiber do its own work. Nothing in this fiber ever
+          // suspends on delivery, so a backlog cannot delay the next event.
+          //
+          // This ordering is deliberate. Recording inline in this sequential
+          // chain was not enough: `Stream.runForEach` processes one event at a
+          // time, so a `publish` suspended by backpressure on event N meant
+          // event N+1 was not offered to the liveness queue either. A terminal
+          // event could then sit unrecorded for as long as the backlog lasted —
+          // unbounded, so no grace window can cover it. Separate fibers with
+          // independent unbounded queues remove that coupling entirely.
+          //
+          // FIFO drain preserves per-consumer ordering, which matters for both:
+          // subscribers depend on delivery order, and `lastStartedTurnId`
+          // attributes turnId-less terminal events to the last announced turn.
+          // The Pi resume cursor still persists before its event publishes.
+          Effect.andThen(() => Queue.offer(livenessQueue, canonicalEvent)),
+          Effect.andThen(() => Queue.offer(dispatchQueue, [source, canonicalEvent])),
         ),
       ),
     );
@@ -423,6 +456,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
       ),
     );
+
+  // Sequential per-adapter consumers now only enqueue; these fibers own the
+  // work. The ledger is recorded first so it still leads the projection, and
+  // neither fiber can be stalled by the other's backpressure.
+  yield* Effect.forkScoped(
+    Stream.fromQueue(livenessQueue).pipe(Stream.runForEach((e) => runtimeLiveness.record(e))),
+  );
+  yield* Effect.forkScoped(
+    Stream.fromQueue(dispatchQueue).pipe(
+      Stream.runForEach(([source, event]) =>
+        persistPiTurnResumeCursor(source, event).pipe(
+          Effect.andThen(() => publishRuntimeEvent(event)),
+        ),
+      ),
+    ),
+  );
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
