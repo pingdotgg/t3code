@@ -1,6 +1,5 @@
 import {
   alternateComposerDispatchAction,
-  resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 
@@ -65,29 +64,4 @@ export function resolveComposerSendPresentation(input: {
     alternate: input.canSteer ? alternate : null,
     offersFollowUpChoice: input.canSteer,
   };
-}
-
-/**
- * The outbox dispatch mode for a send, or null when the thread is idle and the
- * server decides. Steering travels as "auto" so a turn that ends before the
- * outbox delivers degrades to a queued run instead of failing the delivery and
- * bouncing the message back into the draft.
- */
-export function resolveFollowUpDispatchMode(input: {
-  readonly running: boolean;
-  readonly canSteer: boolean;
-  readonly isCompacting: boolean;
-  readonly followUpBehavior: FollowUpBehavior;
-  readonly followUpOverride?: ActiveTurnComposerAction;
-}): "queue" | "auto" | null {
-  const action = resolveComposerDispatchMode({
-    // Compaction queues explicitly: while /compact is still being dispatched
-    // the active run is the ordinary one, which an auto send would steer.
-    running: input.running && (input.canSteer || input.isCompacting),
-    alternateModifier:
-      input.followUpOverride !== undefined && input.followUpOverride !== input.followUpBehavior,
-    activeTurnDefault: input.followUpBehavior,
-    activeTurnIsCompaction: input.isCompacting,
-  });
-  return action === "auto" ? null : action === "queue" ? "queue" : "auto";
 }
