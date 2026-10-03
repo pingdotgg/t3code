@@ -1239,8 +1239,8 @@ export function PullRequestDetailPanel({
       setHandoff(null);
       // The server says what to do about it — that the branch is already checked out in the main
       // repository, say — and that sentence is the only way out of the failure.
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
+      const failure = squashAtomCommandFailure(prepared);
+      const detailMessage = failure instanceof Error ? failure.message : null;
       toastManager.update(toastId, {
         type: "error",
         title: "Could not prepare the pull request checkout",
