@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   HostProcessEnvironment,
   HostProcessInvokedAs,
@@ -11,7 +12,32 @@ import {
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+
+it.effect("authenticates release checks with GitHub tokens from the environment", () =>
+  Effect.gen(function* () {
+    const authorizations: Array<string | undefined> = [];
+    const httpClient = HttpClient.make((request) =>
+      Effect.sync(() => {
+        authorizations.push(request.headers.authorization);
+        return HttpClientResponse.fromWeb(request, Response.json([{ tag_name: "v1.2.3" }]));
+      }),
+    );
+    const resolveWith = (environment: Readonly<Record<string, string | undefined>>) =>
+      resolveNewestVersion("stable").pipe(
+        Effect.provideService(HostProcessEnvironment, environment),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+
+    assert.equal(
+      yield* resolveWith({ GH_TOKEN: "gh-token", GITHUB_TOKEN: "github-token" }),
+      "1.2.3",
+    );
+    assert.equal(yield* resolveWith({ GITHUB_TOKEN: "github-token" }), "1.2.3");
+    assert.equal(yield* resolveWith({ GH_TOKEN: "  ", GITHUB_TOKEN: "  " }), "1.2.3");
+    assert.deepStrictEqual(authorizations, ["Bearer gh-token", "Bearer github-token", undefined]);
+  }),
+);
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
