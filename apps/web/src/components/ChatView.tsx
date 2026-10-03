@@ -22,6 +22,8 @@ import {
   rememberCheckoutIsRepo,
 } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
+import { useScratchProject } from "../hooks/useScratchProject";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   latestExecutedRun,
@@ -2642,26 +2644,56 @@ export default function ChatView(props: ChatViewProps) {
     },
     [navigate, setEnvironmentEnabled],
   );
+  const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const activeProjectIsScratch =
+    activeProject !== null &&
+    isScratchProject(
+      activeProject,
+      environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ?? null,
+    );
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
-    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
-    const memberProjects = allProjects.filter(
-      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
-    );
-    const seen = new Set<string>();
     const envs: EnvironmentOption[] = [];
-    for (const p of memberProjects) {
-      if (seen.has(p.environmentId)) continue;
-      seen.add(p.environmentId);
-      const isPrimary = p.environmentId === primaryEnvironmentId;
-      const environment = environmentById.get(p.environmentId) ?? null;
+    const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
+      const environment = environmentById.get(environmentId) ?? null;
       envs.push({
-        environmentId: p.environmentId,
-        projectId: p.id,
-        label: environment?.label ?? p.environmentId,
-        isPrimary,
+        environmentId,
+        projectId,
+        label: environment?.label ?? environmentId,
+        isPrimary: environmentId === primaryEnvironmentId,
         machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
       });
+    };
+    if (activeProjectIsScratch && draftId) {
+      // Each machine keeps its own "No project" folder at its own path, so they
+      // never group as one logical project. Offer every machine that has one.
+      for (const environment of environments) {
+        const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
+        // Keep the current machine visible so an offline source can still switch away.
+        if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
+          continue;
+        const scratchProject =
+          environment.environmentId === activeProject.environmentId
+            ? activeProject
+            : allProjects.find(
+                (p) =>
+                  p.environmentId === environment.environmentId && isScratchProject(p, scratchRoot),
+              );
+        pushEnvironment(environment.environmentId, scratchProject?.id ?? null);
+      }
+    } else {
+      const logicalKey = deriveLogicalProjectKeyFromSettings(
+        activeProject,
+        projectGroupingSettings,
+      );
+      const seen = new Set<string>();
+      for (const p of allProjects) {
+        if (seen.has(p.environmentId)) continue;
+        if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey)
+          continue;
+        seen.add(p.environmentId);
+        pushEnvironment(p.environmentId, p.id);
+      }
     }
     // Sort: primary first, then alphabetical
     envs.sort((a, b) => {
@@ -2669,8 +2701,21 @@ export default function ChatView(props: ChatViewProps) {
       return a.label.localeCompare(b.label);
     });
     return envs;
-  }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
+  }, [
+    activeProject,
+    activeProjectIsScratch,
+    allProjects,
+    draftId,
+    environments,
+    projectGroupingSettings,
+    primaryEnvironmentId,
+    environmentById,
+    scratchWorkspaceRootFor,
+  ]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+  // Auto balance retargets to an existing project; a machine's "No project"
+  // folder may not exist until it is picked.
+  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -2889,7 +2934,7 @@ export default function ChatView(props: ChatViewProps) {
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
-    hasMultipleEnvironments &&
+    canAutoBalanceEnvironments &&
     loadBalancingSettings.loadBalancingEnabled &&
     draftThread?.environmentSelection !== "manual" &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
@@ -4191,7 +4236,7 @@ export default function ChatView(props: ChatViewProps) {
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
-    if (!target) return;
+    if (!target?.projectId) return;
     setDraftThreadContext(draftId, {
       projectRef: scopeProjectRef(target.environmentId, target.projectId),
       environmentSelection: "auto",
@@ -4244,23 +4289,91 @@ export default function ChatView(props: ChatViewProps) {
           : "Auto balance"
     : undefined;
 
-  // Handle environment change for draft threads.  When the user picks a
-  // different environment we update the draft context to point at the physical
-  // project in that environment while keeping the same logical project.
+  const environmentChangeRef = useRef<symbol | null>(null);
+  const [isEnvironmentChanging, setIsEnvironmentChanging] = useState(false);
+  useLayoutEffect(() => {
+    return () => {
+      environmentChangeRef.current = null;
+      setIsEnvironmentChanging(false);
+    };
+  }, [draftId, activeProjectKey]);
+
   const onEnvironmentChange = useCallback(
     (nextEnvironmentId: EnvironmentId) => {
-      if (envLocked || !draftId) return;
+      if (envLocked || !draftId || sendInFlightRef.current) return;
+      const originalDraft = getDraftSession(draftId);
+      if (!originalDraft || originalDraft.promotedTo) return;
       const target = logicalProjectEnvironments.find(
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
-      setDraftThreadContext(draftId, {
-        projectRef: scopeProjectRef(target.environmentId, target.projectId),
-        environmentSelection: "manual",
-        loadBalancedEnvironmentId: null,
-      });
+      const request = Symbol();
+      environmentChangeRef.current = request;
+      setIsEnvironmentChanging(false);
+      const retarget = (project: (typeof allProjects)[number]) => {
+        const currentDraft = getDraftSession(draftId);
+        if (
+          environmentChangeRef.current !== request ||
+          sendInFlightRef.current ||
+          !currentDraft ||
+          currentDraft.promotedTo ||
+          currentDraft.environmentId !== originalDraft.environmentId ||
+          currentDraft.projectId !== originalDraft.projectId
+        )
+          return;
+        const projectRef = scopeProjectRef(target.environmentId, project.id);
+        if (activeProjectIsScratch) {
+          // Scratch projects are machine-local, so move their logical mapping too.
+          setLogicalProjectDraftThreadId(
+            deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+            projectRef,
+            draftId,
+            { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+          );
+        } else {
+          setDraftThreadContext(draftId, {
+            projectRef,
+            environmentSelection: "manual",
+            loadBalancedEnvironmentId: null,
+          });
+        }
+      };
+      const finish = () => {
+        if (environmentChangeRef.current === request) {
+          environmentChangeRef.current = null;
+          setIsEnvironmentChanging(false);
+        }
+      };
+      if (target.projectId !== null) {
+        const project = allProjects.find(
+          (project) =>
+            project.environmentId === target.environmentId && project.id === target.projectId,
+        );
+        if (project) retarget(project);
+        finish();
+        return;
+      }
+      // Keep send disabled until the destination Scratch project is ready.
+      setIsEnvironmentChanging(true);
+      void openScratchProject(target.environmentId)
+        .then((project) => {
+          if (project) retarget(project);
+        })
+        .finally(finish);
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [
+      activeProjectIsScratch,
+      allProjects,
+      draftId,
+      envLocked,
+      getDraftSession,
+      logicalProjectEnvironments,
+      openScratchProject,
+      projectGroupingSettings,
+      sendInFlightRef,
+      setDraftThreadContext,
+      setLogicalProjectDraftThreadId,
+    ],
   );
 
   const activeTerminalGroup =
@@ -8131,6 +8244,7 @@ export default function ChatView(props: ChatViewProps) {
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
+      environmentChangeRef.current !== null ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
@@ -10439,7 +10553,10 @@ export default function ChatView(props: ChatViewProps) {
     availableEnvironments: logicalProjectEnvironments,
     autoEnvironmentLabel,
     onAutoEnvironment:
-      draftId && !envLocked && hasMultipleEnvironments && loadBalancingSettings.loadBalancingEnabled
+      draftId &&
+      !envLocked &&
+      canAutoBalanceEnvironments &&
+      loadBalancingSettings.loadBalancingEnabled
         ? onAutoEnvironment
         : undefined,
     onEnvironmentChange,
@@ -10896,15 +11013,17 @@ export default function ChatView(props: ChatViewProps) {
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
-                                isRevertingCheckpoint
-                                  ? "Rewinding conversation"
-                                  : feedbackUploading
-                                    ? "Sending feedback"
-                                    : threadDetailLoading
-                                      ? "Messages loading"
-                                      : worktreeSetupBlocksSend
-                                        ? "Preparing worktree"
-                                        : projectCloneSendBlockReason
+                                isEnvironmentChanging
+                                  ? "Preparing machine"
+                                  : isRevertingCheckpoint
+                                    ? "Rewinding conversation"
+                                    : feedbackUploading
+                                      ? "Sending feedback"
+                                      : threadDetailLoading
+                                        ? "Messages loading"
+                                        : worktreeSetupBlocksSend
+                                          ? "Preparing worktree"
+                                          : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={
@@ -11085,7 +11204,7 @@ export default function ChatView(props: ChatViewProps) {
                                 onAutoEnvironment={
                                   draftId &&
                                   !envLocked &&
-                                  hasMultipleEnvironments &&
+                                  canAutoBalanceEnvironments &&
                                   loadBalancingSettings.loadBalancingEnabled
                                     ? onAutoEnvironment
                                     : undefined

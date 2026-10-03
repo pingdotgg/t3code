@@ -16,7 +16,8 @@ export {
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  /** Null when the machine's "No project" folder is not created yet. */
+  projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
