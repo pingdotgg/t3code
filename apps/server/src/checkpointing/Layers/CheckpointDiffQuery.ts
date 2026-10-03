@@ -47,21 +47,23 @@ function resolveCheckpointRange(input: {
     | undefined;
   const diffPaths = new Set<string>();
   let attributionComplete = true;
-  // A checkpoint's turnFiles cannot be trusted as the complete set of changed paths when:
+  // Filtering a range by turnFiles is only sound when turnFiles provably covers
+  // every changed path in the range. A checkpoint's cumulative `files` is the
+  // authoritative changed-path set at that point, so distrust the filter when:
   // - touched-path attribution hit its cap (agentTouchedPaths is the capped set), or
-  // - the cumulative summary shows changes that nothing attributes to the turn (changes made
-  //   outside edit/write/delete/move tools), or
-  // - both file summaries failed, leaving files and turnFiles empty.
-  // Filtering a range by an untrustworthy set silently drops work, so drop the filter instead.
-  // A superset is always preferable to missing changes.
-  const trustTurnFiles = (
+  // - the range's cumulative summary reports a path no turn attributes, which is
+  //   a partially attributed turn (changes made outside edit/write/delete/move
+  //   tools) rather than a fully unattributed one, or
+  // - the cumulative summary is empty while earlier in-range turns did attribute
+  //   changes, which is only possible if that summary failed.
+  // A superset is always preferable to silently dropped work.
+  const trustAttribution = (
     checkpoint: ProjectionThreadCheckpointContext["checkpoints"][number],
-  ): boolean => {
-    if (checkpoint.agentTouchedPaths.length >= MAX_TURN_SCOPED_PATHS) {
-      return false;
-    }
-    return !(checkpoint.files.length > 0 && checkpoint.turnFiles.length === 0);
-  };
+  ): boolean => checkpoint.agentTouchedPaths.length < MAX_TURN_SCOPED_PATHS;
+
+  let cumulativePathsAtRangeEnd: Set<string> | undefined;
+  let earlierRangeReportedChanges = false;
+  const inRangeAttributedPaths = new Set<string>();
 
   for (const checkpoint of input.threadContext.checkpoints) {
     maxTurnCount = Math.max(maxTurnCount, checkpoint.checkpointTurnCount);
@@ -74,7 +76,7 @@ function resolveCheckpointRange(input: {
     if (checkpoint.checkpointTurnCount === input.toTurnCount && toCheckpointRef === undefined) {
       toCheckpointRef = checkpoint.checkpointRef;
       if (input.scope === "turn") {
-        if (!trustTurnFiles(checkpoint)) {
+        if (!trustAttribution(checkpoint)) {
           attributionComplete = false;
         }
         for (const file of checkpoint.turnFiles) {
@@ -87,18 +89,38 @@ function resolveCheckpointRange(input: {
       checkpoint.checkpointTurnCount > input.fromTurnCount &&
       checkpoint.checkpointTurnCount <= input.toTurnCount
     ) {
-      if (!trustTurnFiles(checkpoint)) {
+      if (!trustAttribution(checkpoint)) {
         attributionComplete = false;
       }
       for (const file of checkpoint.turnFiles) {
         addDiffPath(diffPaths, file);
+        inRangeAttributedPaths.add(file.path);
+      }
+      if (checkpoint.checkpointTurnCount === input.toTurnCount) {
+        cumulativePathsAtRangeEnd = new Set(checkpoint.files.map((file) => file.path));
+      } else if (checkpoint.files.length > 0) {
+        earlierRangeReportedChanges = true;
       }
     }
   }
 
-  // Safety net for the case no content check can catch: a range whose attribution
-  // produced no paths at all. An unfiltered diff of an unchanged range is still
-  // empty, so this can only widen the result, never narrow it.
+  if (cumulativePathsAtRangeEnd !== undefined) {
+    // A cumulative summary cannot shrink: if an earlier in-range turn reported
+    // changes and the range-end cumulative set is empty, this summary failed.
+    if (cumulativePathsAtRangeEnd.size === 0 && earlierRangeReportedChanges) {
+      attributionComplete = false;
+    }
+    for (const path of cumulativePathsAtRangeEnd) {
+      if (!inRangeAttributedPaths.has(path)) {
+        attributionComplete = false;
+        break;
+      }
+    }
+  }
+
+  // Safety net for a range whose attribution produced no paths at all. An
+  // unfiltered diff of an unchanged range is still empty, so this can only widen
+  // the result, never narrow it.
   if (diffPaths.size === 0) {
     attributionComplete = false;
   }

@@ -403,8 +403,11 @@ describe("CheckpointDiffQueryLive", () => {
           checkpointTurnCount: 2,
           checkpointRef: toCheckpointRef,
           status: "ready",
-          files: [{ path: "src/unrelated.ts", kind: "modified", additions: 50, deletions: 0 }],
-          agentTouchedPaths: ["src/second.ts"],
+          files: [
+            { path: "src/first.ts", kind: "modified", additions: 1, deletions: 1 },
+            { path: "src/second.ts", kind: "modified", additions: 2, deletions: 0 },
+          ],
+          agentTouchedPaths: ["src/first.ts", "src/second.ts"],
           turnFiles: [
             { path: "src/first.ts", kind: "modified", additions: 1, deletions: 1 },
             { path: "src/second.ts", kind: "modified", additions: 2, deletions: 0 },
@@ -751,6 +754,194 @@ describe("CheckpointDiffQueryLive", () => {
       Effect.gen(function* () {
         const query = yield* CheckpointDiffQuery;
         yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1, scope: "turn" });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(diffCheckpointsCalls).toEqual([{}]);
+  });
+
+  it("keeps residual changes from a partially attributed turn", async () => {
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const diffCheckpointsCalls: Array<{ readonly paths?: ReadonlyArray<string> }> = [];
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 2);
+    const modified = (path: string) => ({
+      path,
+      kind: "modified" as const,
+      additions: 1,
+      deletions: 0,
+    });
+    // Turn 2 edited src/a.ts with the edit tool and rewrote src/b.ts from a shell
+    // command, so its cumulative summary lists both but only a.ts is attributed.
+    const threadCheckpointContext = makeThreadCheckpointContext({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpointTurnCount: 2,
+      checkpointRef: toCheckpointRef,
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+          status: "ready",
+          files: [modified("src/a.ts")],
+          agentTouchedPaths: ["src/a.ts"],
+          turnFiles: [modified("src/a.ts")],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: toCheckpointRef,
+          status: "ready",
+          files: [modified("src/a.ts"), modified("src/b.ts")],
+          agentTouchedPaths: ["src/a.ts"],
+          turnFiles: [modified("src/a.ts")],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:01:00.000Z",
+        },
+      ],
+    });
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () => Effect.succeed(true),
+      checkpointRefMatchesWorkspace: () => Effect.succeed(true),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: ({ paths }) =>
+        Effect.sync(() => {
+          diffCheckpointsCalls.push({ ...(paths !== undefined ? { paths } : {}) });
+          return "unfiltered patch";
+        }),
+      diffCheckpointFiles: () => Effect.succeed([]),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () => Effect.die("unused"),
+          getShellSnapshot: () => Effect.die("unused"),
+          getActiveChatArchiveEntries: () => Effect.die("unused"),
+          getSnapshotSequence: () => Effect.die("unused"),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshotById: () => Effect.succeed(Option.none()),
+          listThreadProjectIds: () => Effect.die("unused"),
+          getThreadActivitiesPage: () => Effect.die("unused"),
+          readThread: () => Effect.die("unused"),
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(diffCheckpointsCalls).toEqual([{}]);
+  });
+
+  it("does not filter a conversation when a later turn's file summary failed", async () => {
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const diffCheckpointsCalls: Array<{ readonly paths?: ReadonlyArray<string> }> = [];
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 2);
+    const modified = (path: string) => ({
+      path,
+      kind: "modified" as const,
+      additions: 1,
+      deletions: 0,
+    });
+    // Turn 1 is attributed, but turn 2 persisted empty files and turnFiles because
+    // both of its summaries failed. Filtering to turn 1's paths would drop turn 2.
+    const threadCheckpointContext = makeThreadCheckpointContext({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpointTurnCount: 2,
+      checkpointRef: toCheckpointRef,
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+          status: "ready",
+          files: [modified("src/first.ts")],
+          agentTouchedPaths: ["src/first.ts"],
+          turnFiles: [modified("src/first.ts")],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: toCheckpointRef,
+          status: "ready",
+          files: [],
+          agentTouchedPaths: [],
+          turnFiles: [],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:01:00.000Z",
+        },
+      ],
+    });
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () => Effect.succeed(true),
+      checkpointRefMatchesWorkspace: () => Effect.succeed(true),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: ({ paths }) =>
+        Effect.sync(() => {
+          diffCheckpointsCalls.push({ ...(paths !== undefined ? { paths } : {}) });
+          return "unfiltered patch";
+        }),
+      diffCheckpointFiles: () => Effect.succeed([]),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () => Effect.die("unused"),
+          getShellSnapshot: () => Effect.die("unused"),
+          getActiveChatArchiveEntries: () => Effect.die("unused"),
+          getSnapshotSequence: () => Effect.die("unused"),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshotById: () => Effect.succeed(Option.none()),
+          listThreadProjectIds: () => Effect.die("unused"),
+          getThreadActivitiesPage: () => Effect.die("unused"),
+          readThread: () => Effect.die("unused"),
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
       }).pipe(Effect.provide(layer)),
     );
 
