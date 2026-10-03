@@ -587,6 +587,41 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("labels an OpenCode 2 model by provider name, else provider id", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            providerID: "anthropic",
+            providerName: "Anthropic",
+            id: "claude-opus-5-5",
+            name: "Claude Opus 5.5",
+            variants: [],
+          },
+          {
+            providerID: "github-copilot",
+            id: "claude-opus-5.5",
+            name: "Claude Opus 5.5",
+            variants: [],
+          },
+        ]),
+      );
+
+      NodeAssert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.subProvider]),
+        [
+          ["anthropic/claude-opus-5-5", "Anthropic"],
+          ["github-copilot/claude-opus-5.5", "github-copilot"],
+        ],
+      );
+    }),
+  );
+
   it.effect("reports a failed OpenCode 2 model list without the server's response", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";

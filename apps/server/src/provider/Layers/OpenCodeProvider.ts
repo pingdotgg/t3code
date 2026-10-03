@@ -381,6 +381,7 @@ export const makePendingOpenCodeProvider = (
 /** One model an OpenCode 2 server lists, as the status check reads it. */
 export interface OpenCode2Model {
   readonly providerID: string;
+  readonly providerName?: string | undefined;
   readonly id: string;
   readonly name: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
@@ -544,6 +545,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       .map((model) => ({
         slug: `${model.providerID}/${model.id}`,
         name: model.name,
+        subProvider: trimOptional(model.providerName) ?? model.providerID,
         isCustom: false,
         capabilities: openCode2ModelCapabilities(model),
       }))

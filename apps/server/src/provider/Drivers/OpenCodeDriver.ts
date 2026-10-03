@@ -298,10 +298,29 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
         ),
       });
+      const openCode2Location = { directory: serverConfig.cwd };
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-        openCode2Server.withConnection((connection) =>
-          connection.client.model.list({ location: { directory: serverConfig.cwd } }).pipe(
-            Effect.map((models) => models.data),
+        openCode2Server.withConnection(({ client }) =>
+          Effect.all(
+            [
+              client.model.list({ location: openCode2Location }),
+              // Provider names only label the picker, so a failed lookup falls back to provider ids.
+              client.provider.list({ location: openCode2Location }).pipe(
+                Effect.map((providers) => providers.data),
+                Effect.orElseSucceed(() => []),
+              ),
+            ],
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(([models, providers]) => {
+              const providerNames = new Map(
+                providers.map((provider) => [provider.id, provider.name]),
+              );
+              return models.data.map((model) => ({
+                ...model,
+                providerName: providerNames.get(model.providerID),
+              }));
+            }),
             Effect.mapError(
               (cause) =>
                 new OpenCodeRuntime.OpenCodeRuntimeError({
