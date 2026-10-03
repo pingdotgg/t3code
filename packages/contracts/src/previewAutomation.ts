@@ -1296,7 +1296,7 @@ export class PreviewAutomationClientDisconnectedError extends Schema.TaggedError
   PreviewAutomationRequestErrorFields,
 ) {
   override get message(): string {
-    return `Preview automation client ${this.clientId} disconnected during ${this.operation}.`;
+    return `Preview automation ${this.operation} was interrupted because client ${this.clientId} disconnected or its host generation was evicted.`;
   }
 }
 
