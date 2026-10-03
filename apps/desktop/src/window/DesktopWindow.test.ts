@@ -194,17 +194,18 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const desktopEnvironmentLayer = (platform: NodeJS.Platform = environmentInput.platform) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -226,6 +227,7 @@ function makeTestLayer(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -286,7 +288,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        desktopEnvironmentLayer(input.platform),
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -401,7 +403,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       Layer.provide(
         Layer.mergeAll(
           desktopAssetsLayer,
-          desktopEnvironmentLayer,
+          desktopEnvironmentLayer(),
           DesktopAppSettings.layerTest(),
           desktopClientSettingsLayer,
           desktopServerExposureLayer,
@@ -804,6 +806,58 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("lets Linux tiled windows shrink while retaining other platform minima", () =>
+    Effect.gen(function* () {
+      const cases = [
+        {
+          platform: "linux" as const,
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            mainWindowBounds: { x: 80, y: 60, width: 624, height: 360 },
+          },
+          expected: { width: 624, height: 360, minWidth: undefined, minHeight: undefined },
+        },
+        {
+          platform: "darwin" as const,
+          desktopSettings: DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          expected: { width: 1100, height: 780, minWidth: 840, minHeight: 620 },
+        },
+        {
+          platform: "win32" as const,
+          desktopSettings: DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          expected: { width: 1100, height: 780, minWidth: 840, minHeight: 620 },
+        },
+      ];
+
+      for (const testCase of cases) {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions,
+          desktopSettings: testCase.desktopSettings,
+          platform: testCase.platform,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        }).pipe(Effect.provide(layer));
+
+        const options = createdWindowOptions[0];
+        assert.isDefined(options);
+        assert.equal(options.width, testCase.expected.width);
+        assert.equal(options.height, testCase.expected.height);
+        assert.equal(options.minWidth, testCase.expected.minWidth);
+        assert.equal(options.minHeight, testCase.expected.minHeight);
+      }
+    }),
+  );
+
   it.effect("uses the persisted main window bounds when opening the window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -1009,7 +1063,7 @@ describe("DesktopWindow", () => {
   it.effect("does not persist bounds that fail the domain schema", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 839.4, height: 619.4 });
+      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 0.4, height: 359.4 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
