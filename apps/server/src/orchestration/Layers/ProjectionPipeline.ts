@@ -945,6 +945,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : previousMessage?.origin !== undefined
                 ? { origin: previousMessage.origin }
                 : {}),
+            ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -1183,6 +1184,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: event.payload.queuedTurn.message.text,
             attachments: event.payload.queuedTurn.message.attachments,
             origin: event.payload.queuedTurn.origin ?? null,
+            ...(event.payload.queuedTurn.message.context !== undefined
+              ? { context: event.payload.queuedTurn.message.context }
+              : {}),
             modelSelection: event.payload.queuedTurn.modelSelection ?? null,
             titleSeed: event.payload.queuedTurn.titleSeed ?? null,
             runtimeMode: event.payload.queuedTurn.runtimeMode,
@@ -1208,6 +1212,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existing.value,
             text: event.payload.text,
             ...(event.payload.origin !== undefined ? { origin: event.payload.origin } : {}),
+            ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
             updatedAt: event.payload.updatedAt,
             failedAt: null,
             failureMessage: null,

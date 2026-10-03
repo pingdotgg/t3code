@@ -1,3 +1,6 @@
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import type { ThreadContextId } from "@t3tools/contracts";
+
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -15,6 +18,11 @@ export type ComposerPromptSegment =
   | {
       type: "skill";
       name: string;
+    }
+  | {
+      type: "thread-context";
+      contextId: ThreadContextId;
+      label: string;
     }
   | {
       type: "terminal-context";
@@ -50,6 +58,13 @@ type InlineTokenMatch =
       value: string;
       start: number;
       end: number;
+    }
+  | {
+      type: "thread-context";
+      contextId: ThreadContextId;
+      label: string;
+      start: number;
+      end: number;
     };
 
 type MentionTokenMatch = Extract<InlineTokenMatch, { type: "mention" }>;
@@ -76,7 +91,28 @@ function collectMentionTokenMatches(text: string): MentionTokenMatch[] {
 }
 
 function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
-  const matches: InlineTokenMatch[] = collectMentionTokenMatches(text);
+  // Thread references are atomic: @/$ tokens inside a reference label (or
+  // its URL) belong to the chip, never to a nested mention or skill.
+  const threadRanges: Array<{ start: number; end: number }> = [];
+  const matches: InlineTokenMatch[] = [];
+  for (const occurrence of collectThreadContextReferences(text)) {
+    threadRanges.push({ start: occurrence.start, end: occurrence.end });
+    matches.push({
+      type: "thread-context",
+      contextId: occurrence.contextId,
+      label: occurrence.label,
+      start: occurrence.start,
+      end: occurrence.end,
+    });
+  }
+  const insideThreadRange = (start: number, end: number): boolean =>
+    threadRanges.some((range) => start < range.end && end > range.start);
+
+  for (const match of collectMentionTokenMatches(text)) {
+    if (!insideThreadRange(match.start, match.end)) {
+      matches.push(match);
+    }
+  }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];
@@ -85,7 +121,7 @@ function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
     const matchIndex = match.index ?? 0;
     const start = matchIndex + prefix.length;
     const end = start + fullMatch.length - prefix.length;
-    if (skillName.length > 0) {
+    if (skillName.length > 0 && !insideThreadRange(start, end)) {
       matches.push({ type: "skill", value: skillName, start, end });
     }
   }
@@ -190,6 +226,12 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
 
     if (match.type === "mention") {
       segments.push({ type: "mention", path: match.value });
+    } else if (match.type === "thread-context") {
+      segments.push({
+        type: "thread-context",
+        contextId: match.contextId,
+        label: match.label,
+      });
     } else {
       segments.push({ type: "skill", name: match.value });
     }

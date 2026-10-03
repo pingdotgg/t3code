@@ -770,6 +770,7 @@ export function projectEvent(
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             ...(payload.origin !== undefined ? { origin: payload.origin } : {}),
+            ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
             createdAt: payload.createdAt,
@@ -799,6 +800,12 @@ export function projectEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    // Deltas that omit context must not drop the established binding.
+                    ...(message.context !== undefined
+                      ? { context: message.context }
+                      : entry.context !== undefined
+                        ? { context: entry.context }
+                        : {}),
                   }
                 : entry,
             )
@@ -922,7 +929,15 @@ export function projectEvent(
             queuedTurn.id === payload.queuedTurnId
               ? {
                   ...queuedTurn,
-                  message: { ...queuedTurn.message, text: payload.text },
+                  message: {
+                    ...queuedTurn.message,
+                    text: payload.text,
+                    ...(payload.context !== undefined
+                      ? { context: payload.context }
+                      : queuedTurn.message.context !== undefined
+                        ? { context: queuedTurn.message.context }
+                        : {}),
+                  },
                   ...(payload.origin !== undefined ? { origin: payload.origin } : {}),
                   updatedAt: payload.updatedAt,
                   failedAt: null,

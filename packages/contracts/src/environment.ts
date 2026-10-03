@@ -86,6 +86,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   nativeAppIcons: Schema.optionalKey(Schema.Boolean),
   providerWorkspaceSnapshots: Schema.optionalKey(Schema.Boolean),
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  /** Advertises thread-context attachments (`t3-context://` refs + `t3_thread_read`). */
+  threadContext: Schema.optionalKey(Schema.Boolean),
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),

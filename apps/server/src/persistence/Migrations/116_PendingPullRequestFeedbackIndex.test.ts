@@ -8,8 +8,8 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 it.effect("indexes only monitors with pending feedback for bounded delivery scans", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 114 });
     yield* runMigrations({ toMigrationInclusive: 115 });
+    yield* runMigrations({ toMigrationInclusive: 116 });
 
     const indexes = yield* sql<{ readonly name: string; readonly sql: string | null }>`
       SELECT name, sql

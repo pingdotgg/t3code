@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
@@ -42,6 +43,7 @@ import { makeInstanceRegistryMock } from "../src/provider/testUtils/providerInst
 import { ProviderInstanceRegistry } from "../src/provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
+import { ServerEnvironment } from "../src/environment/Services/ServerEnvironment.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
 import {
@@ -326,6 +328,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(serverSettingsLayer),
+      Layer.provideMerge(
+        Layer.succeed(ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env-integration-harness")),
+          getDescriptor: Effect.die("ServerEnvironment.getDescriptor is unused in this harness"),
+        }),
+      ),
       Layer.provideMerge(
         Layer.succeed(ReviewSnapshotVerifier, {
           currentSnapshot: (input) => Effect.succeed(input.snapshot),
