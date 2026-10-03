@@ -733,7 +733,11 @@ function ScheduledTaskEditorDialog({
               <Field
                 label="Project"
                 hint={
-                  moveDetachesThreadBinding(draft, baselineDraft)
+                  moveDetachesThreadBinding(
+                    draft,
+                    baselineDraft,
+                    tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId),
+                  )
                     ? "detaches the thread binding"
                     : undefined
                 }

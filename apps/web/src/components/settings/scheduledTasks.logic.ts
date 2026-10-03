@@ -35,9 +35,20 @@ export function workspaceStrategyFromDraft(
 
 // The dialog has no thread picker, so a bound task's only expressible
 // project move is unbind-and-move — the thread cannot follow across
-// projects. The Project field surfaces this as a hint before saving.
-export function moveDetachesThreadBinding(draft: DraftState, baseline: DraftState): boolean {
-  return draft.threadId !== "" && draft.projectId !== baseline.projectId;
+// projects. The Project field surfaces this as a hint before saving. It
+// mirrors buildScheduledTaskUpdateInput against the live task, so a binding
+// another client added while the editor was open is still announced.
+export function moveDetachesThreadBinding(
+  draft: DraftState,
+  baseline: DraftState,
+  task: ScheduledTask | undefined,
+): boolean {
+  return (
+    task !== undefined &&
+    task.threadId !== null &&
+    draft.projectId !== baseline.projectId &&
+    draft.projectId !== task.projectId
+  );
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {

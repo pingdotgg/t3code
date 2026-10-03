@@ -311,7 +311,7 @@ describe("moveDetachesThreadBinding", () => {
   it("unbinds in the same patch when a bound task moves projects", () => {
     const opened = taskToDraft(bound);
     const moved = { ...opened, projectId: "project:two" };
-    expect(moveDetachesThreadBinding(moved, opened)).toBe(true);
+    expect(moveDetachesThreadBinding(moved, opened, bound)).toBe(true);
     const patch = buildPatch(moved, bound, opened);
     expect(patch).toEqual({
       id: bound.id,
@@ -324,7 +324,7 @@ describe("moveDetachesThreadBinding", () => {
   it("keeps the binding when the project is unchanged", () => {
     const opened = taskToDraft(bound);
     const renamed = { ...opened, title: "Renamed" };
-    expect(moveDetachesThreadBinding(renamed, opened)).toBe(false);
+    expect(moveDetachesThreadBinding(renamed, opened, bound)).toBe(false);
     const patch = buildPatch(renamed, bound, opened);
     expect(patch).toEqual({
       id: bound.id,
@@ -337,7 +337,7 @@ describe("moveDetachesThreadBinding", () => {
   it("never detaches for an unbound task", () => {
     const opened = taskToDraft(task);
     const moved = { ...opened, projectId: "project:two" };
-    expect(moveDetachesThreadBinding(moved, opened)).toBe(false);
+    expect(moveDetachesThreadBinding(moved, opened, task)).toBe(false);
     const patch = buildPatch(moved, task, opened);
     expect(patch).not.toHaveProperty("threadId");
   });
@@ -354,6 +354,7 @@ describe("moveDetachesThreadBinding", () => {
       threadId: "thread:rebound" as ScheduledTask["threadId"],
     };
     const staleMove = { ...opened, projectId: "project:two" };
+    expect(moveDetachesThreadBinding(staleMove, opened, live)).toBe(false);
     const patch = buildScheduledTaskUpdateInput(
       staleMove,
       opened,
@@ -377,6 +378,20 @@ describe("moveDetachesThreadBinding", () => {
       title: "Renamed",
     });
     expect(editPatch).not.toHaveProperty("threadId");
+  });
+
+  it("announces the detach of a binding added while the editor was open", () => {
+    // The editor opened on an unbound task; another client then bound a
+    // thread in the same project. Moving projects now detaches that binding,
+    // and the hint must say so before saving.
+    const opened = taskToDraft(task);
+    const live: ScheduledTask = {
+      ...task,
+      threadId: "thread:bound-later" as ScheduledTask["threadId"],
+    };
+    const moved = { ...opened, projectId: "project:two" };
+    expect(moveDetachesThreadBinding(moved, opened, live)).toBe(true);
+    expect(buildPatch(moved, live, opened)).toMatchObject({ threadId: null });
   });
 
   it("preserves a live binding when an unbound draft moves to its project", () => {
