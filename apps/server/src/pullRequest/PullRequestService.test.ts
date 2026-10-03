@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -262,6 +263,76 @@ it.effect("does not wait for an in-flight detail read to display a preview", () 
     assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
     yield* Deferred.succeed(releaseDetail, undefined);
     yield* Fiber.join(detail);
+  }),
+);
+
+it.effect("reads a detail again when the cache answers with an interrupt", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => {
+            calls += 1;
+            return calls === 1
+              ? Effect.interrupt
+              : Effect.succeed(hostedChangeRequest("Description"));
+          },
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    const detail = yield* service.detail(ref);
+
+    assert.strictEqual(detail.title, "Change request 1");
+    assert.strictEqual(calls, 2);
+  }),
+);
+
+it.effect("recovers when a resent detail read joins the lookup being torn down", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const teardownStarted = yield* Deferred.make<void>();
+    const releaseTeardown = yield* Deferred.make<void>();
+    let calls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => {
+            calls += 1;
+            return calls === 1
+              ? Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(teardownStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseTeardown)),
+                    ),
+                  ),
+                )
+              : Effect.succeed(hostedChangeRequest("Description"));
+          },
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    // The first read is abandoned while its `gh` lookup is still shutting down.
+    const first = yield* Effect.forkChild(service.detail(ref));
+    yield* Deferred.await(started);
+    yield* Effect.forkChild(Fiber.interrupt(first));
+    yield* Deferred.await(teardownStarted);
+
+    // The resent read arrives inside that teardown window and joins the dying entry.
+    const second = yield* Effect.forkChild(service.detail(ref));
+    yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow, { discard: true });
+    yield* Deferred.succeed(releaseTeardown, undefined);
+
+    const exit = yield* Fiber.await(second);
+    assert.isTrue(Exit.isSuccess(exit));
+    assert.strictEqual(calls, 2);
   }),
 );
 

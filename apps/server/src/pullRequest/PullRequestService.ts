@@ -5,6 +5,7 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -149,6 +150,37 @@ const VIEWER_CACHE_TTL = Duration.minutes(10);
 const SEARCH_VISIBILITY_TTL = Duration.minutes(10);
 const STALE_DETAIL_WINDOW = Duration.minutes(10);
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
+
+/**
+ * `effect/Cache` drops an entry only once its lookup fiber has exited, and it
+ * interrupts that fiber when the last caller walks away. A read that arrives in
+ * the gap between "last caller left" and "fiber finished" joins the dying entry
+ * and comes back with a bare interrupt instead of a value (#14113). The client
+ * turns that into a sticky error, so the first PR panel opened after a turn can
+ * fail until the reader presses Retry.
+ *
+ * A caller that is not itself interrupted should never observe a lookup that is
+ * shutting down, so drop the dying entry and read again. The retry is bounded:
+ * the entry is gone after the first invalidate, and a genuinely cancelled caller
+ * never reaches this handler at all (Effect does not run the recovery for the
+ * fiber's own interrupt), so the cap only guards a pathological repeat.
+ */
+const READ_AFTER_INTERRUPT_ATTEMPTS = 3;
+const cacheReadAfterInterrupt = <Key, A, E, R>(
+  cache: Cache.Cache<Key, A, E, R>,
+  key: Key,
+  attempts = READ_AFTER_INTERRUPT_ATTEMPTS,
+): Effect.Effect<A, E, R> =>
+  Cache.get(cache, key).pipe(
+    Effect.catchCauseIf(
+      (cause) => Cause.hasInterruptsOnly(cause) && attempts > 0,
+      () =>
+        Cache.invalidate(cache, key).pipe(
+          Effect.andThen(cacheReadAfterInterrupt(cache, key, attempts - 1)),
+        ),
+    ),
+  );
+
 const LIST_CACHE_CAPACITY = 64;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
@@ -2879,7 +2911,7 @@ export const make = Effect.gen(function* () {
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
-    return Cache.get(listCache, key);
+    return cacheReadAfterInterrupt(listCache, key);
   };
 
   const checksCache = yield* Cache.makeWith(
@@ -2971,7 +3003,7 @@ export const make = Effect.gen(function* () {
     // `serveHeld` returns immediately. Skip the write when that read is older
     // than a later strict summary — display reuse would otherwise keep the
     // regression and never ask the host again.
-    const read = Cache.get(detailCache, key).pipe(
+    const read = cacheReadAfterInterrupt(detailCache, key).pipe(
       Effect.tap((value) => {
         const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
         return shouldReplaceHeldSummary(key, summary)
@@ -3008,7 +3040,7 @@ export const make = Effect.gen(function* () {
     return Cache.getSuccess(detailCache, key).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => Cache.get(previewCache, key),
+          onNone: () => cacheReadAfterInterrupt(previewCache, key),
           onSome: (detail) => Effect.succeed(previewFields(detail)),
         }),
       ),
@@ -3016,7 +3048,7 @@ export const make = Effect.gen(function* () {
   };
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = refCacheKey(input);
-    return Cache.get(activityCache, key);
+    return cacheReadAfterInterrupt(activityCache, key);
   };
 
   const diffCache = yield* Cache.makeWith(
@@ -3046,7 +3078,7 @@ export const make = Effect.gen(function* () {
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
     ]);
-    const read = Cache.get(diffCache, key).pipe(
+    const read = cacheReadAfterInterrupt(diffCache, key).pipe(
       Effect.tap((value) =>
         canCacheDiff(value)
           ? Effect.void
@@ -3126,7 +3158,7 @@ export const make = Effect.gen(function* () {
     }
     if (missing.size === 0) return { stats: held };
     const key = statsBatchKey(missing.values());
-    const { result, at } = yield* Cache.get(listStatsCache, key);
+    const { result, at } = yield* cacheReadAfterInterrupt(listStatsCache, key);
     for (const [key, ref] of missing) {
       const stat = result.stats.find(
         (stat) =>
