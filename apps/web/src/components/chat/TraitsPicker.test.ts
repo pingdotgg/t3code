@@ -237,57 +237,33 @@ describe("buildUnavailableModelOptionDescriptors", () => {
   });
 });
 
-it("shows OpenCode's reported Default on the trigger while keeping only None and Thinking choices", () => {
+it("shows Default only with a matching provider report", () => {
   const selection = {
     instanceId: ProviderInstanceId.make("opencode"),
-    model: "openrouter/inclusionai/ling-3.1-flash",
+    model: "ling",
     options: [],
   };
-  const descriptors: ReadonlyArray<ProviderOptionDescriptor> = [
-    {
-      id: "variant",
-      label: "Reasoning",
-      type: "select",
-      options: [
-        { id: "none", label: "None" },
-        { id: "thinking", label: "Thinking" },
-      ],
-    },
-  ];
   const input = {
     provider: ProviderDriverKind.make("opencode"),
-    descriptors,
+    descriptors: [
+      selectDescriptor(
+        "variant",
+        [
+          { id: "none", label: "None" },
+          { id: "thinking", label: "Thinking" },
+        ],
+        "",
+      ),
+    ],
     primarySelectDescriptorId: "variant",
     ultrathinkPromptControlled: false,
     modelSelection: selection,
-    reportedModelSelection: { ...selection, options: [{ id: "variant", value: "default" }] },
   };
-  expect(buildTraitsTriggerDisplay(input)).toEqual({ label: "Default", speedIcon: null });
-  expect(descriptors[0]).toMatchObject({
-    options: [
-      { id: "none", label: "None" },
-      { id: "thinking", label: "Thinking" },
-    ],
-  });
-  expect(buildTraitsTriggerDisplay({ ...input, reportedModelSelection: null })).toEqual({
-    label: "",
-    speedIcon: null,
-  });
+  expect(buildTraitsTriggerDisplay(input).label).toBe("");
   expect(
     buildTraitsTriggerDisplay({
       ...input,
-      modelSelection: { ...selection, options: [{ id: "variant", value: "thinking" }] },
-      descriptors: [
-        {
-          ...descriptors[0]!,
-          type: "select",
-          options: [
-            { id: "none", label: "None" },
-            { id: "thinking", label: "Thinking" },
-          ],
-          currentValue: "thinking",
-        },
-      ],
-    }),
-  ).toEqual({ label: "Thinking", speedIcon: null });
+      reportedModelSelection: { ...selection, options: [{ id: "variant", value: "default" }] },
+    }).label,
+  ).toBe("Default");
 });

@@ -58,7 +58,7 @@ import {
   countComposerDraftAttachmentsAfterSelection,
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
-import { useProject, useThreadShells, useThreadReportedModelSelection } from "../../state/entities";
+import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
@@ -150,6 +150,7 @@ export interface ThreadComposerProps {
    */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
+  readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -424,10 +425,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
   });
   const sendLabel = sendPresentation.label;
-  const reportedModelSelection = useThreadReportedModelSelection({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
@@ -671,7 +668,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       providerInstanceId: currentModelSelection.instanceId,
       providerGroups: threadProviderGroups,
       selectedModel: currentModelSelection,
-      reportedModelSelection,
+      reportedModelSelection: props.reportedModelSelection,
       onSelectModel: (option) =>
         props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
       optionDescriptors: providerOptionDescriptors,
@@ -688,7 +685,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }),
     [
       currentModelSelection,
-      reportedModelSelection,
+      props.reportedModelSelection,
       currentRuntimeMode,
       props.onUpdateModelSelection,
       props.onUpdateRuntimeMode,

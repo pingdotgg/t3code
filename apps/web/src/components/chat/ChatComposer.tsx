@@ -237,11 +237,7 @@ import {
 } from "~/lib/composerContextRecords";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threadContextDrag";
-import {
-  readThreadShell,
-  useThreadShells,
-  useThreadReportedModelSelection,
-} from "~/state/entities";
+import { readThreadShell, useThreadShells } from "~/state/entities";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import type { ComposerContextClipboardFragment, ComposerContextRecord } from "@t3tools/contracts";
@@ -1585,6 +1581,7 @@ export interface ChatComposerProps {
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  reportedModelSelection?: ModelSelection | null;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -1732,6 +1729,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    reportedModelSelection,
     activeContextWindow,
     compactThreadUnavailable,
     compactDisabled,
@@ -2873,9 +2871,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
-  const reportedModelSelection = useThreadReportedModelSelection(
-    routeKind === "server" ? routeThreadRef : null,
-  );
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,

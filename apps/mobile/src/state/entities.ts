@@ -1,13 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
+import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
 import { appAtomRegistry } from "./atom-registry";
 import type {
   EnvironmentProject,
+  EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
-  ModelSelection,
   ScopedProjectRef,
   ScopedThreadRef,
   ServerConfig,
@@ -20,9 +21,6 @@ import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
-);
-const EMPTY_REPORTED_MODEL_SELECTION_ATOM = Atom.make<ModelSelection | null>(null).pipe(
-  Atom.withLabel("mobile-thread-reported-model:empty"),
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("mobile-thread-shell:empty"),
@@ -92,12 +90,9 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
   return useAtomValue(environmentServerConfigsAtom);
 }
 
-export function useThreadReportedModelSelection(
-  ref: ScopedThreadRef | null,
-): ModelSelection | null {
-  return useAtomValue(
-    ref === null
-      ? EMPTY_REPORTED_MODEL_SELECTION_ATOM
-      : environmentThreadDetails.reportedModelSelectionAtom(ref),
-  );
+const selectReportedModelSelection = (thread: EnvironmentThread | null) =>
+  thread === null ? null : deriveReportedModelSelection(thread.projection);
+
+export function useThreadReportedModelSelection(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadDetails.threadAtom(ref), selectReportedModelSelection);
 }

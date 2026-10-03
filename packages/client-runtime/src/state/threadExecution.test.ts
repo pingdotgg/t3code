@@ -573,28 +573,24 @@ describe("provider-reported model selection", () => {
   });
 
   it("shows the reported default in a subagent's effort label", () => {
-    expect(
-      formatModelSelectionEffort(
-        selected,
-        [
-          {
-            slug: selected.model,
-            name: selected.model,
-            isCustom: false,
-            capabilities: {
-              optionDescriptors: [
-                {
-                  id: "reasoningEffort",
-                  label: "Reasoning",
-                  type: "select",
-                  options: [{ id: "high", label: "High" }],
-                },
-              ],
+    const models = [
+      {
+        slug: selected.model,
+        name: selected.model,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select" as const,
+              options: [{ id: "high", label: "High" }],
             },
-          },
-        ],
-        reported,
-      ),
-    ).toBe("Default");
+          ],
+        },
+      },
+    ];
+    expect(formatModelSelectionEffort(selected, models, reported)).toBe("Default");
+    expect(formatModelSelectionEffort(selected, models)).toBeNull();
   });
 });

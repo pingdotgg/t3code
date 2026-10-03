@@ -410,6 +410,11 @@ describe("OpenCode2 adapter", () => {
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
+      assert.deepEqual(thread.nativeMetadata?.modelSelection, {
+        ...bigPickle,
+        options: [{ id: "variant", value: "default" }],
+      });
+      assert.equal(bigPickle.options, undefined);
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(
         turnInput(thread, {
@@ -2833,6 +2838,10 @@ describe("OpenCode2 adapter", () => {
         modelSelection: bigPickle,
         runtimePolicy: customPolicy,
       });
+      assert.deepEqual(thread.nativeMetadata?.modelSelection, {
+        ...bigPickle,
+        options: [{ id: "variant", value: "default" }],
+      });
       // Each directory keeps its own limit, whichever was read last.
       assert.equal(runtime.getModelContextWindow?.(bigPickle, WORK), 160000);
       assert.equal(runtime.getModelContextWindow?.(bigPickle, custom), 48000);
@@ -3871,42 +3880,6 @@ const providerTurnId = Effect.gen(function* () {
 }).pipe(Effect.provide(IdAllocator.layer));
 
 describe("OpenCode reported model variants", () => {
-  it.effect(
-    "preserves the reported default on resume without changing the requested selection",
-    () =>
-      Effect.gen(function* () {
-        const { thread } = yield* resumed([]);
-        assert.deepEqual(thread.nativeMetadata?.modelSelection, {
-          ...bigPickle,
-          options: [{ id: "variant", value: "default" }],
-        });
-        assert.equal(bigPickle.options, undefined);
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("carries the server's reported model from a newly created session", () =>
-    Effect.gen(function* () {
-      const runtime = yield* openCode2ReplayRuntime([
-        ...opening,
-        out("session.create", {
-          location: { directory: WORK },
-          model: { providerID: "opencode", id: "big-pickle" },
-          permissions: t3Rules,
-        }),
-        replyData("session.create", sessionInfo()),
-      ]);
-      const thread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection: bigPickle,
-        runtimePolicy: policy(),
-      });
-      assert.deepEqual(thread.nativeMetadata?.modelSelection, {
-        ...bigPickle,
-        options: [{ id: "variant", value: "default" }],
-      });
-    }).pipe(Effect.scoped),
-  );
-
   it.effect(
     "updates reported variants from selected-model and step events without duplicate updates",
     () =>

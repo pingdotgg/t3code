@@ -9,12 +9,7 @@ import {
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
-import type {
-  ModelSelection,
-  ScopedProjectRef,
-  ScopedThreadRef,
-  ServerConfig,
-} from "@t3tools/contracts";
+import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -35,9 +30,6 @@ const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
 );
 const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
   Atom.withLabel("web-thread-refs:empty"),
-);
-const EMPTY_REPORTED_MODEL_SELECTION_ATOM = Atom.make<ModelSelection | null>(null).pipe(
-  Atom.withLabel("web-thread-reported-model:empty"),
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
@@ -281,14 +273,4 @@ export function readEnvironmentThreadRefs(
 
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-}
-
-export function useThreadReportedModelSelection(
-  ref: ScopedThreadRef | null,
-): ModelSelection | null {
-  return useAtomValue(
-    ref === null
-      ? EMPTY_REPORTED_MODEL_SELECTION_ATOM
-      : environmentThreadDetails.reportedModelSelectionAtom(ref),
-  );
 }

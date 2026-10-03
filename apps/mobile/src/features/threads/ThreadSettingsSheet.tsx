@@ -10,7 +10,6 @@ import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
-  getModelSelectionReportedOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -753,11 +752,8 @@ function ThreadSettingsOptionsItem(props: {
                   label={descriptor.label}
                   value={getProviderOptionCurrentLabel(
                     descriptor,
-                    getModelSelectionReportedOptionValue(
-                      session.displayedModelSelection,
-                      session.reportedModelSelection,
-                      descriptor.id,
-                    ),
+                    session.displayedModelSelection,
+                    session.reportedModelSelection,
                   )}
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
                 />
@@ -1014,11 +1010,11 @@ function ThreadSettingsChoiceContent(props: {
               description: undefined,
               selected:
                 choice.id ===
-                (getModelSelectionReportedOptionValue(
+                getProviderOptionCurrentValue(
+                  activeDescriptor,
                   session.displayedModelSelection,
                   session.reportedModelSelection,
-                  activeDescriptor.id,
-                ) ?? getProviderOptionCurrentValue(activeDescriptor)),
+                ),
               onPress: () => {
                 void Haptics.selectionAsync();
                 session.applyOptionChange(activeDescriptor.id, choice.id);

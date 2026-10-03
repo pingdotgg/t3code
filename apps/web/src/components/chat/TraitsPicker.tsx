@@ -10,7 +10,6 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
-  getModelSelectionReportedOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -124,11 +123,13 @@ function replaceDescriptorCurrentValue(
 
 function getDescriptorStringValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }> | null,
+  selection?: ModelSelection | null,
+  reportedSelection?: ModelSelection | null,
 ): string | null {
   if (!descriptor) {
     return null;
   }
-  const value = getProviderOptionCurrentValue(descriptor);
+  const value = getProviderOptionCurrentValue(descriptor, selection, reportedSelection);
   return typeof value === "string" ? value : null;
 }
 
@@ -370,11 +371,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         {descriptors.map((descriptor, index) => {
           const value = getProviderOptionCurrentLabel(
             descriptor,
-            getModelSelectionReportedOptionValue(
-              modelSelection,
-              reportedModelSelection,
-              descriptor.id,
-            ),
+            modelSelection,
+            reportedModelSelection,
           );
           if (!value) return null;
           return (
@@ -399,13 +397,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         const selectedValue =
           ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
             ? "ultrathink"
-            : (getModelSelectionReportedOptionValue(
-                modelSelection,
-                reportedModelSelection,
-                descriptor.id,
-              ) ??
-              getDescriptorStringValue(descriptor) ??
-              "");
+            : (getDescriptorStringValue(descriptor, modelSelection, reportedModelSelection) ?? "");
 
         return (
           <div key={descriptor.id}>
@@ -545,11 +537,8 @@ export function buildTraitsTriggerDisplay(input: {
           ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
           : getProviderOptionCurrentLabel(
               descriptor,
-              getModelSelectionReportedOptionValue(
-                input.modelSelection,
-                input.reportedModelSelection,
-                descriptor.id,
-              ),
+              input.modelSelection,
+              input.reportedModelSelection,
             );
     if (typeof label === "string" && label.length > 0) {
       labels.push(label);

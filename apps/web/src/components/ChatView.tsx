@@ -1626,6 +1626,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const reportedModelSelection = serverProjection
+    ? deriveReportedModelSelection(serverProjection)
+    : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
@@ -4068,7 +4071,7 @@ export default function ChatView(props: ChatViewProps) {
       : formatModelSelectionEffort(
           activeThread.modelSelection,
           providerSubagentModels,
-          serverProjection ? deriveReportedModelSelection(serverProjection) : null,
+          reportedModelSelection,
         );
   const mountComposerContextStrip = shouldShowComposerContextStrip({
     isDraftHeroState,
@@ -10811,6 +10814,7 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
+                              reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===

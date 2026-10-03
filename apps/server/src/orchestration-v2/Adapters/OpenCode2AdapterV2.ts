@@ -1385,18 +1385,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
-    const reportedModelSelection = (model: ModelRef): ModelSelection => ({
-      instanceId,
-      model: `${model.providerID}/${model.id}`,
-      options: model.variant === undefined ? [] : [{ id: "variant", value: model.variant }],
-    });
-
     const withReportedModel = (
       providerThread: OrchestrationV2ProviderThread,
       model: ModelRef | undefined,
     ): OrchestrationV2ProviderThread => {
       if (model === undefined) return providerThread;
-      const modelSelection = reportedModelSelection(model);
+      const modelSelection: ModelSelection = {
+        instanceId,
+        model: `${model.providerID}/${model.id}`,
+        options: model.variant === undefined ? [] : [{ id: "variant", value: model.variant }],
+      };
       if (
         providerThread.nativeMetadata?.modelSelection !== undefined &&
         modelSelectionsEqual(providerThread.nativeMetadata.modelSelection, modelSelection)
