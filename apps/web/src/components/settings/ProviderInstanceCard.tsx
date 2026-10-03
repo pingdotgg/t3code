@@ -913,7 +913,7 @@ export function ProviderInstanceCard({
                   </p>
                   <p
                     className={cn(
-                      "text-xs leading-snug",
+                      "text-xs leading-snug [overflow-wrap:anywhere]",
                       versionAdvisory.emphasis === "strong"
                         ? "text-warning"
                         : "text-muted-foreground",

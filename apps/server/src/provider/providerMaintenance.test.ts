@@ -214,19 +214,44 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it("keeps the manual update hint when the install is behind but unowned", () => {
+  it("names the install to update when it is behind but unowned", () => {
     expect(
       createProviderVersionAdvisory({
         driver: driver("packageTool"),
         currentVersion: "2.1.110",
         latestVersion: "2.1.117",
-        maintenanceCapabilities: manualPackageTool,
+        maintenanceCapabilities: {
+          ...manualPackageTool,
+          installPath: "/Applications/Tool.app/Contents/Resources/bin/package-tool",
+        },
       }),
     ).toMatchObject({
       status: "behind_latest",
       latestVersion: "2.1.117",
       updateCommand: null,
       canUpdate: false,
+      message:
+        "Version 2.1.117 is out. T3 Code runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
+    });
+  });
+
+  it("offers the update when an owned install is behind", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("packageTool"),
+        currentVersion: "2.1.110",
+        latestVersion: "2.1.117",
+        maintenanceCapabilities: makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "npm",
+          updateArgs: ["install", "-g", "@example/package-tool@latest"],
+          updateLockKey: "npm-global:/usr/local",
+        }),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      canUpdate: true,
       message: "Install the update now or review provider settings.",
     });
   });
@@ -738,7 +763,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ),
         );
 
-        expect(capabilities).toEqual(manualPackageTool);
+        expect(capabilities).toEqual({
+          ...manualPackageTool,
+          installPath: NodeFS.realpathSync(kegBinary),
+        });
       }),
   );
 
@@ -765,7 +793,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect(capabilities).toEqual(manualPackageTool);
+        expect(capabilities).toEqual({
+          ...manualPackageTool,
+          installPath: NodeFS.realpathSync(customPath),
+        });
       }),
   );
 
