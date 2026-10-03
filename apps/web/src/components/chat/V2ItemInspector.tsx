@@ -4,6 +4,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -12,6 +13,7 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
+import { ShellCommandBlock } from "./ShellCommandBlock";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -24,6 +26,13 @@ interface V2ItemInspectorProps {
     readonly checkpointId: string;
     readonly scopeId: string;
   }) => void;
+}
+
+/** Whether a command row has anything to expand: a command to show or an exit code. */
+export function commandExecutionHasDetails(
+  item: Extract<OrchestrationV2ProjectedTurnItem["item"], { type: "command_execution" }>,
+): boolean {
+  return commandDisplayText(item.input) !== "" || item.exitCode !== undefined;
 }
 
 function StructuredValue({ value }: { readonly value: unknown }) {
@@ -61,7 +70,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
 
       {item.type === "command_execution" ? (
         <div className="space-y-2">
-          <StructuredValue value={item.input} />
+          <ShellCommandBlock command={item.input} />
           {item.exitCode !== undefined ? (
             <p className={item.exitCode === 0 ? "text-success" : "text-destructive"}>
               Process exited with code {item.exitCode}
