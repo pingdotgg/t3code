@@ -272,7 +272,7 @@ function ArchivedThreadRow(props: {
 
 function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
   return (
-    <View className="rounded-[20px] border border-danger-border bg-danger p-4">
+    <View className="mb-4 rounded-[20px] border border-danger-border bg-danger p-4">
       <Text className="text-base font-t3-bold text-danger-foreground">
         Could not load every archive
       </Text>
@@ -351,10 +351,10 @@ export function ArchivedThreadsScreen(props: {
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
   const renderListItem = useCallback(
-    ({ item }: { item: ArchivedThreadListItem }) => {
+    ({ item, index }: { item: ArchivedThreadListItem; index: number }) => {
       if (item.kind === "project") {
         return (
-          <View className="pt-4">
+          <View className={index === 0 ? undefined : "pt-4"}>
             <ProjectGroupLabel
               environmentLabel={item.environmentLabel}
               environmentMachine={item.environmentMachine}
@@ -430,7 +430,7 @@ export function ArchivedThreadsScreen(props: {
             contentContainerStyle={{
               paddingBottom: 32,
               paddingHorizontal: 16,
-              paddingTop: 4,
+              paddingTop: 16,
             }}
             contentInsetAdjustmentBehavior="automatic"
             data={listItems}
