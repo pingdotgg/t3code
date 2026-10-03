@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -55,12 +56,53 @@ const withHostPlatform = <ROut, E, RIn>(
     Layer.succeed(HostProcessPlatform, platform),
     Layer.succeed(HostProcessHostname, hostname),
   );
+const withEnvironmentLabel = <ROut, E, RIn>(
+  layer: Layer.Layer<ROut, E, RIn>,
+  platform: NodeJS.Platform,
+  hostname: string,
+  environmentLabel: string,
+) =>
+  Layer.merge(
+    withHostPlatform(layer, platform, hostname),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({ env: { T3CODE_ENVIRONMENT_LABEL: environmentLabel } }),
+    ),
+  );
 
 afterEach(() => {
   runMock.mockReset();
 });
 
 describe("resolveServerEnvironmentLabel", () => {
+  it.effect("prefers and trims a configured environment label", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(
+        Effect.provide(
+          withEnvironmentLabel(LinuxMachineInfoLayer, "linux", "buildbox", "  Build server  "),
+        ),
+      );
+
+      expect(result).toBe("Build server");
+      expect(runMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("ignores empty configured environment labels", () =>
+    Effect.gen(function* () {
+      for (const environmentLabel of ["", " \t "]) {
+        const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+          cwdBaseName: "t3code",
+        }).pipe(
+          Effect.provide(withEnvironmentLabel(TestLayer, "win32", "macbook-pro", environmentLabel)),
+        );
+
+        expect(result).toBe("macbook-pro");
+      }
+    }),
+  );
+
   it.effect("uses hostname fallback regardless of launch mode", () =>
     Effect.gen(function* () {
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({

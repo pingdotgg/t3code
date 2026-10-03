@@ -1,4 +1,5 @@
 import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -182,6 +183,13 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const configuredLabel = normalizeLabel(
+    Option.getOrUndefined(yield* Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(Config.option)),
+  );
+  if (configuredLabel) {
+    return configuredLabel;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
