@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   MessageId,
   type ProjectId,
   WorktreeMcpFailure,
@@ -9,6 +10,7 @@ import {
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -113,6 +115,15 @@ const make = Effect.gen(function* () {
   const readDefaultStartFromOrigin = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.newWorktreesStartFromOrigin),
     asOperationFailed("Unable to read server settings"),
+  );
+
+  // The post-handoff status refresh honors the Git fetch interval, so a zero
+  // interval keeps it from fetching, like the client's refresh RPC.
+  const automaticGitFetchInterval = serverSettings.getSettings.pipe(
+    Effect.map(
+      (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
+    ),
+    Effect.orElseSucceed(() => DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL),
   );
 
   const handoffIds = (scope: McpInvocationScope) =>
@@ -379,7 +390,9 @@ const make = Effect.gen(function* () {
         const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
 
         yield* vcsStatusBroadcaster
-          .refreshStatus(worktreePath)
+          .refreshStatus(worktreePath, {
+            automaticRemoteRefreshInterval: automaticGitFetchInterval,
+          })
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
 
         let setupScript: WorktreeMcpSetupScriptStatus = { status: "skipped" };

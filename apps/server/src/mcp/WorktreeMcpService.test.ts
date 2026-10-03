@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -88,6 +89,7 @@ interface HarnessOptions {
   readonly currentBranch?: string | null;
   readonly notARepo?: boolean;
   readonly newWorktreesStartFromOrigin?: boolean;
+  readonly automaticGitFetchInterval?: Duration.Duration;
   readonly setupScript?: "started" | "no-script" | "fails" | "dies";
   readonly dispatchFails?: boolean;
   readonly dispatchDies?: boolean;
@@ -256,7 +258,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
       workingTree: { files: [], insertions: 0, deletions: 0 },
     }),
   );
-  const refreshStatus = vi.fn((_: string) => Effect.die("refreshStatus stub"));
+  const refreshStatus = vi.fn<
+    VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]["refreshStatus"]
+  >(() => Effect.die("refreshStatus stub"));
   const runForThread = vi.fn((input: { readonly worktreePath: string }) => {
     switch (options.setupScript ?? "started") {
       case "no-script":
@@ -313,6 +317,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
+          ...(options.automaticGitFetchInterval === undefined
+            ? {}
+            : { automaticGitFetchInterval: options.automaticGitFetchInterval }),
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           listRefs,
@@ -347,6 +354,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     deleteLocalBranch,
     localStatus,
     runForThread,
+    refreshStatus,
   };
 };
 
@@ -425,6 +433,27 @@ describe("t3_worktree_handoff", () => {
       });
     });
   });
+
+  it.effect("refreshes the new worktree's status with the configured Git fetch interval", () =>
+    Effect.gen(function* () {
+      for (const [configured, expected] of [
+        [Duration.zero, Duration.zero],
+        [undefined, Duration.seconds(30)],
+      ] as const) {
+        const harness = makeHarness(
+          configured === undefined ? {} : { automaticGitFetchInterval: configured },
+        );
+        yield* runHandoff(harness, { branch: "feature/refresh" });
+
+        expect(harness.refreshStatus).toHaveBeenCalledTimes(1);
+        const [cwd, refreshOptions] = harness.refreshStatus.mock.calls[0]!;
+        expect(cwd).toBe("/worktrees/project/feature/refresh");
+        const interval = refreshOptions?.automaticRemoteRefreshInterval;
+        if (interval === undefined) return expect.fail("refreshStatus got no fetch interval");
+        expect(Duration.toMillis(yield* interval)).toBe(Duration.toMillis(expected));
+      }
+    }),
+  );
 
   it.effect("skips the continuation when no continuationPrompt is given", () => {
     const harness = makeHarness();

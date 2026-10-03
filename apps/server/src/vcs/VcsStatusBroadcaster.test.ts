@@ -212,6 +212,113 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect("does not pull automatically when periodic refreshes are disabled", () => {
+    let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
+    let pullCalls = 0;
+    const localStatus: VcsStatusLocalResult = {
+      ...baseLocalStatus,
+      isDefaultRef: true,
+      refName: "main",
+    };
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.succeed(localStatus),
+          remoteStatus: () => Effect.succeed(remoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+          pullCurrentBranch: () =>
+            Effect.sync(() => {
+              pullCalls += 1;
+              remoteStatus = { ...remoteStatus, behindCount: 0 };
+              return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      // The cached upstream still says "behind", but nothing fetched, so a
+      // focus refresh with the interval at 0 must not reach for the remote.
+      const quiet = yield* broadcaster.refreshStatus("/repo", {
+        automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+      });
+      assert.equal(pullCalls, 0);
+      assert.equal(quiet.behindCount, 2);
+
+      const pulled = yield* broadcaster.refreshStatus("/repo");
+      assert.equal(pullCalls, 1);
+      assert.equal(pulled.behindCount, 0);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("does not pull automatically on the initial poll when the interval is zero", () => {
+    let pullCalls = 0;
+    // Settles on the first remote update or pull, whichever the poll reaches.
+    const settled = Deferred.makeUnsafe<void>();
+    const behindRemote: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.succeed({ ...baseLocalStatus, isDefaultRef: true, refName: "main" }),
+          remoteStatus: () => Effect.succeed(behindRemote),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+          pullCurrentBranch: () =>
+            Effect.sync(() => {
+              pullCalls += 1;
+              return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
+            }).pipe(Effect.tap(() => Deferred.succeed(settled, undefined))),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const scope = yield* Scope.make();
+      let remoteUpdated: VcsStatusStreamEvent | undefined;
+      yield* Stream.runForEach(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+        ),
+        (event) => {
+          if (event._tag !== "remoteUpdated") return Effect.void;
+          remoteUpdated = event;
+          return Deferred.succeed(settled, undefined);
+        },
+      ).pipe(Effect.forkIn(scope));
+
+      yield* Deferred.await(settled);
+      assert.equal(pullCalls, 0);
+      assert.deepStrictEqual(remoteUpdated, {
+        _tag: "remoteUpdated",
+        remote: behindRemote,
+      } satisfies VcsStatusStreamEvent);
+
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
@@ -591,6 +698,39 @@ describe("VcsStatusBroadcaster", () => {
         assert.equal(state.localStatusCalls, 1);
         assert.equal(state.remoteStatusCalls, 1);
       }).pipe(Effect.provide(testLayer));
+    },
+  );
+
+  it.effect(
+    "an explicit refresh reads the cached upstream when periodic refreshes are disabled",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: remoteStatusWithPr,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+        // A window focus or a mobile thread selection with the interval at 0.
+        yield* broadcaster.refreshStatus("/repo", {
+          automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+        });
+        assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false]);
+        assert.equal(state.remoteInvalidationCalls, 1);
+
+        yield* broadcaster.refreshStatus("/repo", {
+          automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)),
+        });
+        yield* broadcaster.refreshStatus("/repo");
+        assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false, true, true]);
+        assert.equal(state.remoteStatusCalls, 3);
+      }).pipe(Effect.provide(makeTestLayer(state)));
     },
   );
 
