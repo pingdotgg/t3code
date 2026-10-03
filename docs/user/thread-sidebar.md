@@ -49,11 +49,13 @@ project. Choose **All projects** in that picker to clear the project filter.
 When more than one environment is listed, open **Environments** beside the
 project picker and select the environments whose threads you want to see. At
 least one environment must stay selected. Choose **All environments** to clear
-this filter.
+this filter. The app remembers your project choice, but the environment
+selection resets to all environments when you reload or reopen it.
 
 The filters work together: the list shows threads from the selected project in
-the selected environments. Clear both filters to see threads across all projects
-and environments again.
+the selected environments. If you hide every environment the selected project
+lives in, the project filter returns to **All projects**. Clear both filters to
+see threads across all projects and environments again.
 
 ## Pin and reorder threads
 
