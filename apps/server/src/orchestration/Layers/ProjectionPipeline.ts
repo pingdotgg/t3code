@@ -1101,9 +1101,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             const pending = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
               threadId: event.payload.threadId,
             });
-            const failureMessageId = (
-              event.payload.activity.payload as { readonly messageId?: unknown } | undefined
-            )?.messageId;
+            // Identical narrowing to the in-memory projector: `payload` is
+            // Schema.Unknown and may be null, so an optional chain still threw,
+            // and a non-string `messageId` made this projection keep a row the
+            // projector deleted — the snapshot reported idle while the invariant
+            // still considered the thread busy.
+            const activityPayload = event.payload.activity.payload;
+            const failureMessageId =
+              typeof activityPayload === "object" &&
+              activityPayload !== null &&
+              "messageId" in activityPayload &&
+              typeof activityPayload.messageId === "string"
+                ? activityPayload.messageId
+                : undefined;
             if (
               Option.isNone(pending) ||
               failureMessageId === undefined ||

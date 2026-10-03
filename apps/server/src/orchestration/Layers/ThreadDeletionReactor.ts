@@ -481,11 +481,23 @@ const make = Effect.gen(function* () {
       return Option.none();
     }
 
-    const reservation = yield* worktreeCleanupJobs.tryReserveForRemoval({
-      threadId,
-      canonicalWorktreePath: canonicalPath,
-      reservedAt: now,
-    });
+    // Reserve while holding the per-checkout lock, the same lock a turn start
+    // holds while it checks for a pending cleanup. That makes "observe no
+    // reservation" and "create the reservation" mutually exclusive.
+    //
+    // The global worktree lock is not sufficient on its own: turn starts no
+    // longer take it, so without this a start could check for cleanup, find
+    // none, and then have the worktree reserved and its provider stopped before
+    // it ever dispatched. This is the reservation main's global lock was
+    // covering for turn starts.
+    const reservation = yield* checkoutCoordinator.withCheckout(
+      canonicalPath,
+      worktreeCleanupJobs.tryReserveForRemoval({
+        threadId,
+        canonicalWorktreePath: canonicalPath,
+        reservedAt: now,
+      }),
+    );
     if (Option.isNone(reservation)) {
       return Option.none();
     }

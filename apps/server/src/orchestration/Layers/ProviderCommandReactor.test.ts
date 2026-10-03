@@ -3352,4 +3352,59 @@ describe("ProviderCommandReactor", () => {
       thread?.activities.some((activity) => activity.kind === "provider.session.stop.failed"),
     ).toBe(true);
   });
+  it("rejects a duplicate start when the session carries a previous terminal status", async () => {
+    // After an interrupt the session is `interrupted` with no active turn. The
+    // next start used to keep that terminal status, so every reader concluded the
+    // new start had already resolved and the duplicate below was accepted. This
+    // is the common send-after-stop path.
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    const startTurn = (commandId: string, messageId: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(messageId),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+
+    await startTurn("cmd-terminal-1", "message-terminal-1");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-terminal-complete" });
+
+    // Leave the session in the terminal state a stop or failed turn produces.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-terminal-session"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          ...(await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          )!.session!,
+          status: "interrupted",
+          activeTurnId: null,
+          lastError: "No active provider turn.",
+        },
+        createdAt: now,
+      }),
+    );
+
+    await startTurn("cmd-terminal-2", "message-terminal-2");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    await expect(startTurn("cmd-terminal-dup", "message-terminal-dup")).rejects.toThrow(
+      /already has a turn in flight/,
+    );
+  });
 });

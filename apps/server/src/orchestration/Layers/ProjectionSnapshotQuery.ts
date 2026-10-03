@@ -1078,6 +1078,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
      SELECT 1
      FROM projection_thread_sessions AS resolved
      WHERE resolved.thread_id = threads.thread_id
+       -- Only a session state written *after* the start can retire it. A
+       -- terminal status left over from the previous turn predates the start and
+       -- says nothing about it, which is exactly the send-after-stop case.
+       AND resolved.updated_at >= pending.requested_at
        AND (
          (resolved.status = 'running' AND resolved.active_turn_id IS NOT NULL)
          OR (

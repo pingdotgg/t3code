@@ -41,6 +41,7 @@ import {
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import { isTerminalOrchestrationSessionStatus } from "@t3tools/shared/threadBusyState";
 import { projectThreadContextForProvider } from "@t3tools/shared/threadContext";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import { WorkspaceOwnershipRepositoryLive } from "../../persistence/Layers/WorkspaceOwnership.ts";
@@ -1141,6 +1142,16 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         session: {
           ...sessionBeforeTurn.session,
+          // A terminal status here describes the *previous* turn — a stop leaves
+          // `interrupted`, a failed turn leaves `error`. Keeping it while starting
+          // the next turn made every reader conclude the new start had already
+          // resolved: the invariant's busy check, the projector, and the snapshot
+          // all treat terminal-with-no-active-turn as settled, so the start was
+          // retired before the provider was ever called and a duplicate send got
+          // through. This is the common send-after-stop path.
+          status: isTerminalOrchestrationSessionStatus(sessionBeforeTurn.session.status)
+            ? "starting"
+            : sessionBeforeTurn.session.status,
           activeMessageId: event.payload.messageId,
           updatedAt: event.payload.createdAt,
         },

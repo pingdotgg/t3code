@@ -83,7 +83,17 @@ export function sessionResolvesPendingTurnStart(session: {
   if (session.activeTurnId !== null && session.activeTurnId !== undefined) {
     return session.status === "running";
   }
-  return (
-    session.status === "error" || session.status === "stopped" || session.status === "interrupted"
-  );
+  return isTerminalOrchestrationSessionStatus(session.status);
+}
+
+/**
+ * Session statuses that mean no turn is in progress.
+ *
+ * One definition, because a terminal status describes the *previous* turn. A new
+ * start accepted while the session still carries one must not be read as already
+ * resolved, which is why the reactor moves the session to `starting` when it
+ * stamps a new start on top of a terminal status.
+ */
+export function isTerminalOrchestrationSessionStatus(status: string): boolean {
+  return status === "error" || status === "stopped" || status === "interrupted";
 }
