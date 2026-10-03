@@ -16,7 +16,12 @@ import { AppText as Text } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
-import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import {
+  buildPairingUrl,
+  extractPairingUrlFromQrPayload,
+  parsePairingFields,
+  parsePairingUrl,
+} from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 
 type ConnectionsNewRouteParams = {
@@ -82,6 +87,13 @@ export function ConnectionsNewRouteScreen({
   const handleHostChange = useCallback((value: string) => {
     setHostInput(value);
   }, []);
+
+  const normalizePairingFields = useCallback(() => {
+    const parsed = parsePairingFields(hostInput, codeInput);
+    setHostInput(parsed.host);
+    setCodeInput(parsed.code);
+    return parsed;
+  }, [codeInput, hostInput]);
 
   const handleCodeChange = useCallback((value: string) => {
     setCodeInput(value);
@@ -174,8 +186,9 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
-  }, [codeInput, connectAndClose, hostInput]);
+    const fields = normalizePairingFields();
+    await connectAndClose(buildPairingUrl(fields.host, fields.code), false);
+  }, [connectAndClose, normalizePairingFields]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -251,6 +264,7 @@ export function ConnectionsNewRouteScreen({
                 placeholder="192.168.1.100:8080"
                 value={hostInput}
                 onChangeText={handleHostChange}
+                onBlur={normalizePairingFields}
               />
 
               <ConnectionFormField
