@@ -8733,7 +8733,18 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const shouldQueueBehindActiveRun = phase === "running" && dispatchMode === "queue";
+    // Sending past the resume banner compacts first so the turn does not resend the stale
+    // history. The message queues behind the /compact run; steering into it is rejected,
+    // and a held queue would strand it.
+    const compactBeforeSend =
+      resumeCompactionBannerItem !== null &&
+      !compactDisabled &&
+      !hasHeldQueuedRuns &&
+      multipleModelSelections === null &&
+      messageTextForSend.toLowerCase() !== "/compact";
+    const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
+    const shouldQueueBehindActiveRun =
+      compactBeforeSend || (phase === "running" && dispatchMode === "queue");
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -9299,6 +9310,22 @@ export default function ChatView(props: ChatViewProps) {
       failure = turnAttachmentsResult;
     }
 
+    if (failure === null && compactBeforeSend) {
+      const compactResult = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: threadIdForSend,
+          message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode: sendInteractionMode,
+        },
+      });
+      if (compactResult._tag === "Failure") {
+        failure = compactResult;
+      }
+    }
+
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
@@ -9376,7 +9403,7 @@ export default function ChatView(props: ChatViewProps) {
           titleSeed: title,
           runtimeMode,
           interactionMode: sendInteractionMode,
-          dispatchMode,
+          dispatchMode: turnDispatchMode,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
