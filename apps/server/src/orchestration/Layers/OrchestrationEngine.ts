@@ -153,6 +153,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   // is transient — operation retries mint a new commandId — and the
   // cross-aggregate staleness window shrank from seconds of queue-wait to the
   // millisecond admission phase.
+  // Collaboration commands (child.report, delegation.settle) stay on their
+  // own aggregate for the same reason even though they emit onto related
+  // streams: their dispatchers observe settleable/reportable state on the
+  // committed model before dispatching with a fresh commandId, commit-time
+  // decide revalidates on the fresh model, and every settlement-affecting
+  // domain event re-drives settle evaluation for the thread and its parent —
+  // so a transient miss is re-driven, never permanently lost, while
+  // per-thread commit ordering (which provider ingestion relies on) holds.
   const DISPATCH_SHARD_COUNT = 16;
   const shardIndexForCommand = (command: OrchestrationCommand): number => {
     const ref = commandToAggregateRef(command);
@@ -461,11 +469,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // Git/subprocess work) ran concurrently across shards; everything from
         // here through the read-model swap and event publish holds the global
         // commit lock, so decide() always sees the fresh model.
-        return yield* commitLock.withPermits(1)(
+        const committed = yield* commitLock.withPermits(1)(
           Effect.gen(function* () {
             const authoritativeReplay = yield* checkCommandReceipt(command);
             if (authoritativeReplay !== null) {
-              return authoritativeReplay;
+              return { result: authoritativeReplay, projectionReceipts: [] } as const;
             }
             const previousWorkspaceBinding =
               command.type === "thread.workspace.handoff"
@@ -512,7 +520,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 status: "accepted",
                 error: null,
               });
-              return dispatchResult(command, readModel.snapshotSequence);
+              return {
+                result: dispatchResult(command, readModel.snapshotSequence),
+                projectionReceipts: [],
+              } as const;
             }
             const committedCommand = yield* sql
               .withTransaction(
@@ -643,22 +654,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   ),
                 );
             }
-            yield* Effect.forEach(
-              committedCommand.projectionReceipts,
-              (receipt) => receipt.reconcile,
-              {
-                concurrency: 1,
-                discard: true,
-              },
-            ).pipe(
-              Effect.tapError((error) =>
-                Effect.logWarning("projection post-commit reconciliation remains pending", {
-                  commandId: envelope.command.commandId,
-                  error,
-                }),
-              ),
-              Effect.ignore,
-            );
             for (const [index, event] of committedCommand.committedEvents.entries()) {
               yield* PubSub.publish(eventPubSub, event);
               if (index === 0) {
@@ -674,15 +669,37 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 );
               }
             }
-            return dispatchResult(
-              admittedCommand,
-              committedCommand.lastSequence,
-              command.type === "thread.child.report"
-                ? reportVerdictForCommand(command.commandId, committedCommand.committedEvents)
-                : undefined,
-            );
+            return {
+              result: dispatchResult(
+                admittedCommand,
+                committedCommand.lastSequence,
+                command.type === "thread.child.report"
+                  ? reportVerdictForCommand(command.commandId, committedCommand.committedEvents)
+                  : undefined,
+              ),
+              projectionReceipts: committedCommand.projectionReceipts,
+            } as const;
           }),
         );
+        // Post-commit projection reconcile runs outside the commit lock: it
+        // only requires the transaction above to have committed, serializes
+        // concurrent drains on the reconciler's own lock, and stays awaited
+        // here so dispatch() still resolves after fully-reconciled state.
+        // Publish order stays commit order because publishing above holds the
+        // lock; only the unbounded reconcile filesystem work moves out.
+        yield* Effect.forEach(committed.projectionReceipts, (receipt) => receipt.reconcile, {
+          concurrency: 1,
+          discard: true,
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("projection post-commit reconciliation remains pending", {
+              commandId: envelope.command.commandId,
+              error,
+            }),
+          ),
+          Effect.ignore,
+        );
+        return committed.result;
       }).pipe(Effect.withSpan(`orchestration.command.${envelope.command.type}`)),
     ).pipe(
       Effect.flatMap((exit) =>
