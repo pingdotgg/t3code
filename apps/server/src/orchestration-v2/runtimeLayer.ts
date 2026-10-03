@@ -37,6 +37,7 @@ import { layer as threadTitleRegenerationServiceLayer } from "./ThreadTitleRegen
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
+import { layer as commandOutputHubLayer } from "./CommandOutputHub.ts";
 import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
 import { layer as providerSwitchServiceLayer } from "./ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "./ProviderTurnControlService.ts";
@@ -119,9 +120,14 @@ const providerSwitchServiceProvided = providerSwitchServiceLayer.pipe(
   Layer.provide(providerAdapterRegistryProvided),
 );
 
+const commandOutputHubProvided = commandOutputHubLayer.pipe(
+  Layer.provide(Layer.merge(eventSinkProvided, projectionStoreLayer)),
+);
+
 const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      commandOutputHubProvided,
       providerAdapterRegistryProvided,
       eventSinkProvided,
       idAllocatorLayer,
@@ -297,6 +303,7 @@ const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
 );
 
 export const OrchestrationV2LayerLive = Layer.mergeAll(
+  commandOutputHubProvided,
   orchestratorProvided,
   threadManagementProvided,
   effectWorkerProvided,

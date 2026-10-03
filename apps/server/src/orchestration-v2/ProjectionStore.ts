@@ -421,6 +421,11 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     targetInstanceId?: ProviderInstanceId,
   ) => Effect.Effect<ProjectionThreadProviderContext, ProjectionStoreV2Error>;
+  /** One turn item by id, without loading the thread's timeline. */
+  readonly getTurnItem: (
+    threadId: ThreadId,
+    itemId: TurnItemId,
+  ) => Effect.Effect<OrchestrationV2TurnItem | undefined, ProjectionStoreV2Error>;
   readonly getRuntimeResponseContext: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -4317,6 +4322,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = (threadId, itemId) =>
+      Effect.gen(function* () {
+        const rows =
+          yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND turn_item_id = ${itemId} LIMIT 1`;
+        return rows[0] === undefined
+          ? undefined
+          : yield* decodeTurnItemPayload(rows[0].payload_json);
+      }).pipe(Effect.mapError(controlReadError(threadId)));
+
     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
       sql
         .withTransaction(
@@ -5463,6 +5478,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRunningTurnContext,
       getThreadProviderContext,
       getRuntimeResponseContext,
+      getTurnItem,
       getCheckpointContext,
       getCheckpointCaptureContext,
       getRunMessage,
@@ -5846,6 +5862,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   ),
           };
         }),
+      getTurnItem: (threadId, itemId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            state.projections.get(threadId)?.turnItems.find((item) => item.id === itemId),
+          ),
+        ),
       getRuntimeResponseContext: (threadId, requestId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

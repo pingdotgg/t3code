@@ -8,6 +8,7 @@ import {
   WorkLogPressable,
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
+import { ThreadCommandOutput } from "./thread-command-output";
 import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
@@ -1037,6 +1038,13 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               </Text>
             )}
           </ScrollView>
+          {row.projectedItem.item.type === "command_execution" ? (
+            <ThreadCommandOutput
+              environmentId={props.environmentId}
+              threadId={row.projectedItem.sourceThreadId}
+              itemId={row.projectedItem.sourceItemId}
+            />
+          ) : null}
         </Animated.View>
       ) : null}
     </Animated.View>

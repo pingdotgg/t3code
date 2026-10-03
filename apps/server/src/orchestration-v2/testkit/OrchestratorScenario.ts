@@ -11,6 +11,7 @@ import type {
   ProviderUserInputAnswers,
   CommandId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as Orchestrator from "../Orchestrator.ts";
+import type { RecordedCommandOutput } from "./CommandOutputRecorder.ts";
 import type { ProviderReplayGate } from "./ProviderReplayGate.testkit.ts";
 
 export type OrchestratorV2ScenarioStep =
@@ -117,6 +119,8 @@ export interface OrchestratorV2ScenarioResult {
   readonly projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
   readonly shellSnapshot: OrchestrationV2ThreadShellSnapshot;
   readonly capturedShellSnapshots: ReadonlyMap<string, OrchestrationV2ThreadShellSnapshot>;
+  /** Live output each command streamed (never persisted). Provider replays fill it in. */
+  readonly commandOutput?: ReadonlyMap<TurnItemId, RecordedCommandOutput>;
 }
 
 export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<OrchestratorV2ScenarioStepError>()(

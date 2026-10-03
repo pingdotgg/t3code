@@ -11,6 +11,7 @@ import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
+import { CommandOutputPanel } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 
 interface V2ItemInspectorProps {
@@ -62,6 +63,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "command_execution" ? (
         <div className="space-y-2">
           <StructuredValue value={item.input} />
+          <CommandOutputPanel
+            environmentId={props.environmentId}
+            threadId={props.projectedItem.sourceThreadId}
+            itemId={props.projectedItem.sourceItemId}
+          />
           {item.exitCode !== undefined ? (
             <p className={item.exitCode === 0 ? "text-success" : "text-destructive"}>
               Process exited with code {item.exitCode}

@@ -32,6 +32,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -116,6 +117,18 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
+  }),
+  /**
+   * Raw output from a running command. Never persisted: the session manager
+   * hands it to the command output hub, which only clients showing the row see.
+   * The item's final output still arrives in its `turn_item.updated`.
+   */
+  Schema.Struct({
+    type: Schema.Literal("command_output.delta"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    chunk: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime_request.updated"),

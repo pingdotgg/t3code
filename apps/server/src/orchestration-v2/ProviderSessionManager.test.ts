@@ -55,6 +55,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -456,6 +457,9 @@ function makeTestLayer(input: {
       Layer.provide(
         Layer.mergeAll(
           registryLayer,
+          CommandOutputHub.layer.pipe(
+            Layer.provide(Layer.merge(configuredEventSinkLayer, TestStoresLayer)),
+          ),
           configuredEventSinkLayer,
           IdAllocator.layer,
           providerEventIngestorTestLayer,
