@@ -702,6 +702,85 @@ describe("orchestrator MCP toolkit", () => {
             yield* invoke("t3_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
 
+            // Archiving detaches the provider, so the caller's own running turn
+            // must refuse it instead of failing mid-turn.
+            const selfArchiveCall = yield* invoke("t3_thread_organize", { action: "archive" });
+            expect(selfArchiveCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+              message:
+                "A thread cannot be archived while a turn is running. Archive it after the turn ends, from another thread or in the app.",
+            });
+            const afterSelfArchive = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterSelfArchive.thread.archivedAt).toBeNull();
+            expect(afterSelfArchive.runs[0]?.status).toBe("running");
+            // A detach would have dropped the session from the projection.
+            expect(parent.providerSessions).not.toHaveLength(0);
+            expect(afterSelfArchive.providerSessions.map((session) => session.id)).toEqual(
+              expect.arrayContaining(parent.providerSessions.map((session) => session.id)),
+            );
+
+            const idleThreadId = ThreadId.make("thread:mcp-idle-archive");
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-idle-archive:create"),
+              threadId: idleThreadId,
+              projectId,
+              title: "Idle thread to archive",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const archiveTargetGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(idleThreadId, archiveTargetGate);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-idle-archive:start"),
+              threadId: idleThreadId,
+              messageId: MessageId.make("message:mcp-idle-archive:start"),
+              text: "Finish after the archive rejection.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const archiveEvents = yield* EventSink.EventSinkV2;
+            const awaitArchiveTargetStatus = (status: "running" | "completed") =>
+              archiveEvents.stream({ threadId: idleThreadId }).pipe(
+                Stream.filter(
+                  ({ event }) => event.type === "run.updated" && event.payload.status === status,
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
+            yield* awaitArchiveTargetStatus("running");
+            const otherArchiveCall = yield* invoke("t3_thread_organize", {
+              threadId: idleThreadId,
+              action: "archive",
+            });
+            expect(otherArchiveCall.structuredContent).toEqual(selfArchiveCall.structuredContent);
+            expect(
+              (yield* orchestrator.getThreadProjection(idleThreadId)).thread.archivedAt,
+            ).toBeNull();
+            yield* Deferred.succeed(archiveTargetGate, undefined);
+            yield* awaitArchiveTargetStatus("completed");
+            const completedArchiveTarget = yield* orchestrator.getThreadProjection(idleThreadId);
+            expect(completedArchiveTarget.runs[0]?.checkpointId).not.toBeNull();
+            expect(completedArchiveTarget.runs[0]?.status).toBe("completed");
+            const idleArchiveCall = yield* invoke("t3_thread_organize", {
+              threadId: idleThreadId,
+              action: "archive",
+            });
+            expect(idleArchiveCall.structuredContent).toHaveProperty("sequence");
+            expect(
+              (yield* orchestrator.getThreadProjection(idleThreadId)).thread.archivedAt,
+            ).not.toBeNull();
+
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
             }

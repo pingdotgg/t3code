@@ -48,7 +48,7 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
+  /** The server rejects archive while a run is preparing, starting or running (idle attached providers still archive), so disable it here. */
   readonly isRunning: boolean;
   readonly supports: {
     readonly settlement: boolean;

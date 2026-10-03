@@ -212,6 +212,41 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
     }),
   );
 
+/** Stage run rows for command-policy tests. This does not simulate provider or checkpoint effects. */
+const rewriteRuns = (
+  threadId: ThreadId,
+  commandId: string,
+  rewrite: (run: OrchestrationV2Run, now: DateTime.Utc) => OrchestrationV2Run | undefined,
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const now = yield* DateTime.now;
+    yield* eventSink.commitCommand({
+      commandId: CommandId.make(commandId),
+      threadId,
+      commandType: "provider-runtime.reconcile",
+      acceptedAt: now,
+      events: projection.runs.flatMap((run) => {
+        const payload = rewrite(run, now);
+        return payload === undefined
+          ? []
+          : [
+              {
+                id: EventId.make(`${commandId}:${run.id}`),
+                type: "run.updated" as const,
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload,
+              },
+            ];
+      }),
+      effects: [],
+    });
+  });
+
 const TestLayer = Layer.mergeAll(
   OrchestrationV2LayerLive,
   OrchestrationV2EventSinkLayerLive,
@@ -2864,6 +2899,13 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isDefined(activeRun);
       assert.isDefined(queuedRun);
 
+      // Archive refuses a starting turn, so simulate a restart: the active run
+      // ends and recovery holds the queue.
+      yield* rewriteRuns(threadId, "runtime-layer-archive-queued-restart", (run, now) =>
+        run.status === "queued"
+          ? { ...run, queueHeld: true }
+          : { ...run, status: "cancelled", completedAt: now },
+      );
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("runtime-layer-archive-queued-archive"),
@@ -2893,6 +2935,116 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(afterPromotion.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+    }),
+  );
+
+  const startArchiveTestThread = (name: string) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`runtime-layer-archive-${name}-thread`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`runtime-layer-archive-${name}-create`),
+        threadId,
+        projectId: ProjectId.make(`runtime-layer-archive-${name}-project`),
+        title: `Archive ${name}`,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: `/tmp/runtime-layer-archive-${name}`,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`runtime-layer-archive-${name}-message`),
+        threadId,
+        messageId: MessageId.make(`runtime-layer-archive-${name}-message`),
+        text: "Keep the provider occupied.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        started.runs.map((run) => run.status),
+        ["starting"],
+      );
+      return threadId;
+    });
+
+  it.effect.each(["preparing", "starting", "running"] as const)(
+    "refuses to archive a thread while its turn is %s, then archives it once the turn ends",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const threadId = yield* startArchiveTestThread(status);
+        if (status !== "starting") {
+          yield* rewriteRuns(threadId, `runtime-layer-archive-${status}-stage`, (run) => ({
+            ...run,
+            status,
+          }));
+        }
+        const previousSequence = yield* orchestrator.getThreadEventSequence(threadId);
+
+        const commandId = CommandId.make(`runtime-layer-archive-${status}-archive`);
+        const error = yield* orchestrator
+          .dispatch({ type: "thread.archive", commandId, threadId })
+          .pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorThreadTurnRunningError);
+        assert.equal(
+          error.message,
+          "This thread cannot be archived while a turn is running. Archive it after the turn ends.",
+        );
+        assert.equal(yield* orchestrator.getThreadEventSequence(threadId), previousSequence);
+        assert.deepEqual(
+          yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect),
+          [],
+        );
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        const refused = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(refused.thread.archivedAt);
+        assert.deepEqual(
+          refused.runs.map((run) => run.status),
+          [status],
+        );
+
+        yield* rewriteRuns(threadId, `runtime-layer-archive-${status}-complete`, (run, now) => ({
+          ...run,
+          status: "completed",
+          completedAt: now,
+        }));
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`runtime-layer-archive-${status}-archive-after-turn`),
+          threadId,
+        });
+        assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+      }),
+  );
+
+  it.effect("archives a thread whose run is waiting", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* startArchiveTestThread("waiting");
+      yield* rewriteRuns(threadId, "runtime-layer-archive-waiting-stage", (run) => ({
+        ...run,
+        status: "waiting",
+      }));
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-archive-waiting-archive"),
+        threadId,
+      });
+      const archived = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNotNull(archived.thread.archivedAt);
+      assert.equal(archived.runs[0]?.status, "waiting");
     }),
   );
 

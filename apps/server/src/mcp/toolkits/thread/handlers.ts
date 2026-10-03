@@ -297,7 +297,17 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         default:
           command = { ...common, type: `thread.${input.action}` };
       }
-      const result = yield* threads.dispatch(command).pipe(Effect.mapError(unavailable));
+      const result = yield* threads.dispatch(command).pipe(
+        Effect.mapError((error) =>
+          error._tag === "OrchestratorThreadTurnRunningError"
+            ? new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message:
+                  "A thread cannot be archived while a turn is running. Archive it after the turn ends, from another thread or in the app.",
+              })
+            : unavailable(),
+        ),
+      );
       return { sequence: result.sequence };
     }),
 });

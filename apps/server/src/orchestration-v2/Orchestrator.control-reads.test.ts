@@ -266,6 +266,17 @@ it.effect(
         turnItemTypes: ["user_message"],
       });
       assert.isAbove(fresh.turnItems.at(-1)!.ordinal, 900);
+      // Archive refuses a preparing run, so end the deferred one first.
+      const deferred = (yield* projections.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
+      assert.equal(deferred.status, "preparing");
+      yield* projections.apply({
+        id: EventId.make("cancel-deferred-run"),
+        type: "run.updated",
+        threadId,
+        runId: deferred.id,
+        occurredAt: now,
+        payload: { ...deferred, status: "cancelled", completedAt: now },
+      });
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("archive-with-old-history"),
