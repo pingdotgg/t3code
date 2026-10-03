@@ -7,6 +7,9 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -14,6 +17,8 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+
+const isRunFinalizationError = Schema.is(RunFinalization.RunFinalizationError);
 
 it.effect("refreshes workspace after checkpoint capture without reading history", () => {
   const threadId = ThreadId.make("thread_finalize");
@@ -129,3 +134,51 @@ it.effect.each(
     assert.deepEqual(refreshed, [...scenario.expected]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect.each(["missing-scope", "read-failure"] as const)(
+  "reports %s separately from workspace refresh failures",
+  (scenario) => {
+    const threadId = ThreadId.make("thread:finalization-error");
+    const runId = RunId.make("run:finalization-error");
+    const scopeId = CheckpointScopeId.make("scope:finalization-error");
+    const refresh = vi.fn(() => Effect.void);
+    const layer = RunFinalization.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getCheckpointContext: () =>
+              scenario === "missing-scope"
+                ? Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] })
+                : Effect.fail(
+                    new ProjectionStore.ProjectionStoreReadError({
+                      threadId,
+                      cause: "read failed",
+                    }),
+                  ),
+          }),
+          Layer.succeed(RunFinalization.RunFinalizationObserver, {
+            refresh,
+            refreshAfterTurn: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* RunFinalization.RunFinalizationService;
+      const result = yield* Effect.exit(service.finalize({ threadId, runId, scopeId }));
+      assert.isTrue(Exit.isFailure(result));
+      if (Exit.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        assert.isTrue(isRunFinalizationError(error));
+        if (isRunFinalizationError(error)) {
+          assert.equal(
+            error.operation,
+            scenario === "missing-scope" ? "missing-checkpoint-scope" : "read-checkpoint-context",
+          );
+        }
+      }
+      assert.equal(refresh.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  },
+);

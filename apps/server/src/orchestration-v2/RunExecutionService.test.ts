@@ -7,8 +7,10 @@ import {
   EventId,
   MessageId,
   NodeId,
+  PlanId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -3204,6 +3206,56 @@ it.effect("omits interrupt results and subagent cascade for a superseded attempt
   }),
 );
 
+it.effect("closes old attempt text after steering supersedes its run ownership", () =>
+  Effect.gen(function* () {
+    const result = yield* captureRootRunTermination({
+      key: "superseded-open-text",
+      shouldFinalizeRun: () => Effect.succeed(false),
+      events: (ids) => {
+        const node = {
+          ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+          kind: "assistant_message" as const,
+        };
+        const message: OrchestrationV2ConversationMessage = {
+          id: MessageId.make("message:superseded-open-text"),
+          threadId: ids.threadId,
+          runId: ids.runId,
+          nodeId: node.id,
+          role: "assistant",
+          text: "Partial text",
+          streaming: true,
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "provider",
+          createdAt: DateTime.makeUnsafe(0),
+          updatedAt: DateTime.makeUnsafe(0),
+        };
+        return Stream.fromIterable([
+          { type: "node.updated", driver, node },
+          { type: "message.updated", driver, message },
+          {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+              threadId: ids.threadId,
+              runId: ids.runId,
+              nodeId: node.id,
+              providerTurnId: ids.rootProviderTurnId,
+            },
+          },
+          rootTerminalEvent(ids, "interrupted"),
+        ]);
+      },
+    });
+    assert.lengthOf(result.messages, 1);
+    assert.isFalse(result.messages[0]?.streaming);
+    assert.equal(result.written[0]?.status, "interrupted");
+    assert.isFalse(result.events.some((event) => event.type === "run.updated"));
+    assert.deepEqual(result.observed, []);
+  }),
+);
+
 it.effect("emits run_interrupt_result when superseded attempt still has a hard-stop request", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -3292,6 +3344,46 @@ it.effect("records a finished run as failed when its ownership check cannot be r
   }),
 );
 
+it.effect(
+  "closes old reasoning after a failed ownership read without changing the successor run",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* captureRootRunTermination({
+        key: "superseded-finalize-guard-read-failure",
+        runCurrentWriteCommitted: false,
+        shouldFinalizeRun: () =>
+          Effect.fail(
+            new ProjectionStore.ProjectionStoreReadError({
+              threadId: ThreadId.make("thread:superseded-finalize-guard-read-failure"),
+              cause: "database unavailable",
+            }),
+          ),
+        events: (ids) =>
+          Stream.fromIterable([
+            {
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                ...makeLinkedChildTurnItemFixture({ ids, driver, type: "reasoning" }),
+                id: ids.itemId,
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: ids.rootNodeId,
+                providerTurnId: ids.rootProviderTurnId,
+              },
+            },
+            rootTerminalEvent(ids, "completed"),
+          ]),
+      });
+      assert.deepEqual(result.observed, []);
+      assert.isFalse(result.events.some((event) => event.type === "run.updated"));
+      assert.isFalse(result.events.some((event) => event.type === "provider-thread.updated"));
+      const reasoning = result.written.find((item) => item.type === "reasoning");
+      assert.equal(reasoning?.status, "failed");
+      assert.isFalse(reasoning?.type === "reasoning" && reasoning.streaming);
+    }),
+);
+
 it.effect("does not refresh pull requests for auxiliary or stale provider terminals", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
@@ -3307,9 +3399,10 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
             { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:previous") },
             "interrupted",
           ),
+          rootTerminalEvent(ids, "completed"),
         ]),
     });
-    assert.deepEqual(observed, []);
+    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
   }),
 );
 
@@ -3379,6 +3472,214 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect("fails a clean provider stream drain without a root terminal", () =>
+  Effect.gen(function* () {
+    const result = yield* captureRootRunTermination({
+      key: "clean-stream-drain",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.empty,
+    });
+    assert.deepEqual(result.observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.lengthOf(result.written, 1);
+    assert.equal(result.written[0]?.status, "failed");
+  }),
+);
+
+it.effect("does not correlate an early terminal by a reused thread and run ordinal", () =>
+  Effect.gen(function* () {
+    const result = yield* captureRootRunTermination({
+      key: "unseeded-early-terminal",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      providerTurnIdKnown: false,
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+    });
+    assert.deepEqual(result.observed, ["run:failed", "pull-requests-refreshed"]);
+  }),
+);
+
+it.effect("does not write another terminal batch when start fails after root completion", () =>
+  Effect.gen(function* () {
+    const rootFinished = yield* Deferred.make<void>();
+    const result = yield* captureRootRunTermination({
+      key: "completed-before-start-error",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+      refreshAfterTurn: Deferred.succeed(rootFinished, undefined),
+      startTurn: (input) =>
+        Deferred.await(rootFinished).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "late start failure",
+              }),
+            ),
+          ),
+        ),
+    });
+    assert.deepEqual(result.observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.deepEqual(result.written, []);
+  }),
+);
+
+it.effect(
+  "cancels a blocked observer when provider startup fails without writing another terminal batch",
+  () =>
+    Effect.gen(function* () {
+      const refreshStarted = yield* Deferred.make<void>();
+      const refreshBlocked = yield* Deferred.make<void>();
+      const refreshExited = yield* Deferred.make<void>();
+      const result = yield* captureRootRunTermination({
+        key: "blocked-observer-start-error",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+        refreshAfterTurn: Deferred.succeed(refreshStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(refreshBlocked)),
+          Effect.ensuring(Deferred.succeed(refreshExited, undefined)),
+        ),
+        startTurn: (input) =>
+          Deferred.await(refreshStarted).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: "late start failure",
+                }),
+              ),
+            ),
+          ),
+      });
+      yield* Deferred.await(refreshExited);
+      assert.deepEqual(result.observed, ["run:waiting", "pull-requests-refreshed"]);
+      assert.deepEqual(result.written, []);
+    }),
+);
+
+it.effect.each(["interrupted", "drained"] as const)(
+  "flushes buffered assistant text when the run is %s",
+  (status) =>
+    Effect.gen(function* () {
+      const result = yield* captureRootRunTermination({
+        key: `flush-buffered-text:${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => {
+          const message: OrchestrationV2ConversationMessage = {
+            id: MessageId.make(`message:buffered:${status}`),
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            role: "assistant",
+            text: "Partial text without a markdown boundary",
+            streaming: true,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "provider",
+            createdAt: DateTime.makeUnsafe(0),
+            updatedAt: DateTime.makeUnsafe(0),
+          };
+          return Stream.fromIterable([
+            { type: "message.updated", driver, message },
+            {
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+                threadId: ids.threadId,
+                runId: ids.runId,
+                text: message.text,
+              },
+            },
+            ...(status === "interrupted" ? [rootTerminalEvent(ids, "interrupted")] : []),
+          ]);
+        },
+      });
+      assert.lengthOf(result.messages, 1);
+      assert.isFalse(result.messages[0]?.streaming);
+      assert.equal(result.messages[0]?.text, "Partial text without a markdown boundary");
+      const assistantItem = result.written.find((item) => item.type === "assistant_message");
+      assert.isDefined(assistantItem);
+      assert.equal(assistantItem?.status, status === "drained" ? "failed" : status);
+      if (assistantItem?.type === "assistant_message") assert.isFalse(assistantItem.streaming);
+    }),
+);
+
+it.effect.each(["completed", "interrupted"] as const)(
+  "closes plan execution records on %s while preserving unfinished plan steps",
+  (status) =>
+    Effect.gen(function* () {
+      const result = yield* captureRootRunTermination({
+        key: `open-plan:${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => {
+          const planId = PlanId.make(`plan:open:${status}`);
+          const node = {
+            ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            kind: "todo_list" as const,
+          };
+          const steps = [
+            { id: "pending-step", text: "Finish the work", status: "pending" as const },
+          ];
+          return Stream.fromIterable([
+            { type: "node.updated", driver, node },
+            {
+              type: "plan.updated",
+              driver,
+              plan: {
+                id: planId,
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: node.id,
+                kind: "todo_list",
+                status: "active",
+                steps,
+              },
+            },
+            {
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                id: ids.childItemId,
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: node.id,
+                providerThreadId: ids.providerThreadId,
+                providerTurnId: ids.rootProviderTurnId,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Plan",
+                startedAt: DateTime.makeUnsafe(0),
+                completedAt: null,
+                updatedAt: DateTime.makeUnsafe(0),
+                type: "todo_list",
+                planId,
+                steps,
+              },
+            },
+            rootTerminalEvent(ids, status),
+          ]);
+        },
+      });
+      const item = result.written.find((item) => item.type === "todo_list");
+      assert.isDefined(item);
+      assert.equal(item?.status, status);
+      if (item?.type === "todo_list") assert.equal(item.steps[0]?.status, "pending");
+      const node = result.events.find(
+        (event) => event.type === "node.updated" && event.payload.kind === "todo_list",
+      );
+      assert.isDefined(node);
+      if (node?.type === "node.updated") assert.equal(node.payload.status, status);
+      assert.isFalse(result.events.some((event) => event.type === "plan.updated"));
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3389,6 +3690,8 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly providerTurnIdKnown?: boolean;
+  readonly runCurrentWriteCommitted?: boolean;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3400,19 +3703,25 @@ function captureRootRunTermination(input: {
       driver,
       status: "running",
     });
+    const writtenEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
+    const writtenMessages = yield* Ref.make<ReadonlyArray<OrchestrationV2ConversationMessage>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
     const captureFinalEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
       Effect.gen(function* () {
+        yield* Ref.update(writtenEvents, (current) => [...current, ...events]);
         for (const event of events) {
           if (event.type === "turn-item.updated") {
             yield* captureTurnItem(event.payload);
           }
           if (event.type === "run.updated") {
             yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
+          }
+          if (event.type === "message.updated") {
+            yield* Ref.update(writtenMessages, (current) => [...current, event.payload]);
           }
         }
       });
@@ -3432,9 +3741,11 @@ function captureRootRunTermination(input: {
               }),
             writeWithEffects: (payload) => captureFinalEvents(payload.events).pipe(Effect.as([])),
             writeIfRunCurrent: (payload) =>
-              captureFinalEvents(payload.events).pipe(
-                Effect.as({ committed: true, storedEvents: [] }),
-              ),
+              input.runCurrentWriteCommitted === false
+                ? Effect.succeed({ committed: false, storedEvents: [] })
+                : captureFinalEvents(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  ),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -3510,7 +3821,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.providerTurnIdKnown === false ? null : ids.rootProviderTurnId,
         } as OrchestrationV2RunAttempt,
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
@@ -3543,7 +3854,12 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return {
+      events: yield* Ref.get(writtenEvents),
+      written: yield* Ref.get(writtenItems),
+      messages: yield* Ref.get(writtenMessages),
+      observed: yield* Ref.get(observed),
+    };
   });
 }
 

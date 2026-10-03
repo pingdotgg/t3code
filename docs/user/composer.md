@@ -55,6 +55,10 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
+When you stop or steer a turn, partial assistant text stays in the conversation.
+Its streaming indicator ends with that turn; newer responses keep streaming until
+their own turn finishes.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
