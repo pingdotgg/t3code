@@ -2,6 +2,7 @@ import type {
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -18,8 +19,93 @@ import { OrchestrationCommandInvariantError } from "./Errors.ts";
 export interface WorkspaceAdmissionDeps {
   readonly findThread: (threadId: string) => OrchestrationThread | undefined;
   readonly findProject: (projectId: string) => OrchestrationProject | undefined;
+  readonly listThreads: () => ReadonlyArray<OrchestrationThread>;
   readonly claimOwnership: WorkspaceOwnershipRepositoryShape["claim"];
   readonly hasCleanupReservationByPath: WorktreeCleanupJobRepositoryShape["hasReservationByPath"];
+}
+
+/**
+ * Threads that are in the same lineage as `threadId` *and* bound to the same
+ * checkout: a fork and the chat it was forked from, sibling forks, and their
+ * descendants. Forks inherit the source's worktree (matching orchestration-v2,
+ * whose fork plan spreads the source thread), so without this the fork could
+ * never run a turn.
+ *
+ * Lineage alone is deliberately not enough. `parentThreadId` is also the
+ * delegated-child relation (`t3 chat new --parent`), and a delegated child is
+ * allocated its own isolated worktree while its parent's provider session is
+ * still running, so treating every relative as a co-owner refused the child's
+ * first turn. Matching canonical paths keeps the allowance and the busy check
+ * tied to what actually matters: two threads writing one checkout.
+ */
+function lineageThreadIds(
+  threadId: ThreadId,
+  deps: Pick<WorkspaceAdmissionDeps, "findThread" | "listThreads">,
+): ReadonlyArray<ThreadId> {
+  const lineage = new Set<ThreadId>([threadId]);
+  let cursor = deps.findThread(threadId);
+  while (cursor?.parentThreadId != null && !lineage.has(cursor.parentThreadId)) {
+    lineage.add(cursor.parentThreadId);
+    cursor = deps.findThread(cursor.parentThreadId);
+  }
+  const rootThreadId = cursor?.id ?? threadId;
+  // Descend from the root so sibling forks of the same source share too.
+  const pending = [rootThreadId];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    for (const candidate of deps.listThreads()) {
+      if (candidate.parentThreadId === current && !lineage.has(candidate.id)) {
+        lineage.add(candidate.id);
+        pending.push(candidate.id);
+      }
+    }
+  }
+  return [...lineage];
+}
+
+/**
+ * Live relatives on the checkout being claimed. Archived and deleted threads
+ * are excluded, matching `findCanonicalActiveWorktreeOwner`: neither
+ * `thread.archived` nor `thread.deleted` clears a non-terminal turn or a
+ * running session, so an archived relative would otherwise block its whole
+ * family forever with advice to stop a thread the user can no longer stop.
+ */
+const findCheckoutRelatives = Effect.fn("findCheckoutRelatives")(function* (
+  threadId: ThreadId,
+  requestedPath: string,
+  deps: Pick<WorkspaceAdmissionDeps, "findThread" | "listThreads">,
+) {
+  const candidates = lineageThreadIds(threadId, deps).flatMap((id) => {
+    const candidate = deps.findThread(id);
+    if (
+      candidate === undefined ||
+      candidate.id === threadId ||
+      candidate.deletedAt !== null ||
+      candidate.archivedAt !== null ||
+      candidate.worktreePath === null
+    ) {
+      return [];
+    }
+    return [candidate];
+  });
+  if (candidates.length === 0) return [] as ReadonlyArray<OrchestrationThread>;
+  const [canonicalRequested, ...canonicalCandidates] = yield* Effect.all(
+    [requestedPath, ...candidates.map((candidate) => candidate.worktreePath!)].map((path) =>
+      Effect.promise(() => canonicalizeWorktreePath(path)),
+    ),
+  );
+  return candidates.filter((_, index) => canonicalCandidates[index] === canonicalRequested);
+});
+
+function threadIsBusy(thread: OrchestrationThread | undefined): boolean {
+  if (thread === undefined) return false;
+  if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
+  return (
+    thread.latestTurn?.state === "running" ||
+    thread.session?.status === "running" ||
+    thread.session?.activeTurnId != null
+  );
 }
 
 /**
@@ -380,6 +466,21 @@ export const admitWorkspaceCommand = Effect.fn("admitWorkspace")(function* (
   ) {
     return command;
   }
+  // A fork inherits its source's worktree, so relatives bound to the same
+  // checkout share it. Ownership still transfers per command (the generation
+  // advances and `assertOwned` keeps working), and only one of them may hold
+  // the checkout at a time: a running relative would make this claim stale
+  // mid-turn and would let two turns write one index. Scoping to the claimed
+  // path keeps delegated children (own isolated worktree) and handed-off forks
+  // out of it.
+  const relatives = yield* findCheckoutRelatives(command.threadId, requestedPath, deps);
+  const busyRelative = relatives.find(threadIsBusy);
+  if (busyRelative !== undefined) {
+    return yield* new OrchestrationCommandInvariantError({
+      commandType: command.type,
+      detail: `Thread '${busyRelative.id}' is running and shares this workspace with '${command.threadId}'. Wait for it to finish or stop it, then try again; T3 will not let two related chats write one checkout at once.`,
+    });
+  }
   const binding = yield* deps
     .claimOwnership({
       threadId: command.threadId,
@@ -392,6 +493,7 @@ export const admitWorkspaceCommand = Effect.fn("admitWorkspace")(function* (
             : (prepared.branch ?? thread?.workspaceBinding?.branch ?? thread?.branch ?? null),
       commandId: command.commandId,
       now: new Date().toISOString(),
+      coOwnerThreadIds: relatives.map((relative) => relative.id),
     })
     .pipe(
       Effect.mapError((error) => {

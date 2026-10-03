@@ -7,7 +7,10 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { WorkspaceOwnershipRepository } from "../Services/WorkspaceOwnership.ts";
+import {
+  WorkspaceOwnershipConflict,
+  WorkspaceOwnershipRepository,
+} from "../Services/WorkspaceOwnership.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 import { WorkspaceOwnershipRepositoryLive } from "./WorkspaceOwnership.ts";
 
@@ -88,6 +91,87 @@ async function makeRuntime(failFlag?: { value: boolean }) {
 }
 
 describe("WorkspaceOwnershipRepository", () => {
+  it("lets a declared co-owner take over a worktree and keeps the conflict for others", async () => {
+    const runtime = await makeRuntime();
+    const repo = await runtime.runPromise(Effect.service(WorkspaceOwnershipRepository));
+    const now = new Date().toISOString();
+    try {
+      const repoDir = trackTempDir(createGitRepository());
+      const source = ThreadId.make("ownership-family-source");
+      const fork = ThreadId.make("ownership-family-fork");
+      const outsider = ThreadId.make("ownership-family-outsider");
+
+      const first = await runtime.runPromise(
+        repo.claim({
+          threadId: source,
+          worktreePath: repoDir,
+          branch: null,
+          commandId: "cmd-ownership-family-source",
+          now,
+        }),
+      );
+
+      // Without the lineage allowance the fork is a conflict.
+      const conflict = await runtime.runPromise(
+        repo
+          .claim({
+            threadId: fork,
+            worktreePath: repoDir,
+            branch: null,
+            commandId: "cmd-ownership-family-fork-denied",
+            now,
+          })
+          .pipe(Effect.flip),
+      );
+      expect(conflict).toBeInstanceOf(WorkspaceOwnershipConflict);
+
+      // With it, the fork takes ownership and the generation advances so no
+      // stale binding from the previous owner still asserts.
+      const takeover = await runtime.runPromise(
+        repo.claim({
+          threadId: fork,
+          worktreePath: repoDir,
+          branch: null,
+          commandId: "cmd-ownership-family-fork",
+          now,
+          coOwnerThreadIds: [source],
+        }),
+      );
+      expect(takeover.generation).toBeGreaterThan(first.generation);
+      await expect(runtime.runPromise(repo.assertOwned(takeover, fork))).resolves.toBeUndefined();
+
+      // An unrelated thread still cannot take it.
+      const outsiderClaim = await runtime.runPromise(
+        repo
+          .claim({
+            threadId: outsider,
+            worktreePath: repoDir,
+            branch: null,
+            commandId: "cmd-ownership-family-outsider",
+            now,
+            coOwnerThreadIds: [source],
+          })
+          .pipe(Effect.flip),
+      );
+      expect(outsiderClaim).toBeInstanceOf(WorkspaceOwnershipConflict);
+
+      // The fork hands it back to the source the same way.
+      const handback = await runtime.runPromise(
+        repo.claim({
+          threadId: source,
+          worktreePath: repoDir,
+          branch: null,
+          commandId: "cmd-ownership-family-handback",
+          now,
+          coOwnerThreadIds: [fork],
+        }),
+      );
+      expect(handback.generation).toBeGreaterThan(takeover.generation);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("releases the filesystem ledger when the database row is missing", async () => {
     const runtime = await makeRuntime();
     const repo = await runtime.runPromise(Effect.service(WorkspaceOwnershipRepository));

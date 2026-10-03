@@ -38,6 +38,15 @@ export interface WorkspaceOwnershipRepositoryShape {
     readonly branch: string | null;
     readonly commandId: string | null;
     readonly now: string;
+    /**
+     * Threads allowed to take this worktree over from the current owner
+     * because they share one fork lineage. Ownership still transfers (the
+     * generation advances), so a fork and its source never write the checkout
+     * at the same moment; unrelated threads are unaffected. The caller is
+     * responsible for passing only genuine lineage relatives and for refusing
+     * the claim while another relative is mid-turn.
+     */
+    readonly coOwnerThreadIds?: ReadonlyArray<ThreadId>;
   }) => Effect.Effect<
     WorkspaceBinding,
     WorkspaceOwnershipConflict | WorkspaceOwnershipRepositoryError
