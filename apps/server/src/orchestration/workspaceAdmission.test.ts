@@ -260,6 +260,124 @@ describe("admitWorkspaceCommand fork lineage sharing", () => {
     );
     expect(claimOwnership.mock.calls[0]![0].coOwnerThreadIds ?? []).not.toContain(sourceThreadId);
   });
+
+  it("admits a delegated child that owns its own worktree while its parent runs", async () => {
+    // `parentThreadId` is also the delegated-child relation (cli.ts sets it on
+    // `thread.create` for `t3 chat new --parent`), and a child is allocated its
+    // own isolated worktree while the parent's session is still running.
+    const childThreadId = ThreadId.make("delegated-child");
+    const childWorktree = "/tmp/fork-family-child-wt";
+    const withChild = [
+      ...lineage,
+      thread(childThreadId, sourceThreadId, { worktreePath: childWorktree }),
+    ];
+    const runningSource = thread(sourceThreadId, null, {
+      latestTurn: {
+        turnId: TurnId.make("turn-running"),
+        state: "running",
+        requestedAt: "2025-01-01T00:00:00.000Z",
+        startedAt: "2025-01-01T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const withRunningParent = withChild.map((entry) =>
+      entry.id === sourceThreadId ? runningSource : entry,
+    );
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+
+    await Effect.runPromise(
+      admitWorkspaceCommand(
+        depsWith({
+          claimOwnership,
+          findThread: (id) => withRunningParent.find((entry) => entry.id === id),
+          listThreads: () => withRunningParent,
+        }),
+        turnStart(childThreadId),
+      ),
+    );
+
+    expect(claimOwnership).toHaveBeenCalledTimes(1);
+    expect(claimOwnership.mock.calls[0]![0].worktreePath).toBe(childWorktree);
+    expect(claimOwnership.mock.calls[0]![0].coOwnerThreadIds ?? []).not.toContain(sourceThreadId);
+  });
+
+  it("ignores a relative bound to a different worktree", async () => {
+    // A fork handed off to its own checkout no longer shares anything, so a
+    // running source elsewhere must not block it.
+    const handedOff = lineage.map((entry) =>
+      entry.id === forkThreadId
+        ? thread(forkThreadId, sourceThreadId, { worktreePath: "/tmp/fork-wt" })
+        : entry,
+    );
+    const running = handedOff.map((entry) =>
+      entry.id === sourceThreadId
+        ? thread(sourceThreadId, null, {
+            latestTurn: {
+              turnId: TurnId.make("turn-running"),
+              state: "running",
+              requestedAt: "2025-01-01T00:00:00.000Z",
+              startedAt: "2025-01-01T00:00:00.000Z",
+              completedAt: null,
+              assistantMessageId: null,
+            },
+          })
+        : entry,
+    );
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+
+    await Effect.runPromise(
+      admitWorkspaceCommand(
+        depsWith({
+          claimOwnership,
+          findThread: (id) => running.find((entry) => entry.id === id),
+          listThreads: () => running,
+        }),
+        turnStart(forkThreadId),
+      ),
+    );
+
+    expect(claimOwnership).toHaveBeenCalledTimes(1);
+    expect(claimOwnership.mock.calls[0]![0].coOwnerThreadIds ?? []).toEqual([]);
+  });
+
+  it("ignores archived and deleted relatives left mid-turn", async () => {
+    const stale = lineage.map((entry) =>
+      entry.id === sourceThreadId
+        ? thread(sourceThreadId, null, {
+            archivedAt: "2025-01-02T00:00:00.000Z",
+            latestTurn: {
+              turnId: TurnId.make("turn-running"),
+              state: "running",
+              requestedAt: "2025-01-01T00:00:00.000Z",
+              startedAt: "2025-01-01T00:00:00.000Z",
+              completedAt: null,
+              assistantMessageId: null,
+            },
+          })
+        : entry,
+    );
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+
+    await Effect.runPromise(
+      admitWorkspaceCommand(
+        depsWith({
+          claimOwnership,
+          findThread: (id) => stale.find((entry) => entry.id === id),
+          listThreads: () => stale,
+        }),
+        turnStart(forkThreadId),
+      ),
+    );
+
+    // Claimed rather than refused: an archived relative stuck on a running turn
+    // must not block its family with advice to stop an unstoppable thread. The
+    // idle sibling on the same checkout is still a legitimate co-owner.
+    expect(claimOwnership).toHaveBeenCalledTimes(1);
+    const coOwners = claimOwnership.mock.calls[0]![0].coOwnerThreadIds ?? [];
+    expect(coOwners).not.toContain(sourceThreadId);
+    expect(coOwners).toContain(siblingThreadId);
+  });
 });
 
 describe("isWorktreeCleanupPending", () => {
