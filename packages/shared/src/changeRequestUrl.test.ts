@@ -69,6 +69,18 @@ describe("parseChangeRequestUrl", () => {
     ).toEqual({ host: "acme.visualstudio.com", repository: "platform/_git/t3code", number: 17 });
   });
 
+  it("reads an Azure DevOps Server pull request on its own domain, collection path included", () => {
+    expect(
+      parseChangeRequestUrl(
+        "https://scm.example.com/tfs/Collection/Project/_git/Repo/pullrequest/123",
+      ),
+    ).toEqual({
+      host: "scm.example.com",
+      repository: "tfs/collection/project/_git/repo",
+      number: 123,
+    });
+  });
+
   it("survives trailing segments, a trailing slash and a query string", () => {
     expect(parseChangeRequestUrl("https://github.com/t3tools/t3code/pull/123/files?w=1")).toEqual({
       host: "github.com",
@@ -90,6 +102,9 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
       "https://blog.example.test/2026/updates/pull/3",
+      "https://scm.example.com/tfs/Collection/Project/_git/Repo",
+      "https://scm.example.com/tfs/Collection/Project/_git/Repo/pullrequest/abc",
+      "https://scm.example.com/tfs/Collection/Project/pullrequest/123",
       "javascript:alert(1)//github.com/t3tools/t3code/pull/1",
       "not a url",
     ]) {

@@ -30,8 +30,8 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
  *
  * Each host is recognised by the path shape it alone uses, guarded by a hostname it could
  * plausibly be served from, since self-hosted installs are named whatever their admin chose:
- * GitLab's `/-/` marker is unique enough to trust on any hostname, while `/pull/` is generic
- * enough that it is only believed from a GitHub-ish host.
+ * GitLab's `/-/` marker and Azure DevOps' `/_git/…/pullrequest/` are unique enough to trust on
+ * any hostname, while `/pull/` is generic enough that it is only believed from a GitHub-ish host.
  *
  * Nothing here tries to tell a lookalike hostname from a real one — `github.com.evil.test` and
  * the rest are an open set, and blocking spellings of it costs real hosts (`gitlab.com.br` is a
@@ -68,13 +68,11 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
-  // of the repository path there, as it is in the remote URL the identity is read from.
-  if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
-    const match = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match);
-  }
-  return null;
+  // Azure DevOps, Azure DevOps Server included, whose collection path comes before the project.
+  // `_git` is part of the repository path there, as it is in the remote URL the identity is read
+  // from.
+  const azure = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  return azure ? claim(host, azure) : null;
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {

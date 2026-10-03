@@ -348,6 +348,38 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("links an Azure DevOps Server pull request on a host it has no provider for", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        project: makeProject({
+          canonicalKey: "scm.example.com/tfs/collection/project/_git/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://scm.example.com/tfs/Collection/Project/_git/Repo",
+          },
+          provider: "unknown",
+          displayName: "tfs/collection/project/_git/repo",
+        }),
+      });
+      const supplied = "https://scm.example.com/tfs/Collection/Project/_git/Repo/pullrequest/123";
+      const fromUrl = yield* harness.call("link_pull_request", { url: supplied });
+      expect(fromUrl).toMatchObject({
+        host: "scm.example.com",
+        repository: "tfs/collection/project/_git/repo",
+        number: 123,
+        url: supplied,
+      });
+      const fromNumber = yield* harness.call("link_pull_request", {
+        repository: "tfs/Collection/Project/_git/Repo",
+        number: 124,
+      });
+      expect(fromNumber.url).toBe(
+        "https://scm.example.com/tfs/collection/project/_git/repo/pullrequest/124",
+      );
+    }),
+  );
+
   it.effect("rejects a target that names neither a URL nor repository and number", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

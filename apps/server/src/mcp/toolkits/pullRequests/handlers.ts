@@ -97,7 +97,12 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
       repository,
       input.number,
       project?.repositoryIdentity?.locator.remoteUrl,
-    ) ?? `https://${host}/${repository}/pull/${input.number}`;
+    ) ??
+    // An Azure DevOps repository path keeps its `_git` segment on any host, Server included.
+    (/(?:^|\/)_git\//u.test(repository)
+      ? changeRequestUrlFor("azure-devops", host, repository, input.number)
+      : null) ??
+    `https://${host}/${repository}/pull/${input.number}`;
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
     url,
