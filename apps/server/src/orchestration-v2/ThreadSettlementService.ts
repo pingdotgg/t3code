@@ -129,6 +129,18 @@ function pullRequestSettles(
   return pullRequestAtMs >= userAnchorMs;
 }
 
+/** Whether a snoozed thread woke before its wake time (error or completed work). */
+function snoozeWokeEarly(thread: ProjectionStore.ProjectionSettlementCandidate): boolean {
+  const snoozedAtMs = toMillis(thread.snoozedAt);
+  const completedAtMs = toMillis(thread.latestRunCompletedAt);
+  const wokeOnError =
+    thread.status === "failed" &&
+    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
+  const wokeOnCompletion =
+    snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
+  return wokeOnError || wokeOnCompletion;
+}
+
 /** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(
   thread: ProjectionStore.ProjectionSettlementCandidate,
@@ -144,16 +156,9 @@ export function isAutoSettlementCandidate(
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
-  // A snoozed thread that woke early (error or completed work) can settle;
-  // one still parked on its wake time keeps its stronger statement.
-  const snoozedAtMs = toMillis(thread.snoozedAt);
-  const completedAtMs = toMillis(thread.latestRunCompletedAt);
-  const wokeOnError =
-    thread.status === "failed" &&
-    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
-  const wokeOnCompletion =
-    snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
-  return wokeOnError || wokeOnCompletion;
+  // A snoozed thread that woke early can settle; one still parked on its
+  // wake time keeps its stronger statement.
+  return snoozeWokeEarly(thread);
 }
 
 export function resolveAutoSettlementAt(input: {
@@ -197,8 +202,17 @@ export function resolveAutoSettlementAt(input: {
     return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
   }
   if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
-  return activityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
-    ? DateTime.makeUnsafe(activityAtMs)
+  // A timed wake fires no event, so the inactivity window restarts at the
+  // wake time; otherwise work idle since before the snooze settles on the
+  // first sweep after it wakes. A snooze still in the future never anchors,
+  // and neither does one that woke early: that wake is already in activity.
+  const snoozedUntilMs = toMillis(thread.snoozedUntil);
+  const inactiveSinceMs =
+    snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs && !snoozeWokeEarly(thread)
+      ? Math.max(activityAtMs, snoozedUntilMs)
+      : activityAtMs;
+  return inactiveSinceMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
+    ? DateTime.makeUnsafe(inactiveSinceMs)
     : null;
 }
 

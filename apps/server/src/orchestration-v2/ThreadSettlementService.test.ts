@@ -230,6 +230,186 @@ describe("threadHasQueuedTurnStart", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
+  it.each([
+    {
+      name: "keeps a thread active when its snooze ended an hour ago",
+      snoozedUntil: at(-60 * 60 * 1_000),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      autoSettleAfterDays: 3,
+      expected: null,
+    },
+    {
+      name: "settles at the wake time after the inactivity window elapses",
+      snoozedUntil: at(-4 * DAY_MS),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      autoSettleAfterDays: 3,
+      expected: at(-4 * DAY_MS),
+    },
+    {
+      name: "keeps a thread active when activity after waking is still recent",
+      snoozedUntil: at(-5 * DAY_MS),
+      latestUserMessageAt: at(-2 * DAY_MS),
+      autoSettleAfterDays: 3,
+      expected: null,
+    },
+    {
+      name: "keeps a still-snoozed thread parked despite old activity",
+      snoozedUntil: at(DAY_MS),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      autoSettleAfterDays: 3,
+      expected: null,
+    },
+    {
+      name: "preserves the activity anchor for a never-snoozed thread",
+      snoozedUntil: null,
+      latestUserMessageAt: at(-10 * DAY_MS),
+      autoSettleAfterDays: 3,
+      expected: at(-10 * DAY_MS),
+    },
+    {
+      name: "keeps a woken thread active when inactivity settlement is disabled",
+      snoozedUntil: at(-4 * DAY_MS),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      autoSettleAfterDays: null,
+      expected: null,
+    },
+  ])("$name", ({ snoozedUntil, latestUserMessageAt, autoSettleAfterDays, expected }) => {
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread: shell({ snoozedUntil, latestUserMessageAt }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays,
+        autoSettleOnMerge: true,
+      }),
+    ).toEqual(expected);
+  });
+
+  it("ignores a future snooze anchor when completion already woke the thread", () => {
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread: shell({
+          snoozedAt: at(-11 * DAY_MS),
+          snoozedUntil: at(DAY_MS),
+          latestUserMessageAt: at(-10 * DAY_MS),
+          latestRunCompletedAt: at(-10 * DAY_MS),
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+      }),
+    ).toEqual(at(-10 * DAY_MS));
+  });
+
+  it.each([
+    {
+      name: "preserves early completion as the anchor after the snooze deadline passes",
+      status: "idle" as const,
+      snoozedAt: at(-15 * DAY_MS),
+      latestRunCompletedAt: at(-10 * DAY_MS),
+      snoozedUntil: at(-DAY_MS),
+      expected: at(-10 * DAY_MS),
+    },
+    {
+      name: "preserves early failure as the anchor after the snooze deadline passes",
+      status: "failed" as const,
+      snoozedAt: at(-15 * DAY_MS),
+      latestRunCompletedAt: at(-10 * DAY_MS),
+      snoozedUntil: at(-DAY_MS),
+      expected: at(-10 * DAY_MS),
+    },
+    {
+      name: "preserves activity for a failed thread with an unknown snooze start after its deadline",
+      status: "failed" as const,
+      snoozedAt: null,
+      latestRunCompletedAt: at(-10 * DAY_MS),
+      snoozedUntil: at(-DAY_MS),
+      expected: at(-10 * DAY_MS),
+    },
+    {
+      name: "keeps a timed wake active when completion predates the snooze",
+      status: "idle" as const,
+      snoozedAt: at(-15 * DAY_MS),
+      latestRunCompletedAt: at(-20 * DAY_MS),
+      snoozedUntil: at(-DAY_MS),
+      expected: null,
+    },
+    {
+      name: "settles at the timed wake when completion predates the snooze",
+      status: "idle" as const,
+      snoozedAt: at(-15 * DAY_MS),
+      latestRunCompletedAt: at(-20 * DAY_MS),
+      snoozedUntil: at(-4 * DAY_MS),
+      expected: at(-4 * DAY_MS),
+    },
+  ])("$name", ({ status, snoozedAt, latestRunCompletedAt, snoozedUntil, expected }) => {
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread: shell({
+          status,
+          snoozedAt,
+          snoozedUntil,
+          latestUserMessageAt: at(-20 * DAY_MS),
+          latestRunRequestedAt: at(-20 * DAY_MS),
+          latestRunStartedAt: at(-20 * DAY_MS),
+          latestRunCompletedAt,
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: false,
+      }),
+    ).toEqual(expected);
+  });
+
+  it("preserves the early completion anchor on both sides of the snooze deadline", () => {
+    const snoozedUntil = at(-DAY_MS);
+    const completedAt = at(-10 * DAY_MS);
+    const input = {
+      thread: shell({
+        snoozedAt: at(-15 * DAY_MS),
+        snoozedUntil,
+        latestUserMessageAt: at(-20 * DAY_MS),
+        latestRunRequestedAt: at(-20 * DAY_MS),
+        latestRunStartedAt: at(-20 * DAY_MS),
+        latestRunCompletedAt: completedAt,
+      }),
+      pullRequest: null,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: false,
+    };
+    const deadlineMs = DateTime.toEpochMillis(snoozedUntil);
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: deadlineMs - 60_000 }),
+    ).toEqual(completedAt);
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: deadlineMs + 60_000 }),
+    ).toEqual(completedAt);
+  });
+
+  it.each(["merged", "closed"] as const)(
+    "preserves the activity anchor after waking when a pull request is %s",
+    (state) => {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          thread: shell({
+            snoozedUntil: at(-60 * 60 * 1_000),
+            latestUserMessageAt: at(-10 * DAY_MS),
+          }),
+          pullRequest: {
+            state,
+            mergedAt: DateTime.formatIso(at(-5 * DAY_MS)),
+            closedAt: DateTime.formatIso(at(-5 * DAY_MS)),
+          },
+          nowMs: NOW_MS,
+          autoSettleAfterDays: 3,
+          autoSettleOnMerge: state === "merged",
+        }),
+      ).toEqual(at(-10 * DAY_MS));
+    },
+  );
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),
@@ -610,6 +790,32 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("does not auto-settle a recently woken thread with old activity during a sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const latestUserMessageAt = DateTime.makeUnsafe(Date.parse(NOW) - 10 * DAY_MS);
+        const woken = makeThread("recently-woken", {
+          latestUserMessageAt,
+          snoozedUntil: DateTime.makeUnsafe(Date.parse(NOW) - 60 * 60 * 1_000),
+        });
+        const inactive = makeThread("never-snoozed", { latestUserMessageAt });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([woken, inactive]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+            inactive.id,
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
