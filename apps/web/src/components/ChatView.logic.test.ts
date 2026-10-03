@@ -628,6 +628,30 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
+  it("holds a first send while the thread shell still reports a preparing run", () => {
+    // The draft had no run. The server thread's shell shows the new run before
+    // the detail projection behind `phase` loads.
+    const localDispatch = createLocalDispatchSnapshot(makeThread());
+    const preparingRun = {
+      ...completedTurn,
+      status: "preparing" as const,
+      startedAt: null,
+      completedAt: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "disconnected",
+        latestRun: preparingRun,
+        runtime: { ...readySession, status: "preparing", activeRunId: preparingRun.runId },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
   it("waits for the matching running turn before acknowledging", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestRun: completedTurn, runtime: readySession }),

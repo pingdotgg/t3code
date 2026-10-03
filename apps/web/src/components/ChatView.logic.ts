@@ -57,7 +57,7 @@ import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
-import type { TimelineEntry } from "../session-logic";
+import { derivePhase, type TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
@@ -1248,7 +1248,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
-  if (input.phase === "connecting") {
+  // The thread shell can report a preparing or starting run before the detail
+  // projection behind `phase` loads, so either source still connecting holds
+  // the send.
+  if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
     return false;
   }
 

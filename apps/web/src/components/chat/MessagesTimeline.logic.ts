@@ -1673,7 +1673,11 @@ export function deriveMessagesTimelineRows(input: {
     input.worktreeSetup !== undefined &&
     worktreeSetupAgentStarted(input.worktreeSetup) &&
     input.latestRun?.startedAt != null;
-  const setupRunning = !setupHandedOff && input.worktreeSetup?.phase === "running";
+  // A finished setup keeps the slot until the turn is live, so the card does
+  // not jump above the working header in the gap before the run starts.
+  const setupOwnsWorkingSlot =
+    !setupHandedOff &&
+    (input.worktreeSetup?.phase === "running" || input.worktreeSetup?.phase === "done");
   if (input.worktreeSetup && (!setupHandedOff || input.worktreeSetup.phase !== "running")) {
     const setupRow = {
       kind: "worktree-setup",
@@ -1688,7 +1692,9 @@ export function deriveMessagesTimelineRows(input: {
     // While the setup runs, the working header leads the card in the same
     // slot it keeps once the agent's own turn takes over. The main pass may
     // already have placed that header (a bootstrap counts as working).
-    const workingRowIndex = setupRunning ? nextRows.findIndex((row) => row.kind === "working") : -1;
+    const workingRowIndex = setupOwnsWorkingSlot
+      ? nextRows.findIndex((row) => row.kind === "working")
+      : -1;
     if (workingRowIndex >= 0) {
       nextRows.splice(workingRowIndex + 1, 0, setupRow);
     } else {
@@ -1696,7 +1702,7 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.splice(
         insertAt,
         0,
-        ...(setupRunning
+        ...(setupOwnsWorkingSlot
           ? [
               {
                 kind: "working",
@@ -1710,15 +1716,15 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  // A running setup owns the working slot above its card and shows no
-  // activity row of its own; every other state gets the usual tail.
+  // A setup that owns the working slot sits under it and shows no activity
+  // row of its own; every other state gets the usual tail.
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
   if (
     input.isWorking &&
-    !setupRunning &&
+    !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
