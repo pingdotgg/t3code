@@ -1,6 +1,7 @@
 #!/bin/sh
-# Installs the T3 Code CLI from a GitHub Release archive. Needs only sh, tar,
+# Installs the T3 Code CLI from a GitHub Release archive. Needs sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
+# On Linux, the executable also needs system libraries including libatomic.so.1.
 #
 #   curl -fsSL https://t3.codes/install.sh | sh
 #
@@ -208,7 +209,23 @@ else
   step "Extracting T3 Code..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
   rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
-  "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
+  if LC_ALL=C "${staging}/t3" --version >/dev/null 2>"${staging}/version.errors"; then
+    cat "${staging}/version.errors" >&2
+    rm -f "${staging}/version.errors"
+  else
+    if "$interactive"; then printf '\n' >&2; fi
+    cat "${staging}/version.errors" >&2
+    if [ "$platform" = linux ] && grep -Fq 'error while loading shared libraries: libatomic.so.1: cannot open shared object file: No such file or directory' "${staging}/version.errors"; then
+      printf '%s\n' \
+        '' \
+        't3 install: the downloaded executable requires libatomic.so.1' \
+        '' \
+        '  Use your Linux package manager to install the package' \
+        '  providing libatomic.so.1 (commonly named libatomic or libatomic1).' >&2
+      fail "install the library, then rerun the installer"
+    fi
+    fail "the downloaded executable does not run"
+  fi
   printf '%s\n' "$version" > "${staging}/.install-complete"
 
   rm -rf "$target_dir"
