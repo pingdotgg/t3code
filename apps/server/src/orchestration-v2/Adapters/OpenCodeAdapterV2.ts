@@ -56,6 +56,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import type { LocalMcpServer } from "../../mcp/ComputerAccess.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
@@ -971,6 +972,9 @@ export function makeOpenCodeAdapterV2(
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
+        // An external server is shared, so T3 adds its servers only to one it
+        // spawned. Only the servers OpenCode accepted are named in the prompt.
+        const localMcpServers: Array<LocalMcpServer> = [];
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -983,6 +987,27 @@ export function makeOpenCodeAdapterV2(
               },
             }),
           );
+          // Computer access is an addition: a server that cannot start it still runs.
+          for (const local of mcpSession.localMcpServers ?? []) {
+            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+              client.mcp.add({
+                name: local.name,
+                config: {
+                  type: "local",
+                  command: [local.command, ...local.args],
+                  environment: { ...local.env },
+                },
+              }),
+            ).pipe(
+              Effect.andThen(Effect.sync(() => localMcpServers.push(local))),
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not add a computer access MCP server to OpenCode.", {
+                  server: local.name,
+                  cause,
+                }),
+              ),
+            );
+          }
         }
 
         const now = yield* DateTime.now;
@@ -3223,6 +3248,7 @@ export function makeOpenCodeAdapterV2(
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
+                  localMcpServers,
                 }),
               ]
                 .filter(Boolean)

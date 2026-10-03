@@ -22,6 +22,7 @@ import {
   RunId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -85,6 +86,7 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
+  isRunUsingComputer,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -2158,5 +2160,46 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("isRunUsingComputer", () => {
+  const runningRunId = RunId.make("run-running");
+  const updatedAt = DateTime.makeUnsafe("2026-10-02T00:00:00.000Z");
+  const toolItem = (toolName: string, runId = runningRunId): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make(`turn-item:${runId}:${toolName}`),
+    threadId: ThreadId.make("thread-computer"),
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "running",
+    title: null,
+    startedAt: updatedAt,
+    completedAt: null,
+    updatedAt,
+    type: "dynamic_tool",
+    toolName,
+    input: {},
+  });
+
+  it("is true once the running run calls a Cua Driver tool, whatever the provider's naming", () => {
+    for (const toolName of ["mcp__cua-driver__click", "cua-driver.click", "cua-driver_click"]) {
+      expect(isRunUsingComputer([toolItem("Bash"), toolItem(toolName)], runningRunId)).toBe(true);
+    }
+  });
+
+  it("ignores other tools, earlier runs, and idle threads", () => {
+    expect(isRunUsingComputer([toolItem("mcp__t3-code__preview_click")], runningRunId)).toBe(false);
+    expect(
+      isRunUsingComputer(
+        [toolItem("mcp__cua-driver__click", RunId.make("run-earlier"))],
+        runningRunId,
+      ),
+    ).toBe(false);
+    expect(isRunUsingComputer([toolItem("mcp__cua-driver__click")], null)).toBe(false);
   });
 });

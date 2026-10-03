@@ -49,6 +49,14 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { useEnvironmentQuery } from "~/state/query";
+import {
+  ComputerAccessSetupDialog,
+  computerAppsReady,
+  computerBrowserReady,
+  type ComputerAccessSetupKind,
+} from "./ComputerAccessSetupDialog";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   AgentDeviceSetupStatus,
@@ -854,6 +862,140 @@ function DeviceIntegrationControls({
   );
 }
 
+/**
+ * Environment-wide switches for the opt-in computer access MCP servers. The
+ * status comes from the selected environment, which is the machine they drive.
+ * Turning a switch on opens its setup until that machine is ready, and only
+ * turns it on for that machine; turning it off applies to the whole scope.
+ */
+function ComputerAccessSettings() {
+  const { environment: selected } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const updateEnvironment = useAtomCommand(serverEnvironment.updateSettings, "Computer access");
+  const [setup, setSetup] = useState<ComputerAccessSetupKind | null>(null);
+  const environmentId =
+    selected?.connection.phase === "connected" && selected.serverConfig !== null
+      ? selected.environmentId
+      : null;
+  // Untested on Windows and Linux, and headless hosts have nothing to drive.
+  const macHost = selected?.serverConfig?.environment.platform.os === "darwin";
+  const hostLabel = selected?.label ?? "this Mac";
+  const {
+    data: status,
+    error: statusError,
+    refresh,
+  } = useEnvironmentQuery(
+    environmentId === null || !macHost
+      ? null
+      : serverEnvironment.computerAccess({ environmentId, input: {} }),
+  );
+  const appsOn = settings.enableAgentComputerAccess;
+  const browserTabsOn = settings.enableAgentBrowserTabs;
+  const appsReady = status !== null && computerAppsReady(status);
+  const browser = status === null ? undefined : computerBrowserReady(status);
+  // Readiness was checked on the selected Mac only, so only it is turned on.
+  const enable = (patch: {
+    readonly enableAgentComputerAccess?: true;
+    readonly enableAgentBrowserTabs?: true;
+  }) => {
+    if (environmentId) void updateEnvironment({ environmentId, input: { patch } });
+  };
+  const setupButton = (kind: ComputerAccessSetupKind) => (
+    <Button size="sm" variant="outline" onClick={() => setSetup(kind)}>
+      Set up
+    </Button>
+  );
+
+  const rows = (
+    <>
+      <SettingsRow
+        {...searchableSetting("agent-computer-access")}
+        serverScoped
+        settingKeys={["enableAgentComputerAccess"]}
+        description={`Let agents use apps on ${hostLabel} through Cua Driver. Codex uses its own Computer Use.`}
+        status={appsOn && status ? (appsReady ? "Ready" : "Needs setup") : null}
+        control={
+          <>
+            {appsOn && status && !appsReady ? setupButton("apps") : null}
+            <ScopedSwitch
+              settingKeys={["enableAgentComputerAccess"]}
+              checked={appsOn}
+              disabled={environmentId === null || !macHost}
+              onCheckedChange={(checked) =>
+                !checked
+                  ? updateSettings({ enableAgentComputerAccess: false })
+                  : appsReady
+                    ? enable({ enableAgentComputerAccess: true })
+                    : setSetup("apps")
+              }
+              aria-label="Agent computer access"
+            />
+          </>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("agent-browser-tabs")}
+        serverScoped
+        settingKeys={["enableAgentBrowserTabs"]}
+        description={`Let agents use the open browser tabs and sign-ins on ${hostLabel} through Chrome DevTools MCP.`}
+        status={
+          browserTabsOn && status ? (browser ? `Using ${browser.name}` : "Needs setup") : null
+        }
+        control={
+          <>
+            {browserTabsOn && status && !browser ? setupButton("browser") : null}
+            <ScopedSwitch
+              settingKeys={["enableAgentBrowserTabs"]}
+              checked={browserTabsOn}
+              disabled={environmentId === null || !macHost}
+              onCheckedChange={(checked) =>
+                !checked
+                  ? updateSettings({ enableAgentBrowserTabs: false })
+                  : browser
+                    ? enable({ enableAgentBrowserTabs: true })
+                    : setSetup("browser")
+              }
+              aria-label="Agent browser tabs"
+            />
+          </>
+        }
+      />
+    </>
+  );
+
+  return (
+    <SettingsSection id="computer" title="Computer">
+      {macHost || environmentId === null ? (
+        rows
+      ) : (
+        <SettingsUnavailableGroup message="Available on macOS for now.">
+          {rows}
+        </SettingsUnavailableGroup>
+      )}
+      {setup && environmentId ? (
+        <ComputerAccessSetupDialog
+          kind={setup}
+          environmentId={environmentId}
+          hostLabel={hostLabel}
+          status={status}
+          statusError={statusError}
+          onRefresh={refresh}
+          onFinish={() => {
+            enable(
+              setup === "apps"
+                ? { enableAgentComputerAccess: true }
+                : { enableAgentBrowserTabs: true },
+            );
+            setSetup(null);
+          }}
+          onClose={() => setSetup(null)}
+        />
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdatePrimarySettings();
@@ -1456,6 +1598,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <ComputerAccessSettings />
     </SettingsPageContainer>
   );
 }

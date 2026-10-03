@@ -266,6 +266,9 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  ServerComputerAccessAction,
+  ServerComputerAccessError,
+  ServerComputerAccessStatus,
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -465,6 +468,8 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+  serverCheckComputerAccess: "server.checkComputerAccess",
+  serverRunComputerAccessAction: "server.runComputerAccessAction",
 
   // Scheduled tasks
   scheduledTasksList: "scheduledTasks.list",
@@ -550,6 +555,18 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerCheckComputerAccessRpc = Rpc.make(WS_METHODS.serverCheckComputerAccess, {
+  payload: Schema.Struct({}),
+  success: ServerComputerAccessStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerRunComputerAccessActionRpc = Rpc.make(WS_METHODS.serverRunComputerAccessAction, {
+  payload: Schema.Struct({ action: ServerComputerAccessAction }),
+  success: ServerComputerAccessStatus,
+  error: Schema.Union([ServerComputerAccessError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -1685,6 +1702,8 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsServerCheckComputerAccessRpc,
+  WsServerRunComputerAccessActionRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,

@@ -621,6 +621,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow simulator emulator ios android drive tools sessions"],
   },
   {
+    id: "agent-computer-access",
+    title: "Agent computer access",
+    to: "/settings/integrations",
+    searchTerms: ["computer use cua driver native apps control click type screen desktop"],
+  },
+  {
+    id: "agent-browser-tabs",
+    title: "Agent browser tabs",
+    to: "/settings/integrations",
+    searchTerms: [
+      "chrome helium brave edge tabs devtools mcp sign in logged in existing browser remote debugging",
+    ],
+  },
+  {
     id: "device-hub",
     title: "Device hub",
     to: "/settings/integrations",

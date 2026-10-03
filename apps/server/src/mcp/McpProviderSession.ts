@@ -1,5 +1,7 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
+import type { LocalMcpServer } from "./ComputerAccess.ts";
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -22,6 +24,38 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * Opt-in stdio servers (Cua Driver, Chrome DevTools MCP), with their prompt
+   * text. Adapters that run stdio MCP servers attach them next to `t3-code`
+   * and pass them to `buildRuntimeInstructions`; Codex keeps its own Computer
+   * Use, and OpenCode 2 and Pi do not attach them yet.
+   */
+  readonly localMcpServers?: ReadonlyArray<LocalMcpServer>;
+}
+
+/** Claude and Cursor SDK `mcpServers` entries for the session's local servers. */
+export function stdioLocalMcpServers(config: McpProviderSessionConfig | undefined) {
+  return Object.fromEntries(
+    (config?.localMcpServers ?? []).map((server) => [
+      server.name,
+      {
+        type: "stdio" as const,
+        command: server.command,
+        args: [...server.args],
+        env: { ...server.env },
+      },
+    ]),
+  );
+}
+
+/** ACP stdio `mcpServers` entries for the session's local servers. */
+export function acpLocalMcpServers(config: McpProviderSessionConfig | undefined) {
+  return (config?.localMcpServers ?? []).map((server) => ({
+    name: server.name,
+    command: server.command,
+    args: [...server.args],
+    env: Object.entries(server.env).map(([name, value]) => ({ name, value })),
+  }));
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

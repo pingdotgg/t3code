@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ComputerAccess from "../mcp/ComputerAccess.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -318,6 +319,7 @@ export const layerWithOptions = (
        * reverse costs an agent one toolset and is visible immediately (#7083).
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      const computerAccess = yield* Effect.serviceOption(ComputerAccess.ComputerAccess);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -410,6 +412,30 @@ export const layerWithOptions = (
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
       /**
+       * Records the opt-in computer access servers on the thread's MCP
+       * session. Adapters that run stdio MCP servers attach them; the rest,
+       * Codex included, ignore them.
+       */
+      const setMcpSessionWithLocalServers = (config: McpProviderSession.McpProviderSessionConfig) =>
+        Effect.gen(function* () {
+          const localMcpServers = Option.isSome(computerAccess)
+            ? yield* computerAccess.value.servers(config.threadId)
+            : [];
+          McpProviderSession.setMcpProviderSession({ ...config, localMcpServers });
+        });
+      /**
+       * Threads whose running turn can drive the computer, by provider thread.
+       * The turn's end, or Stop, ends the thread's Cua session, which removes
+       * the agent's cursor; the next tool call starts a new session.
+       */
+      const computerTurns = new Map<string, ThreadId>();
+      const endComputerSession = (providerThreadId: string) => {
+        const threadId = computerTurns.get(providerThreadId);
+        return threadId === undefined || Option.isNone(computerAccess)
+          ? Effect.void
+          : computerAccess.value.endSession(threadId);
+      };
+      /**
        * Resolves (or mints) the thread's MCP credential and returns it with a
        * reservation held; the caller must drop the reservation exactly once.
        * Serialized per thread so two concurrent prepares cannot interleave
@@ -456,6 +482,7 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    yield* setMcpSessionWithLocalServers(existing);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -467,7 +494,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                 });
-                McpProviderSession.setMcpProviderSession(credential.config);
+                yield* setMcpSessionWithLocalServers(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
@@ -1490,9 +1517,18 @@ export const layerWithOptions = (
               }),
             ).pipe(
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
+              Effect.andThen(
+                Effect.sync(() => {
+                  const cua = McpProviderSession.readMcpProviderSession(
+                    input.threadId,
+                  )?.localMcpServers?.some((server) => server.name === "cua-driver");
+                  if (cua) computerTurns.set(input.providerThread.id, input.threadId);
+                }),
+              ),
               Effect.andThen(runtime.startTurn(input)),
               Effect.catch((error) =>
                 observeActivity(providerSessionId, markIdle(providerSessionId)).pipe(
+                  Effect.andThen(Effect.sync(() => computerTurns.delete(input.providerThread.id))),
                   Effect.andThen(Effect.fail(error)),
                 ),
               ),
@@ -1503,6 +1539,8 @@ export const layerWithOptions = (
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+              // Before the adapter winds down, so the cursor leaves on Stop.
+              Effect.andThen(endComputerSession(input.providerThread.id)),
               Effect.andThen(runtime.interruptTurn(input)),
             ),
           respondToRuntimeRequest: (input) =>
@@ -1554,6 +1592,17 @@ export const layerWithOptions = (
                 ? markIdle(entry.runtime.providerSessionId)
                 : touchActivity(entry.runtime.providerSessionId),
             ).pipe(
+              // Ends the Cua session before run subscribers see the terminal,
+              // so the thread's next turn cannot start ahead of it.
+              Effect.andThen(
+                event.type === "turn.terminal"
+                  ? endComputerSession(event.providerThreadId).pipe(
+                      Effect.ensuring(
+                        Effect.sync(() => computerTurns.delete(event.providerThreadId)),
+                      ),
+                    )
+                  : Effect.void,
+              ),
               Effect.andThen(
                 event.type === "provider_session.updated"
                   ? persistProviderSessionUpdate(entry, event)

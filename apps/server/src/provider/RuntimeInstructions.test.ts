@@ -29,6 +29,16 @@ describe("buildRuntimeInstructions", () => {
     ).toContain("through the Codex harness, as my-model.");
   });
 
+  it("adds computer access guidance only for attached servers", () => {
+    expect(buildRuntimeInstructions({ harness: "Claude Code" })).not.toContain("<computer_access>");
+    expect(
+      buildRuntimeInstructions({
+        harness: "Claude Code",
+        localMcpServers: [{ instructions: "Use cua-driver for native apps." }],
+      }),
+    ).toContain("<computer_access>\nUse cua-driver for native apps.\n</computer_access>");
+  });
+
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
     expect(instructions).toContain("through the Cursor harness.");

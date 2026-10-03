@@ -34,6 +34,7 @@ import { HttpServer } from "effect/unstable/http";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ComputerAccess from "../mcp/ComputerAccess.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -412,6 +413,7 @@ function makeTestLayer(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly computerAccessLayer?: Layer.Layer<ComputerAccess.ComputerAccess>;
 }) {
   const configuredEventSinkLayer =
     input.flakyReleaseWrites !== undefined
@@ -463,6 +465,7 @@ function makeTestLayer(input: {
           TestStoresLayer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.computerAccessLayer === undefined ? [] : [input.computerAccessLayer]),
         ),
       ),
     ),
@@ -2178,6 +2181,128 @@ it.effect(
 
       yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
     }),
+);
+
+it.effect("ProviderSessionManagerV2 ends the thread's Cua session on Stop and at turn end", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const endedThreads = yield* Ref.make<ReadonlyArray<string>>([]);
+    const computerAccessLayer = Layer.succeed(
+      ComputerAccess.ComputerAccess,
+      ComputerAccess.ComputerAccess.of({
+        servers: () =>
+          Effect.succeed([
+            {
+              name: "cua-driver",
+              command: "cua-driver",
+              args: ["mcp"],
+              env: {},
+              instructions: "Use apps.",
+            },
+          ]),
+        status: Effect.succeed(ComputerAccess.UNAVAILABLE_STATUS),
+        runAction: () => Effect.succeed(ComputerAccess.UNAVAILABLE_STATUS),
+        endSession: (threadId) => Ref.update(endedThreads, (ended) => [...ended, threadId]),
+      }),
+    );
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-computer",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-computer",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "native-turn",
+      });
+      const terminal = {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        runOrdinal: 1,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      } satisfies ProviderAdapterV2Event;
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(
+        (yield* Ref.get(mcpConfigs))[0]?.localMcpServers?.map((server) => server.name),
+        ["cua-driver"],
+      );
+      yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+      const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+      yield* runtime.startTurn({
+        appThread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "click the button",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* runtime.interruptTurn({ providerThread, providerTurnId });
+      assert.deepEqual(yield* Ref.get(endedThreads), [threadId]);
+
+      const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(queue);
+      yield* Queue.offer(queue!, terminal);
+      // A late copy of the terminal finds no running turn and ends nothing.
+      yield* Queue.offer(queue!, terminal);
+      yield* TestClock.adjust("100 millis");
+      yield* Effect.yieldNow;
+      assert.deepEqual(yield* Ref.get(endedThreads), [threadId, threadId]);
+
+      yield* manager.close(providerSessionId);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({ state, idleTimeoutMs: 1000, mcpConfigs, computerAccessLayer }),
+      ),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 uses the same release path for runtime failures", () =>

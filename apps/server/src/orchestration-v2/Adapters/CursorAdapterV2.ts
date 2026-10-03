@@ -214,6 +214,7 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
         Authorization: session.authorizationHeader,
       },
     },
+    ...McpProviderSession.stdioLocalMcpServers(session),
   };
 }
 
@@ -2153,7 +2154,13 @@ export function makeCursorAdapterV2(
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const runtimeInstructions = buildRuntimeInstructions({
+            harness: "Cursor",
+            model: turnInput.modelSelection.model,
+            localMcpServers: McpProviderSession.readMcpProviderSession(turnInput.threadId)
+              ?.localMcpServers,
+          });
+          const text = `${userText}\n\n${runtimeInstructions}`;
           return images.length === 0
             ? text
             : ({

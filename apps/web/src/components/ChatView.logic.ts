@@ -12,6 +12,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
@@ -93,6 +94,25 @@ export function agentControlledBrowserCloseConfirmation(
     `Close ${activeBrowserCount} browsers while the agent is using them?`,
     "The agent is actively controlling these browsers. Closing them may interrupt the current browser actions.",
   ].join("\n");
+}
+
+/**
+ * Whether the running run has driven the user's computer through Cua Driver,
+ * so the composer can say so next to Stop. Providers name the tool calls
+ * differently (`mcp__cua-driver__click`, `cua-driver.click`,
+ * `cua-driver_click`), and every name contains the server's.
+ */
+export function isRunUsingComputer(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  runningRunId: RunId | null,
+): boolean {
+  if (runningRunId === null) return false;
+  return turnItems.some(
+    (item) =>
+      item.runId === runningRunId &&
+      item.type === "dynamic_tool" &&
+      item.toolName?.includes("cua-driver") === true,
+  );
 }
 
 /** The floating player hides only while the same source is rendered in the panel. */

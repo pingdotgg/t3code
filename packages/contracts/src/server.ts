@@ -588,6 +588,76 @@ export const EnvironmentTheme = Schema.Struct({
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
+/** A Chromium browser on the environment's machine that agents can attach to. */
+export const ServerComputerAccessBrowser = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  /** Page where the user turns on remote debugging, such as `chrome://inspect/#remote-debugging`. */
+  inspectUrl: Schema.String,
+  /** Whether the browser is running with remote debugging on right now. */
+  remoteDebugging: Schema.Boolean,
+});
+export type ServerComputerAccessBrowser = typeof ServerComputerAccessBrowser.Type;
+
+/**
+ * What the computer access setup flows show. Computer access is macOS-only for
+ * now; other hosts report nothing installed. Checking never installs anything.
+ */
+export const ServerComputerAccessStatus = Schema.Struct({
+  cuaDriver: Schema.Struct({
+    /** Binary sessions would launch, or null when it is not installed. */
+    path: Schema.NullOr(Schema.String),
+    /** Grants held by Cua Driver. Unverified reads as false. */
+    permissions: Schema.Struct({ accessibility: Schema.Boolean, screenRecording: Schema.Boolean }),
+    /** Whether Cua's permission request is still waiting for the user. */
+    requestingPermissions: Schema.Boolean,
+    /** Whether the last permission request ended without both grants. */
+    permissionsFailed: Schema.Boolean,
+  }),
+  browsers: Schema.Array(ServerComputerAccessBrowser),
+  /** Whether Chrome DevTools MCP is installed. Browser setup installs it. */
+  browserToolInstalled: Schema.Boolean,
+});
+export type ServerComputerAccessStatus = typeof ServerComputerAccessStatus.Type;
+
+export const ServerComputerAccessAction = Schema.Literals([
+  "install-cua-driver",
+  /** Starts, or restarts, Cua's permission request in the background. */
+  "request-cua-permissions",
+  "cancel-cua-permissions",
+  "open-accessibility-settings",
+  "open-screen-recording-settings",
+  "install-browser-tool",
+]);
+export type ServerComputerAccessAction = typeof ServerComputerAccessAction.Type;
+
+export class ServerComputerAccessError extends Schema.TaggedError<ServerComputerAccessError>()(
+  "ServerComputerAccessError",
+  {
+    action: ServerComputerAccessAction,
+    reason: Schema.Literals(["unsupported-platform", "driver-missing", "command-failed"]),
+    /** The runner failure or the failed command's result. Never shown to users. */
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    if (this.reason === "unsupported-platform") {
+      return "Computer access is only available on macOS for now.";
+    }
+    if (this.reason === "driver-missing") return "Install Cua Driver first.";
+    switch (this.action) {
+      case "install-cua-driver":
+        return "Cua Driver did not install.";
+      case "install-browser-tool":
+        return "Chrome DevTools MCP did not install.";
+      case "request-cua-permissions":
+        return "Cua Driver did not get both permissions.";
+      default:
+        return "System Settings did not open.";
+    }
+  }
+}
+
 /**
  * Whether a theme file carries anything to render. A file with neither seeds
  * nor colors would show as the stock palette wearing a name, which reads as a

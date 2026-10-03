@@ -178,6 +178,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as ComputerAccess from "./mcp/ComputerAccess.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -2101,6 +2102,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverCheckComputerAccess]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCheckComputerAccess,
+            Effect.gen(function* () {
+              const access = yield* Effect.serviceOption(ComputerAccess.ComputerAccess);
+              if (Option.isNone(access)) return ComputerAccess.UNAVAILABLE_STATUS;
+              return yield* access.value.status;
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRunComputerAccessAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunComputerAccessAction,
+            Effect.gen(function* () {
+              const access = yield* Effect.serviceOption(ComputerAccess.ComputerAccess);
+              if (Option.isNone(access)) return ComputerAccess.UNAVAILABLE_STATUS;
+              return yield* access.value.runAction(input.action);
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetConfig,
