@@ -117,6 +117,8 @@ import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as McpOAuth from "./auth/McpOAuth.ts";
+import { mcpOAuthRouteLayer } from "./auth/mcpOAuthHttp.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -649,6 +651,7 @@ const makeRoutesLayer = Layer.mergeAll(
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
+    mcpOAuthRouteLayer.pipe(Layer.provide(McpOAuth.layer)),
   ),
   // The MCP session registry is provided globally (shared with V2 provider
   // sessions) rather than inline here. The orchestrator toolkit resolves
@@ -657,6 +660,7 @@ const makeRoutesLayer = Layer.mergeAll(
   // what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    Layer.provide(McpOAuth.mcpClientAuthenticatorLayer),
   ),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,

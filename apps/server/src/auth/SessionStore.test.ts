@@ -278,6 +278,20 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
+  it.effect("carries a runtime-mode ceiling only on sessions issued with one", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const capped = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        runtimeModeCeiling: "auto",
+      });
+      const uncapped = yield* sessions.issue({ method: "bearer-access-token" });
+
+      expect((yield* sessions.verify(capped.token)).runtimeModeCeiling).toBe("auto");
+      expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
   it.effect("rejects malformed session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

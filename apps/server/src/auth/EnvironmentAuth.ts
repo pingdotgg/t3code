@@ -2,6 +2,8 @@ import {
   AuthAccessTokenType,
   AuthAccessWriteScope,
   AuthAdministrativeScopes,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthStandardClientScopes,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
@@ -18,6 +20,7 @@ import {
   type AuthWebSocketTicketResult,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
@@ -61,6 +64,25 @@ export interface IssuedBearerSession {
   readonly subject: string;
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.Utc;
+}
+
+/**
+ * Sessions an MCP client (an agent T3 Code did not launch) obtains through
+ * OAuth. They are accepted only by `/mcp`, where every action is capped by the
+ * runtime-mode ceiling the user approved; the HTTP API and WebSocket reject
+ * them so an agent token cannot reach the full RPC surface around that cap.
+ */
+const MCP_CLIENT_SUBJECT = "mcp-client";
+export const MCP_CLIENT_SCOPES = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+] as const;
+const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+
+export interface McpClientSession {
+  readonly sessionId: AuthSessionId;
+  readonly label: string;
+  readonly runtimeModeCeiling: RuntimeMode;
 }
 
 export interface AuthenticatedSession {
@@ -406,6 +428,19 @@ export const serverAuthInvalidRequestReason = (
 ): "invalid_scope" | "scope_not_granted" =>
   error._tag === "ServerAuthInvalidScopeError" ? "invalid_scope" : "scope_not_granted";
 
+export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAuthMcpApprovalCodeError>()(
+  "ServerAuthMcpApprovalCodeError",
+  { reason: Schema.Literals(["unknown_or_used", "not_a_pairing_code", "insufficient_scope"]) },
+) {
+  override get message(): string {
+    return this.reason === "insufficient_scope"
+      ? "That pairing code cannot control threads. Create one with the standard scopes."
+      : this.reason === "not_a_pairing_code"
+        ? "That is not a one-time pairing code."
+        : "That pairing code is unknown, expired, or already used.";
+  }
+}
+
 export class ServerAuthForbiddenOperationError extends Schema.TaggedError<ServerAuthForbiddenOperationError>()(
   "ServerAuthForbiddenOperationError",
   {},
@@ -502,6 +537,30 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueStartupPairingUrl: (
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
+    /** Only bearer `mcp-client` sessions; never cookies or proof-bound tokens. */
+    readonly authenticateMcpClient: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    readonly issueMcpClientSession: (input: {
+      readonly label: string;
+      readonly runtimeModeCeiling: RuntimeMode;
+      readonly client: AuthClientMetadata;
+    }) => Effect.Effect<
+      { readonly token: string; readonly expiresAt: DateTime.DateTime },
+      ServerAuthInternalError
+    >;
+    /**
+     * Spends a one-time pairing code as approval for an MCP client. Proof-bound
+     * codes (T3 Connect) are refused without being spent, and desktop bootstrap
+     * grants never qualify.
+     */
+    readonly consumeMcpApprovalCode: (
+      code: string,
+    ) => Effect.Effect<void, ServerAuthMcpApprovalCodeError | ServerAuthInternalError>;
+    /** A browser cookie session only; a bearer header never counts as one. */
+    readonly authenticateBrowserSession: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
   }
 >()("t3/auth/EnvironmentAuth") {}
 
@@ -539,6 +598,15 @@ export function toBootstrapExchangeError(
     cause,
   });
 }
+
+const rejectMcpClientAudience = <S extends { readonly subject: string }>(session: S) =>
+  session.subject === MCP_CLIENT_SUBJECT
+    ? Effect.fail(
+        new ServerAuthInvalidCredentialError({
+          diagnostic: "MCP client sessions are only accepted by the MCP endpoint.",
+        }),
+      ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
+    : Effect.succeed(session);
 
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
@@ -624,6 +692,8 @@ export const make = Effect.gen(function* () {
             )
           : Effect.void,
       ),
+      mapSessionVerificationErrors,
+      Effect.flatMap(rejectMcpClientAudience),
       Effect.map((session) => ({
         sessionId: session.sessionId,
         subject: session.subject,
@@ -632,7 +702,6 @@ export const make = Effect.gen(function* () {
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
       })),
-      mapSessionVerificationErrors,
     );
 
   const authenticateRequest = (
@@ -1079,6 +1148,8 @@ export const make = Effect.gen(function* () {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
         if (websocketTicket && websocketTicket.trim().length > 0) {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
+            mapSessionVerificationErrors,
+            Effect.flatMap(rejectMcpClientAudience),
             Effect.map((session) => ({
               sessionId: session.sessionId,
               subject: session.subject,
@@ -1086,13 +1157,85 @@ export const make = Effect.gen(function* () {
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
-            mapSessionVerificationErrors,
           );
         }
       }
 
       return yield* authenticateRequest(request);
     });
+
+  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
+    const token = parseBearerToken(request);
+    if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
+    return sessions.verify(token).pipe(
+      mapSessionVerificationErrors,
+      Effect.flatMap((session) =>
+        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
+          ? Effect.succeed({
+              sessionId: session.sessionId,
+              label: session.client.label ?? "MCP client",
+              runtimeModeCeiling: session.runtimeModeCeiling ?? "approval-required",
+            } satisfies McpClientSession)
+          : Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic: "Only MCP client sessions are accepted here.",
+              }),
+            ),
+      ),
+      Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
+    );
+  };
+
+  const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
+    sessions
+      .issue({
+        subject: MCP_CLIENT_SUBJECT,
+        method: "bearer-access-token",
+        scopes: MCP_CLIENT_SCOPES,
+        ttl: MCP_CLIENT_SESSION_TTL,
+        runtimeModeCeiling: input.runtimeModeCeiling,
+        client: { ...input.client, label: input.label, deviceType: "bot" },
+      })
+      .pipe(
+        Effect.map((issued) => ({ token: issued.token, expiresAt: issued.expiresAt })),
+        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
+        Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
+      );
+
+  const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
+    request,
+  ) => {
+    const token =
+      request.cookies[sessions.cookieName] ??
+      (sessions.legacyCookieName ? request.cookies[sessions.legacyCookieName] : undefined) ??
+      (devAuth ? request.cookies[devAuth.cookieName] : undefined);
+    if (!token) return Effect.fail(new ServerAuthMissingCredentialError({}));
+    return authenticateToken(token).pipe(
+      Effect.filterOrFail(
+        (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
+        () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
+      ),
+      Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
+    );
+  };
+
+  const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (code) =>
+    // No proof key: a code bound to a T3 Connect client's key fails without being spent.
+    resolveBootstrapGrant(code.trim()).pipe(
+      Effect.catchIf(
+        (error): error is ServerAuthInvalidCredentialError =>
+          error._tag === "ServerAuthInvalidCredentialError",
+        () => Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
+      ),
+      Effect.flatMap((grant) =>
+        grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
+          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+          : MCP_CLIENT_SCOPES.every((scope) => grant.scopes.includes(scope))
+            ? Effect.void
+            : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+      ),
+      Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
+    );
 
   return EnvironmentAuth.of({
     getDescriptor: () =>
@@ -1116,6 +1259,10 @@ export const make = Effect.gen(function* () {
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,
     issueStartupPairingUrl,
+    authenticateMcpClient,
+    issueMcpClientSession,
+    consumeMcpApprovalCode,
+    authenticateBrowserSession,
   });
 });
 
