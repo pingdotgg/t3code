@@ -288,6 +288,22 @@ function escapeLength(input: string, index: number): number {
 
 const penTransitions = new Map<string, string>();
 
+/** CSI parameters as numbers. Colon sub-parameters (`38:2::r:g:b`) carry an optional
+    colour-space id that the semicolon form (`38;2;r;g;b`) has no slot for. */
+function csiParams(params: string): Array<number> {
+  const numbers: Array<number> = [];
+  for (const part of params.split(";")) {
+    if (!part.includes(":")) {
+      numbers.push(Number(part));
+      continue;
+    }
+    const sub = part.split(":").map(Number);
+    if ((sub[0] === 38 || sub[0] === 48) && sub[1] === 2 && sub.length >= 6) sub.splice(2, 1);
+    numbers.push(...sub);
+  }
+  return numbers;
+}
+
 /** A mutable copy of the screen, for applying one chunk. */
 class Terminal {
   settled: string;
@@ -296,6 +312,8 @@ class Terminal {
   col: number;
   pen: string;
   saved: { row: number; col: number } | null;
+  /** Output was discarded on purpose (scrollback cleared or window over budget). */
+  dropped = false;
 
   constructor(screen: TerminalScreen) {
     this.settled = screen.settled;
@@ -331,7 +349,7 @@ class Terminal {
   csi(params: string, final: string): void {
     const private_ = params.startsWith("?") || params.startsWith(">") || params.startsWith("=");
     if (private_) return; // Mode switches (cursor visibility, bracketed paste).
-    const numbers = params === "" ? [] : params.replaceAll(":", ";").split(";").map(Number);
+    const numbers = params === "" ? [] : csiParams(params);
     const count = Math.max(1, numbers[0] || 1);
     switch (final) {
       case "m": {
@@ -377,6 +395,10 @@ class Terminal {
         } else if (mode === 1) {
           for (let row = 0; row < this.row; row += 1) this.lines[row] = [];
           this.lines[this.row] = eraseLine(this.lines[this.row]!, this.col, 1);
+        } else if (mode === 3) {
+          // Clear scrollback: what already scrolled out goes, the window stays.
+          if (this.settled !== "") this.dropped = true;
+          this.settled = "";
         } else {
           // A cleared screen starts the window over; what scrolled out stays.
           this.lines = [[]];
@@ -503,6 +525,18 @@ export function appendTerminalOutput(
     }
     return sliceLine(line, length - maxChars, length);
   });
+  // The window as a whole stays within the tail too: oldest lines scroll out early.
+  let windowChars = terminal.lines.reduce((total, line) => total + lineLength(line), 0);
+  while (windowChars > maxChars && terminal.row > 0) {
+    const line = terminal.lines.shift()!;
+    windowChars -= lineLength(line);
+    terminal.settled += `${serializeLine(line)}\n`;
+    terminal.row -= 1;
+    if (terminal.saved !== null) {
+      terminal.saved = { ...terminal.saved, row: Math.max(0, terminal.saved.row - 1) };
+    }
+  }
+  if (terminal.dropped) truncated = true;
   const settled = terminalOutputTail(terminal.settled, maxChars);
   const window = terminal.lines.map(serializeLine).join("\n");
   const tail = terminalOutputTail(settled.text + window, maxChars);

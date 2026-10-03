@@ -101,6 +101,33 @@ describe("appendTerminalOutput", () => {
   });
 });
 
+describe("appendTerminalOutput edge cases from review", () => {
+  it("reads colon-form true colour with or without a colour-space id", () => {
+    const red = normalizeTerminalOutput("\u001b[38:2::255:0:0mR").text;
+    expect(red).toBe("\u001b[0;38;2;255;0;0mR\u001b[0m");
+    expect(normalizeTerminalOutput("\u001b[38:2:0:255:0:0mR").text).toBe(red);
+  });
+
+  it("clears only scrollback on ESC[3J", () => {
+    const lines = Array.from({ length: 70 }, (_, index) => `line ${index}`).join("\n");
+    const state = feed([lines, "\u001b[3J"]);
+    expect(state.text.startsWith("line 6\n")).toBe(true);
+    expect(state.text.endsWith("line 69")).toBe(true);
+    expect(state.truncated).toBe(true);
+  });
+
+  it("keeps the whole window within the tail when every line is long", () => {
+    const long = `${"x".repeat(900)}\n`;
+    const state = feed([long.repeat(64)], 4_096);
+    const windowChars = state.screen.lines.reduce(
+      (total, line) => total + line.reduce((sum, run) => sum + run.text.length, 0),
+      0,
+    );
+    expect(windowChars).toBeLessThanOrEqual(4_096);
+    expect(state.text.length).toBeLessThanOrEqual(4_096);
+  });
+});
+
 describe("terminalOutputResumeText", () => {
   it("lets a viewer that starts from it apply later chunks exactly as the source does", () => {
     // Mid-redraw: cursor two lines up, a colour on, and half an escape pending.
