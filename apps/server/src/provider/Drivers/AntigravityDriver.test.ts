@@ -20,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -248,6 +249,12 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Unexpected quota request")),
+    ),
+  ),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({

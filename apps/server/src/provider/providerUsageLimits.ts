@@ -127,7 +127,14 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
-  if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
+  // A failed read for another credential cannot inherit the old account's allowance.
+  if (
+    probed?.unavailable?.reason === "probeFailed" &&
+    published &&
+    !published.unavailable &&
+    (probed.credentialFingerprint === undefined ||
+      probed.credentialFingerprint === published.credentialFingerprint)
+  ) {
     return published;
   }
   return probed;

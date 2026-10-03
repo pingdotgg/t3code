@@ -68,6 +68,10 @@ the dialog.
 
 ## Track subscription limits
 
+Antigravity reports the remaining Gemini and Claude/GPT allowances on five-hour
+and weekly windows for each instance signed in with a personal Google account.
+Other Antigravity sign-in methods do not report subscription limits.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

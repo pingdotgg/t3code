@@ -79,6 +79,23 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it("does not reuse successful quotas from another credential after a failed probe", () => {
+    const accountA = { ...published, credentialFingerprint: "account-a" };
+    const failed = {
+      checkedAt,
+      windows: [],
+      credentialFingerprint: "account-b",
+      unavailable: { reason: "probeFailed" as const },
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: accountA, probed: failed })).toBe(failed);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: accountA,
+        probed: { ...failed, credentialFingerprint: "account-a" },
+      }),
+    ).toBe(accountA);
+  });
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };

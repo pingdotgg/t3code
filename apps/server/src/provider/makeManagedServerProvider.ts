@@ -49,7 +49,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
-    readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+    readonly publishSnapshot: (
+      snapshot: ServerProvider,
+      options?: { readonly replaceUsageLimits: boolean },
+    ) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
@@ -79,14 +82,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
     generation: number,
     nextSnapshot: ServerProvider,
+    options?: { readonly replaceUsageLimits: boolean },
   ) {
     const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
       if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
       // Enrichment derives from the snapshot it was handed; a runtime usage
-      // update that landed since must not be reverted by it.
-      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      // update that landed since must not be reverted by it. Providers whose
+      // enrichment owns usage state can explicitly replace or clear it.
+      const merged = withUsageLimits(
+        nextSnapshot,
+        options?.replaceUsageLimits ? nextSnapshot.usageLimits : state.snapshot.usageLimits,
+      );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
@@ -117,7 +125,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         settings,
         snapshot,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-        publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+        publishSnapshot: (nextSnapshot, options) =>
+          publishEnrichedSnapshot(generation, nextSnapshot, options),
       })
       .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
 

@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/unstable/http";
 import type { AcpError } from "effect-acp/errors";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -53,6 +54,7 @@ import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/Antigr
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
+import { makeAntigravityUsageLimits } from "../Layers/antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
@@ -74,6 +76,7 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
   | ModelManifest.ModelManifest
   | Path.Path
@@ -90,6 +93,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
+      const httpClient = yield* HttpClient.HttpClient;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -381,9 +385,21 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         };
       });
 
+      const usageLimits = yield* makeAntigravityUsageLimits({
+        enabled,
+        authMethod: auth.authMethod,
+        tokenPath: path.join(profileDirectory, "antigravity-acp", "acp_token.json"),
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
+        usageLimits: usageLimits.read.pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        ),
+        usageLimitsCredentialFingerprint: usageLimits.credentialFingerprint,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
