@@ -3039,6 +3039,36 @@ it.effect(
     }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
+it.effect("update pins an unbound task's post-update runtime mode", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const { task: unbound } = yield* tasks.upsert({
+      ...boundTaskInput,
+      threadId: null,
+      enabled: false,
+      runtimeMode: "approval-required",
+    });
+    // An unbound task runs under its stored modes, so the pin describes the
+    // mode this update writes, not the one it replaces.
+    const elevated = yield* tasks.update({
+      id: unbound.id,
+      projectId: unbound.projectId,
+      runtimeMode: "full-access",
+      expectedExecutionRuntimeMode: "full-access",
+    });
+    assert.equal(Option.getOrThrow(elevated).task.runtimeMode, "full-access");
+    const stalePin = yield* tasks
+      .update({
+        id: unbound.id,
+        projectId: unbound.projectId,
+        runtimeMode: "approval-required",
+        expectedExecutionRuntimeMode: "full-access",
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(stalePin));
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
 it.effect("upsert rejects when the bound destination's modes drifted since authorization", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService.ScheduledTaskService;

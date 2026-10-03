@@ -1671,7 +1671,7 @@ export const layer = Layer.effect(
                 taskId: input.id,
                 projectId: nextProjectId,
                 threadId: nextThreadId,
-                task: existing,
+                task: { ...existing, runtimeMode: input.runtimeMode ?? existing.runtimeMode },
                 ...(input.expectedExecutionRuntimeMode === undefined
                   ? {}
                   : { expectedExecutionRuntimeMode: input.expectedExecutionRuntimeMode }),
