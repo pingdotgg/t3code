@@ -1,24 +1,13 @@
 /**
- * ProviderRuntimeLiveness - what the provider runtime has told us about each
- * thread, observed *ahead* of the durable projection.
+ * ProviderRuntimeLiveness - which turns the provider has reported settled,
+ * observed ahead of the durable projection.
  *
- * Adapters flip their in-memory session to idle before they emit the matching
- * terminal event (`OpenCodeAdapter.finishTurn` clears `activeTurnId`, then emits
- * `turn.completed`), so between those two points `providerService.listSessions()`
- * and the durable `thread.session` disagree even though nothing went wrong. A
- * reconciler comparing the two (see ProviderSessionReaper) needs to know whether
- * the provider already reported a terminal outcome for the turn the projection
- * still calls active — otherwise a healthy turn that finished seconds ago is
- * indistinguishable from a lost session.
+ * Adapters flip their session to idle *before* emitting the matching terminal
+ * event, so between those two points the live session and the projection
+ * disagree even though nothing went wrong. A reconciler comparing the two (see
+ * ProviderSessionReaper) needs to tell that apart from a genuinely lost session.
  *
- * `record` runs in the same sequential chain immediately *before*
- * `publishRuntimeEvent`, so an observation is never behind the projection for
- * the same event. The lag this exists to absorb is entirely downstream: the
- * bounded runtime bus and the single orchestration command worker, both of
- * which sit after `record`.
- *
- * State is in-memory and intentionally not persisted: it describes what the
- * *running* process has observed, and a fresh process has observed nothing.
+ * In-memory by design: a fresh process has observed nothing.
  *
  * @module ProviderRuntimeLiveness
  */
@@ -32,13 +21,7 @@ export interface ProviderThreadRuntimeObservation {
 }
 
 export interface ProviderRuntimeLivenessShape {
-  /**
-   * Record one provider runtime event. Called on the single ingestion funnel
-   * before the event is published to orchestration.
-   *
-   * Only turn lifecycle events carry information here, so callers should filter
-   * first — see `isLifecycleEvent`.
-   */
+  /** Records one event. Callers must filter with `isLifecycleEvent` first. */
   readonly record: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
 
   /** Latest observation for a thread, or `null` when nothing was observed. */
@@ -46,12 +29,9 @@ export interface ProviderRuntimeLivenessShape {
 }
 
 /**
- * Event types that change what the ledger knows: which turn the provider last
- * announced, and which turns it has reported settled.
- *
- * Everything else — `content.delta`, `message.part.updated`, `task.progress` —
- * carries nothing the ledger reads. Filtering at the ingestion funnel keeps the
- * per-event cost of this ledger off the streaming hot path entirely.
+ * The only events that change what the ledger knows. Streaming traffic
+ * (`content.delta`, `message.part.updated`, …) carries none of it, so filtering
+ * keeps this ledger off the hot path.
  */
 export const isLifecycleEvent = (event: ProviderRuntimeEvent): boolean =>
   event.type === "turn.started" || event.type === "turn.completed" || event.type === "turn.aborted";

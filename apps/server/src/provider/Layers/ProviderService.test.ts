@@ -71,8 +71,7 @@ import {
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
-// Production provides the shared runtime-liveness ledger from the runtime
-// layer; tests build the service standalone, so supply it here.
+// Production provides this from the runtime layer; standalone tests supply it.
 const makeProviderServiceLive = (options?: Parameters<typeof makeProviderServiceLiveBase>[0]) =>
   makeProviderServiceLiveBase(options).pipe(Layer.provide(ProviderRuntimeLivenessLive));
 
@@ -2502,9 +2501,8 @@ it.effect("ProviderServiceLive records runtime liveness before publishing events
       const collector = yield* Stream.runForEach(provider.streamEvents, (event) =>
         Effect.gen(function* () {
           if (event.type === "turn.completed") {
-            // The ledger must already know the turn is settled by the time any
-            // subscriber sees the terminal event, otherwise a reconciler reading
-            // it can still mistake that turn for a lost session.
+            // The ledger must know the turn is settled before any subscriber
+            // sees the terminal event.
             const observation = yield* liveness.observe(threadId);
             yield* Ref.set(settledAtDelivery, new Set(observation?.settledTurns.keys() ?? []));
           }
@@ -2530,13 +2528,10 @@ it.effect("ProviderServiceLive records runtime liveness before publishing events
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-// Regression: the bounded runtime bus applies backpressure, and `ProviderService`
-// consumes each adapter with a single sequential `Stream.runForEach`. Recording
-// inline in that chain meant a `publish` suspended on event N also prevented
-// event N+1 from being recorded, so a terminal event could sit unrecorded for as
-// long as the backlog lasted — unbounded, which no grace window can cover.
-// Liveness therefore records on its own fiber and must advance even while a
-// subscriber has the delivery path wedged.
+// Regression: recording inline in the sequential per-adapter consumer meant a
+// publish suspended on event N also blocked event N+1 from being recorded, so a
+// terminal event could stay unrecorded as long as the backlog lasted. Liveness
+// must record on its own fiber, even while a subscriber wedges delivery.
 it.effect("ProviderServiceLive records terminal liveness while a subscriber wedges delivery", () =>
   Effect.gen(function* () {
     const { pi, providerLayer } = makePiProviderServiceLayer();
@@ -2560,13 +2555,10 @@ it.effect("ProviderServiceLive records terminal liveness while a subscriber wedg
       yield* Stream.runForEach(provider.streamEvents, () => Effect.never).pipe(Effect.forkScoped);
       yield* sleep(50);
 
-      // A burst large enough to wedge delivery many times over, terminated by
-      // the turn completion whose settle the reaper depends on.
-      //
-      // The burst uses non-terminal lifecycle events deliberately. Streaming
-      // events are filtered before reaching the ledger, so only lifecycle
-      // traffic can both wedge delivery and still need recording; a delta burst
-      // would let this test pass even against the old coupled implementation.
+      // Non-terminal lifecycle events deliberately: streaming events are
+      // filtered before the ledger, so only lifecycle traffic can both wedge
+      // delivery and still need recording. A delta burst would let this test
+      // pass even against the coupled implementation it disproves.
       for (let index = 0; index < 8_000; index += 1) {
         pi.emit({
           eventId: asEventId(`evt-liveness-burst-${index}`),

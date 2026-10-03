@@ -279,11 +279,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   // Delivery carries the adapter identity because the Pi resume-cursor write
   // below is provider-scoped and must run before that event publishes.
   const dispatchQueue = yield* Queue.unbounded<[ProviderEventSource, ProviderRuntimeEvent]>();
-  yield* Effect.forkScoped(
-    Stream.fromQueue(livenessQueue).pipe(
-      Stream.runForEach((event) => runtimeLiveness.record(event)),
-    ),
-  );
 
   const getInstance = (instanceId: ProviderInstanceId) =>
     registry
@@ -400,29 +395,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
         }).pipe(
-          // Hand the event to BOTH consumers as non-blocking offers, then let
-          // each dedicated fiber do its own work. Nothing in this fiber ever
-          // suspends on delivery, so a backlog cannot delay the next event.
+          // Both offers are non-blocking (unbounded queues, sole producer), so a
+          // backpressured `publish` can never stop the next event being recorded.
+          // Doing this work inline in the sequential consumer could not: a
+          // suspended publish on event N also blocked event N+1 from being
+          // recorded, so a terminal event could stay unrecorded for as long as
+          // the backlog lasted — which no grace window can cover.
           //
-          // This ordering is deliberate. Recording inline in this sequential
-          // chain was not enough: `Stream.runForEach` processes one event at a
-          // time, so a `publish` suspended by backpressure on event N meant
-          // event N+1 was not offered to the liveness queue either. A terminal
-          // event could then sit unrecorded for as long as the backlog lasted —
-          // unbounded, so no grace window can cover it. Separate fibers with
-          // independent unbounded queues remove that coupling entirely.
-          //
-          // FIFO drain preserves per-consumer ordering, which matters for both:
-          // subscribers depend on delivery order, and `lastStartedTurnId`
-          // attributes turnId-less terminal events to the last announced turn.
-          // The Pi resume cursor still persists before its event publishes.
-          // Neither offer can suspend (both queues are unbounded and this
-          // consumer is the only producer), so nothing here can be starved by
-          // delivery backpressure — that decoupling is the point.
-          //
-          // Liveness is filtered to lifecycle events: the ledger reads nothing
-          // from streaming traffic, which is orders of magnitude larger than
-          // lifecycle traffic. This keeps the ledger entirely off the hot path.
+          // FIFO drain preserves ordering for both consumers: subscribers depend
+          // on delivery order, and `lastStartedTurnId` attribution needs it.
           Effect.andThen(
             isLifecycleEvent(canonicalEvent)
               ? Queue.offer(livenessQueue, canonicalEvent)
@@ -468,11 +449,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     );
 
-  // Sequential per-adapter consumers now only enqueue; these fibers own the
-  // work. The ledger is recorded first so it still leads the projection, and
-  // neither fiber can be stalled by the other's backpressure.
+  // Exactly one fiber per queue: `Queue` distributes rather than broadcasts, so a
+  // second drainer would split events across both and break the ordering
+  // `lastStartedTurnId` attribution depends on.
   yield* Effect.forkScoped(
-    Stream.fromQueue(livenessQueue).pipe(Stream.runForEach((e) => runtimeLiveness.record(e))),
+    Stream.fromQueue(livenessQueue).pipe(
+      Stream.runForEach((event) => runtimeLiveness.record(event)),
+    ),
   );
   yield* Effect.forkScoped(
     Stream.fromQueue(dispatchQueue).pipe(
