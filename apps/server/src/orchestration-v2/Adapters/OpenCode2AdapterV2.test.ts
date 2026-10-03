@@ -48,6 +48,10 @@ import * as ProviderContinuationRequests from "../ProviderContinuationRequests.t
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { OPENCODE_2_STILL_STOPPING } from "./OpenCode2AdapterV2.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
+import {
+  makeProviderReplayGate,
+  type ProviderReplayGate,
+} from "../testkit/ProviderReplayGate.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
@@ -64,12 +68,18 @@ const reply = (operation: string, data: unknown): ProviderReplayEntry => ({
   frame: { type: "sdk.response", operation, data },
 });
 const replyData = (operation: string, data: unknown) => reply(operation, { data });
-const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry => ({
+const event = (
+  type: string,
+  data: Record<string, unknown>,
+  /** Holds the event until a test's replay gate releases this label. */
+  label?: string,
+): ProviderReplayEntry => ({
   type: "emit_inbound",
   frame: {
     type: "sdk.event",
     event: { id: `evt_${type.replaceAll(".", "")}0000`, created: 1, type, data, ...durable },
   },
+  ...(label === undefined ? {} : { label }),
 });
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
@@ -313,7 +323,11 @@ const colorForm = {
  */
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly supervised?: boolean },
+  options?: {
+    readonly external?: boolean;
+    readonly supervised?: boolean;
+    readonly replayGate?: ProviderReplayGate;
+  },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
@@ -332,7 +346,10 @@ const resumed = (
           : []),
         ...entries,
       ]),
-      options?.external === undefined ? undefined : { external: options.external },
+      {
+        ...(options?.external === undefined ? {} : { external: options.external }),
+        ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
+      },
     );
     const thread = yield* runtime.resumeThread({
       providerThread: providerThread(yield* DateTime.now),
@@ -1434,6 +1451,40 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("still checks the server when a failed prompt's execution starts late", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        // The request failed, but the server took the prompt: its execution
+        // starts only after the turn already failed.
+        reply("session.prompt", {
+          status: 502,
+          body: { _tag: "UnknownError", message: "bad gateway" },
+        }),
+        event("session.execution.started", { sessionID: SESSION }),
+        // That run is still going, so the next turn stops it and fails.
+        out("session.active"),
+        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const ended = yield* terminals(runtime, 2);
+      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
+      // The late start has been read.
+      yield* Deferred.await(offered);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.equal(first?.status, "failed");
+      assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("prompts again without a check after the server refused a prompt", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -1471,6 +1522,123 @@ describe("OpenCode2 adapter", () => {
       const [, second] = yield* Fiber.join(ended);
       assert.equal(second?.status, "failed");
       assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("ends a background reply's continuation after a lost stream took a Stop's end", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const gate = makeProviderReplayGate(["drop", "reply"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD),
+          // Restarting the turn stops only the parent, and the server never answers.
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", "<hang>"),
+          // The restarted turn finds the parent still stopping and fails.
+          out("session.active"),
+          replyData("session.active", { [SESSION]: { type: "running" } }),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          // The stream drops before the parent's end; the reconnect finds it idle.
+          event("session.usage.updated", { sessionID: SESSION }, "drop"),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [CHILD]: { type: "running" } }),
+          out("permission.list", { sessionID: CHILD }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: CHILD }),
+          replyData("session.form.list", []),
+          // The subagent ends and OpenCode answers its report on its own.
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`,
+                description: "Sleep",
+                metadata: {
+                  source: "subagent",
+                  childID: CHILD,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event(
+            "session.text.ended",
+            {
+              sessionID: SESSION,
+              assistantMessageID: "msg_followup",
+              ordinal: 0,
+              text: "CHILD_OK",
+            },
+            "reply",
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          // The subagent's session runs again: its turn marks that the reply's end was handled.
+          event("session.execution.started", { sessionID: CHILD }),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      // The single reader of the runtime's events.
+      const attached = yield* Deferred.make<void>();
+      const collected = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "subagent.updated" && event.subagent.childThreadId !== null
+            ? Deferred.succeed(attached, undefined)
+            : Effect.void,
+        ),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId?.startsWith(`${CHILD}:turn:`) === true,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(attached);
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("11 seconds");
+      yield* Fiber.join(interrupt);
+      yield* runtime.startTurn({ ...secondTurn(thread), appThread: withLineage(thread).appThread });
+      gate.release("drop");
+      yield* Deferred.await(offered);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runId: RunId.make("run:opencode2-adapter:wake"),
+        runOrdinal: 3,
+        providerTurnOrdinal: 3,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:wake"),
+        message: {
+          ...turnInput(thread).message,
+          messageId: MessageId.make("message:opencode2-adapter:wake"),
+          createdBy: "agent" as const,
+          creationSource: "provider" as const,
+        },
+      });
+      gate.release("reply");
+      // The reply's own end finishes its continuation: the lost Stop's end does not take it.
+      assert.deepEqual(
+        [...(yield* Fiber.join(collected))].flatMap((event) =>
+          event.type === "turn.terminal" ? [event.status] : [],
+        ),
+        ["interrupted", "failed", "completed"],
+      );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
