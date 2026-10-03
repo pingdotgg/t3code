@@ -189,7 +189,9 @@ export class WorkspaceFileSystem extends Context.Service<
      *
      * Creates parent directories as needed and rejects paths that escape the
      * workspace root. With `replaceLines`, rewrites only that range of an existing
-     * file and fails with `WorkspaceFileLinesChangedError` if it moved.
+     * file and fails with `WorkspaceFileLinesChangedError` if it moved. That check
+     * holds against other writes through this service only, not against processes
+     * writing the file directly.
      */
     readonly writeFile: (
       input: ProjectWriteFileInput,
