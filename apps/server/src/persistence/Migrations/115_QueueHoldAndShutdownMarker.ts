@@ -23,8 +23,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // table_xinfo, not table_info: generated columns are hidden from table_info,
+  // so a table_info guard re-runs ADD COLUMN and trips a duplicate-column error.
   const threadColumns = yield* sql<{ readonly name: string }>`
-    PRAGMA table_info(projection_threads)
+    PRAGMA table_xinfo(projection_threads)
   `;
 
   if (!threadColumns.some((column) => column.name === "queue_held_at")) {
@@ -35,7 +37,7 @@ export default Effect.gen(function* () {
   }
 
   const queuedTurnColumns = yield* sql<{ readonly name: string }>`
-    PRAGMA table_info(projection_queued_turns)
+    PRAGMA table_xinfo(projection_queued_turns)
   `;
 
   if (!queuedTurnColumns.some((column) => column.name === "queue_position")) {

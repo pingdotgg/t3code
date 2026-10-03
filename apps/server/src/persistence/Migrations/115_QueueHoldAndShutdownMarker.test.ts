@@ -4,7 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
-import migration from "./113_QueueHoldAndShutdownMarker.ts";
+import migration from "./115_QueueHoldAndShutdownMarker.ts";
 
 const withMemoryDb = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(NodeSqliteClient.layerMemory()));
@@ -12,7 +12,7 @@ const withMemoryDb = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
 const columnsOf = (table: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql<{ readonly name: string }>`PRAGMA table_info(${sql(table)})`;
+    return yield* sql<{ readonly name: string }>`PRAGMA table_xinfo(${sql(table)})`;
   });
 
 const seedQueuedTurn = Effect.fnUntraced(function* (input: {
@@ -61,7 +61,7 @@ const readPositions = (threadId: string) =>
 it.effect("adds the queue columns and shutdown marker during a normal upgrade", () =>
   withMemoryDb(
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 112 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       yield* migration;
 
       assert.isTrue(
@@ -84,7 +84,7 @@ it.effect("adds the queue columns and shutdown marker during a normal upgrade", 
 it.effect("is idempotent when replayed against an already-migrated database", () =>
   withMemoryDb(
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 112 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       yield* migration;
       yield* migration;
 
@@ -104,7 +104,7 @@ it.effect("is idempotent when replayed against an already-migrated database", ()
 it.effect("backfills queue_position from existing creation order per thread", () =>
   withMemoryDb(
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 112 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       // Newest first on purpose: the backfill must reassign positions by
       // creation order, not preserve insertion order.
       yield* seedQueuedTurn({
@@ -146,7 +146,7 @@ it.effect("backfills queue_position from existing creation order per thread", ()
 it.effect("breaks same-timestamp ties deterministically by queued turn id", () =>
   withMemoryDb(
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 112 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       const sameInstant = "2026-01-01T00:00:00Z";
       for (const id of ["turn-z", "turn-m", "turn-a"]) {
         yield* seedQueuedTurn({ queuedTurnId: id, threadId: "thread-1", createdAt: sameInstant });

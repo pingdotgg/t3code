@@ -267,6 +267,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     id: message.id,
     role: message.role,
     text: message.text,
+    ...(message.context !== undefined ? { context: message.context } : {}),
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
@@ -299,6 +300,7 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     files: checkpoint.files.map((file) => ({ ...file })),
     agentTouchedPaths: [...(checkpoint.agentTouchedPaths ?? [])],
     turnFiles: (checkpoint.turnFiles ?? []).map((file) => ({ ...file })),
+    transitionFiles: (checkpoint.transitionFiles ?? []).map((file) => ({ ...file })),
   };
 }
 
@@ -1557,6 +1559,7 @@ function updateThreadMessageState(
               : {}),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
           ...(incoming.origin !== undefined ? { origin: incoming.origin } : {}),
+          ...(incoming.context !== undefined ? { context: incoming.context } : {}),
         };
 
   let nextMessageIds = messageIds;
@@ -2341,6 +2344,7 @@ function applyEnvironmentOrchestrationEvent(
           files: event.payload.files,
           agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
           turnFiles: event.payload.turnFiles ?? [],
+          transitionFiles: event.payload.transitionFiles ?? [],
           assistantMessageId: event.payload.assistantMessageId,
           completedAt: event.payload.completedAt,
         });
@@ -2543,7 +2547,13 @@ function applyEnvironmentOrchestrationEvent(
           queuedTurn.id === event.payload.queuedTurnId
             ? {
                 ...queuedTurn,
-                message: { ...queuedTurn.message, text: event.payload.text },
+                message: {
+                  ...queuedTurn.message,
+                  text: event.payload.text,
+                  ...(event.payload.context !== undefined
+                    ? { context: event.payload.context }
+                    : {}),
+                },
                 updatedAt: event.payload.updatedAt,
                 failedAt: null,
                 failureMessage: null,

@@ -11,6 +11,7 @@ import {
   clientSourceFingerprint,
 } from "../../scripts/lib/client-build.ts";
 import { fileURLToPath } from "node:url";
+import { createDevProxyConfig, resolveDevProxyTarget } from "./src/vite/devProxy.ts";
 
 const repoEnv = loadRepoEnv();
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -21,8 +22,9 @@ Object.assign(process.env, repoEnv);
 
 const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
-const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
-const configuredWsUrl = process.env.VITE_WS_URL?.trim();
+const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
+const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
+const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim();
 const configuredCliOAuthClientId = repoEnv.VITE_CLERK_CLI_OAUTH_CLIENT_ID?.trim();
 const configuredHostedAppUrl = repoEnv.VITE_HOSTED_APP_URL?.trim();
@@ -35,28 +37,13 @@ const buildSourcemap =
       ? "hidden"
       : true;
 
-function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
-  if (!wsUrl) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(wsUrl);
-    if (url.protocol === "ws:") {
-      url.protocol = "http:";
-    } else if (url.protocol === "wss:") {
-      url.protocol = "https:";
-    }
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
+const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
+const devProxyConfig = createDevProxyConfig(devProxyTarget);
+const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0);
+const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
 export default defineConfig({
   plugins: [
@@ -134,31 +121,11 @@ export default defineConfig({
     host,
     port,
     strictPort: true,
-    ...(devProxyTarget
-      ? {
-          proxy: {
-            "/.well-known": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-            "/api": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-            "/attachments": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-          },
-        }
-      : {}),
-    hmr: {
-      // Explicit config so Vite's HMR WebSocket connects reliably
-      // inside Electron's BrowserWindow. Vite 8 uses console.debug for
-      // connection logs — enable "Verbose" in DevTools to see them.
-      protocol: "ws",
-      host,
-    },
+    allowedHosts,
+    ...(devProxyConfig ? { proxy: devProxyConfig } : {}),
+    // Pin Electron's HMR endpoint, but let browser dev derive it from the page
+    // origin so remote clients don't try to connect to their own localhost.
+    ...(isSingleOriginDev ? {} : { hmr: { protocol: "ws" as const, host } }),
   },
   build: {
     outDir: "dist",

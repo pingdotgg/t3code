@@ -125,6 +125,7 @@ describe("thread markdown export", () => {
           files: [{ path: "src/export.ts", kind: "modified", additions: 10, deletions: 2 }],
           agentTouchedPaths: ["src/export.ts"],
           turnFiles: [{ path: "src/export.ts", kind: "modified", additions: 10, deletions: 2 }],
+          transitionFiles: [],
           assistantMessageId: MessageId.make("message-assistant-1"),
           completedAt: "2026-06-01T07:01:05.000Z",
         },

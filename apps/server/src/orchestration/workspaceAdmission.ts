@@ -94,6 +94,18 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     command.type === "thread.create" ||
     command.type === "thread.turn.start" ||
     command.type === "thread.queued-turn.dispatch";
+  // handoff/meta.update keep the full path below: their project-checkout
+  // rejection depends on the Git probing. Every other non-execution command
+  // (notably high-volume activity appends) ignores all probed values, so
+  // return before any filesystem/Git work: each probe costs a subprocess,
+  // and under load those subprocesses serialize on the dispatch path.
+  const needsWorkspacePreparation =
+    isExecutionCommand ||
+    command.type === "thread.workspace.handoff" ||
+    command.type === "thread.meta.update";
+  if (!needsWorkspacePreparation) {
+    return { command, worktreePath: null, branch: null, honoredProjectCheckout: false };
+  }
   const createThread =
     command.type === "thread.create"
       ? command
@@ -161,7 +173,9 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     if (isProjectCheckout && isExecutionCommand && gitRoot !== null) {
       // Treat legacy/root bindings as an isolation request. This preserves
       // the user's turn and recovery path while ensuring the human checkout
-      // is never admitted as the writer's workspace.
+      // is never admitted as the writer's workspace. Non-execution commands
+      // (handoff/meta.update) keep the rejection below: they must never
+      // claim the human's main checkout.
     } else if (isProjectCheckout) {
       return yield* new OrchestrationCommandInvariantError({
         commandType: command.type,
@@ -179,6 +193,9 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
   }
 
   if (!isExecutionCommand) {
+    // handoff/meta.update without a path involved: nothing to allocate,
+    // honor, or reject. Execution commands always carry a threadId and
+    // continue to isolated allocation below.
     return {
       command,
       worktreePath: null,
@@ -187,17 +204,7 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     };
   }
 
-  let threadId: string | undefined;
-  switch (command.type) {
-    case "thread.create":
-    case "thread.turn.start":
-    case "thread.queued-turn.dispatch":
-      threadId = command.threadId;
-      break;
-  }
-  if (threadId === undefined) {
-    return { command, worktreePath: null, branch: null, honoredProjectCheckout: false };
-  }
+  const threadId: string = command.threadId;
   if (gitRoot === null) {
     return yield* new OrchestrationCommandInvariantError({
       commandType: command.type,

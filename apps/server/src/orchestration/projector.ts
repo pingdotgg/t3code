@@ -31,7 +31,7 @@ import {
   resolveInitialThreadPullRequest,
   selectRetainedMessageIds,
   shouldPreserveActiveMessageId,
-  terminalTurnStateForSessionStatus,
+  reconcileLatestTurnWithSession,
 } from "./projection/ProjectionPolicy.ts";
 import {
   MessageSentPayloadSchema,
@@ -97,35 +97,7 @@ function latestTurnFromSession(
   thread: OrchestrationThread,
   session: OrchestrationSession,
 ): OrchestrationThread["latestTurn"] {
-  if (session.status === "running" && session.activeTurnId !== null) {
-    return {
-      turnId: session.activeTurnId,
-      state: "running",
-      requestedAt:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? thread.latestTurn.requestedAt
-          : session.updatedAt,
-      startedAt:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? (thread.latestTurn.startedAt ?? session.updatedAt)
-          : session.updatedAt,
-      completedAt: null,
-      assistantMessageId:
-        thread.latestTurn?.turnId === session.activeTurnId
-          ? thread.latestTurn.assistantMessageId
-          : null,
-    };
-  }
-
-  if (thread.latestTurn?.state === "running") {
-    return {
-      ...thread.latestTurn,
-      state: terminalTurnStateForSessionStatus(session.status),
-      completedAt: session.updatedAt,
-    };
-  }
-
-  return thread.latestTurn;
+  return reconcileLatestTurnWithSession(thread.latestTurn, session);
 }
 
 function updateThread(
@@ -802,6 +774,7 @@ export function projectEvent(
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             ...(payload.origin !== undefined ? { origin: payload.origin } : {}),
+            ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
             createdAt: payload.createdAt,
@@ -831,6 +804,12 @@ export function projectEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    // Deltas that omit context must not drop the established binding.
+                    ...(message.context !== undefined
+                      ? { context: message.context }
+                      : entry.context !== undefined
+                        ? { context: entry.context }
+                        : {}),
                   }
                 : entry,
             )
@@ -1018,7 +997,15 @@ export function projectEvent(
             queuedTurn.id === payload.queuedTurnId
               ? {
                   ...queuedTurn,
-                  message: { ...queuedTurn.message, text: payload.text },
+                  message: {
+                    ...queuedTurn.message,
+                    text: payload.text,
+                    ...(payload.context !== undefined
+                      ? { context: payload.context }
+                      : queuedTurn.message.context !== undefined
+                        ? { context: queuedTurn.message.context }
+                        : {}),
+                  },
                   ...(payload.origin !== undefined ? { origin: payload.origin } : {}),
                   updatedAt: payload.updatedAt,
                   failedAt: null,
@@ -1170,6 +1157,7 @@ export function projectEvent(
             files: payload.files,
             agentTouchedPaths: payload.agentTouchedPaths,
             turnFiles: payload.turnFiles,
+            transitionFiles: payload.transitionFiles,
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },

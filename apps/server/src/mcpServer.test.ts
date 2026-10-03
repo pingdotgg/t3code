@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { __testing, startMcpHttpServer } from "./mcpServer.ts";
+import { __testing, resolveMcpCliInvocation, startMcpHttpServer } from "./mcpServer.ts";
 
 const run = async (command: string, args: ReadonlyArray<string>, cwd: string) => {
   const result = await new Promise<{ readonly code: number | null; readonly stderr: string }>(
@@ -3235,5 +3235,49 @@ describe("switch_workspace MCP tool", () => {
       await rm(root, { recursive: true, force: true });
       await rm(other, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveMcpCliInvocation", () => {
+  const runtime = { execPath: "/usr/bin/node", entryPath: "/srv/t3.js" } as const;
+
+  it("runs this process's entry point when no override is set", () => {
+    expect(resolveMcpCliInvocation({}, runtime)).toEqual({
+      cliCommand: "/usr/bin/node",
+      cliArgsPrefix: ["/srv/t3.js"],
+    });
+  });
+
+  it("falls back to bare t3 when there is no entry point", () => {
+    expect(
+      resolveMcpCliInvocation({}, { execPath: "/usr/bin/node", entryPath: undefined }),
+    ).toEqual({ cliCommand: "t3", cliArgsPrefix: [] });
+  });
+
+  it("honors T3_MCP_CLI_COMMAND and drops the implicit entry point", () => {
+    expect(resolveMcpCliInvocation({ T3_MCP_CLI_COMMAND: "  /opt/t3-wrapper  " }, runtime)).toEqual(
+      { cliCommand: "/opt/t3-wrapper", cliArgsPrefix: [] },
+    );
+  });
+
+  it("keeps T3_MCP_CLI_ARGS_PREFIX behind the override", () => {
+    expect(
+      resolveMcpCliInvocation(
+        {
+          T3_MCP_CLI_COMMAND: "/opt/t3-wrapper",
+          T3_MCP_CLI_ARGS_PREFIX: '["--base-dir","/data"]',
+        },
+        runtime,
+      ),
+    ).toEqual({ cliCommand: "/opt/t3-wrapper", cliArgsPrefix: ["--base-dir", "/data"] });
+  });
+
+  it("rejects a malformed args prefix rather than silently dropping it", () => {
+    expect(() => resolveMcpCliInvocation({ T3_MCP_CLI_ARGS_PREFIX: "not json" }, runtime)).toThrow(
+      /JSON array of strings/,
+    );
+    expect(() => resolveMcpCliInvocation({ T3_MCP_CLI_ARGS_PREFIX: "[1,2]" }, runtime)).toThrow(
+      /JSON array of strings/,
+    );
   });
 });

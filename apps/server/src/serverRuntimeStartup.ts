@@ -1,5 +1,7 @@
 import {
   CommandId,
+  COPILOT_DRIVER_KIND,
+  DEFAULT_AUTOMATED_MODEL_SELECTION,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROVIDER_DRIVER_KIND,
@@ -164,10 +166,15 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
   Effect.asVoid,
 );
 
-export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
-  instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
-  model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
-});
+export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => {
+  if (DEFAULT_PROVIDER_DRIVER_KIND === COPILOT_DRIVER_KIND) {
+    return DEFAULT_AUTOMATED_MODEL_SELECTION;
+  }
+  return {
+    instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
+    model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
+  };
+};
 
 export const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
