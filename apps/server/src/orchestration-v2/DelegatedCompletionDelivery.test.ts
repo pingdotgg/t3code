@@ -652,3 +652,101 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       }),
   );
 });
+
+it.effect(
+  "Stop disposes tasks spawned during a completion-wake run as well as its incoming cohort",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("stop-wake-parent");
+      const originRunId = RunId.make("stop-wake-origin");
+      const taskId = NodeId.make("stop-wake-incoming-task");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("stop-wake-project"),
+        runId: originRunId,
+        rootNodeId: NodeId.make("stop-wake-origin-root"),
+        taskId,
+        deliveryState: "claimed",
+        deliveryTaskIds: [taskId],
+        completionWake: "always",
+        now,
+      });
+      const original = yield* orchestrator.getThreadProjection(threadId);
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("stop-wake-origin-completed"),
+            type: "run.updated",
+            threadId,
+            runId: originRunId,
+            occurredAt: now,
+            payload: { ...original.runs[0]!, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const delivery = original.runs[0]!.delegatedCompletion!.delivery!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make("stop-wake-start"),
+        threadId,
+        messageId: delivery.messageId,
+        text: "Delegated task completed",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        delegatedCompletion: {
+          parentRunId: originRunId,
+          generation: delivery.generation,
+          taskIds: [taskId],
+        },
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === delivery.messageId,
+      )!;
+      const requested = yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make("stop-wake-new-task"),
+        parentThreadId: threadId,
+        parentRunId: wake.id,
+        parentNodeId: wake.rootNodeId!,
+        task: "Do the next round",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+      });
+      const taskEvent = requested.storedEvents.find(
+        (stored) => stored.event.type === "subagent.updated",
+      );
+      if (taskEvent?.event.type !== "subagent.updated")
+        return yield* Effect.die("Missing new task");
+      const newTaskId = taskEvent.event.payload.id;
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("stop-wake-stop"),
+        threadId,
+        runId: wake.id,
+      });
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        stopped.subagents.find((task) => task.id === newTaskId)?.completionDelivery?.state,
+        "disposed",
+      );
+      assert.equal(
+        stopped.runs.find((run) => run.id === wake.id)?.delegatedCompletion?.disposition,
+        "stopped",
+      );
+      assert.equal(
+        stopped.runs.find((run) => run.id === originRunId)?.delegatedCompletion?.disposition,
+        "stopped",
+      );
+    }).pipe(Effect.provide(TestLayer)),
+);

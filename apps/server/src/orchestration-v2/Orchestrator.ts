@@ -7929,18 +7929,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const completionMessage = projection.messages.find(
         (candidate) => candidate.id === run.userMessageId,
       );
-      const completionCohortRunId = completionMessage?.delegatedCompletion?.parentRunId ?? run.id;
+      // A completion-wake run owns its incoming cohort and any tasks it delegated itself.
+      const completionCohortRunIds = new Set([
+        completionMessage?.delegatedCompletion?.parentRunId ?? run.id,
+        run.id,
+      ]);
       const stopCompletionCohort = () =>
-        Effect.gen(function* () {
-          yield* disposeDelegatedCompletionCohort({
-            command,
-            events,
-            projection: yield* getProjectionWithPendingEvents(command.threadId, events),
-            parentRunId: completionCohortRunId,
-            disposition: "stopped",
-            now,
-          });
-        });
+        Effect.forEach(
+          completionCohortRunIds,
+          (parentRunId) =>
+            Effect.gen(function* () {
+              yield* disposeDelegatedCompletionCohort({
+                command,
+                events,
+                projection: yield* getProjectionWithPendingEvents(command.threadId, events),
+                parentRunId,
+                disposition: "stopped",
+                now,
+              });
+            }),
+          { discard: true },
+        );
 
       const emitEvent = emit(events, command);
       const holdQueuedRuns = Effect.forEach(
