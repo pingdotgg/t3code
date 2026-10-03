@@ -8,7 +8,7 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 import {
   CursorKeychainTimeoutError,
   readMacCursorAccessToken,
-} from "../provider/cursorCredentialStore.ts";
+} from "../provider/cursorKeychainToken.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

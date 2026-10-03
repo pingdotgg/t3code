@@ -29,13 +29,15 @@ import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
+import { runCachePersistence } from "./cachePersistence.ts";
 import {
   isRpcClientError,
   request,
@@ -82,7 +84,8 @@ const IDLE_SERVER_UPDATE_STATE: ServerUpdateState = { status: "idle" };
 const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
   Atom.withLabel("environment-data:server:update-state:empty"),
 );
-const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
+/** Shared with the outdated-host update, which reports through the same state. */
+export const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
   ),
@@ -176,9 +179,9 @@ export function validateServerUpdateReadyEvent(
  * Keeps reconnect attempts ~1s apart for the whole update restart.
  *
  * A restart takes the server down for ~15 seconds, but the supervisor's normal
- * backoff ladder (1/2/4/8/16s) assumes an unexpected failure and lands attempts
- * at ~3, 5, 9, 17 and 33 seconds — so a 15-second restart is observed as a
- * 33-second "Resuming". Nudging on every backoff entry (not just the first)
+ * backoff assumes an unexpected failure and doubles its delay after each failed
+ * attempt, so a 15-second restart can be observed as a ~30-second "Resuming".
+ * Nudging on every backoff entry (not just the first)
  * holds the retry cadence flat until the server answers again. The sleep before
  * each nudge is the pacer: a connection that fails instantly re-enters backoff
  * immediately and would otherwise spin a tight retry loop.
@@ -305,7 +308,7 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-function serverUpdateFailureMessage(error: unknown): string {
+export function serverUpdateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
@@ -364,8 +367,8 @@ export interface ServerConfigSubscriptionOptions {
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (subscription: ServerConfigSubscriptionOptions) {
-    const supervisor = yield* EnvironmentSupervisor;
-    const cache = yield* EnvironmentCacheStore;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
     const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
       Effect.catch((error) =>
@@ -418,11 +421,18 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       );
     });
 
-    yield* Stream.fromQueue(persistence).pipe(
-      Stream.debounce("500 millis"),
-      Stream.runForEach(persistPending),
-      Effect.forkScoped,
+    yield* Effect.addFinalizer(() =>
+      Ref.get(pendingPersistence).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (config) => persist(config).pipe(Effect.asVoid),
+          }),
+        ),
+      ),
     );
+
+    yield* runCachePersistence(persistence, persistPending).pipe(Effect.forkScoped);
 
     yield* subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
@@ -441,17 +451,6 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
         }),
       ),
       Effect.forkScoped,
-    );
-
-    yield* Effect.addFinalizer(() =>
-      Ref.get(pendingPersistence).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.void,
-            onSome: (config) => persist(config).pipe(Effect.asVoid),
-          }),
-        ),
-      ),
     );
 
     return state;
@@ -485,7 +484,7 @@ export function applyServerWelcomeEvent(
   current: EnvironmentServerWelcomeState,
   session: RpcSession,
   event: {
-    readonly type: "welcome" | "ready";
+    readonly type: "welcome" | "ready" | "legacyThreadMigration";
     readonly payload: unknown;
   },
 ): EnvironmentServerWelcomeState {
@@ -512,7 +511,7 @@ export function resolveServerWelcomeState(
 
 export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWelcomeState.make")(
   function* () {
-    const supervisor = yield* EnvironmentSupervisor;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const initialSession = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
     const state = yield* SubscriptionRef.make<EnvironmentServerWelcomeState>({
       currentSession: initialSession,
@@ -611,7 +610,10 @@ export function resolveServerConfigValue(
 }
 
 export function createServerEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
+    E
+  >,
   options: {
     readonly initialConfigValueAtom: (
       environmentId: EnvironmentId,
@@ -680,7 +682,7 @@ export function createServerEnvironmentAtoms<R, E>(
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
   const updateServer = createRuntimeCommand<
-    EnvironmentRegistry | EnvironmentCacheStore | R,
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E,
     ServerUpdateTarget,
     ServerSelfUpdateResult,
@@ -705,7 +707,7 @@ export function createServerEnvironmentAtoms<R, E>(
       });
 
       return Effect.gen(function* () {
-        const environmentRegistry = yield* EnvironmentRegistry;
+        const environmentRegistry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
@@ -967,6 +969,12 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
+  const updateSettings = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:update-settings",
+    tag: WS_METHODS.serverUpdateSettings,
+    scheduler: configScheduler,
+    concurrency: configConcurrency,
+  });
 
   return {
     configValueAtom,
@@ -993,6 +1001,27 @@ export function createServerEnvironmentAtoms<R, E>(
     completeProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-complete",
       tag: WS_METHODS.providerAuthComplete,
+    }),
+    chatGptReconnectProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:chatgpt:reconnect-profile",
+      tag: WS_METHODS.chatGptReconnectProfile,
+    }),
+    chatGptImportProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:chatgpt:import-profile",
+      tag: WS_METHODS.chatGptImportProfile,
+    }),
+    chatGptHandoffState: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:chatgpt:handoff",
+      sensitiveInput: true,
+      // OAuth must not be replayed when the connection recovers.
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.chatGptHandoffSubscribe>) =>
+        runStream(WS_METHODS.chatGptHandoffSubscribe, input),
+      idleTtlMs: 0,
+    }),
+    codexAuthCallbackState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:codex:auth-callback",
+      tag: WS_METHODS.codexAuthCallbackSubscribe,
+      idleTtlMs: 0,
     }),
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-cancel",
@@ -1042,6 +1071,19 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
+    scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-tasks:live",
+      tag: WS_METHODS.scheduledTasksSubscribe,
+    }),
+    // A cold transcript scan is measured in seconds, so keep the result around
+    // long enough that switching windows or re-rendering does not rescan.
+    usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-summary",
+      tag: WS_METHODS.serverGetUsageSummary,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+    }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
       tag: WS_METHODS.subscribeResourceTelemetry,
@@ -1052,16 +1094,28 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
     }),
-    // A cold transcript scan is measured in seconds, so keep the result around
-    // long enough that switching windows or re-rendering does not rescan.
-    usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:usage-summary",
-      tag: WS_METHODS.serverGetUsageSummary,
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+    searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:acp-registry:search",
+      tag: WS_METHODS.serverSearchAcpRegistry,
+      // Each submitted search refreshes the server-side registry. Dropping an
+      // abandoned query immediately also interrupts stale in-flight requests.
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     configProjection,
     welcome,
+    legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:legacy-thread-migration",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "legacyThreadMigration"
+              ? Result.succeed(event.payload)
+              : Result.failVoid,
+          ),
+        ),
+    }),
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:consume-reset-credit",
       tag: WS_METHODS.providerConsumeResetCredit,
@@ -1081,6 +1135,7 @@ export function createServerEnvironmentAtoms<R, E>(
             environmentId,
             input.instanceId ?? null,
             input.cwd ?? null,
+            input.fresh ?? false,
             input.refreshModels ?? false,
           ]),
       },
@@ -1104,15 +1159,126 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    updateSettings: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:update-settings",
-      tag: WS_METHODS.serverUpdateSettings,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
+    updateSettings,
+    // Provider-instance mutations share the settings command and its
+    // environment-serial scheduler. The named boundary keeps clients on the
+    // atomic map-entry payload instead of rebuilding a stale whole map.
+    mutateProviderInstance: updateSettings,
+    prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:prepare",
+      tag: WS_METHODS.serverPrepareAcpRegistryAgent,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    uninstallAcpRegistryManagedBinary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:uninstall-managed-binary",
+      tag: WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    acceptAcpRegistryUrlAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:accept-url-auth",
+      tag: WS_METHODS.serverAcceptAcpRegistryUrlAuth,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.elicitationId}`,
+      },
+    }),
+    listAcpRegistrySessions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:list-sessions",
+      tag: WS_METHODS.serverListAcpRegistrySessions,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.cursor ?? "first"}`,
+      },
+    }),
+    importAcpRegistrySession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:import-session",
+      tag: WS_METHODS.serverImportAcpRegistrySession,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.sessionId}`,
+      },
+    }),
+    deleteAcpRegistrySession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:delete-session",
+      tag: WS_METHODS.serverDeleteAcpRegistrySession,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.sessionId}`,
+      },
+    }),
+    listAcpRegistryProviders: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:list-providers",
+      tag: WS_METHODS.serverListAcpRegistryProviders,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}`,
+      },
+    }),
+    setAcpRegistryProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:set-provider",
+      tag: WS_METHODS.serverSetAcpRegistryProvider,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.providerId}`,
+      },
+    }),
+    disableAcpRegistryProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:disable-provider",
+      tag: WS_METHODS.serverDisableAcpRegistryProvider,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.providerId}`,
+      },
+    }),
+    logoutAcpRegistry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:logout",
+      tag: WS_METHODS.serverLogoutAcpRegistry,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+      },
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:upsert",
+      tag: WS_METHODS.scheduledTasksUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:set-enabled",
+      tag: WS_METHODS.scheduledTasksSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:delete",
+      tag: WS_METHODS.scheduledTasksDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Deliberately not on the config lane: run-now blocks until the run is
+    // dispatched, and a slow run must not stall settings/keybinding/provider
+    // mutations (or other scheduled-task edits) queued behind it.
+    runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:run-now",
+      tag: WS_METHODS.scheduledTasksRunNow,
     }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
