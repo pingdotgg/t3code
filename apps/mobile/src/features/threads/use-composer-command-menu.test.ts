@@ -162,6 +162,27 @@ describe("mobile multi-word path search", () => {
     await type("[Foreign Subsidiaries](Foreign%20Subsidiaries) ");
     expect(menu.trigger).toBeNull();
   });
+  it("keeps typed extensions separate from existing prose and closes on a caret jump", async () => {
+    const suffix = " then summarize";
+    await type("@Foreign" + suffix);
+    await act(() => menu.onSelectionChange({ start: 8, end: 8 }));
+    await act(() =>
+      root.render(
+        createElement(Probe, {
+          draftMessage: "@Foreign Subsidiaries" + suffix,
+          ownerKey: "draft-1",
+        }),
+      ),
+    );
+    const cursor = "@Foreign Subsidiaries".length;
+    await act(() => menu.onSelectionChange({ start: cursor, end: cursor }));
+    expect(menu.trigger?.query).toBe("Foreign Subsidiaries");
+    expect(menu.trigger?.rangeEnd).toBe(cursor);
+    const end = cursor + suffix.length;
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toBeNull();
+  });
+
   it("does not carry an active search into a different draft", async () => {
     await type("@Foreign");
     await type("@Foreign Subsidiaries");

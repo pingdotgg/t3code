@@ -13,9 +13,7 @@ let root: Root;
 let composer: ReturnType<typeof useComposerTriggerState>;
 
 function ComposerProbe() {
-  const state = useComposerTriggerState(() =>
-    detectComposerTrigger(initialPrompt, initialPrompt.length),
-  );
+  const state = useComposerTriggerState(initialPrompt);
   useLayoutEffect(() => {
     composer = state;
   });
@@ -87,6 +85,29 @@ describe("composer suggestion dismissal", () => {
       })),
     });
     expect(items.map((item) => item.label)).toEqual([query]);
+  });
+
+  it("closes when the caret jumps into existing prose and rejects keyboard selection", async () => {
+    const suffix = " then summarize";
+    await updatePrompt("@Foreign" + suffix, "@Foreign".length);
+    await updatePrompt("@Foreign Subsidiaries" + suffix, "@Foreign Subsidiaries".length);
+    expect(composer.trigger?.query).toBe("Foreign Subsidiaries");
+    // Keyboard selection re-reads the editor before its next selection render.
+    const text = "@Foreign Subsidiaries" + suffix;
+    expect(composer.resolveTrigger(composer.detectTrigger(text, text.length))).toBeNull();
+    await updatePrompt(text);
+    expect(composer.trigger).toBeNull();
+  });
+
+  it("preserves the suffix when editing a query before existing prose", async () => {
+    const suffix = " then summarize";
+    await updatePrompt("@Foreign" + suffix, "@Foreign".length);
+    await updatePrompt("@Foreign " + suffix, "@Foreign ".length);
+    await updatePrompt("@Foreign Subsidiaries" + suffix, "@Foreign Subsidiaries".length);
+    expect(composer.trigger?.rangeEnd).toBe("@Foreign Subsidiaries".length);
+    await updatePrompt("@Foreign Subsidiaries" + suffix, 0);
+    await updatePrompt("@Foreign Subsidiaries" + suffix);
+    expect(composer.trigger).toBeNull();
   });
 
   it("does not reopen a dismissed multi-word search as typing continues", async () => {
@@ -176,7 +197,7 @@ describe("composer suggestion dismissal", () => {
   it("clears dismissal when switching drafts or pending questions", async () => {
     await act(() => composer.dismissTrigger(composer.trigger));
     const candidate = detectComposerTrigger(initialPrompt, initialPrompt.length);
-    await act(() => composer.resetTrigger(candidate));
+    await act(() => composer.resetTrigger(candidate, initialPrompt));
 
     expect(composer.trigger).toEqual(candidate);
     expect(composer.resolveTrigger(candidate)).toEqual(candidate);
