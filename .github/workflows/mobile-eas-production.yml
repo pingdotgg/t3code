@@ -18,8 +18,11 @@ name: Mobile EAS Production
 #      Store stays a manual App Store Connect step.
 #   2. OTA: publish a production-channel update for each platform where at
 #      least one finished production build matches the current native
-#      fingerprint. Old-version binaries with a matching fingerprint receive
-#      it too. When native drift means no binary could install the update,
+#      fingerprint. Older binaries of the same major version with a matching
+#      fingerprint receive it too; the major version is part of the
+#      fingerprint (apps/mobile/fingerprint.config.js), so a new major never
+#      reaches the previous major's store binaries over the air. When native
+#      drift means no binary could install the update,
 #      it is skipped and flagged in the job summary instead of published
 #      into the void.
 # workflow_dispatch remains as a manual override for both modes (e.g. to
