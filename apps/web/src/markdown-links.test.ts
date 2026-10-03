@@ -511,6 +511,13 @@ describe("directory paths with a trailing separator", () => {
     ).toMatchObject({ basename: ".claude" });
   });
 
+  it("resolves a relative folder written with a trailing separator", () => {
+    expect(resolveMarkdownFileLinkMeta("patches/", "/repo/project")).toMatchObject({
+      workspaceRelativePath: "patches/",
+      basename: "patches",
+    });
+  });
+
   it("matches the label of the same path without a trailing separator", () => {
     const withSlash = resolveMarkdownFileLinkMeta("/tmp/favicons/", "/repo/project");
     const withoutSlash = resolveMarkdownFileLinkMeta("/tmp/favicons", "/repo/project");
