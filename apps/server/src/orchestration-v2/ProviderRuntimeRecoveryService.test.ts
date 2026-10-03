@@ -1272,3 +1272,28 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("propagates an unreadable restart continuation instead of reporting it absent", () => {
+  const failure = new EffectOutbox.EffectOutboxError({
+    operation: "get",
+    cause: new Error("offline"),
+  });
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
+        Layer.mock(EffectOutbox.EffectOutboxV2)({ get: () => Effect.fail(failure) }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const error = yield* Effect.flip(
+      recovery.isRestartContinuationPending(RunId.make("run:unreadable")),
+    );
+    assert.strictEqual(error, failure);
+  }).pipe(Effect.provide(layer));
+});

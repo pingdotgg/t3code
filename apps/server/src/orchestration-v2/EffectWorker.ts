@@ -109,10 +109,18 @@ export const executorLayer: Layer.Layer<
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           case "provider-runtime.continue":
+            // A delegated child that will not be continued stays cancelled, so
+            // its parent must get that result now rather than at next startup.
             return continueRestartedRun({
               threadId: effect.threadId,
               sourceRunId: effect.request.sourceRunId,
             }).pipe(
+              Effect.tapCause(() =>
+                willRetry ? Effect.void : threads.reconcileAppOwnedSubagentResult(effect.threadId),
+              ),
+              Effect.tap((started) =>
+                started ? Effect.void : threads.reconcileAppOwnedSubagentResult(effect.threadId),
+              ),
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.mapError(
@@ -123,6 +131,7 @@ export const executorLayer: Layer.Layer<
                     cause,
                   }),
               ),
+              Effect.asVoid,
             );
           case "provider-session.detach":
             return providerSessions
