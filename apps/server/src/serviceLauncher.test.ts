@@ -4,7 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  databaseBackupBlocker,
+  Launcher,
+  type BackupSpaceProbe,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -13,6 +19,13 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+const writeSparseFile = (filePath: string, size: number) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.writeFileString(filePath, "");
+    yield* fileSystem.truncate(filePath, size);
+  });
 
 it("accepts only exact semantic versions", () => {
   for (const version of ["0.0.0", "1.2.3", "1.2.3-alpha.1", "1.2.3-0", "1.2.3+001"]) {
@@ -357,6 +370,173 @@ if (context.update?.status === "pending") {
       const updateId = state.update?.id;
       assert.isDefined(updateId);
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+    }),
+  );
+
+  const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-space-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const replyPath = path.join(root, "rejection.txt");
+      const trialMarker = path.join(root, "trial-started");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
+      const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
+      const childSource = `
+import { writeFileSync } from "node:fs";
+const paths = ${encoded};
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  writeFileSync(paths.trialMarker, "started");
+  process.exit(1);
+} else if (context.update === undefined) {
+  process.on("message", (message) => {
+    if (message.type === "update-rejected") {
+      writeFileSync(paths.replyPath, message.reason);
+      process.exit(0);
+    }
+  });
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath });
+  setInterval(() => {}, 1_000);
+} else {
+  process.exit(0);
+}
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { backupSpaceProbe },
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      return {
+        reason: yield* fs.readFileString(replyPath),
+        trialStarted: yield* fs.exists(trialMarker),
+        state: yield* Effect.promise(() => readServiceState(statePath)),
+      };
+    });
+
+  it.effect("refuses a backup that cannot fit and leaves the server running", () =>
+    Effect.gen(function* () {
+      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+        readFreeBytes: () => Promise.resolve(0),
+        canClone: () => Promise.resolve(true),
+      });
+
+      assert.include(reason, "Not enough free disk space");
+      assert.include(reason, "The server was not stopped");
+      assert.isFalse(trialStarted);
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.isUndefined(state.update);
+    }),
+  );
+
+  it.effect("refuses the update when free space cannot be checked", () =>
+    Effect.gen(function* () {
+      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+        readFreeBytes: () => Promise.reject(new Error("statfs unavailable")),
+      });
+
+      assert.include(
+        reason,
+        "Could not check that the database backup fits before updating: statfs unavailable",
+      );
+      assert.isFalse(trialStarted);
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.isUndefined(state.update);
+    }),
+  );
+
+  it.effect("checks database backup space against clone or full-copy needs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
+      const databasePath = path.join(root, "state.sqlite");
+      yield* writeSparseFile(databasePath, 10 * 1024 ** 3);
+      const check = (free: number, cloneable: boolean) =>
+        Effect.promise(() =>
+          databaseBackupBlocker(root, databasePath, {
+            readFreeBytes: () => Promise.resolve(free),
+            canClone: () => Promise.resolve(cloneable),
+          }),
+        );
+
+      // A full copy fits: no clone needed.
+      assert.isUndefined(yield* check(11 * 1024 ** 3, false));
+      // A clone needs 10% headroom for the trial's writes, at least 1 GiB.
+      assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
+      assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
+      // A filesystem that cannot clone needs room for the full copy.
+      const blocker = yield* check(8 * 1024 ** 3, false);
+      assert.include(blocker ?? "", "Not enough free disk space");
+      assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
+      assert.include(blocker ?? "", "The server was not stopped");
+    }),
+  );
+
+  it.effect("fails the backup check when the database cannot be inspected", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
+      const error = yield* Effect.promise(() =>
+        databaseBackupBlocker(root, path.join(root, "missing.sqlite"), {
+          readFreeBytes: () => Promise.resolve(0),
+        }).then(
+          () => undefined,
+          (cause: unknown) => cause,
+        ),
+      );
+      assert.equal((error as NodeJS.ErrnoException | undefined)?.code, "ENOENT");
+    }),
+  );
+
+  it.effect("recognizes a clone into the backup directory on this filesystem", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-clone-" });
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      // With no free space, the result shows which requirement applied.
+      const blocker = yield* Effect.promise(() =>
+        databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
+      );
+      // A tiny database: 1.0 GB is the clone minimum, 0.0 GB the full copy. The
+      // macOS temp directory is on APFS, so the clone requirement applies there.
+      assert.include(
+        blocker ?? "",
+        // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
+        process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
+      );
+      // Linux probes leave nothing behind in the backup directory.
+      assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );
 });
