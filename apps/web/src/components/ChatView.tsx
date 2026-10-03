@@ -5375,7 +5375,13 @@ export default function ChatView(props: ChatViewProps) {
         diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
-    if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
+    if (
+      !panels.openProactive(
+        activeThreadRef,
+        { kind: "diff", turnId: newlyCompletedTurnId },
+        userActionRevision,
+      )
+    ) {
       return;
     }
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
