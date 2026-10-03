@@ -9614,13 +9614,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         request.kind === "user_input"
           ? `Read it with t3_pending_request_read (threadId ${childThreadId}, requestId ${request.id}) and answer with t3_pending_request_respond, or ask the user.`
           : "Only the user can resolve this. Ask them to open the delegated task's thread.";
+      // One notice per request: an accepted receipt means it was delivered.
+      // A rejected one (say, a pending merge-back) must not suppress a later
+      // update for the same request, so each rejection moves to a new id.
+      let commandId = CommandId.make(`command:delegated-task-blocked:${request.id}`);
+      for (let attempt = 1; ; attempt++) {
+        const receipt = yield* commandReceipts.getByCommandId(commandId);
+        if (Option.isNone(receipt)) break;
+        if (receipt.value.status !== "rejected") return;
+        commandId = CommandId.make(`command:delegated-task-blocked:${request.id}:${attempt}`);
+      }
       const messageId = yield* idAllocator.allocate.message({
         threadId: parentThreadId,
         ordinal: (yield* projectionStore.getMessageCount(parentThreadId)) + 1,
       });
       yield* dispatchWithReceiptEffect({
         type: "message.dispatch",
-        commandId: CommandId.make(`command:delegated-task-blocked:${request.id}`),
+        commandId,
         threadId: parentThreadId,
         messageId,
         text: `Delegated task ${task.id} ${need}. ${action} It may already be resolved; its result still arrives when it finishes.`,

@@ -619,6 +619,22 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       );
       assert.include(signIn?.text ?? "", "Only the user can resolve this");
 
+      // A rejected earlier attempt must not swallow a later update's notice.
+      yield* sink.commitRejectedCommand({
+        commandId: CommandId.make("command:delegated-task-blocked:request:retry"),
+        threadId,
+        commandType: "message.dispatch",
+        rejectedAt: now,
+        error: "Thread has a pending merge-back transfer.",
+      });
+      const retried = yield* nextNotice(
+        yield* block(childThreadId, taskId, "request:retry", "user_input"),
+      );
+      assert.equal(
+        retried?.notification?.summary,
+        "Load test lane is waiting for an answer to a question",
+      );
+
       const blocked = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         blocked.messages.filter(
@@ -626,7 +642,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
             message.notification?.source.kind === "delegated_task" &&
             message.notification.source.taskIds.includes(taskId),
         ).length,
-        3,
+        4,
       );
       // The child is not finished: no result is published to the parent.
       assert.equal(blocked.subagents.find((row) => row.id === taskId)?.status, "running");
@@ -646,6 +662,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       assert.equal(noticeRunStatus(disposed, question?.id), "cancelled");
       assert.equal(noticeRunStatus(disposed, approval?.id), "cancelled");
       assert.equal(noticeRunStatus(disposed, signIn?.id), "cancelled");
+      assert.equal(noticeRunStatus(disposed, retried?.id), "cancelled");
 
       // Stop must not let any queued notice start a new parent turn either.
       const second = yield* nextNotice(
