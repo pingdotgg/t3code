@@ -162,8 +162,8 @@ export function MicrophoneTest({
       {...searchableSetting("microphone")}
       description={description}
       control={
-        <div className="flex min-h-10 w-full flex-col gap-2 sm:w-auto">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto">
+          <div className="flex min-h-10 min-w-0 items-center gap-2">
             {phase === "idle" ? (
               <Button
                 size="sm"
