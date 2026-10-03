@@ -82,7 +82,9 @@ it("keeps the legacy importer out of reach of new code", () => {
     .toSorted();
   // Startup imports pending transcripts, the V2 runtime wires the importer, and
   // thread and project services hydrate a V1 transcript before they act on it.
+  // The explicit recovery CLI reconciles later V1 work into a separate V2 copy.
   assert.deepEqual(importers, [
+    "cli/threads.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
     "project/ProjectService.ts",

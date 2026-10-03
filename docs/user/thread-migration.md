@@ -34,6 +34,35 @@ Before continuing a long or important thread, read the recent transcript and inc
 requirements the agent still needs in your next message. Starting a new thread and pasting a short
 handoff is also a good choice when the old conversation contains conflicting instructions.
 
+## Recovering work after returning to V1
+
+If you used V2, returned to Stable, and created more work, recover that later V1 history with:
+
+```sh
+t3 threads recover-v1 --dry-run
+t3 threads recover-v1 --output /path/to/recovered-statev2.sqlite
+```
+
+The command reads both databases and creates a separate recovered V2 database. It never overwrites
+an input or an existing output file. Missing threads are imported, and additional messages are
+added to existing threads when their conversation has not diverged. If both versions continued
+a conversation, or V2 changed or deleted it, the V1 conversation is recovered as a separate thread
+labelled “recovered from Stable”. Existing V2 thread settings are preserved.
+
+Run this on the machine hosting the environment. Use `--base-dir <T3-home>` for a non-default
+home, or `--source <v1-database>` and `--target <v2-database>` for recovery copies. Sources must
+have reached V1 schema 54. Without `--output`, the command only reports its plan. Repeating recovery
+against the recovered database skips unchanged work.
+Later Stable messages extend an existing recovered copy if that copy has not diverged. Messages
+added to an existing thread appear after its current timeline, even when their timestamps are earlier.
+
+Before using the output, stop the V2 host, retain its current database as a backup, and put the
+recovered file in its place as `userdata/statev2.sqlite`. Do not replace a running database. If
+V2 has received more work since recovery, regenerate the output from the latest V2 database first.
+V1 work created after the snapshot requires another recovery. Keep the original T3 home and
+attachment files: this is a database recovery, not a portable export. The transcript limitations
+above still apply; reasoning entries remain in the original V1 database.
+
 ## Keeping a recovery copy
 
 T3 Code does not currently have a whole-thread export command. Before a major server update, stop
