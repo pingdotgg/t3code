@@ -1,5 +1,6 @@
 import {
   EventId,
+  OrchestrationV2ThreadStreamItem,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -8,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 
 import {
   buildBoundedThreadStreamSnapshot,
@@ -260,5 +263,105 @@ describe("decideThreadResume", () => {
         replayEncodedBytes: projectedBytes,
       }),
     ).toEqual({ mode: "replay", afterSequence: 9, throughSequence: 10 });
+  });
+});
+
+describe("compact bounded snapshots", () => {
+  const FORK_PARENT = ThreadId.make("thread-stream-parent");
+  const decodeStreamItem = Schema.decodeUnknownSync(
+    Schema.toCodecJson(OrchestrationV2ThreadStreamItem),
+  );
+  const encodeStreamItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ThreadStreamItem));
+
+  /** Fork child: inherited parent rows and marker, then local rows, plus an older interrupt request. */
+  function forkProjection(): OrchestrationV2ThreadProjection {
+    const base = timelineProjection(6);
+    const local = base.visibleTurnItems.slice(3).map((row, index) => ({ ...row, position: index }));
+    const inherited = base.visibleTurnItems.slice(0, 3).map((row, index) => {
+      const item = { ...row.item, id: TurnItemId.make(`parent-${index}`), threadId: FORK_PARENT };
+      return {
+        position: index,
+        visibility: "inherited" as const,
+        sourceThreadId: FORK_PARENT,
+        sourceItemId: item.id,
+        item,
+      };
+    });
+    const request = {
+      ...base.turnItems[0]!,
+      id: TurnItemId.make("interrupt-request"),
+      type: "run_interrupt_request",
+      ordinal: 0,
+      message: "Stop",
+    } as unknown as OrchestrationV2TurnItem;
+    return {
+      ...base,
+      turnItems: [request, ...local.map((row) => row.item)],
+      visibleTurnItems: [...inherited, ...local].map((row, position) => ({ ...row, position })),
+    };
+  }
+
+  it.each([
+    ["linear", () => timelineProjection(80)],
+    ["fork with retained interrupt request", forkProjection],
+  ])("restores the exact opted-out snapshot for %s threads", (_, makeProjection) => {
+    const base = makeProjection();
+    // The shared fixture omits a model; the wire codec requires one.
+    const projection = {
+      ...base,
+      thread: { ...base.thread, modelSelection: { instanceId: "codex", model: "gpt-5" } },
+    } as OrchestrationV2ThreadProjection;
+    const full = buildBoundedThreadStreamSnapshot({ snapshotSequence: 44, projection });
+    const compact = buildBoundedThreadStreamSnapshot({
+      snapshotSequence: 44,
+      projection,
+      compactTurnItems: true,
+    });
+
+    // Opted-out clients get exactly the previous representation.
+    expect("turnItemsOmitLocalVisible" in full).toBe(false);
+    expect(compact.turnItemsOmitLocalVisible).toBe(true);
+    expect(compact.projection.turnItems.length).toBeLessThan(full.projection.turnItems.length);
+    const { turnItemsOmitLocalVisible: _marker, ...compactFields } = compact;
+    expect({ ...compactFields, projection: full.projection }).toEqual(full);
+
+    // Decode the wire form like a client, then restore before use.
+    const decodedFull = decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(full))));
+    const decodedCompact = decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(compact))));
+    if (decodedFull.kind !== "snapshot" || decodedCompact.kind !== "snapshot") {
+      throw new Error("Expected snapshots");
+    }
+    expect(boundedSnapshotProjection(decodedCompact)).toEqual(decodedFull.projection);
+  });
+
+  it("keeps the retained interrupt request outside the visible window", () => {
+    const compact = buildBoundedThreadStreamSnapshot({
+      snapshotSequence: 1,
+      projection: forkProjection(),
+      compactTurnItems: true,
+    });
+    expect(compact.projection.turnItems.map((item) => item.id)).toEqual(["interrupt-request"]);
+    expect(boundedSnapshotProjection(compact).turnItems.map((item) => String(item.id))).toEqual([
+      "item-3",
+      "item-4",
+      "item-5",
+      "interrupt-request",
+    ]);
+  });
+
+  it("omits the marker when the window has no local rows", () => {
+    const fork = forkProjection();
+    const inheritedOnly = {
+      ...fork,
+      turnItems: fork.turnItems.slice(0, 1),
+      visibleTurnItems: fork.visibleTurnItems.slice(0, 3),
+    };
+    const compact = buildBoundedThreadStreamSnapshot({
+      snapshotSequence: 1,
+      projection: inheritedOnly,
+      compactTurnItems: true,
+    });
+    expect("turnItemsOmitLocalVisible" in compact).toBe(false);
+    expect(compact.projection.turnItems.map((item) => item.id)).toEqual(["interrupt-request"]);
   });
 });

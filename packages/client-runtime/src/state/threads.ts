@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -589,7 +590,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       // Bounded socket fallbacks carry their cursor. Legacy-compatible full
       // snapshots omit these fields and still replace progressive state.
       yield* setThread(
-        item.projection,
+        boundedSnapshotProjection(item),
         hasProgressiveHistory
           ? {
               history: {
@@ -919,7 +920,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
-          ...(acceptBoundedSnapshot ? { acceptBoundedSnapshot: true as const } : {}),
+          ...(acceptBoundedSnapshot
+            ? { acceptBoundedSnapshot: true as const, acceptCompactTurnItems: true as const }
+            : {}),
         };
       }),
       {
