@@ -110,6 +110,40 @@ export function outcomeFromExit(exit: Exit.Exit<unknown, unknown>): Observabilit
   return Cause.hasInterruptsOnly(exit.cause) ? "interrupt" : "failure";
 }
 
+export interface WebSocketRaceWinner {
+  readonly endedBySessionExpiry: boolean;
+}
+
+export interface WebSocketDisconnectFields {
+  readonly durationMs: number;
+  readonly outcome: ObservabilityOutcome;
+  readonly endedBySessionExpiry?: true;
+  readonly cause?: string;
+}
+
+/**
+ * Log fields for `websocket disconnected`. The `/ws` route races the RPC
+ * socket handler against `waitUntilSessionInactive`, and the expiry branch
+ * resolves to an ordinary 401 response — a *success* exit that is otherwise
+ * byte-identical to a clean client-initiated close. Callers must tag the race
+ * winner (see `websocketRpcRouteLayer`) so a server-side session-expiry close
+ * is distinguishable from the client hanging up.
+ */
+export function websocketDisconnectFields(
+  exit: Exit.Exit<WebSocketRaceWinner, unknown>,
+  connectedAtMs: number,
+  nowMs: number = Date.now(),
+): WebSocketDisconnectFields {
+  return {
+    durationMs: Math.max(0, nowMs - connectedAtMs),
+    outcome: outcomeFromExit(exit),
+    ...(Exit.isSuccess(exit) && exit.value.endedBySessionExpiry === true
+      ? { endedBySessionExpiry: true as const }
+      : {}),
+    ...(Exit.isFailure(exit) ? { cause: Cause.pretty(exit.cause) } : {}),
+  };
+}
+
 export function normalizeModelMetricLabel(model: string | null | undefined): string | undefined {
   const normalized = model?.trim().toLowerCase();
   if (!normalized) {

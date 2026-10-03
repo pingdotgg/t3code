@@ -1,6 +1,9 @@
 import "../../index.css";
 
 import {
+  CollaborationRequestId,
+  CollaborationResponseId,
+  CollaborativeAcceptanceExchangeId,
   EnvironmentId,
   MessageId,
   ThreadId,
@@ -23,6 +26,11 @@ const toastAddMock = vi.hoisted(() => vi.fn());
 vi.mock("../ui/toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../ui/toast")>()),
   toastManager: { add: toastAddMock },
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => vi.fn(),
 }));
 
 vi.mock("~/environmentApi", () => ({
@@ -299,6 +307,113 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("visibly distinguishes messages sent from another thread", async () => {
+    const text = "Please address these review findings.";
+    const collaborationRequestText = "A parent thread sent a review request.";
+    const collaborationResponseText = "A child thread sent its review findings.";
+    const ownMessageText = "I’ll take care of the fixes here.";
+    const screen = await render(
+      <AppAtomRegistryProvider>
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "cross-thread-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              message: {
+                id: MessageId.make("cross-thread-message"),
+                role: "user",
+                text,
+                origin: {
+                  kind: "cross-thread",
+                  sourceThreadId: ThreadId.make("review-thread"),
+                  sourceMessageId: MessageId.make("review-request"),
+                  sourceThreadTitle: "Review thread",
+                },
+                createdAt: "2026-04-13T12:00:00.000Z",
+                streaming: false,
+              },
+            },
+            {
+              id: "collaboration-request-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:30.000Z",
+              message: {
+                id: MessageId.make("collaboration-request-message"),
+                role: "user",
+                text: collaborationRequestText,
+                origin: {
+                  kind: "collaboration-request",
+                  requestId: CollaborationRequestId.make("request-1"),
+                  exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+                },
+                createdAt: "2026-04-13T12:00:30.000Z",
+                streaming: false,
+              },
+            },
+            {
+              id: "collaboration-response-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:45.000Z",
+              message: {
+                id: MessageId.make("collaboration-response-message"),
+                role: "user",
+                text: collaborationResponseText,
+                origin: {
+                  kind: "collaboration-response",
+                  requestId: CollaborationRequestId.make("request-1"),
+                  responseId: CollaborationResponseId.make("response-1"),
+                  exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+                },
+                createdAt: "2026-04-13T12:00:45.000Z",
+                streaming: false,
+              },
+            },
+            {
+              id: "user-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:01:00.000Z",
+              message: {
+                id: MessageId.make("user-message"),
+                role: "user",
+                text: ownMessageText,
+                createdAt: "2026-04-13T12:01:00.000Z",
+                streaming: false,
+              },
+            },
+          ]}
+        />
+      </AppAtomRegistryProvider>,
+    );
+
+    try {
+      const message = page.getByText(text, { exact: true }).element().closest(".group");
+      expect(message).not.toBeNull();
+      expect(message!.classList.contains("bg-violet-500/20")).toBe(true);
+      expect(message!.classList.contains("border-violet-400/55")).toBe(true);
+      expect(getComputedStyle(message!).backgroundColor).toContain("/ 0.2)");
+      await expect.element(page.getByText("Review thread", { exact: true })).toBeVisible();
+      for (const collaborationText of [collaborationRequestText, collaborationResponseText]) {
+        const collaborationMessage = page
+          .getByText(collaborationText, { exact: true })
+          .element()
+          .closest(".group");
+        expect(collaborationMessage?.classList.contains("bg-violet-500/20")).toBe(true);
+        expect(getComputedStyle(collaborationMessage!).backgroundColor).toContain("/ 0.2)");
+      }
+      expect(page.getByText("From another thread", { exact: true }).elements()).toHaveLength(2);
+      const ownMessage = page
+        .getByText(ownMessageText, { exact: true })
+        .element()
+        .closest(".group");
+      expect(ownMessage?.classList.contains("bg-secondary")).toBe(true);
+      expect(ownMessage?.classList.contains("bg-violet-500/20")).toBe(false);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("snaps to the bottom when timeline rows appear after an initially empty render", async () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")
@@ -503,6 +618,7 @@ describe("MessagesTimeline", () => {
                   id: "long-edit",
                   createdAt,
                   turnId,
+                  sourceActivityKind: "tool.started",
                   tone: "tool",
                   label: "Edit file",
                   detail: "/workspace/src/durable-worktree-c...",
@@ -549,6 +665,9 @@ describe("MessagesTimeline", () => {
         expect(getComputedStyle(details!).getPropertyValue("text-size-adjust")).toBe("100%");
         expect(getComputedStyle(detail).backgroundColor).toBe("rgba(0, 0, 0, 0)");
         expect(detail.scrollWidth).toBeLessThanOrEqual(detail.clientWidth + 1);
+        const evidenceButton = page.getByRole("button", { name: "Load full tool evidence" });
+        await expect.element(evidenceButton).toBeVisible();
+        expect(getComputedStyle(evidenceButton.element()).fontSize).toBe(`${fontSize}px`);
       } finally {
         await screen.unmount();
       }

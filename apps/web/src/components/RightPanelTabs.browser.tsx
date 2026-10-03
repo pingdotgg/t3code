@@ -1,6 +1,6 @@
 import "../index.css";
 
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, PreviewSessionSnapshot, ProjectId } from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -96,6 +96,29 @@ describe("RightPanelTabs", () => {
     }
   });
 
+  it("labels pull request tabs with only the pull request number", async () => {
+    const pullRequest: RightPanelSurface = {
+      id: "pull-request:environment-a:project-a:owner/repo:626",
+      kind: "pull-request",
+      environmentId: "environment-a" as EnvironmentId,
+      reference: {
+        projectId: "project-a" as ProjectId,
+        repository: "owner/repo",
+        number: 626,
+      },
+      title: "A descriptive pull request title",
+    };
+    const { screen } = await mountTabs([pullRequest], pullRequest.id);
+    try {
+      const tab = page.getByRole("button", { name: "#626", exact: true });
+      await expect.element(tab).toBeInTheDocument();
+      expect(await tab.element()).toHaveTextContent("#626");
+      await expect.element(page.getByLabelText("Close #626")).toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("keeps the surface title bar compact", async () => {
     const { screen } = await mountTabs();
     try {
@@ -159,8 +182,10 @@ describe("RightPanelTabs", () => {
       const fileTab = await page.getByTitle("src/index.ts").element();
 
       expect(closeButton.parentElement).toBe(tabBar);
-      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("12px");
-      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("12px");
+      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("13px");
+      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("13px");
+      expect(fileTab.parentElement!.getBoundingClientRect().height).toBe(28);
+      expect(getComputedStyle(fileTab.parentElement!.parentElement!).columnGap).toBe("4px");
       const closeFile = await page.getByLabelText("Close index.ts").element();
       expect(closeFile.getBoundingClientRect().right).toBeLessThanOrEqual(
         fileTab.getBoundingClientRect().left,
@@ -263,6 +288,17 @@ describe("RightPanelTabs", () => {
       await vi.waitFor(() => {
         expect(panel.getBoundingClientRect().width).toBeCloseTo(startWidth + 120, 0);
       });
+
+      const resizedHandle = handle.getBoundingClientRect();
+      const resizedStartX = resizedHandle.left + resizedHandle.width / 2;
+      dispatch("pointerdown", resizedStartX);
+      dispatch("pointermove", resizedStartX + 1_000);
+      dispatch("pointerup", resizedStartX + 1_000);
+
+      await vi.waitFor(() => {
+        expect(panel.getBoundingClientRect().width).toBe(280);
+      });
+      expect(localStorage.getItem("t3code:preview-panel-width")).toBe("280");
     } finally {
       await screen.unmount();
     }

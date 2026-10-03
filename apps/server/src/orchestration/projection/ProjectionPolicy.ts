@@ -1,5 +1,7 @@
 import type {
   GitPullRequestAssociation,
+  OrchestrationLatestTurn,
+  OrchestrationSession,
   ReviewSnapshot,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -63,6 +65,47 @@ export function isNonAuthoritativeCheckpointStatus(status: string | undefined): 
 
 export function terminalTurnStateForSessionStatus(status: string): "error" | "interrupted" {
   return status === "error" ? "error" : "interrupted";
+}
+
+/**
+ * Session-to-turn mapping, shared by both projections because the decider reads
+ * the in-memory result while clients read the SQL one. A running session is
+ * authoritative for its active turn; a turn still marked running under a session
+ * that has stopped has been orphaned and is terminalised.
+ */
+export function reconcileLatestTurnWithSession(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): OrchestrationLatestTurn | null {
+  if (session === null) {
+    return latestTurn;
+  }
+  if (session.status === "running" && session.activeTurnId !== null) {
+    if (latestTurn?.turnId === session.activeTurnId) {
+      return {
+        ...latestTurn,
+        state: "running",
+        startedAt: latestTurn.startedAt ?? session.updatedAt,
+        completedAt: null,
+      };
+    }
+    return {
+      turnId: session.activeTurnId,
+      state: "running",
+      requestedAt: session.updatedAt,
+      startedAt: session.updatedAt,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+  }
+  if (latestTurn?.state === "running") {
+    return {
+      ...latestTurn,
+      state: terminalTurnStateForSessionStatus(session.status),
+      completedAt: session.updatedAt,
+    };
+  }
+  return latestTurn;
 }
 
 /**

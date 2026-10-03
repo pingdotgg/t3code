@@ -1,9 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DEFAULT_MODEL,
-  DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_PROVIDER_DRIVER_KIND,
+  COPILOT_DRIVER_KIND,
   defaultInstanceIdForDriver,
   ProjectId,
   ThreadId,
@@ -140,10 +138,11 @@ it.each([
   ),
 );
 
-it("uses the canonical provider default for auto-bootstrapped model selection", () => {
+it("defaults auto-bootstrapped selection to gpt-6-luna on low reasoning", () => {
   assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
-    instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
-    model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
+    instanceId: defaultInstanceIdForDriver(COPILOT_DRIVER_KIND),
+    model: "gpt-6-luna",
+    options: [{ id: "reasoning", value: "low" }],
   });
 });
 

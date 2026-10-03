@@ -573,6 +573,7 @@ describe("ProviderCommandReactor", () => {
         checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/thread-1/${input.commandId}`),
         status: "ready",
         files: [],
+        transitionFiles: [],
         agentTouchedPaths: [],
         turnFiles: [],
         checkpointTurnCount: 1,
