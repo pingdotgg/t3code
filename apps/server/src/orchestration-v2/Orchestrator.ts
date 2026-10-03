@@ -411,6 +411,16 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   }
 }
 
+// Adapters coerce whatever they receive, so an unusable answer must be rejected
+// here, before the request resolves. Codex's native `{ answers }` shape is accepted.
+const decodeUserInputAnswer = Schema.decodeUnknownOption(
+  Schema.Union([
+    Schema.String,
+    Schema.Array(Schema.String),
+    Schema.Struct({ answers: Schema.Array(Schema.String) }),
+  ]),
+);
+
 function pendingThreadTitleGenerationEffect(
   commandId: CommandId,
   threadId: ThreadId,
@@ -6816,6 +6826,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Provider session ${providerSessionId} was not found.`,
         });
       }
+      const answerEntries: Array<readonly [string, string | ReadonlyArray<string>]> = [];
+      for (const [questionId, value] of Object.entries(command.answers ?? {})) {
+        const answer = Option.getOrUndefined(decodeUserInputAnswer(value));
+        if (answer === undefined) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `The answer to question ${questionId} must be text or a list of text.`,
+          });
+        }
+        answerEntries.push([
+          questionId,
+          typeof answer === "object" && "answers" in answer ? answer.answers : answer,
+        ]);
+      }
+      const answers = command.answers === undefined ? undefined : Object.fromEntries(answerEntries);
 
       const now = yield* DateTime.now;
       const resolvedRequest = {
@@ -6823,7 +6849,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "resolved" as const,
         resolvedAt: now,
         ...(command.decision === undefined ? {} : { decision: command.decision }),
-        ...(command.answers === undefined ? {} : { answers: command.answers }),
+        ...(answers === undefined ? {} : { answers }),
       };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
@@ -6882,11 +6908,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...approvalTurnItem,
-            ...(approvalTurnItem.type === "user_input_request" && command.answers !== undefined
+            ...(approvalTurnItem.type === "user_input_request" && answers !== undefined
               ? {
                   questionAnswer: {
                     requestId: command.requestId,
-                    answers: command.answers ?? {},
+                    answers,
                     attachmentsByQuestionId: command.attachmentsByQuestionId ?? {},
                     questionTextById: Object.fromEntries(
                       approvalTurnItem.questions.map((question) => [
@@ -6914,7 +6940,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         const replies: string[] = [];
         for (const question of approvalTurnItem.questions) {
-          const answer = command.answers?.[question.id];
+          const answer = answers?.[question.id];
           if (typeof answer !== "string" || answer.trim().length === 0) {
             if (question.required === false) continue;
             return yield* new OrchestratorDispatchError({
@@ -6994,7 +7020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionId,
             requestId: command.requestId,
             ...(command.decision === undefined ? {} : { decision: command.decision }),
-            ...(command.answers === undefined ? {} : { answers: command.answers }),
+            ...(answers === undefined ? {} : { answers }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

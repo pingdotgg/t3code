@@ -534,3 +534,86 @@ it.effect("settles only the stopped run's background work, once", () =>
     ]);
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("rejects an unusable user-input answer before the request resolves", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:answer-shape");
+    const sessionId = ProviderSessionId.make("session:answer-shape");
+    const requestId = RuntimeRequestId.make("request:answer-shape");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-answer-shape"),
+      threadId,
+      projectId: ProjectId.make("project:answer-shape"),
+      title: "Question",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("attach-answer-shape"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: sessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: "gpt-5.1-codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("request:answer-shape"),
+      type: "runtime-request.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId: NodeId.make("node:answer-shape"),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId: sessionId },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+
+    const invalid = yield* orchestrator
+      .dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("answer-shape-invalid"),
+        threadId,
+        requestId,
+        answers: { "Which color?": { choice: "Blue" } },
+      })
+      .pipe(Effect.result);
+    assert.equal(invalid._tag, "Failure");
+    assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, "pending");
+
+    yield* orchestrator.dispatch({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-shape-codex"),
+      threadId,
+      requestId,
+      answers: { "Which color?": { answers: ["Blue"] } },
+    });
+    const resolved = yield* projections.getRuntimeRequest(threadId, requestId);
+    assert.equal(resolved?.status, "resolved");
+    assert.deepEqual(resolved?.answers, { "Which color?": ["Blue"] });
+  }).pipe(Effect.provide(testLayer)),
+);
