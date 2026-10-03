@@ -4800,33 +4800,14 @@ function ChatViewBody(
             return;
           }
           // Child-chat workflows run in the background: stay on the current
-          // thread and let the user open the worker on demand (sidebar,
-          // workflow-runs popover, or the toast action).
+          // thread and let the user open the worker on demand from the sidebar
+          // or workflow-runs popover.
           const releaseThreadDetail = retainThreadDetailSubscription(
             environmentId,
             result.threadId,
           );
           try {
             await ensureRoutableServerThread(resultThreadRef);
-            toastManager.add(
-              stackedThreadToast({
-                type: "success",
-                title: "Workflow started in background",
-                description: "It keeps running without switching threads.",
-                actionProps: {
-                  children: "Open thread",
-                  onClick: () => {
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: {
-                        environmentId,
-                        threadId: result.threadId,
-                      },
-                    });
-                  },
-                },
-              }),
-            );
           } catch (error) {
             toastManager.add(
               stackedThreadToast({
