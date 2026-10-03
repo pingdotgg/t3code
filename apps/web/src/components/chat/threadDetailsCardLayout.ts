@@ -1,4 +1,5 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
+import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
 export function resolveThreadDetailsCardDensity(
   height: number,
@@ -20,7 +21,7 @@ export function resolveThreadDetailsCardLayout({
   overlapsDetailsCard = false,
 }: {
   container: { width: number; height: number };
-  lane: { margin: number; minChatWidth: number };
+  lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
 }) {
@@ -28,7 +29,7 @@ export function resolveThreadDetailsCardLayout({
   // Keep in sync with --thread-details-panel-width, which sizes the popover.
   const width = 280;
   const x = container.width - width - gap;
-  if (x - lane.margin * 2 < lane.minChatWidth) return null;
+  if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.
   const height =

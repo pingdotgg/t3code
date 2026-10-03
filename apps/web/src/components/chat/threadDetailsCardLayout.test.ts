@@ -4,7 +4,7 @@ import {
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
 
-const lane = { margin: 96, minChatWidth: 640 };
+const lane = { padding: 20, minChatWidth: 640 };
 const resolve = (width: number, height: number, previewY: number | null = null) =>
   resolveThreadDetailsCardLayout({
     container: { width, height },
@@ -22,9 +22,9 @@ describe("workspace card", () => {
     });
     expect(resolve(1344, 900)).toMatchObject({ x: 1052, width: 280 });
   });
-  it("hides when a readable chat lane and its margins cannot fit beside it", () => {
-    expect(resolve(1124, 900)).toMatchObject({ x: 832 });
-    expect(resolve(1123, 900)).toBeNull();
+  it("hides when a readable chat lane cannot fit beside it", () => {
+    expect(resolve(984, 900)).toMatchObject({ x: 692 });
+    expect(resolve(983, 900)).toBeNull();
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {

@@ -19,28 +19,9 @@ export interface ChatCanvasPreview {
 }
 
 const GAP = 12;
-// Space between chat and the workspace card. The card floats in the right
-// margin while the centered chat clears it by this much. Closer than this, the
-// card docks and chat keeps this space on both sides.
-const DETAILS_CARD_CLEARANCE = 96;
-
-/**
- * Space on each side of chat while the workspace card is docked. Chat gives up
- * width before this space. It never exceeds the centered margin, so a
- * full-width chat stays full width.
- */
-export function resolveDockedChatMargin({
-  width,
-  padding,
-  maxChatWidth,
-}: {
-  width: number;
-  padding: number;
-  maxChatWidth: number;
-}) {
-  const centeredWidth = Math.max(0, Math.min(maxChatWidth, width - padding * 2));
-  return Math.min(DETAILS_CARD_CLEARANCE, (width - centeredWidth) / 2);
-}
+// Minimum space between chat and the workspace card. Chat stays centered while
+// the card fits beside it with this much room.
+export const DETAILS_CARD_CLEARANCE = 32;
 
 /** Pure geometry shared by the conversation, composer, workspace card, and floating preview. */
 export function resolveChatCanvasLayout({
@@ -61,23 +42,22 @@ export function resolveChatCanvasLayout({
   detailsCard?: PreviewMiniPlayerObstacles["detailsCard"];
 }) {
   const centeredWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
-  // Without that clearance the card docks like a sidebar, and chat centers in
-  // the space to its left.
-  const docked =
-    detailsCard !== null &&
-    (container.width + centeredWidth) / 2 + DETAILS_CARD_CLEARANCE > detailsCard.left;
-  const laneRight = docked ? detailsCard.left : container.width;
-  const margin = docked
-    ? resolveDockedChatMargin({ width: container.width, padding, maxChatWidth })
-    : padding;
-  const normalWidth = Math.max(0, Math.min(maxChatWidth, laneRight - margin * 2));
-  const normalLeft = (laneRight - normalWidth) / 2;
-  // The lane CSS adds `padding` on each side, so the insets carry the rest.
+  // A workspace card that does not fit beside the centered chat first moves
+  // chat left, only as far as it needs. Chat narrows only after it reaches the
+  // left padding.
+  const laneRight = detailsCard
+    ? detailsCard.left - DETAILS_CARD_CLEARANCE
+    : container.width - padding;
+  const normalWidth = Math.max(0, Math.min(centeredWidth, laneRight - padding));
+  const normalLeft = Math.max(
+    padding,
+    Math.min((container.width - normalWidth) / 2, laneRight - normalWidth),
+  );
   let chat = {
     left: normalLeft,
     width: normalWidth,
-    insetStart: margin - padding,
-    insetEnd: container.width - laneRight + margin - padding,
+    insetStart: 0,
+    insetEnd: Math.max(0, container.width - normalLeft * 2 - normalWidth),
   };
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;
