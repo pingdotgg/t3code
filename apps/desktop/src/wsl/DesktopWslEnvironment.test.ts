@@ -424,7 +424,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
-  const createFixture = () => {
+  const createFixture = (includeMonitor = false) => {
     const result = runShell(
       [
         "set -eu",
@@ -436,6 +436,13 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/t3"`,
         'chmod +x "$stage/t3"',
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/build/Release/pty.node"`,
+        ...(includeMonitor
+          ? [
+              'mkdir -p "$stage/resource-monitor/linux-x64"',
+              `printf '%s' ${sh("#!/bin/sh\nprintf monitor-ready\n")} > "$stage/resource-monitor/linux-x64/t3-resource-monitor"`,
+              'chmod 644 "$stage/resource-monitor/linux-x64/t3-resource-monitor"',
+            ]
+          : []),
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$work/stage" t3-0.0.0-linux-x64`,
         `printf 'work:%s\\n' "$work"`,
         `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,
@@ -468,6 +475,17 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
   };
+
+  it("makes a monitor archived without execute permission runnable", () => {
+    const fixture = createFixture(true);
+    const installed = fixture.install();
+    expect(installed.status, installed.stderr).toBe(0);
+
+    const monitor = `${fixture.runtimeRoot}/resource-monitor/linux-x64/t3-resource-monitor`;
+    const launched = runShell(`set -eu\ntest -x ${sh(monitor)}\n${sh(monitor)}`);
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(launched.stdout).toBe("monitor-ready");
+  });
 
   const probeFixture = (fixture: ReturnType<typeof createFixture>) =>
     runShell(

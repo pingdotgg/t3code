@@ -2094,6 +2094,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const sourceArchivePath = yield* makeLinuxCliArchiveFixture({
           root,
           stem: "t3-1.2.3-linux-x64",
+          extraMembers: ["t3-1.2.3-linux-x64/resource-monitor/linux-x64/t3-resource-monitor"],
         });
         const stageAppDir = path.join(root, "app");
         const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
@@ -2106,6 +2107,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           fs.readFile(archivePath),
         ]);
         assert.deepStrictEqual(staged, source);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const listing = yield* spawner.spawn(ChildProcess.make("tar", ["-tzf", archivePath]));
+        const members = yield* Stream.mkString(Stream.decodeText(listing.stdout));
+        assert.equal(Number(yield* listing.exitCode), 0);
+        assert.include(
+          members,
+          "t3-1.2.3-linux-x64/resource-monitor/linux-x64/t3-resource-monitor",
+        );
         // The digest both gates installation inside the distro and names the
         // extracted runtime's cache directory.
         const hash = yield* fs.readFileString(hashPath);

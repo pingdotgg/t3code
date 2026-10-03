@@ -384,6 +384,10 @@ export const buildWslRuntimeInstallScript = (
     // The release archive has one top-level `t3-<version>-linux-<arch>/`
     // directory; strip it so the executable lands at `$runtime_root/t3`.
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
+    // Repair Unix execute bits that can be lost when the archive is staged on Windows.
+    'for monitor in "$runtime_tmp"/resource-monitor/linux-*/t3-resource-monitor; do',
+    '  [ ! -f "$monitor" ] || chmod 755 "$monitor"',
+    "done",
     // Never write the ready marker over a tree whose executable does not run.
     // Failing here drops out to the mounted-tree fallback, which is
     // recoverable; promoting it would mark the defect ready and cache it.
