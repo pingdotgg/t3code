@@ -73,6 +73,7 @@ interface ClientConnection {
   readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
+  readonly activeThreadId: PreviewAutomationHostFocus["activeThreadId"];
   readonly liveTabs: NonNullable<PreviewAutomationHostFocus["liveTabs"]>;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
@@ -377,6 +378,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       environmentId: host.environmentId,
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
+      activeThreadId: undefined,
       liveTabs: [],
       focusOrder: 0,
       queue,
@@ -434,6 +436,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       clients.set(host.clientId, {
         ...currentHost,
         focused: host.focused,
+        activeThreadId: host.activeThreadId,
         liveTabs: host.liveTabs ?? currentHost.liveTabs,
         focusOrder: host.focused ? focusSequence : currentHost.focusOrder,
       });
@@ -517,6 +520,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
                   (left, right) =>
                     Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
                     Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
+                    Number(right.activeThreadId === input.scope.threadId) -
+                      Number(left.activeThreadId === input.scope.threadId) ||
                     Number(right.focused) - Number(left.focused) ||
                     right.focusOrder - left.focusOrder,
                 )[0];
