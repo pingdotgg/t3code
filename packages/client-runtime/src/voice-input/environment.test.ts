@@ -30,12 +30,9 @@ const prepared = (
     wsBaseUrl: "ws://localhost",
   }),
 });
-for (const url of [
-  "http://remote.example",
-  "http://127.0.0.1.evil.example",
-  "http://192.168.1.1",
-]) {
-  it.effect(`does not send audio or credentials to ${url}`, () =>
+it.effect.each(["http://remote.example", "http://127.0.0.1.evil.example", "http://192.168.1.1"])(
+  "does not send audio or credentials to %s",
+  (url) =>
     Effect.gen(function* () {
       const fetch = vi.fn(async () => Response.json({ text: "hello" }));
       const result = yield* transcribeEnvironmentPcm(
@@ -52,34 +49,31 @@ for (const url of [
       });
       expect(fetch).not.toHaveBeenCalled();
     }),
-  );
-}
-for (const url of [
+);
+it.effect.each([
   "https://remote.example",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://[::1]:3000",
-]) {
-  it.effect(`allows protected or loopback transport ${url}`, () =>
-    Effect.gen(function* () {
-      const fetch = vi.fn(async () => Response.json({ text: "hello" }));
-      expect(
-        yield* transcribeEnvironmentPcm(
-          prepared(url),
-          new Uint8Array(4),
-          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        ).pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.provideService(FetchHttpClient.Fetch, fetch),
-        ),
-      ).toEqual({ text: "hello" });
-      expect(fetch).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ redirect: "error", credentials: "include" }),
-      );
-    }),
-  );
-}
+])("allows protected or loopback transport %s", (url) =>
+  Effect.gen(function* () {
+    const fetch = vi.fn(async () => Response.json({ text: "hello" }));
+    expect(
+      yield* transcribeEnvironmentPcm(
+        prepared(url),
+        new Uint8Array(4),
+        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+      ),
+    ).toEqual({ text: "hello" });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ redirect: "error", credentials: "include" }),
+    );
+  }),
+);
 
 it.effect("does not send browser cookies with bearer-authenticated voice requests", () =>
   Effect.gen(function* () {
