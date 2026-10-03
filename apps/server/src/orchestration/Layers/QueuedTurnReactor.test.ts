@@ -335,6 +335,15 @@ async function runReactor(
     readonly providerInstances?: ServerSettings["providerInstances"];
     readonly optIn?: boolean;
     readonly enableAfterStart?: boolean;
+    /**
+     * Published from inside the startup path, after the event consumer is forked
+     * but before crash recovery completes. Models the readiness-changing event
+     * that provider ingestion can deliver during the recovery window.
+     */
+    readonly resumeDuringStart?: {
+      readonly readModel: OrchestrationReadModel;
+      readonly event: OrchestrationEvent;
+    };
     readonly delegationIdleStallThresholdMs?: number;
   },
 ): Promise<ReadonlyArray<OrchestrationCommand>> {
@@ -342,8 +351,23 @@ async function runReactor(
   const commands: OrchestrationCommand[] = [];
   const domainEvents = await Effect.runPromise(PubSub.unbounded<OrchestrationEvent>());
   let dispatchesStarted = 0;
+  let publishedDuringStart = false;
   const engineLayer = Layer.succeed(OrchestrationEngineService, {
-    getReadModel: () => Effect.succeed(readModel),
+    getReadModel: () =>
+      Effect.suspend(() => {
+        // Models the readiness-changing event provider ingestion can deliver
+        // while recovery is still running: this fires from the crash-hold
+        // sweep's own read, which is after the consumer is forked and before the
+        // barrier opens.
+        if (options?.resumeDuringStart && !publishedDuringStart) {
+          publishedDuringStart = true;
+          readModel = options.resumeDuringStart.readModel;
+          return Effect.flatMap(PubSub.publish(domainEvents, options.resumeDuringStart.event), () =>
+            Effect.succeed(readModel),
+          );
+        }
+        return Effect.succeed(readModel);
+      }),
     readEvents: () => Stream.empty,
     dispatch: (command) =>
       Effect.sync(() => {
@@ -530,6 +554,10 @@ async function runReactor(
     Effect.scoped(
       Effect.gen(function* () {
         const reactor = yield* QueuedTurnReactor;
+        // `resumeDuringStart` publishes from inside the start path: the engine's
+        // first read model fetch is stubbed to publish an event the first time
+        // it is called, which happens after the event consumer is forked but
+        // before crash recovery has installed the holds.
         yield* reactor.start();
         if (options?.resume) {
           expect(commands).toHaveLength(0);
@@ -564,6 +592,35 @@ describe("QueuedTurnReactor", () => {
     expect(holds[0]).toMatchObject({ threadId });
     // The whole point of holding: nothing reaches the provider until the user
     // says so, even though the queue is otherwise eligible.
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  /**
+   * The event consumer is forked before crash recovery installs the holds, and
+   * TurnLifecycleRuntime starts provider ingestion before this reactor, so a
+   * readiness-changing event for a restored thread can arrive while that thread
+   * is still unheld. Without a recovery barrier the queued prompt dispatches in
+   * that window — the case the hold exists to prevent.
+   */
+  /**
+   * The domain-event consumer is forked before crash recovery installs the
+   * holds, and TurnLifecycleRuntime starts provider ingestion before this
+   * reactor, so a readiness-changing event can arrive for a restored thread
+   * while it is still unheld. `resumeDuringStart` delivers it from inside the
+   * recovery sweep's own read, which is exactly that window.
+   */
+  it("drops an event-triggered drain that arrives while recovery is still running", async () => {
+    const state = queuedReadModel();
+    const commands = await runReactor(state, monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      resumeDuringStart: {
+        readModel: state,
+        event: queueMetaUpdatedEvent(state.threads[0]!.id),
+      },
+      waitAfterStartMs: 40,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(true);
     expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
   });
 
