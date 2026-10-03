@@ -539,15 +539,34 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         ),
       );
 
-      expect(command.shell).toBe(true);
-      expect(command.command).not.toContain(" & ");
-      expect(command.command).toContain("^&");
-      expect(command.args).toEqual([
-        '^"run^"',
-        '^"value^ ^&^ calc^"',
-        '^"^%PATH^%^"',
-        '^"quote\\^"value^"',
-      ]);
+      expect(command).toEqual({
+        command: [
+          '^"C:\\Program^ Files\\npm^ ^&^ tools\\vp.cmd^"',
+          '^"run^"',
+          '^"value^ ^&^ calc^"',
+          '^"^%PATH^%^"',
+          '^"quote\\^"value^"',
+        ].join(" "),
+        args: [],
+        shell: true,
+      });
+    }),
+  );
+
+  it.effect("launches Windows .bat shims without passing args alongside shell: true", () =>
+    Effect.gen(function* () {
+      const command = yield* resolveSpawnCommand("tool", ["--flag"], {
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, () => "C:\\tools\\tool.bat"),
+      );
+
+      expect(command).toEqual({
+        command: '^"C:\\tools\\tool.bat^" ^"--flag^"',
+        args: [],
+        shell: true,
+      });
     }),
   );
 
