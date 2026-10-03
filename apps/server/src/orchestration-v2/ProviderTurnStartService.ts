@@ -1232,6 +1232,19 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
+        // Legacy attempts predate native identity, so they can only have run on
+        // the native thread this provider thread was created with: one that was
+        // not just replaced, and with no attempt yet recorded under any native id.
+        nativeThreadHasTurns:
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !projection.attempts.some(
+              (source) =>
+                source.providerThreadId === providerThread.id &&
+                source.id !== attempt.id &&
+                source.nativeThreadId !== undefined,
+            )),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,

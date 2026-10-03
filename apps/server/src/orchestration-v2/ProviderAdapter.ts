@@ -399,6 +399,12 @@ export interface ProviderAdapterV2TurnInput {
   readonly runId: RunId;
   readonly runOrdinal: number;
   readonly providerTurnOrdinal: number;
+  /**
+   * Whether an earlier provider turn ran on the provider thread's current
+   * native thread. False after a fallback bound a fresh native thread to a
+   * provider thread that already has turns. Unset when unknown.
+   */
+  readonly nativeThreadHasTurns?: boolean;
   readonly restartContinuationOfRunId?: RunId;
   readonly attemptId: RunAttemptId;
   readonly rootNodeId: NodeId;
