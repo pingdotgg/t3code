@@ -20,7 +20,9 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -30,6 +32,7 @@ import {
   resolveClaudeSdkExecutablePath,
 } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -961,6 +964,52 @@ function makeClaudeAgentSdkReplayLayer(
   );
 }
 
+/**
+ * While a foreground Bash call runs, Claude Code writes its output to a task
+ * file the adapter tails. A replay has no Claude Code process, so it writes the
+ * file each recorded `task_started` names, holding that call's recorded output,
+ * under a scenario-owned `CLAUDE_CODE_TMPDIR`.
+ */
+const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles")(function* (
+  transcript: ClaudeAgentSdkReplayTranscript,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tmpRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-replay-tasks-" });
+  const frames = transcript.entries.flatMap((entry) =>
+    entry.type === "emit_inbound" && typeof entry.frame === "object" && entry.frame !== null
+      ? [entry.frame as Record<string, unknown>]
+      : [],
+  );
+  const outputByToolUseId = new Map<string, string>();
+  for (const frame of frames) {
+    const result = frame.tool_use_result as Record<string, unknown> | undefined;
+    const content = (frame.message as { readonly content?: unknown } | undefined)?.content;
+    if (typeof result?.stdout !== "string" || !Array.isArray(content)) continue;
+    const toolResult = content.find(
+      (block): block is { readonly tool_use_id: string } =>
+        block?.type === "tool_result" && typeof block.tool_use_id === "string",
+    );
+    if (toolResult === undefined) continue;
+    const stderr = typeof result.stderr === "string" ? result.stderr : "";
+    outputByToolUseId.set(toolResult.tool_use_id, `${result.stdout}${stderr}`);
+  }
+  const root = claudeTaskOutputRoot({ CLAUDE_CODE_TMPDIR: tmpRoot }, path);
+  for (const frame of frames) {
+    if (frame.type !== "system" || frame.subtype !== "task_started") continue;
+    if (frame.task_type !== "local_bash" || frame.is_backgrounded !== false) continue;
+    const output =
+      typeof frame.tool_use_id === "string" ? outputByToolUseId.get(frame.tool_use_id) : undefined;
+    if (root === undefined || output === undefined || typeof frame.session_id !== "string") {
+      continue;
+    }
+    const tasks = path.join(root, "replay-project", frame.session_id, "tasks");
+    yield* fileSystem.makeDirectory(tasks, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(tasks, `${String(frame.task_id)}.output`), output);
+  }
+  return tmpRoot;
+});
+
 function makeClaudeProviderAdapterRegistryReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
@@ -972,14 +1021,23 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
-    drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
-    configMap: {
-      [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
-        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-      },
-    },
-  }).pipe(
+  return Layer.unwrap(
+    writeReplayTaskOutputFiles(transcript).pipe(
+      Effect.orDie,
+      Effect.map((tmpRoot) =>
+        ProviderAdapterRegistry.makeDriverLayer({
+          drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
+          configMap: {
+            [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
+            },
+          },
+        }),
+      ),
+      Effect.provide(NodeServices.layer),
+    ),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         makeClaudeAgentSdkReplayLayer(transcript, options),

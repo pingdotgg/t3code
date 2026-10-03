@@ -58,6 +58,7 @@ import {
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
+  COMMAND_OUTPUT_STREAMING_PROMPT,
   TURN_INTERRUPT_PROMPT,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
@@ -97,6 +98,7 @@ const SCENARIO_NAMES = [
   "message_steering",
   "turn_interrupt",
   "turn_interrupt_mid_tool",
+  "command_output_streaming",
   "thread_rollback",
   "thread_rollback_after_restart",
   "thread_rollback_to_stopped_turn",
@@ -762,6 +764,29 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
               label: "interrupt-after-command-execution",
               prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
               interruptAfterCommandExecutionStarted: true,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "command_output_streaming",
+      fileName: "command_output_streaming.ndjson",
+      description: "One command prints over several seconds, so Codex streams its output deltas.",
+      runs: [
+        {
+          name: "command-output-streaming",
+          description: "Run a foreground command that prints a line a second.",
+          prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "command-output-streaming",
+              prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
             },
           ],
         },

@@ -112,6 +112,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -1985,6 +1986,17 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeThread,
             subscribeOrchestrationV2Thread(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
+          observeRpcStream(
+            ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
+            Stream.unwrap(
+              CommandOutputHub.CommandOutputHub.use((hub) => Effect.succeed(hub.subscribe(input))),
+            ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,

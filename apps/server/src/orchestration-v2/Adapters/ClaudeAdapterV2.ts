@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -77,6 +78,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1837,6 +1839,27 @@ function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
   return typeof value === "string" ? value : value === undefined ? "" : jsonStringifyForTool(value);
 }
 
+/**
+ * A command row's output: what the command printed. Bash results arrive as a
+ * structured `{ stdout, stderr, ... }` record, which must not be shown as JSON.
+ */
+function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
+  if (output.type === "structured_tool_use_result") {
+    const value = output.value;
+    const stdout =
+      typeof value === "object" && value !== null && "stdout" in value ? value.stdout : undefined;
+    const stderr =
+      typeof value === "object" && value !== null && "stderr" in value ? value.stderr : undefined;
+    if (typeof stdout === "string" || typeof stderr === "string") {
+      return [stdout, stderr]
+        .filter((part): part is string => typeof part === "string" && part.length > 0)
+        .join("\n");
+    }
+    if (typeof output.fallbackValue === "string") return output.fallbackValue;
+  }
+  return claudeNativeToolOutputText(output);
+}
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -2951,6 +2974,23 @@ export function makeClaudeAdapterV2(
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        // Foreground Bash calls whose output file is being tailed, by tool_use_id.
+        const taskOutputTails = new Map<
+          string,
+          { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
+        >();
+        const taskOutputRoot = claudeTaskOutputRoot(adapterOptions.environment, path);
+        // Waits for the tail's last read so its output lands before the call settles.
+        const stopTaskOutputTail = (toolUseId: string) =>
+          Effect.suspend(() => {
+            const tail = taskOutputTails.get(toolUseId);
+            if (tail === undefined) return Effect.void;
+            taskOutputTails.delete(toolUseId);
+            return Deferred.succeed(tail.stop, undefined).pipe(
+              Effect.andThen(Fiber.await(tail.fiber)),
+              Effect.asVoid,
+            );
+          });
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
@@ -3777,13 +3817,15 @@ export function makeClaudeAdapterV2(
           const webSearchResults = webSearchResultsFromClaudeOutput(input.output);
           const outputValue = claudeNativeToolOutputValue(input.output);
           const outputText = claudeNativeToolOutputText(input.output);
+          const commandOutputText =
+            itemType === "command_execution" ? claudeCommandOutputText(input.output) : "";
           const turnItem: OrchestrationV2TurnItem =
             itemType === "command_execution"
               ? {
                   ...itemBase,
                   type: "command_execution",
                   input: commandInputFromClaudeTool(input.toolName, input.toolInput),
-                  ...(outputText.length === 0 ? {} : { output: outputText }),
+                  ...(commandOutputText.length === 0 ? {} : { output: commandOutputText }),
                 }
               : itemType === "file_change"
                 ? {
@@ -4728,6 +4770,7 @@ export function makeClaudeAdapterV2(
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
+            yield* stopTaskOutputTail(toolCall.nativeItemId);
             const artifacts = buildToolCallArtifacts({
               context: input.context,
               nativeItemId: toolCall.nativeItemId,
@@ -5812,6 +5855,42 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "system" && message.subtype === "task_started") {
             if (isClaudeNonSubagentTask(message)) {
+              const tailedCall =
+                message.tool_use_id === undefined
+                  ? undefined
+                  : context.toolCalls.get(message.tool_use_id);
+              if (
+                taskOutputRoot !== undefined &&
+                message.task_type === "local_bash" &&
+                message.is_backgrounded === false &&
+                tailedCall?.classification.itemType === "command_execution" &&
+                !taskOutputTails.has(tailedCall.nativeItemId)
+              ) {
+                const itemId = idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId: tailedCall.nativeItemId,
+                });
+                const stop = yield* Deferred.make<void>();
+                const fiber = yield* tailClaudeTaskOutput({
+                  root: taskOutputRoot,
+                  sessionId: message.session_id,
+                  taskId: message.task_id,
+                  stop,
+                  onChunk: (chunk) =>
+                    emitProviderEvent({
+                      type: "command_output.delta",
+                      driver: CLAUDE_PROVIDER,
+                      threadId: tailedCall.threadId,
+                      itemId,
+                      chunk,
+                    }),
+                }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.forkIn(sessionScope),
+                );
+                taskOutputTails.set(tailedCall.nativeItemId, { fiber, stop });
+              }
               context.ignoredTaskIds.add(message.task_id);
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -6043,6 +6122,7 @@ export function makeClaudeAdapterV2(
               updatedAt: completedAt,
               presentation: toolCall.presentation,
             });
+            yield* stopTaskOutputTail(toolCall.nativeItemId);
             yield* emitToolCallArtifacts(artifacts);
             context.toolCalls.delete(toolCall.nativeItemId);
           }

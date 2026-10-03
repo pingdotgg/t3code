@@ -33,6 +33,7 @@ import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -293,6 +294,7 @@ export const layerWithOptions = (
 ): Layer.Layer<
   ProviderSessionManagerV2,
   never,
+  | CommandOutputHub.CommandOutputHub
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
@@ -318,6 +320,7 @@ export const layerWithOptions = (
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
+      const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -1426,6 +1429,23 @@ export const layerWithOptions = (
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
+            // Live output skips run subscribers and ingestion entirely: it is
+            // never persisted, and a flood of it must not queue ahead of real events.
+            if (event.type === "command_output.delta") {
+              return commandOutput.append(event);
+            }
+            // A settled item carries its final output, so its live tail can go.
+            const releaseLiveOutput =
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status !== "running" &&
+              event.turnItem.status !== "pending" &&
+              event.turnItem.status !== "waiting"
+                ? commandOutput.finish({
+                    threadId: event.turnItem.threadId,
+                    itemId: event.turnItem.id,
+                  })
+                : Effect.void;
             if (
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped"
@@ -1477,6 +1497,7 @@ export const layerWithOptions = (
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  yield* releaseLiveOutput;
                 }),
               ),
             );

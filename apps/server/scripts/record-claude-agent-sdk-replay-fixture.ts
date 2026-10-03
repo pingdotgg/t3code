@@ -55,6 +55,7 @@ import {
   TOOL_CALL_READ_ONLY_WORKSPACE_ROOT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
+  COMMAND_OUTPUT_STREAMING_PROMPT,
   TURN_INTERRUPT_PROMPT,
   TURN_INTERRUPT_RECOVERY_PROMPT,
   WORKSPACE_NEVER_POLICY,
@@ -116,6 +117,12 @@ const CLAUDE_RECORDINGS = {
     prompts: [MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT],
     defaultTranscriptFile: "fixtures/message_steering/claude_transcript.ndjson",
     queryMode: "active_steering",
+    enableTools: true,
+  },
+  command_output_streaming: {
+    prompts: [COMMAND_OUTPUT_STREAMING_PROMPT],
+    defaultTranscriptFile: "fixtures/command_output_streaming/claude_transcript.ndjson",
+    queryMode: "streaming",
     enableTools: true,
   },
   turn_interrupt_mid_tool: {
