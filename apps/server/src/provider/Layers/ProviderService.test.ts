@@ -2562,15 +2562,20 @@ it.effect("ProviderServiceLive records terminal liveness while a subscriber wedg
 
       // A burst large enough to wedge delivery many times over, terminated by
       // the turn completion whose settle the reaper depends on.
+      //
+      // The burst uses non-terminal lifecycle events deliberately. Streaming
+      // events are filtered before reaching the ledger, so only lifecycle
+      // traffic can both wedge delivery and still need recording; a delta burst
+      // would let this test pass even against the old coupled implementation.
       for (let index = 0; index < 8_000; index += 1) {
         pi.emit({
           eventId: asEventId(`evt-liveness-burst-${index}`),
           provider: piDriver,
           threadId,
           createdAt: new Date().toISOString(),
-          type: "content.delta",
+          type: "turn.started",
           turnId,
-          payload: { delta: "x", streamKind: "text" },
+          payload: {},
         });
       }
       pi.emit({

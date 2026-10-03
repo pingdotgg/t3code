@@ -35,12 +35,26 @@ export interface ProviderRuntimeLivenessShape {
   /**
    * Record one provider runtime event. Called on the single ingestion funnel
    * before the event is published to orchestration.
+   *
+   * Only turn lifecycle events carry information here, so callers should filter
+   * first — see `isLifecycleEvent`.
    */
   readonly record: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
 
   /** Latest observation for a thread, or `null` when nothing was observed. */
   readonly observe: (threadId: ThreadId) => Effect.Effect<ProviderThreadRuntimeObservation | null>;
 }
+
+/**
+ * Event types that change what the ledger knows: which turn the provider last
+ * announced, and which turns it has reported settled.
+ *
+ * Everything else — `content.delta`, `message.part.updated`, `task.progress` —
+ * carries nothing the ledger reads. Filtering at the ingestion funnel keeps the
+ * per-event cost of this ledger off the streaming hot path entirely.
+ */
+export const isLifecycleEvent = (event: ProviderRuntimeEvent): boolean =>
+  event.type === "turn.started" || event.type === "turn.completed" || event.type === "turn.aborted";
 
 export class ProviderRuntimeLiveness extends Context.Service<
   ProviderRuntimeLiveness,

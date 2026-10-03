@@ -61,7 +61,7 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
+import { isLifecycleEvent, ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import {
   ProviderSessionDirectory,
@@ -416,7 +416,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           // subscribers depend on delivery order, and `lastStartedTurnId`
           // attributes turnId-less terminal events to the last announced turn.
           // The Pi resume cursor still persists before its event publishes.
-          Effect.andThen(() => Queue.offer(livenessQueue, canonicalEvent)),
+          // Neither offer can suspend (both queues are unbounded and this
+          // consumer is the only producer), so nothing here can be starved by
+          // delivery backpressure — that decoupling is the point.
+          //
+          // Liveness is filtered to lifecycle events: the ledger reads nothing
+          // from streaming traffic, which is orders of magnitude larger than
+          // lifecycle traffic. This keeps the ledger entirely off the hot path.
+          Effect.andThen(
+            isLifecycleEvent(canonicalEvent)
+              ? Queue.offer(livenessQueue, canonicalEvent)
+              : Effect.void,
+          ),
           Effect.andThen(() => Queue.offer(dispatchQueue, [source, canonicalEvent])),
         ),
       ),

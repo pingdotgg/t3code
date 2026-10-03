@@ -12,12 +12,12 @@ import {
 } from "../Services/ProviderRuntimeLiveness.ts";
 
 /**
- * Threads stop emitting once their work is done, so entries must not be kept
- * forever. Comfortably longer than the reaper's settled-turn hold (10 min) so a
- * genuinely stuck thread is still observable when a sweep asks, and long enough
- * that a settled turn survives several sweeps.
+ * Threads stop producing turns once their work is done, so entries must not be
+ * kept forever. The reaper only honours a settle for `settledTurnHoldMs`
+ * (10 min), so anything well beyond that is unusable; this leaves several
+ * multiples of headroom for slow sweeps without holding stale entries.
  */
-const RETENTION_MS = 2 * 60 * 60 * 1000;
+const RETENTION_MS = 60 * 60 * 1000;
 
 /**
  * Only the turn the projection currently calls active is ever queried, so a
@@ -30,7 +30,12 @@ const MAX_SETTLED_TURNS = 8;
 const PRUNE_BATCH_SIZE = 256;
 
 interface MutableObservation {
-  lastEventAtMs: number;
+  /**
+   * When this thread last produced a lifecycle event. Drives retention only —
+   * no consumer reads it, and `ProviderRuntimeLiveness` filters out streaming
+   * traffic, so it is not a general liveness clock.
+   */
+  lastLifecycleEventAtMs: number;
   /**
    * Turn the provider most recently announced with `turn.started`. Terminal
    * events that omit `turnId` settle *this* turn, mirroring how
@@ -50,8 +55,9 @@ interface LedgerState {
 const makeProviderRuntimeLiveness = Effect.gen(function* () {
   const stateRef = yield* Ref.make<LedgerState>({ entries: new Map(), sincePrune: 0 });
 
-  // `record` runs on the ingestion funnel for every event including every
-  // `content.delta`, so it must stay O(1). Entries are mutated in place under
+  // Callers filter to lifecycle events, so this runs a handful of times per turn
+  // rather than once per event; it stays O(1) regardless. Entries are mutated in
+  // place under
   // `Ref.modify`, the single exclusive access point for this state, and
   // `observe` copies the tail out before returning, so nothing else aliases
   // these objects. The expiry sweep is amortized across a batch of records
@@ -61,7 +67,7 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
       const nowMs = Date.now();
       const threadId = event.threadId;
       const observation = state.entries.get(threadId) ?? {
-        lastEventAtMs: nowMs,
+        lastLifecycleEventAtMs: nowMs,
         lastStartedTurnId: null,
         settledTurns: new Map<string, number>(),
       };
@@ -93,14 +99,14 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
         }
       }
 
-      observation.lastEventAtMs = nowMs;
+      observation.lastLifecycleEventAtMs = nowMs;
       state.entries.set(threadId, observation);
 
       state.sincePrune += 1;
       if (state.sincePrune >= PRUNE_BATCH_SIZE) {
         state.sincePrune = 0;
         for (const [expiredThreadId, expired] of state.entries) {
-          if (nowMs - expired.lastEventAtMs > RETENTION_MS) {
+          if (nowMs - expired.lastLifecycleEventAtMs > RETENTION_MS) {
             state.entries.delete(expiredThreadId);
           }
         }
