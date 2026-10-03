@@ -19,6 +19,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
+  OrchestrationV2UserInputQuestion,
   ProjectId,
   ProviderInstanceId,
   type ProviderApprovalDecision,
@@ -117,6 +118,10 @@ function makeClaudeTestAppThread(input: {
     deletedAt: null,
   };
 }
+
+const decodeUserInputQuestions = Schema.decodeUnknownExit(
+  Schema.Array(OrchestrationV2UserInputQuestion),
+);
 
 function makeClaudeTestTurnInput(input: {
   readonly threadId: ThreadId;
@@ -266,6 +271,31 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,
     );
+  });
+
+  it("fills blank AskUserQuestion option descriptions from the label", () => {
+    // A question with a blank description used to fail event ingestion, which
+    // failed the run while Claude still waited for the answer.
+    const questions = ClaudeAdapterV2.claudeUserInputQuestions({
+      questions: [
+        {
+          header: "Naming",
+          question: "Which name?",
+          options: [
+            { label: "Recorder", description: "Matches the package name." },
+            { label: "Keep", description: "" },
+            { label: "Other", description: "   " },
+            { label: "Ask later" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+    assert.deepEqual(
+      questions[0]?.options.map((option) => option.description),
+      ["Matches the package name.", "Keep", "Other", "Ask later"],
+    );
+    assert.isTrue(Exit.isSuccess(decodeUserInputQuestions(questions)));
   });
 
   it("normalizes Claude todo and proposed-plan tool input", () => {

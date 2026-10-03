@@ -2900,7 +2900,11 @@ function piQuestion(
     method === "select" && Array.isArray(event["options"])
       ? event["options"]
           .filter((option): option is string => typeof option === "string")
-          .map((option) => ({ label: option || "Empty value", description: option, value: option }))
+          .map((option) => ({
+            label: option || "Empty value",
+            description: option || "Empty value",
+            value: option,
+          }))
       : [
           {
             label: "Submit empty value",
