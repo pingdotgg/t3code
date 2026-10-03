@@ -533,6 +533,34 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+/**
+ * Subagent threads have no sidebar row, so an open subagent is represented by
+ * its nearest non-subagent ancestor. Returns `threadId` unchanged for any other
+ * thread, or when the chain leaves the loaded shells.
+ */
+export function resolveSidebarRowThreadId(
+  threadId: ThreadId,
+  environmentId: EnvironmentId,
+  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
+): ThreadId {
+  const findThread = (id: ThreadId) =>
+    threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
+  let thread = findThread(threadId);
+  const visited = new Set<ThreadId>();
+  while (
+    thread !== undefined &&
+    isSidebarSubagentThread(thread) &&
+    thread.lineage.parentThreadId !== null &&
+    !visited.has(thread.id)
+  ) {
+    visited.add(thread.id);
+    const parent = findThread(thread.lineage.parentThreadId);
+    if (parent === undefined) return threadId;
+    thread = parent;
+  }
+  return thread !== undefined && !isSidebarSubagentThread(thread) ? thread.id : threadId;
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;

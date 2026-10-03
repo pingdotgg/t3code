@@ -23,6 +23,7 @@ import {
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarSubagentThread,
+  resolveSidebarRowThreadId,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -457,6 +458,48 @@ describe("sidebar thread lineage helpers", () => {
 
     expect(isSidebarSubagentThread(subagent)).toBe(true);
     expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
+  });
+
+  it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
+    const environmentId = EnvironmentId.make("environment-row");
+    const otherEnvironmentId = EnvironmentId.make("environment-other");
+    const subagentOf = (id: string, parentId: ThreadId, environment = environmentId) =>
+      makeThreadFixture({
+        id: ThreadId.make(id),
+        environmentId: environment,
+        lineage: {
+          rootThreadId: parentId,
+          parentThreadId: parentId,
+          relationshipToParent: "subagent",
+        },
+      });
+    const root = makeThreadFixture({ id: ThreadId.make("thread-root"), environmentId });
+    const fork = makeThreadFixture({
+      id: ThreadId.make("thread-fork"),
+      environmentId,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "fork",
+      },
+    });
+    const child = subagentOf("thread-child", root.id);
+    const grandchild = subagentOf("thread-grandchild", child.id);
+    const forkChild = subagentOf("thread-fork-child", fork.id);
+    const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
+    const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
+    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
+
+    expect(resolveSidebarRowThreadId(root.id, environmentId, threads)).toBe(root.id);
+    expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
+    expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
+    expect(resolveSidebarRowThreadId(forkChild.id, environmentId, threads)).toBe(fork.id);
+    // Parents only resolve within the subagent's own environment.
+    expect(resolveSidebarRowThreadId(elsewhere.id, otherEnvironmentId, threads)).toBe(elsewhere.id);
+    expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
+    const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
+    const loopB = subagentOf("thread-loop-b", loopA.id);
+    expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
   });
 
   it("resolves the parent thread for fork sidebar affordances", () => {
