@@ -210,17 +210,19 @@ export function getProviderOptionCurrentValue(
   if (!descriptor) {
     return undefined;
   }
+  const hasExplicitOption = selection?.options?.some((option) => option.id === descriptor.id);
   // Reported values are display-only; callers that build dispatch options omit this context.
   if (
     selection &&
     reportedSelection &&
     selection.instanceId === reportedSelection.instanceId &&
     selection.model === reportedSelection.model &&
-    !selection.options?.some((option) => option.id === descriptor.id)
+    !hasExplicitOption
   ) {
     const reportedValue = getRawSelectionValueById(reportedSelection.options, descriptor.id);
     if (reportedValue !== undefined) return reportedValue;
   }
+  if (descriptor.id === "variant" && selection && !hasExplicitOption) return undefined;
   if (descriptor.type === "boolean") {
     return descriptor.currentValue;
   }

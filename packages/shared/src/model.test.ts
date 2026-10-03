@@ -335,6 +335,9 @@ describe("provider-reported option display", () => {
     expect(descriptor.options.map((option) => option.id)).toEqual(["none", "thinking"]);
     expect(buildProviderOptionSelectionsFromDescriptors([descriptor])).toBeUndefined();
     expect(getProviderOptionCurrentLabel(descriptor, selection)).toBe("Unknown");
+    expect(
+      getProviderOptionCurrentLabel({ ...descriptor, currentValue: "thinking" }, selection),
+    ).toBe("Unknown");
   });
 
   it.each([
