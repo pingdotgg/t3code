@@ -90,40 +90,104 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /**
+   * Server row when the caller passes a presented shell. Only
+   * latestRunCompletedAt is read: the stored completion timestamp, which —
+   * unlike latestRun.completedAt — presentation never synthesizes.
+   */
+  readonly source?: {
+    readonly latestRunCompletedAt?: string | DateTime.Utc | null | undefined;
+  } | null;
+}
+
+/**
+ * The stored run completion timestamp from the server row, when the shell
+ * carries it. Preferred over latestRun.completedAt: presentation synthesizes
+ * that from projection activity time when the server omits the stored value
+ * (see presentThreadShell), which would mistake unrelated title/metadata
+ * updates for fresh completions and wake snoozed threads early.
+ */
+function storedRunCompletedAt(shell: ThreadSnoozeShell): string | null {
+  const stored = shell.source?.latestRunCompletedAt ?? null;
+  if (stored == null) return null;
+  return typeof stored === "string" ? stored : DateTime.formatIso(stored);
+}
+
+/**
+ * The completion timestamp the wake check may trust. The stored server-row
+ * value wins; a carried row with no stored completion means no confirmed
+ * completion, so the possibly-synthesized presentation value is ineligible.
+ * latestRun.completedAt is only trusted for sourceless (legacy/test) shells.
+ */
+function authoritativeRunCompletedAt(
+  shell: ThreadSnoozeShell,
+  latestRun: { readonly completedAt?: string | null } | null,
+): string | null {
+  const stored = storedRunCompletedAt(shell);
+  if (stored !== null) return stored;
+  if (shell.source != null) return null;
+  return latestRun?.completedAt ?? null;
+}
+
+/**
+ * The instant an early wake was raised by a run outcome or a session error,
+ * or `woke: false` when neither raises the hand. Blocked-on-you wakes
+ * (approval / user input) carry no timestamp and stay the caller's concern.
+ *
+ * A run raises the hand only when it ended strictly after the snooze was set:
+ * a thread snoozed while already failed stays snoozed — that snooze was the
+ * user saying "I saw it, not now". The stored server-row completion is used;
+ * never runtime.updatedAt, which is projection activity time in production
+ * shells and advances on unrelated events (title/metadata updates), and
+ * latestRun.completedAt may be synthesized from it.
+ */
+function runOrSessionWake(shell: ThreadSnoozeShell): { woke: boolean; at: string | null } {
+  const runtime = shell.runtime ?? null;
+  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  const failed =
+    latestRun?.state === "failed" || latestRun?.status === "failed" || runtime?.status === "failed";
+  const completedAt = authoritativeRunCompletedAt(shell, latestRun);
+  // Mirror the server (isAutoSettlementCandidate): a failed thread with no
+  // snooze anchor counts as woken.
+  if (failed && shell.snoozedAt == null) {
+    return { woke: true, at: completedAt ?? runtime?.updatedAt ?? null };
+  }
+  // A run that reached a terminal outcome after the snooze wakes the thread —
+  // completed, failed, cancelled, interrupted or rolled back. Only a terminal
+  // run carries a completion timestamp, so no status check is needed; this
+  // matches the server, which wakes for any newer latestRunCompletedAt.
+  if (
+    shell.snoozedAt != null &&
+    completedAt != null &&
+    Date.parse(completedAt) > Date.parse(shell.snoozedAt)
+  ) {
+    return { woke: true, at: completedAt };
+  }
+  // Legacy session errors without a run timestamp: session.updatedAt stamps
+  // the status edge, so an error newer than the snooze is new information.
+  const session = shell.session ?? null;
+  if (
+    session !== null &&
+    (session.status === "error" || session.status === "failed") &&
+    (shell.snoozedAt == null ||
+      (session.updatedAt != null && Date.parse(session.updatedAt) > Date.parse(shell.snoozedAt)))
+  ) {
+    return { woke: true, at: session.updatedAt ?? shell.snoozedAt ?? null };
+  }
+  return { woke: false, at: null };
 }
 
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
- * the user's snooze: the agent is blocked on them (approval / user input),
- * the session failed, or a run completed after the snooze was set — the
- * v1 taste of event-based snooze ("something happened" wakes early).
- * Raising a hand never clears the server-side snooze fields; it only stops
- * the thread from classifying as snoozed.
+ * the user's snooze: the agent is blocked on them (approval / user input), a
+ * run failed or completed after the snooze was set, or a fresh session error
+ * arrived — the v1 taste of event-based snooze ("something happened" wakes
+ * early). Raising a hand never clears the server-side snooze fields; it only
+ * stops the thread from classifying as snoozed.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
-  const runtime = shell.runtime ?? shell.session ?? null;
-  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  // Only a FRESH failure raises the hand: a thread snoozed while already
-  // failed stays snoozed — that snooze was the user saying "I saw it, not
-  // now". session.updatedAt stamps the status edge, so an error newer than
-  // the snooze is new information.
-  if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
-    (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
-  ) {
-    return true;
-  }
-  if (
-    shell.snoozedAt != null &&
-    (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-    latestRun.completedAt != null &&
-    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return true;
-  }
-  return false;
+  return runOrSessionWake(shell).woke;
 }
 
 /**
@@ -194,17 +258,10 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
     const runtime = shell.runtime ?? shell.session ?? null;
-    if (
-      shell.snoozedAt != null &&
-      (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-      latestRun.completedAt != null &&
-      Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-    ) {
-      return latestRun.completedAt;
-    }
-    return runtime?.updatedAt ?? shell.snoozedAt ?? null;
+    const wake = runOrSessionWake(shell);
+    // Blocked-on-you wakes have no instant: fall back to activity time.
+    return wake.at ?? runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;

@@ -1,8 +1,11 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { presentThreadShell, type EnvironmentThreadShell } from "./models.ts";
+import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -27,6 +30,8 @@ function makeShell(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
   readonly sessionStatus?: "starting" | "running" | "ready" | "error";
+  readonly runtimeStatus?: string;
+  readonly runtimeUpdatedAt?: string;
   readonly pending?: "approval" | "user-input";
   readonly turnCompletedAt?: string | null;
 }): ThreadSnoozeShell {
@@ -36,6 +41,18 @@ function makeShell(input: {
     snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
     hasPendingApprovals: input.pending === "approval",
     hasPendingUserInput: input.pending === "user-input",
+    runtime:
+      input.runtimeStatus === undefined
+        ? null
+        : {
+            threadId,
+            status: input.runtimeStatus,
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: input.runtimeUpdatedAt ?? "2026-04-10T12:00:00.000Z",
+          },
     session:
       input.sessionStatus === undefined
         ? null
@@ -168,6 +185,192 @@ describe("threadRaisedHandWhileSnoozed", () => {
   });
 });
 
+describe("effectiveSnoozed with production runtime shells", () => {
+  /** Production-shaped shell for a usage-limited thread snoozed until reset. */
+  function productionShell(overrides: {
+    readonly runtimeUpdatedAt: string;
+    readonly runCompletedAt: string | null;
+    /** Stored server-row completion; latestRun.completedAt may be synthesized. */
+    readonly storedRunCompletedAt?: string | null;
+    readonly snoozedAt?: string | null;
+    /** Latest run / runtime status; defaults to a failed usage-limit run. */
+    readonly runStatus?: string;
+    readonly runtimeStatus?: string;
+  }): ThreadSnoozeShell {
+    return {
+      snoozedUntil: FUTURE_WAKE,
+      // Snoozed at 09:00, after the usage-limit failure.
+      snoozedAt: overrides.snoozedAt === undefined ? SNOOZED_AT : overrides.snoozedAt,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      ...(overrides.storedRunCompletedAt === undefined
+        ? {}
+        : { source: { latestRunCompletedAt: overrides.storedRunCompletedAt } }),
+      runtime: {
+        threadId: ThreadId.make("thread-1"),
+        status: overrides.runtimeStatus ?? "failed",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: "boom",
+        updatedAt: overrides.runtimeUpdatedAt,
+      },
+      latestRun: {
+        turnId: TurnId.make("turn-1"),
+        status: overrides.runStatus ?? "failed",
+        requestedAt: "2026-04-10T07:00:00.000Z",
+        startedAt: null,
+        completedAt: overrides.runCompletedAt,
+      },
+    };
+  }
+
+  it("stays snoozed when unrelated activity bumps runtime.updatedAt after a limit snooze", () => {
+    // A usage-limited thread snoozed until reset: failure at 08:00, snoozed at
+    // 09:00. A later title/metadata update bumps runtime.updatedAt
+    // (projection activity time) to 11:00 without any new failure. The thread
+    // must stay snoozed until the reset time.
+    expect(
+      effectiveSnoozed(
+        productionShell({
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+          runCompletedAt: "2026-04-10T08:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
+  it("wakes when a run fails after the snooze was set", () => {
+    const shell = productionShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T10:30:00.000Z",
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadRaisedHandWhileSnoozed(shell)).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:30:00.000Z");
+  });
+
+  it("ignores a completedAt synthesized from activity time when the stored completion predates the snooze", () => {
+    // Older servers omit the stored completion, so presentation synthesizes
+    // latestRun.completedAt from projection activity time (11:00 here). The
+    // stored completion (08:00, before the 09:00 snooze) is authoritative:
+    // the thread must stay snoozed.
+    const shell = productionShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T11:00:00.000Z",
+      storedRunCompletedAt: "2026-04-10T08:00:00.000Z",
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadRaisedHandWhileSnoozed(shell)).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+  });
+
+  it("reports the stored completion when it is the fresh outcome", () => {
+    const shell = productionShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T11:00:00.000Z",
+      storedRunCompletedAt: "2026-04-10T10:30:00.000Z",
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:30:00.000Z");
+  });
+
+  it("treats a null stored completion as no confirmed completion", () => {
+    // Server row carried but no stored completion: the later
+    // latestRun.completedAt is synthesized from activity time, so it must not
+    // wake the thread.
+    const shell = productionShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T11:00:00.000Z",
+      storedRunCompletedAt: null,
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadRaisedHandWhileSnoozed(shell)).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+  });
+
+  it("wakes a failed thread that has no snooze anchor", () => {
+    const shell = productionShell({
+      runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+      runCompletedAt: "2026-04-10T08:00:00.000Z",
+      snoozedAt: null,
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadRaisedHandWhileSnoozed(shell)).toBe(true);
+  });
+
+  it.each(["cancelled", "interrupted", "rolled_back"])(
+    "wakes when a %s run ends after the snooze",
+    (runStatus) => {
+      // Any terminal outcome with a fresh completion wakes the thread, matching
+      // the server's latestRunCompletedAt comparison (no status gate).
+      const shell = productionShell({
+        runtimeStatus: runStatus,
+        runStatus,
+        runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+        runCompletedAt: "2026-04-10T10:30:00.000Z",
+        storedRunCompletedAt: "2026-04-10T10:30:00.000Z",
+      });
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+      expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:30:00.000Z");
+    },
+  );
+});
+
+describe("effectiveSnoozed against a presented server shell", () => {
+  const environmentId = EnvironmentId.make("environment-snooze");
+
+  /**
+   * The real production wiring: a usage-limited thread snoozed until reset,
+   * with the projection clock advanced by an unrelated event after the
+   * snooze. `presentThreadShell` synthesizes latestRun.completedAt from that
+   * clock when the server omits the stored completion, which is the exact
+   * shape that used to wake the thread early.
+   */
+  function presentedLimitedShell(
+    storedCompletedAt: string | null | undefined,
+  ): EnvironmentThreadShell {
+    return presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      status: "failed",
+      lastErrorClass: "usage_limit",
+      usageLimitResetAt: FUTURE_WAKE,
+      latestRunId: RunId.make("run-snooze"),
+      latestRunRequestedAt: DateTime.makeUnsafe("2026-04-10T07:00:00.000Z"),
+      ...(storedCompletedAt === undefined
+        ? {}
+        : {
+            latestRunCompletedAt:
+              storedCompletedAt === null ? null : DateTime.makeUnsafe(storedCompletedAt),
+          }),
+      updatedAt: DateTime.makeUnsafe("2026-04-10T11:00:00.000Z"),
+      snoozedUntil: DateTime.makeUnsafe(FUTURE_WAKE),
+      snoozedAt: DateTime.makeUnsafe(SNOOZED_AT),
+    });
+  }
+
+  it("stays snoozed when the server omits the stored completion", () => {
+    const shell = presentedLimitedShell(undefined);
+    // Presentation fills completedAt from the later activity time…
+    expect(shell.latestRun?.completedAt).toBe("2026-04-10T11:00:00.000Z");
+    // …but the snooze anchor predates it, so the thread must stay parked.
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+  });
+
+  it("stays snoozed when the stored completion predates the snooze", () => {
+    const shell = presentedLimitedShell("2026-04-10T08:00:00.000Z");
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+  });
+
+  it("wakes and reports the stored completion when it follows the snooze", () => {
+    const shell = presentedLimitedShell("2026-04-10T10:30:00.000Z");
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:30:00.000Z");
+  });
+});
+
 describe("canSnooze", () => {
   it("allows snoozing quiet and working threads alike", () => {
     expect(canSnooze({ ...makeShell({}), latestUserMessageAt: null }, { now: NOW })).toBe(true);
@@ -282,6 +485,23 @@ describe("threadWokeAt", () => {
       threadWokeAt(makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }), {
         now: NOW,
       }),
+    ).toBe("2026-04-10T11:00:00.000Z");
+  });
+
+  it("reports the session timestamp when the session caused the wake", () => {
+    // Both clocks present, no fresh run outcome: the 11:00 session error woke
+    // the thread, so the Woke indicator must not report the 12:00 runtime
+    // activity time.
+    expect(
+      threadWokeAt(
+        makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          sessionStatus: "error",
+          runtimeStatus: "failed",
+          runtimeUpdatedAt: "2026-04-10T12:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
     ).toBe("2026-04-10T11:00:00.000Z");
   });
 
