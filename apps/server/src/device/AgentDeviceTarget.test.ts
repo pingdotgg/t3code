@@ -21,6 +21,67 @@ import {
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
 describe("host-bound agent commands", () => {
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "starts the desktop runtime as Node before loading the device launcher",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-electron-" });
+        const desktopExecutable = path.join(temp, "T3 Code");
+        const node = "'" + process.execPath.replaceAll("'", "'\"'\"'") + "'";
+        yield* fs.writeFileString(
+          desktopExecutable,
+          `#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] || exit 91\nexec ${node} "$@"\n`,
+        );
+        yield* fs.chmod(desktopExecutable, 0o755);
+        const entryPath = path.join(temp, "device.mjs");
+        yield* fs.writeFileString(entryPath, "console.log(process.env.ELECTRON_RUN_AS_NODE);");
+        const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: temp }).pipe(
+          Effect.provideService(HostProcessIsExecutable, false),
+          Effect.provideService(HostProcessExecutablePath, desktopExecutable),
+        );
+        const env = { ...process.env, ELECTRON_RUN_AS_NODE: "0" };
+        const result = yield* Effect.promise(() =>
+          exec(path.join(shim, "agent-device"), ["--version"], { env }),
+        );
+        expect(result.stdout.trim()).toBe("1");
+        const direct = yield* Effect.promise(() =>
+          exec(process.execPath, [path.join(shim, "agent-device-launcher.mjs"), "--version"], {
+            env,
+          }),
+        );
+        expect(direct.stdout.trim()).toBe("1");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() !== "win32")(
+    "sets Node mode in the Windows command wrapper",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-node-" });
+        const entryPath = path.join(temp, "device.mjs");
+        yield* fs.writeFileString(entryPath, "console.log(process.env.ELECTRON_RUN_AS_NODE);");
+        const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: temp }).pipe(
+          Effect.provideService(HostProcessIsExecutable, false),
+          Effect.provideService(HostProcessExecutablePath, process.execPath),
+        );
+        const result = yield* Effect.promise(() =>
+          exec(
+            "cmd.exe",
+            ["/d", "/s", "/c", `""${path.join(shim, "agent-device.cmd")}" --version"`],
+            {
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: "0" },
+              windowsVerbatimArguments: true,
+            },
+          ),
+        );
+        expect(result.stdout.trim()).toBe("1");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
