@@ -202,6 +202,22 @@ export function getProviderOptionDescriptors(input: {
   );
 }
 
+function getReportedOptionValue(
+  id: string,
+  selection?: ModelSelection | null,
+  reportedSelection?: ModelSelection | null,
+) {
+  if (
+    !selection ||
+    !reportedSelection ||
+    selection.instanceId !== reportedSelection.instanceId ||
+    selection.model !== reportedSelection.model ||
+    selection.options?.some((option) => option.id === id)
+  )
+    return undefined;
+  return getRawSelectionValueById(reportedSelection.options, id);
+}
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,
@@ -212,16 +228,8 @@ export function getProviderOptionCurrentValue(
   }
   const hasExplicitOption = selection?.options?.some((option) => option.id === descriptor.id);
   // Reported values are display-only; callers that build dispatch options omit this context.
-  if (
-    selection &&
-    reportedSelection &&
-    selection.instanceId === reportedSelection.instanceId &&
-    selection.model === reportedSelection.model &&
-    !hasExplicitOption
-  ) {
-    const reportedValue = getRawSelectionValueById(reportedSelection.options, descriptor.id);
-    if (reportedValue !== undefined) return reportedValue;
-  }
+  const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
+  if (reportedValue !== undefined) return reportedValue;
   if (descriptor.id === "variant" && selection && !hasExplicitOption) return undefined;
   if (descriptor.type === "boolean") {
     return descriptor.currentValue;
@@ -250,7 +258,11 @@ export function getProviderOptionCurrentLabel(
   const currentValue = getProviderOptionCurrentValue(descriptor, selection, reportedSelection);
   return (
     descriptor.options.find((option) => option.id === currentValue)?.label ??
-    (currentValue === "default" ? "Default" : descriptor.id === "variant" ? "Unknown" : undefined)
+    (getReportedOptionValue(descriptor.id, selection, reportedSelection) === "default"
+      ? "Default"
+      : descriptor.id === "variant"
+        ? "Unknown"
+        : undefined)
   );
 }
 
