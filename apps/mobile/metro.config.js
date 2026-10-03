@@ -7,6 +7,9 @@ const extraThemes = require("./generated-uniwind-theme-names.json");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
+// Expo finds Worklets' versionless lib/module/package.json. Use the package root
+// so upgrades invalidate cached worklets compiled for the previous runtime.
+config.transformer.workletsVersion = require("react-native-worklets/package.json").version;
 const workspaceRoot = path.resolve(__dirname, "../..");
 const generatedLicenseModuleRoot = path.join(__dirname, ".generated", "third-party-licenses");
 const licenseGeneratorSource = path.join(
