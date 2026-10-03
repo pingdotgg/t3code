@@ -156,6 +156,13 @@ const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   ),
 );
 
+/**
+ * First id for typed Effect RPC requests. Starts within signed int32 for SDKs that reject
+ * larger numeric ids (e.g. the Kotlin ACP SDK decodes ids as `Int`), while staying far
+ * above extension ids, which count up from 1.
+ */
+export const RPC_REQUEST_ID_START = 2 ** 30;
+
 const isEffectRpcRequestId = (requestId: AcpError.AcpRequestId): boolean =>
   typeof requestId === "number" && Number.isSafeInteger(requestId);
 

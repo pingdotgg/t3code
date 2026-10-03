@@ -218,7 +218,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
   }),
 );
 
-it.effect("effect-acp agent uses distinct ids for RPC calls and extension requests", () =>
+it.effect("effect-acp agent keeps RPC ids within int32 and apart from extension ids", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
     const scope = yield* Scope.make();
@@ -267,6 +267,11 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
         : yield* decodedExt(firstOutbound);
 
       assert.notEqual(permissionRequest.id, extRequest.id);
+      // Keep locally generated ids compatible with SDKs that decode signed int32.
+      assert.typeOf(permissionRequest.id, "number");
+      assert.equal(permissionRequest.id, 2 ** 30);
+      assert.isAtMost(Number(permissionRequest.id), 2 ** 31 - 1);
+      assert.equal(extRequest.id, 1);
 
       yield* Queue.offer(
         input,
@@ -293,6 +298,91 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       const permission = yield* Fiber.join(permissionFiber);
       assert.equal(permission.outcome.outcome, "selected");
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+
+      const nextPermissionFiber = yield* agent.client
+        .requestPermission(permissionRequest.params)
+        .pipe(Effect.forkScoped);
+      const nextPermissionRequest = yield* decodedPermission(yield* Queue.take(output));
+      assert.equal(nextPermissionRequest.id, 2 ** 30 + 1);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(RequestPermissionResponse, {
+          jsonrpc: "2.0",
+          id: nextPermissionRequest.id,
+          result: { outcome: { outcome: "cancelled" } },
+        }),
+      );
+      assert.equal((yield* Fiber.join(nextPermissionFiber)).outcome.outcome, "cancelled");
     }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
   }),
+);
+
+it.effect.each([0, 2 ** 30, 2 ** 32])(
+  "effect-acp agent answers incoming id %s independently of outbound ids",
+  (requestId) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const agent = yield* AcpAgent.make(stdio);
+      const contexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
+      yield* agent.handleInitialize((_request, context) =>
+        Ref.update(contexts, (current) => [...current, context]).pipe(
+          Effect.as({
+            protocolVersion: 2,
+            capabilities: {},
+            info: { name: "mock-agent", version: "0.0.0" },
+          }),
+        ),
+      );
+
+      // Opposite directions may reuse an id even while a request is pending.
+      const outboundFiber = yield* agent.client
+        .requestPermission({
+          sessionId: "session-1",
+          title: "Allow mock action",
+          subject: {
+            type: "tool_call",
+            toolCall: { toolCallId: "tool-1", title: "Allow mock action" },
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        })
+        .pipe(Effect.forkScoped);
+      const outbound = yield* decodeRequestPermissionRequest(yield* Queue.take(output));
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeRequest, {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "initialize",
+          params: {
+            protocolVersion: 2,
+            capabilities: {},
+            info: { name: "test-client", version: "0.0.0" },
+          },
+          headers: [],
+        }),
+      );
+      assert.deepEqual(yield* decodeInitializeResponse(yield* Queue.take(output)), {
+        jsonrpc: "2.0",
+        id: requestId,
+        result: {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "mock-agent", version: "0.0.0" },
+        },
+      });
+      assert.deepEqual(yield* Ref.get(contexts), [
+        { requestId: `$t3:jsonrpc:number:${requestId}`, method: "initialize" },
+      ]);
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(RequestPermissionResponse, {
+          jsonrpc: "2.0",
+          id: outbound.id,
+          result: { outcome: { outcome: "cancelled" } },
+        }),
+      );
+      assert.equal((yield* Fiber.join(outboundFiber)).outcome.outcome, "cancelled");
+    }),
 );
