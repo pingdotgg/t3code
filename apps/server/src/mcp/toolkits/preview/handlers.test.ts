@@ -11,7 +11,11 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
-import { claimPreviewRecording, normalizePreviewOpenInput } from "./handlers.ts";
+import {
+  claimPreviewRecording,
+  normalizePreviewNavigateInput,
+  normalizePreviewOpenInput,
+} from "./handlers.ts";
 
 describe("normalizePreviewOpenInput", () => {
   it("leaves an unstated visibility for the client preference to decide", () => {
@@ -39,6 +43,21 @@ describe("normalizePreviewOpenInput", () => {
       reuseExistingTab: true,
       show: true,
     });
+  });
+});
+
+describe("normalizePreviewNavigateInput", () => {
+  it("makes the default navigation budget explicit for the browser host", () => {
+    expect(normalizePreviewNavigateInput({ url: "https://example.com" })).toEqual({
+      url: "https://example.com",
+      timeoutMs: 15_000,
+    });
+    expect(normalizePreviewNavigateInput({ url: "https://example.com", timeoutMs: 2_500 })).toEqual(
+      {
+        url: "https://example.com",
+        timeoutMs: 2_500,
+      },
+    );
   });
 });
 
