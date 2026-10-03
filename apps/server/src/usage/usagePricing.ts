@@ -7,7 +7,12 @@
  *
  * @module usagePricing
  */
-import type { UsageCostSource, UsageModelPriceOverride } from "@t3tools/contracts";
+import type {
+  UsageCategoryCost,
+  UsageCostSource,
+  UsageModelPriceOverride,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 import type { UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
 
@@ -246,10 +251,30 @@ export type PricedRecord = Pick<
 export interface PricedUsage {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
+  /** `costUsd` by token category, or `null` when no rates are known to split it. */
+  readonly categoryCostUsd: UsageCategoryCost | null;
+  /** What `costUsd` exceeds the same tokens at standard rates. `0` without rates. */
+  readonly speedPremiumUsd: number;
+}
+
+function costByCategory(totals: UsageTokenTotals, rates: TokenRates): UsageCategoryCost {
+  return {
+    input: totals.uncachedInputTokens * rates.inputCostPerToken,
+    cacheRead: totals.cachedInputTokens * rates.cacheReadCostPerToken,
+    cacheWrite: totals.cacheCreationTokens * rates.cacheCreationCostPerToken,
+    output: totals.outputTokens * rates.outputCostPerToken,
+  };
+}
+
+function sumCategories(cost: UsageCategoryCost): number {
+  return cost.input + cost.cacheRead + cost.cacheWrite + cost.output;
 }
 
 /**
  * Prices one record's tokens.
+ *
+ * A provider-reported cost is kept as is, and split by category and speed in
+ * proportion to the model's list rates when those are known.
  *
  * `reasoningTokens` is intentionally not charged separately: it is already
  * counted inside `outputTokens`.
@@ -261,21 +286,37 @@ export function priceUsage(
 ): PricedUsage {
   const { model, totals, reportedCostUsd } = record;
   const override = overrides?.get(model.trim());
-  if (override === undefined && reportedCostUsd !== null && Number.isFinite(reportedCostUsd)) {
-    return { costUsd: reportedCostUsd, costSource: "providerReported" };
+  const reported =
+    override === undefined && reportedCostUsd !== null && Number.isFinite(reportedCostUsd)
+      ? reportedCostUsd
+      : null;
+  const unsplit = (costUsd: number, costSource: UsageCostSource): PricedUsage => ({
+    costUsd,
+    costSource,
+    categoryCostUsd: null,
+    speedPremiumUsd: 0,
+  });
+  const rate = override ?? lookupRate(table, record.rateModel ?? model);
+  if (rate === null) {
+    return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }
 
-  const rate = override ?? lookupRate(table, record.rateModel ?? model);
-  if (rate === null) return { costUsd: 0, costSource: "unpriced" };
-
-  const rates = ratesAt(rate, record.speed);
+  const listCost = costByCategory(totals, ratesAt(rate, record.speed));
+  const listCostUsd = sumCategories(listCost);
+  if (reported !== null && listCostUsd <= 0) return unsplit(reported, "providerReported");
+  const premiumUsd =
+    record.speed === "standard" ? 0 : listCostUsd - sumCategories(costByCategory(totals, rate));
+  const scale = reported === null ? 1 : reported / listCostUsd;
   return {
-    costUsd:
-      totals.uncachedInputTokens * rates.inputCostPerToken +
-      totals.cachedInputTokens * rates.cacheReadCostPerToken +
-      totals.cacheCreationTokens * rates.cacheCreationCostPerToken +
-      totals.outputTokens * rates.outputCostPerToken,
-    costSource: "modelPriced",
+    costUsd: reported ?? listCostUsd,
+    costSource: reported === null ? "modelPriced" : "providerReported",
+    categoryCostUsd: {
+      input: listCost.input * scale,
+      cacheRead: listCost.cacheRead * scale,
+      cacheWrite: listCost.cacheWrite * scale,
+      output: listCost.output * scale,
+    },
+    speedPremiumUsd: premiumUsd * scale,
   };
 }
 

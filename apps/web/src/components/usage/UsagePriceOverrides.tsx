@@ -91,13 +91,16 @@ type SaveAttempt = {
   >;
 };
 
+/** Edits custom model prices. `initialModel` opens with a new row for that model. */
 export function UsagePriceOverrides({
   usage,
   initialSelectedEnvironmentIds,
+  initialModel,
   onOpenChange,
 }: {
   readonly usage: readonly EnvironmentUsageStatus[];
   readonly initialSelectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const environments = useAtomValue(priceTargetsAtom);
@@ -105,7 +108,11 @@ export function UsagePriceOverrides({
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
   );
-  const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>([]);
+  const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>(() =>
+    initialModel === undefined
+      ? []
+      : [{ id: "new:initial", model: initialModel, isNew: true, values: {} }],
+  );
   const [pending, setPending] = useState(false);
   const [attempt, setAttempt] = useState<SaveAttempt | null>(null);
   const focusRowRef = useRef<string | null>(null);

@@ -360,6 +360,7 @@ export function UsageRouteScreen() {
                     onCursorEnabled={refreshAfterCursorEnable}
                   />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                  <CostSection merged={merged} />
                   <ModelsSection merged={merged} />
                 </>
               )}
@@ -682,6 +683,55 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
           label="Unpriced"
           value={formatPercent(merged.costQuality.unpricedShare)}
           detail="of records, excluded from cost"
+        />
+      </View>
+    </SettingsSection>
+  );
+}
+
+function CostSection(props: { readonly merged: MergedUsage }) {
+  const { categoryCost, speedCost, costUsd } = props.merged;
+  const shareOfCost = (value: number) =>
+    `${formatPercent(costUsd === 0 ? 0 : value / costUsd)} of cost`;
+  const byCategory = [
+    { label: "Input", value: categoryCost.input },
+    { label: "Cache read", value: categoryCost.cacheRead },
+    { label: "Cache write", value: categoryCost.cacheWrite },
+    { label: "Output", value: categoryCost.output },
+    // Reported cost with no rates to split it, or from older servers.
+    ...(categoryCost.unsplit >= 0.005 ? [{ label: "Other", value: categoryCost.unsplit }] : []),
+  ];
+  const bySpeed = [
+    { label: "Standard", value: speedCost.standard },
+    { label: "Fast", value: speedCost.fast },
+    { label: "Ultrafast", value: speedCost.ultrafast },
+  ];
+
+  return (
+    <SettingsSection title="Cost">
+      <View className="flex-row flex-wrap">
+        {byCategory.map((cell) => (
+          <MetricCell
+            key={cell.label}
+            label={cell.label}
+            value={formatUsd(cell.value)}
+            detail={shareOfCost(cell.value)}
+          />
+        ))}
+      </View>
+      <View className="flex-row flex-wrap border-t border-border-subtle">
+        {bySpeed.map((cell) => (
+          <MetricCell
+            key={cell.label}
+            label={cell.label}
+            value={formatUsd(cell.value)}
+            detail={shareOfCost(cell.value)}
+          />
+        ))}
+        <MetricCell
+          label="Speed premium"
+          value={formatUsd(speedCost.premium)}
+          detail="above standard rates"
         />
       </View>
     </SettingsSection>

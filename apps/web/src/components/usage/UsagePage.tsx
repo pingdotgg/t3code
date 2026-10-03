@@ -27,6 +27,7 @@ import {
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
+  type ModelTotals,
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
@@ -78,7 +79,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
-import { sortModelsByTokens } from "./usageBreakdown";
+import { cacheHitRate, costPerMillionTokens, sortModelsByTokens } from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
   WINDOW_OPTIONS,
@@ -127,6 +128,7 @@ export function UsagePage() {
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
@@ -182,6 +184,13 @@ export function UsagePage() {
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const unpricedModels = useMemo(
+    () =>
+      merged.models
+        .filter((model) => model.unpricedTokens > 0)
+        .toSorted((left, right) => right.unpricedTokens - left.unpricedTokens),
+    [merged.models],
+  );
   const summaryRows: Array<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
     | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
@@ -322,6 +331,7 @@ export function UsagePage() {
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
+            onOpenModelPrices={() => setPriceDialog({})}
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
@@ -625,7 +635,54 @@ export function UsagePage() {
                   </div>
                 </section>
 
-                <section className="flex flex-col gap-3">
+                <section className="flex flex-col gap-2">
+                  <h2 className="text-sm font-medium text-foreground">Cost</h2>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                    <Metric label="Input" value={formatUsd(merged.categoryCost.input)} />
+                    <Metric label="Cache read" value={formatUsd(merged.categoryCost.cacheRead)} />
+                    <Metric label="Cache write" value={formatUsd(merged.categoryCost.cacheWrite)} />
+                    <Metric label="Output" value={formatUsd(merged.categoryCost.output)} />
+                    {/* Reported cost with no rates to split it, or from older servers. */}
+                    {merged.categoryCost.unsplit >= 0.005 ? (
+                      <Metric label="Other" value={formatUsd(merged.categoryCost.unsplit)} />
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                    <Metric label="Standard" value={formatUsd(merged.speedCost.standard)} />
+                    <Metric label="Fast" value={formatUsd(merged.speedCost.fast)} />
+                    <Metric label="Ultrafast" value={formatUsd(merged.speedCost.ultrafast)} />
+                    <Metric label="Speed premium" value={formatUsd(merged.speedCost.premium)} />
+                  </div>
+                </section>
+
+                {unpricedModels.length > 0 ? (
+                  <section className="flex flex-col gap-1">
+                    <h2 className="text-sm font-medium text-foreground">Unpriced</h2>
+                    <ul className="text-sm">
+                      {unpricedModels.map((model) => (
+                        <li
+                          key={`${model.provider}:${model.model}`}
+                          className="flex items-center justify-between gap-4 border-b border-border/50 py-2"
+                        >
+                          <span className="flex min-w-0 items-center gap-2 text-foreground">
+                            <ProviderMark provider={model.provider} className="size-3.5" />
+                            <span className="truncate">{model.model}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-4">
+                            <span className="text-muted-foreground tabular-nums">
+                              {formatTokens(model.unpricedTokens)} tokens
+                            </span>
+                            <InlineButton onClick={() => setPriceDialog({ model: model.model })}>
+                              Set price
+                            </InlineButton>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+
+                <section className="@container/usage-breakdown flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
                     <ToggleGroup
@@ -651,25 +708,24 @@ export function UsagePage() {
                   </div>
 
                   {breakdown === "model" ? (
-                    <table className="w-full table-fixed text-sm">
-                      <colgroup>
-                        <col className="w-2/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
-                      </colgroup>
+                    <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">Model</th>
-                          <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Share</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                        <tr className="border-b border-border text-right text-xs whitespace-nowrap text-muted-foreground">
+                          <th className="w-full py-2 text-left font-normal">Model</th>
+                          <th className="py-2 pl-4 font-normal">Cost</th>
+                          <th className="py-2 pl-4 font-normal">Share</th>
+                          {MODEL_DETAIL_COLUMNS.map((column) => (
+                            <th key={column.label} className={cn(MODEL_DETAIL_CELL, "font-normal")}>
+                              {column.label}
+                            </th>
+                          ))}
+                          <th className="py-2 pl-4 font-normal">Tokens</th>
                         </tr>
                       </thead>
                       <tbody>
                         {breakdownModels.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                            <td colSpan={11} className="py-6 text-center text-muted-foreground">
                               No activity in this window.
                             </td>
                           </tr>
@@ -677,27 +733,30 @@ export function UsagePage() {
                           breakdownModels.map((model) => (
                             <tr
                               key={`${model.provider}:${model.model}`}
-                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                              className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50"
                             >
-                              <td className="py-2 text-foreground">
+                              <td className="py-2 text-left whitespace-normal text-foreground">
                                 <span className="flex items-center gap-2">
                                   <ProviderMark provider={model.provider} className="size-3.5" />
                                   {model.model}
                                 </span>
                               </td>
-                              <td className="py-2 text-right text-foreground tabular-nums">
+                              <td className="py-2 pl-4 text-foreground">
                                 {isModelCostUnknown(model) ? (
                                   <span className="text-muted-foreground">Unpriced</span>
                                 ) : (
                                   formatUsd(model.costUsd)
                                 )}
                               </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {isModelCostUnknown(model) ? "—" : formatPercent(model.costShare)}
+                              <td className="py-2 pl-4">
+                                {isModelCostUnknown(model) ? "" : formatPercent(model.costShare)}
                               </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatTokens(model.totalTokens)}
-                              </td>
+                              {MODEL_DETAIL_COLUMNS.map((column) => (
+                                <td key={column.label} className={MODEL_DETAIL_CELL}>
+                                  {column.value(model)}
+                                </td>
+                              ))}
+                              <td className="py-2 pl-4">{formatTokens(model.totalTokens)}</td>
                             </tr>
                           ))
                         )}
@@ -772,9 +831,46 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
+      {priceDialog ? (
+        <UsagePriceOverrides
+          usage={environments}
+          initialSelectedEnvironmentIds={selectedEnvironmentIds}
+          initialModel={priceDialog.model}
+          onOpenChange={(open) => {
+            if (!open) setPriceDialog(null);
+          }}
+        />
+      ) : null}
     </SidebarInset>
   );
 }
+
+/** Columns the model table shows only when it is wide enough to keep them readable. */
+const MODEL_DETAIL_COLUMNS: readonly {
+  readonly label: string;
+  readonly value: (model: ModelTotals) => string;
+}[] = [
+  { label: "Input", value: (model) => formatTokens(model.tokens.uncachedInputTokens) },
+  { label: "Output", value: (model) => formatTokens(model.tokens.outputTokens) },
+  { label: "Cache read", value: (model) => formatTokens(model.tokens.cachedInputTokens) },
+  { label: "Cache write", value: (model) => formatTokens(model.tokens.cacheCreationTokens) },
+  { label: "Reasoning", value: (model) => formatTokens(model.tokens.reasoningTokens) },
+  {
+    label: "Cache hit",
+    value: (model) => {
+      const rate = cacheHitRate(model);
+      return rate === null ? "" : formatPercent(rate);
+    },
+  },
+  {
+    label: "$/1M",
+    value: (model) => {
+      const cost = costPerMillionTokens(model);
+      return cost === null ? "" : formatUsd(cost);
+    },
+  },
+];
+const MODEL_DETAIL_CELL = "hidden py-2 pl-4 @4xl/usage-breakdown:table-cell";
 
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
@@ -989,6 +1085,7 @@ function UsageEnvironmentFilter({
   isPartial,
   duplicateSources,
   contractMismatches,
+  onOpenModelPrices,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
@@ -998,8 +1095,8 @@ function UsageEnvironmentFilter({
   readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
+  readonly onOpenModelPrices: () => void;
 }) {
-  const [modelPricesOpen, setModelPricesOpen] = useState(false);
   const allSelected = selectedEnvironmentIds === null;
   const label = allSelected
     ? "All environments"
@@ -1015,121 +1112,108 @@ function UsageEnvironmentFilter({
     contractMismatches.length > 0;
 
   return (
-    <>
-      <Menu>
-        <MenuTrigger
-          render={<InlineButton />}
-          className="group/usage-environment min-w-0 max-w-full"
-        >
-          <span className="min-w-0 truncate">{label}</span>
-          <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
-            {showUsageStatus && pendingCount > 0 ? (
-              <>
-                <CircleDashedIcon className="size-3.5" aria-hidden />
-                <span className="sr-only">
-                  {pendingCount} {pendingCount === 1 ? "environment" : "environments"} still
-                  scanning
-                  {isPartial ? "; totals are partial" : ""}
-                </span>
-              </>
-            ) : showUsageStatus && hasIssue ? (
-              <CircleAlertIcon
-                className="size-3.5 text-warning-foreground"
-                aria-label="Some environments could not report usage"
-              />
-            ) : (
-              <ChevronDownIcon
-                className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
-                aria-hidden
-              />
-            )}
-          </span>
-        </MenuTrigger>
-        <MenuPopup align="start">
-          <MenuCheckboxItem
-            checked={allSelected}
-            closeOnClick={false}
-            onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
-          >
-            All environments
-          </MenuCheckboxItem>
-          <MenuSeparator />
-          {environments.map((environment) => {
-            const checked =
-              selectedEnvironmentIds === null ||
-              selectedEnvironmentIds.has(environment.environmentId);
-            const status =
-              environment.error !== null
-                ? "Unavailable"
-                : environment.summary !== null &&
-                    !isCompatibleUsageContractVersion(
-                      environment.summary.contractVersion,
-                      USAGE_CONTRACT_VERSION,
-                    )
-                  ? "Update required"
-                  : environment.summary === null
-                    ? "Scanning…"
-                    : environment.isPending
-                      ? "Refreshing…"
-                      : "Ready";
-            return (
-              <MenuCheckboxItem
-                key={environment.environmentId}
-                checked={checked}
-                closeOnClick={false}
-                onCheckedChange={(nextChecked) => {
-                  const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
-                  if (nextChecked) next.add(environment.environmentId);
-                  else next.delete(environment.environmentId);
-                  onSelectionChange(next.size === environments.length ? null : next);
-                }}
-              >
-                <span className="flex min-w-0 items-center gap-3">
-                  <span className="min-w-0 flex-1 truncate">{environment.label}</span>
-                  {showUsageStatus ? (
-                    <span
-                      className={cn(
-                        "shrink-0 text-xs text-muted-foreground",
-                        environment.error !== null && "text-destructive",
-                      )}
-                    >
-                      {status}
-                    </span>
-                  ) : null}
-                </span>
-              </MenuCheckboxItem>
-            );
-          })}
-          {environments.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
-          ) : null}
-          {showUsageStatus && isPartial ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">
-              Totals are partial while selected environments scan.
-            </p>
-          ) : null}
-          {showUsageStatus ? (
-            <UsageCoverageNotice
-              environments={selectedEnvironments}
-              duplicateSources={duplicateSources}
-              contractMismatches={contractMismatches}
+    <Menu>
+      <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+          {showUsageStatus && pendingCount > 0 ? (
+            <>
+              <CircleDashedIcon className="size-3.5" aria-hidden />
+              <span className="sr-only">
+                {pendingCount} {pendingCount === 1 ? "environment" : "environments"} still scanning
+                {isPartial ? "; totals are partial" : ""}
+              </span>
+            </>
+          ) : showUsageStatus && hasIssue ? (
+            <CircleAlertIcon
+              className="size-3.5 text-warning-foreground"
+              aria-label="Some environments could not report usage"
             />
-          ) : null}
-          <MenuSeparator />
-          <MenuItem onClick={() => setModelPricesOpen(true)}>
-            <SlidersHorizontalIcon aria-hidden />
-            Model prices
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
-      {modelPricesOpen ? (
-        <UsagePriceOverrides
-          usage={environments}
-          initialSelectedEnvironmentIds={selectedEnvironmentIds}
-          onOpenChange={setModelPricesOpen}
-        />
-      ) : null}
-    </>
+          ) : (
+            <ChevronDownIcon
+              className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+              aria-hidden
+            />
+          )}
+        </span>
+      </MenuTrigger>
+      <MenuPopup align="start">
+        <MenuCheckboxItem
+          checked={allSelected}
+          closeOnClick={false}
+          onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
+        >
+          All environments
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        {environments.map((environment) => {
+          const checked =
+            selectedEnvironmentIds === null ||
+            selectedEnvironmentIds.has(environment.environmentId);
+          const status =
+            environment.error !== null
+              ? "Unavailable"
+              : environment.summary !== null &&
+                  !isCompatibleUsageContractVersion(
+                    environment.summary.contractVersion,
+                    USAGE_CONTRACT_VERSION,
+                  )
+                ? "Update required"
+                : environment.summary === null
+                  ? "Scanning…"
+                  : environment.isPending
+                    ? "Refreshing…"
+                    : "Ready";
+          return (
+            <MenuCheckboxItem
+              key={environment.environmentId}
+              checked={checked}
+              closeOnClick={false}
+              onCheckedChange={(nextChecked) => {
+                const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
+                if (nextChecked) next.add(environment.environmentId);
+                else next.delete(environment.environmentId);
+                onSelectionChange(next.size === environments.length ? null : next);
+              }}
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="min-w-0 flex-1 truncate">{environment.label}</span>
+                {showUsageStatus ? (
+                  <span
+                    className={cn(
+                      "shrink-0 text-xs text-muted-foreground",
+                      environment.error !== null && "text-destructive",
+                    )}
+                  >
+                    {status}
+                  </span>
+                ) : null}
+              </span>
+            </MenuCheckboxItem>
+          );
+        })}
+        {environments.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
+        ) : null}
+        {showUsageStatus && isPartial ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            Totals are partial while selected environments scan.
+          </p>
+        ) : null}
+        {showUsageStatus ? (
+          <UsageCoverageNotice
+            environments={selectedEnvironments}
+            duplicateSources={duplicateSources}
+            contractMismatches={contractMismatches}
+          />
+        ) : null}
+        <MenuSeparator />
+        <MenuItem onClick={onOpenModelPrices}>
+          <SlidersHorizontalIcon aria-hidden />
+          Model prices
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
   );
 }
 
@@ -1173,16 +1257,15 @@ function UsageSkeleton() {
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-          {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
-            (label) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <Skeleton className="h-6 w-16" />
-              </div>
-            ),
-          )}
-        </div>
+        <MetricSkeletons
+          labels={["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"]}
+        />
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-foreground">Cost</h2>
+        <MetricSkeletons labels={["Input", "Cache read", "Cache write", "Output"]} />
+        <MetricSkeletons labels={["Standard", "Fast", "Ultrafast", "Speed premium"]} />
       </section>
 
       <section className="flex flex-col gap-3">
@@ -1193,5 +1276,18 @@ function UsageSkeleton() {
         <Skeleton className="h-44" />
       </section>
     </>
+  );
+}
+
+function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+      {labels.map((label) => (
+        <div key={label} className="flex flex-col gap-0.5">
+          <span className="text-xs text-muted-foreground">{label}</span>
+          <Skeleton className="h-6 w-16" />
+        </div>
+      ))}
+    </div>
   );
 }
