@@ -262,11 +262,14 @@ function forEachCommand(
 }
 
 function programName(word: Word): string {
-  return (word.value.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.exe$/u, "");
+  // Bash reads `C:\Python312\python.exe` unquoted as escapes; Windows meant a path.
+  const path = /\\/u.test(word.text) ? word.text.replace(/^["']|["']$/gu, "") : word.value;
+  return (path.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.exe$/u, "");
 }
 
 function interpreterFor(name: string): Interpreter | undefined {
-  if (/^python(?:\d+(?:\.\d+)?)?$|^pypy3?$/u.test(name)) return PYTHON;
+  // `py` is the Windows Python launcher, as in `py -3 -c '…'`.
+  if (/^python(?:\d+(?:\.\d+)?)?$|^pypy3?$|^py$/u.test(name)) return PYTHON;
   return Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : undefined;
 }
 
