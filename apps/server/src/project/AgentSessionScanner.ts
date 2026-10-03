@@ -13,6 +13,8 @@
  *
  * @module project/AgentSessionScanner
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's FileSystem drops NTFS file IDs above Number.MAX_SAFE_INTEGER; the raw bigint stat preserves them.
+import * as NodeFS from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import {
@@ -587,13 +589,28 @@ function extractCwd(line: string): string | null {
   return null;
 }
 
-function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
+/**
+ * File identity snapshot for one transcript path.
+ *
+ * `inodeRaw` carries the decimal `ino` so NTFS file IDs above
+ * `Number.MAX_SAFE_INTEGER` survive; it is `null` when the raw stat failed.
+ *
+ * @public Pure helper exported for regression tests; identity construction stays beside its comparison.
+ */
+export function transcriptIdentity(
+  filePath: string,
+  stats: FileSystem.File.Info,
+  inodeRaw: string | null,
+) {
   return {
     filePath,
     size: Number(stats.size),
     mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
     device: stats.dev,
     inode: Option.getOrNull(stats.ino),
+    // Decimal `ino` preserving NTFS file IDs above `Number.MAX_SAFE_INTEGER`,
+    // where Effect's `ino` is `None`. `null` when the raw stat failed.
+    inodeRaw,
     birthtimeMs: Option.match(stats.birthtime, {
       onNone: () => null,
       onSome: (date) => date.getTime(),
@@ -601,19 +618,91 @@ function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
   };
 }
 
-function sameTranscriptIdentity(
-  left: ReturnType<typeof transcriptIdentity>,
-  right: ReturnType<typeof transcriptIdentity>,
-): boolean {
-  return (
-    left.filePath === right.filePath &&
-    left.size === right.size &&
-    left.mtimeMs === right.mtimeMs &&
-    left.device === right.device &&
-    left.inode === right.inode &&
-    left.birthtimeMs === right.birthtimeMs
-  );
+/**
+ * Normalizes a stored or freshly read raw inode to a comparable string.
+ * Anything that is not a non-empty string (missing field on pre-fix records,
+ * failed stat) becomes `null` and falls back to the numeric check.
+ */
+function normalizeInodeRaw(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
+
+/** Minimal shape compared by {@link sameTranscriptIdentity}. */
+interface TranscriptIdentityLike {
+  readonly filePath: string;
+  readonly size: number;
+  readonly mtimeMs: number | null;
+  readonly device: number;
+  readonly inode: number | null;
+  readonly inodeRaw?: unknown;
+  readonly birthtimeMs: number | null;
+}
+
+/**
+ * Whether two identity snapshots describe the same file.
+ *
+ * Records written before the raw ID existed have no `inodeRaw`; they fall
+ * back to the numeric check so they are not re-imported. When both sides
+ * carry a raw ID (the Windows case where `inode` is `null`), it must match.
+ *
+ * @public Pure helper exported for regression tests; the Windows collision is decided here.
+ */
+export function sameTranscriptIdentity(
+  left: TranscriptIdentityLike,
+  right: TranscriptIdentityLike,
+): boolean {
+  if (
+    left.filePath !== right.filePath ||
+    left.size !== right.size ||
+    left.mtimeMs !== right.mtimeMs ||
+    left.device !== right.device ||
+    left.inode !== right.inode ||
+    left.birthtimeMs !== right.birthtimeMs
+  ) {
+    return false;
+  }
+  // Records written before the raw ID existed have no `inodeRaw`; fall back
+  // to the numeric check above so they don't re-import. When both sides
+  // carry a raw ID (the Windows case where `inode` is `null`), it must match.
+  const leftRaw = normalizeInodeRaw(left.inodeRaw);
+  const rightRaw = normalizeInodeRaw(right.inodeRaw);
+  if (leftRaw !== null && rightRaw !== null && leftRaw !== rightRaw) {
+    return false;
+  }
+  return true;
+}
+
+/** Tagged failure for the raw bigint stat in {@link readRawInode}. */
+class TranscriptInodeStatError extends Schema.TaggedError<TranscriptInodeStatError>()(
+  "TranscriptInodeStatError",
+  {
+    filePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+/**
+ * Decimal `ino` for `transcriptIdentity`, preserving NTFS file IDs above
+ * `Number.MAX_SAFE_INTEGER` where Effect's `ino` is `None`. Returns the safe
+ * integer as a string without extra I/O; otherwise stats the path with
+ * bigint enabled. `null` when the file is gone or the ID is unavailable.
+ *
+ * The raw stat is path-based while surrounding reads use the opened handle,
+ * so a replacement racing between the two can only mix metadata from one file
+ * with the raw ID of another. A mixed identity mismatches (a raw ID names
+ * exactly one file), so the outcome is always the safe direction — skip or
+ * re-read — never a false match.
+ */
+const readRawInode = (
+  filePath: string,
+  knownIno: Option.Option<number>,
+): Effect.Effect<string | null> =>
+  Option.isSome(knownIno)
+    ? Effect.succeed(String(knownIno.value))
+    : Effect.tryPromise({
+        try: () => NodeFS.stat(filePath, { bigint: true }).then((stats) => stats.ino.toString()),
+        catch: (cause) => new TranscriptInodeStatError({ filePath, cause }),
+      }).pipe(Effect.orElseSucceed(() => null));
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -663,6 +752,19 @@ export const make = Effect.gen(function* () {
 
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
+
+  /**
+   * Builds a transcript identity snapshot, filling `inodeRaw` from the safe
+   * numeric inode when available and from a raw bigint stat otherwise, so
+   * large NTFS file IDs survive on Windows without extra I/O on other systems.
+   */
+  const transcriptIdentityEffect = Effect.fn("AgentSessionScanner.transcriptIdentity")(function* (
+    filePath: string,
+    stats: FileSystem.File.Info,
+  ) {
+    const inodeRaw = yield* readRawInode(filePath, stats.ino);
+    return transcriptIdentity(filePath, stats, inodeRaw);
+  });
 
   /** Match directory aliases without assuming the host volume is case-insensitive. */
   const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (
@@ -826,7 +928,8 @@ export const make = Effect.gen(function* () {
       fileSystem.open(filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
-            if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
+            const openIdentity = yield* transcriptIdentityEffect(filePath, yield* file.stat);
+            if (!sameTranscriptIdentity(expected, openIdentity)) {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
@@ -888,7 +991,8 @@ export const make = Effect.gen(function* () {
             }
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
-            return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
+            const closeIdentity = yield* transcriptIdentityEffect(filePath, yield* file.stat);
+            return sameTranscriptIdentity(expected, closeIdentity)
               ? { records, recordCount }
               : null;
           }),
@@ -1395,7 +1499,7 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(stats) || stats.value.type !== "File") {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const identity = transcriptIdentity(transcript.filePath, stats.value);
+          const identity = yield* transcriptIdentityEffect(transcript.filePath, stats.value);
           const completedSource = completed?.find(
             (source) =>
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),

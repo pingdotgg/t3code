@@ -16,6 +16,12 @@ export const AgentSessionImportSource = Schema.Struct({
   mtimeMs: Schema.NullOr(Schema.Number),
   device: Schema.Number,
   inode: Schema.NullOr(Schema.Number),
+  /**
+   * Raw `ino` as decimal string, preserving NTFS file IDs above
+   * `Number.MAX_SAFE_INTEGER` where `inode` is `null`. Missing on records
+   * written before the Windows fix; comparison falls back to `inode` then.
+   */
+  inodeRaw: Schema.optionalKey(Schema.NullOr(Schema.String)),
   birthtimeMs: Schema.NullOr(Schema.Number),
 });
 export type AgentSessionImportSource = typeof AgentSessionImportSource.Type;

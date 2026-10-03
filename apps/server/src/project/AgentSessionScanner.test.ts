@@ -1930,6 +1930,30 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it("distinguishes replaced transcripts by raw file ID when the numeric inode is missing", () => {
+      // Equal size, mtime, and creation millisecond with a missing numeric
+      // inode: the Windows collision from the replaced-transcript bug. Raw IDs
+      // are the distinct NTFS file IDs probed in the issue report.
+      const base = {
+        filePath: "rollout-replaced.jsonl",
+        size: 100,
+        mtimeMs: 1_000,
+        device: 1,
+        inode: null,
+        birthtimeMs: 500,
+      };
+      const original = { ...base, inodeRaw: "5764607523043455093" };
+      const replaced = { ...base, inodeRaw: "5764607523044503669" };
+      expect(Number.isSafeInteger(Number(original.inodeRaw))).toBe(false);
+      expect(Number.isSafeInteger(Number(replaced.inodeRaw))).toBe(false);
+      expect(AgentSessionScanner.sameTranscriptIdentity(original, replaced)).toBe(false);
+      expect(AgentSessionScanner.sameTranscriptIdentity(original, { ...original })).toBe(true);
+      // Records written before the raw ID existed carry no `inodeRaw` and keep
+      // matching, so they are not re-imported after the upgrade.
+      expect(AgentSessionScanner.sameTranscriptIdentity(base, replaced)).toBe(true);
+      expect(AgentSessionScanner.sameTranscriptIdentity(base, { ...base })).toBe(true);
+    });
+
     it.effect("imports visible history from a transcript with an oversized tool record", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
