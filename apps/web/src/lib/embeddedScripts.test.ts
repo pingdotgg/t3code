@@ -63,6 +63,10 @@ describe("embeddedScripts", () => {
     [`psql -d app -c 'select 1'`, "sql", "select 1"],
     [`pwsh -NoProfile -Command "Get-ChildItem"`, "powershell", "Get-ChildItem"],
     [`env FOO=1 sudo -u bob python3 -c 'print(1)'`, "python", "print(1)"],
+    [`env -- FOO=1 python3 -c 'print(1)'`, "python", "print(1)"],
+    [`node --eval="process.exit(0)"`, "javascript", "process.exit(0)"],
+    [`psql --command='select 1'`, "sql", "select 1"],
+    [`psql app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`echo "$(node -e 'console.log(1)')"`, "javascript", "console.log(1)"],
     [`python3 <<< 'print(1)'`, "python", "print(1)"],
   ])("finds the inline script in %s", (command, language, script) => {
@@ -81,6 +85,8 @@ describe("embeddedScripts", () => {
   it.each([
     ["a script file", `python3 build.py <<EOF\ndata\nEOF`],
     ["a module", `python3 -m json.tool <<EOF\n{}\nEOF`],
+    ["a SQL file", `psql -f migrate.sql <<EOF\ny\nEOF`],
+    ["a SQL file given with =", `psql --file=migrate.sql <<EOF\ny\nEOF`],
     ["plain commands", `rg -n "foo" src && git status`],
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
