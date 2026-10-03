@@ -11,7 +11,11 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as NodeNet from "node:net";
 
-import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
+import {
+  buildRemoteLaunchScript,
+  buildRemoteStopScript,
+  buildRemoteT3RunnerScript,
+} from "./tunnel.ts";
 
 const Started = Schema.Struct({
   pid: Schema.Number,
@@ -248,6 +252,140 @@ server.listen(0, "127.0.0.1", () => {
             assert.equal(yield* fs.readFileString(signalPath), mode === "timeout" ? "2" : "1");
           }
         }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  },
+);
+
+const LaunchResult = Schema.Struct({
+  remotePort: Schema.Number,
+  serverKind: Schema.Literals(["external", "managed"]),
+});
+const decodeLaunchResult = Schema.decodeUnknownSync(Schema.fromJsonString(LaunchResult));
+
+// Stands in for `t3 serve`: answers the readiness probe and records itself in
+// the home's server-runtime.json, as every real server does.
+const FAKE_SERVER = `import * as fs from "node:fs";
+import * as http from "node:http";
+const flag = (name) => process.argv[process.argv.indexOf(name) + 1];
+const port = flag("--port");
+const home = flag("--base-dir");
+const runtimePath = home + "/userdata/server-runtime.json";
+const server = http.createServer((_request, response) => response.end("ok"));
+process.on("SIGTERM", () => {
+  fs.rmSync(runtimePath, { force: true });
+  process.exit(0);
+});
+server.listen(Number(port), "127.0.0.1", () => {
+  fs.mkdirSync(home + "/userdata", { recursive: true });
+  fs.writeFileSync(runtimePath, JSON.stringify({
+    version: 1,
+    pid: process.pid,
+    port: Number(port),
+    origin: "http://127.0.0.1:" + port,
+  }));
+  process.stdout.write("recorded\\n");
+});
+`;
+
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "remote launch server reuse",
+  () => {
+    it.live("keeps its own managed server and hands off to a different one", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-" });
+        const home = path.join(fixture, "home");
+        const bin = path.join(fixture, "bin");
+        const cliPath = path.join(fixture, "server.mjs");
+        const stateDir = path.join(home, ".t3", "ssh-launch", "fixture");
+        yield* fs.makeDirectory(bin);
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        yield* fs.symlink(process.execPath, path.join(bin, "node"));
+        yield* fs.writeFileString(cliPath, FAKE_SERVER);
+
+        const freePort = Effect.callback<number>((resume) => {
+          const probe = NodeNet.createServer();
+          probe.listen(0, "127.0.0.1", () => {
+            const { port } = probe.address() as NodeNet.AddressInfo;
+            probe.close(() => resume(Effect.succeed(port)));
+          });
+        });
+        // Seed the preferred port so the launch never scans the real 3773.
+        yield* fs.writeFileString(path.join(stateDir, "port"), `${yield* freePort}\n`);
+
+        const serverPids: number[] = [];
+        // Launched servers outlive the script, so stop each captured PID.
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach(serverPids, (pid) =>
+            Effect.try(() => process.kill(pid, "SIGKILL")).pipe(Effect.ignore),
+          ),
+        );
+        const accepts = (port: number) =>
+          Effect.callback<boolean>((resume) => {
+            const connection = NodeNet.connect(port, "127.0.0.1");
+            connection.once("connect", () => resume(Effect.succeed(true)));
+            connection.once("error", () => resume(Effect.succeed(false)));
+            return Effect.sync(() => connection.destroy());
+          });
+
+        const launch = Effect.fn("test.remoteLaunch")(function* () {
+          const child = yield* spawner.spawn(
+            ChildProcess.make("/bin/sh", ["-s", "--", "fixture"], {
+              cwd: fixture,
+              env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` },
+              stdin: Stream.make(
+                new TextEncoder().encode(buildRemoteLaunchScript({ nodeScriptPath: cliPath })),
+              ),
+            }),
+          );
+          const result = yield* Effect.all(
+            {
+              stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+              stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+              exitCode: child.exitCode,
+            },
+            { concurrency: "unbounded" },
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          const pidText = yield* fs
+            .readFileString(path.join(stateDir, "pid"))
+            .pipe(Effect.orElseSucceed(() => ""));
+          const pid = Number.parseInt(pidText, 10);
+          if (Number.isInteger(pid)) serverPids.push(pid);
+          return { ...decodeLaunchResult(result.stdout.trim()), pid };
+        }, Effect.scoped);
+
+        const first = yield* launch();
+        assert.equal(first.serverKind, "managed");
+        const second = yield* launch();
+        assert.deepEqual(second, first);
+
+        // A different server in the default home is still adopted.
+        const externalPort = yield* freePort;
+        const external = yield* spawner.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [cliPath, "--port", String(externalPort), "--base-dir", path.join(home, ".t3")],
+            { cwd: fixture, detached: false },
+          ),
+        );
+        yield* Effect.addFinalizer(() =>
+          external.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore),
+        );
+        // It has written server-runtime.json once it reports in.
+        yield* external.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const handedOff = yield* launch();
+        assert.equal(handedOff.serverKind, "external");
+        assert.equal(handedOff.remotePort, externalPort);
+        assert.isFalse(yield* accepts(first.remotePort));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
   },
 );
