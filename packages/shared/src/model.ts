@@ -246,12 +246,9 @@ export function getProviderOptionCurrentLabel(
       : undefined;
   }
   const currentValue = getProviderOptionCurrentValue(descriptor, selection, reportedSelection);
-  if (typeof currentValue !== "string") {
-    return undefined;
-  }
   return (
     descriptor.options.find((option) => option.id === currentValue)?.label ??
-    (currentValue === "default" ? "Default" : undefined)
+    (currentValue === "default" ? "Default" : descriptor.id === "variant" ? "Unknown" : undefined)
   );
 }
 

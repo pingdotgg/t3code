@@ -581,7 +581,7 @@ describe("provider-reported model selection", () => {
         capabilities: {
           optionDescriptors: [
             {
-              id: "reasoningEffort",
+              id: "variant",
               label: "Reasoning",
               type: "select" as const,
               options: [{ id: "high", label: "High" }],
@@ -590,7 +590,8 @@ describe("provider-reported model selection", () => {
         },
       },
     ];
-    expect(formatModelSelectionEffort(selected, models, reported)).toBe("Default");
-    expect(formatModelSelectionEffort(selected, models)).toBeNull();
+    const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
+    expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
+    expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
   });
 });

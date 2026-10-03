@@ -334,7 +334,7 @@ describe("provider-reported option display", () => {
     ).toBe("None");
     expect(descriptor.options.map((option) => option.id)).toEqual(["none", "thinking"]);
     expect(buildProviderOptionSelectionsFromDescriptors([descriptor])).toBeUndefined();
-    expect(getProviderOptionCurrentLabel(descriptor, selection)).toBeUndefined();
+    expect(getProviderOptionCurrentLabel(descriptor, selection)).toBe("Unknown");
   });
 
   it.each([
@@ -342,6 +342,6 @@ describe("provider-reported option display", () => {
     { ...selection, instanceId: ProviderInstanceId.make("other") },
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
-    expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBeUndefined();
+    expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
   });
 });
