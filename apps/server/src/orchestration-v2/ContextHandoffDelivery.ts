@@ -7,19 +7,16 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudget.ts";
 
-/** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
-export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
-  function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
-    readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
-    readonly providerThread: OrchestrationV2ProviderThread;
-    readonly budget: number | Effect.Effect<number, BudgetError>;
-    readonly deferInline?: boolean;
-    readonly alreadyDeliveredItemIds: ReadonlySet<string>;
-    readonly inject?: (
-      history: ProviderAdapterV2HistoricalContext,
-    ) => Effect.Effect<boolean, InjectError>;
-    readonly persist: (handoff: OrchestrationV2ContextHandoff) => Effect.Effect<void, PersistError>;
-  }) {
+type ContextHandoffInput<BudgetError = never> = {
+  readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly budget: number | Effect.Effect<number, BudgetError>;
+  readonly deferInline?: boolean;
+  readonly alreadyDeliveredItemIds: ReadonlySet<string>;
+};
+
+export const prepareContextHandoffs = Effect.fn("orchestrationV2.prepareContextHandoffs")(
+  function* <BudgetError = never>(input: ContextHandoffInput<BudgetError>) {
     const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId ?? undefined;
     const pending = input.handoffs.filter(
       (handoff) =>
@@ -27,8 +24,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         handoff.delivery?.nativeThreadId !== nativeThreadId ||
         handoff.delivery.status === "pending",
     );
-    if (pending.length === 0 || (input.deferInline && input.inject === undefined))
-      return { context: "", delivered: Effect.void };
+    if (pending.length === 0) return undefined;
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     let coverage = pending
       .map(
@@ -71,9 +67,30 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void };
+      if (input.deferInline) return undefined;
       return yield* new ContextHandoffBudgetError();
     }
+    return { nativeThreadId, pending, selected };
+  },
+);
+
+/** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
+export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
+  function* <InjectError = never, PersistError = never, BudgetError = never>(
+    input: ContextHandoffInput<BudgetError> & {
+      readonly inject?: (
+        history: ProviderAdapterV2HistoricalContext,
+      ) => Effect.Effect<boolean, InjectError>;
+      readonly persist: (
+        handoff: OrchestrationV2ContextHandoff,
+      ) => Effect.Effect<void, PersistError>;
+    },
+  ) {
+    if (input.deferInline && input.inject === undefined)
+      return { context: "", delivered: Effect.void };
+    const prepared = yield* prepareContextHandoffs(input);
+    if (prepared === undefined) return { context: "", delivered: Effect.void };
+    const { nativeThreadId, pending, selected } = prepared;
     const omittedItemIds = new Set(selected.omittedItemIds);
     const persist = (status: "pending" | "injected" | "inline") =>
       Effect.forEach(
@@ -146,7 +163,7 @@ export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoff
   {},
 ) {
   override get message() {
-    return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
+    return "Insufficient context allowance for the provider handoff. Use a larger-context model or reduce the request; the current request has not been truncated.";
   }
 }
 export class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<ContextHandoffDeliveryUncertainError>()(

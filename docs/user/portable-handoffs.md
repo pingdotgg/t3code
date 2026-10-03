@@ -20,9 +20,14 @@ agent-written summary.
 ## Context limits
 
 A handoff must leave room for existing provider context, your request and attachments, instructions,
-tools, and subsequent work. If even its retrieval references cannot fit, T3 Code reports an error
-instead of shortening your request. Compact the target conversation or select a larger-context
-model before trying again.
+tools, and subsequent work. If the target conversation leaves too little room, T3 Code runs native
+compaction in that same conversation, then retries your request once. Your saved chat and original
+request stay intact. This also applies to an overfull model switch within one provider when the
+new model capacity is known. No encrypted state is copied between providers.
+
+If compaction is unsupported, fails, is stopped, or still leaves too little room, T3 Code reports
+the failure without silently replacing the session or shortening your request. Reduce the request
+or select a larger-context model before trying again.
 
 Server operators can set `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` to change the initial history allowance
 (default 16,000; clamped to 1,024–64,000). This is an upper bound, not a provider context-window
@@ -40,5 +45,10 @@ least 16,000 tokens, or a quarter of the window when larger, for instructions, t
 work. Images reserve an estimated 8,192 tokens each, independent of their file size; other
 attachments reserve 4,096 each for their references. Existing context is estimated from saved
 activity when usage telemetry is unavailable. Known smaller windows still constrain the handoff.
-These are fallback estimates, not exact token counts. Image resolution, custom models, and hidden
-native context can differ, so the provider may still reject an input.
+These are fallback estimates, not exact token counts. Switching models within one provider does not
+trigger automatic compaction solely because the new model's capacity is unknown. Image resolution,
+custom models, and hidden native context can differ, so the provider may still reject an input.
+
+After automatic compaction, T3 Code uses fresh usage reports when available. Otherwise it estimates
+new activity and keeps the history allowance bounded; the provider still decides whether the retry
+fits. Old saved messages are not counted as unchanged native context after compaction.

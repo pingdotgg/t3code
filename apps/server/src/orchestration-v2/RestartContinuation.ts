@@ -25,7 +25,7 @@ import {
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
-    "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
+    "thread" | "runs" | "attempts" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
   cancelledWorkProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
 ): OrchestrationV2Run | undefined {
@@ -34,7 +34,13 @@ export function restartContinuationRun(
     (latest, candidate) => (!latest || candidate.ordinal > latest.ordinal ? candidate : latest),
     undefined,
   );
-  if (!run) return;
+  if (
+    !run ||
+    projection.attempts.some(
+      (attempt) => attempt.id === run.activeAttemptId && attempt.contextCompaction,
+    )
+  )
+    return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   // Background work outlived this settled turn; the provider has no live turn.

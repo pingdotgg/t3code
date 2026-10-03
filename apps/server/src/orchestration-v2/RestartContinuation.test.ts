@@ -107,6 +107,7 @@ it("requires matching saved native state for an unfinished root run", () => {
       ],
     },
     { ...projection, providerTurns: [] },
+    { ...projection, attempts: [{ id: attemptId, contextCompaction: true }] },
     ...[
       "queued",
       "preparing",

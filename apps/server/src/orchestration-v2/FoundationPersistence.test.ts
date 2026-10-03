@@ -1513,6 +1513,8 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("guarded-continuation");
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-stale-provider-start");
       const runId = RunId.make("run:foundation-stale-provider-start");
@@ -1566,6 +1568,14 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           runId,
           activeAttemptId: attemptId,
           expectedStatus: "starting",
+          effects: [
+            {
+              id: "guarded-continuation",
+              commandId,
+              threadId,
+              request: { type: "provider-turn.start", runId },
+            },
+          ],
           events: [
             {
               id: EventId.make("event:foundation-stale-provider-start:running"),
@@ -1607,6 +1617,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
 
       const staleResult = yield* Fiber.join(staleStartFiber);
       assert.isFalse(staleResult.committed);
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
       assert.deepEqual(staleResult.storedEvents, []);
       assert.equal(yield* Ref.get(providerStartCount), 0);
       const projection = yield* projectionStore.getThreadProjection(threadId);
@@ -2630,6 +2641,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
               activeAttemptId: attemptId,
             },
           ],
+          attempts: [],
           providerThreads: [
             {
               id: providerThreadId,
