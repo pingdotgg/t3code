@@ -54,6 +54,9 @@ describe("embeddedScripts", () => {
   it.each([
     [`python3 -c 'print(1)'`, "python", "print(1)"],
     [`python3 -X dev -c 'print(1)'`, "python", "print(1)"],
+    [`py -3 -c 'print(1)'`, "python", "print(1)"],
+    [`C:\\Python312\\python.exe -c 'print(1)'`, "python", "print(1)"],
+    [`"C:\\Program Files\\Python312\\python.exe" -c 'print(1)'`, "python", "print(1)"],
     [`node --eval "process.exit(0)"`, "javascript", "process.exit(0)"],
     [`bun -e 'console.log(Bun.version)'`, "typescript", "console.log(Bun.version)"],
     [`deno eval 'console.log(1)'`, "typescript", "console.log(1)"],

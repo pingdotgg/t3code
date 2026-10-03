@@ -583,6 +583,16 @@ describe("commandHighlightLanguage", () => {
     ["git status; pwsh -c 'Get-Date'", "shellscript"],
     ["cat <<'EOF' > notes.txt\npwsh\nEOF", "shellscript"],
     ["", "shellscript"],
+    // Windows agents also run PowerShell directly, without a pwsh wrapper.
+    ["Get-Content package.json | Select-String version", "powershell"],
+    ["$env:CI='1'; npm test", "powershell"],
+    ["$tmp = Join-Path $env:TEMP repo; git clone example", "powershell"],
+    ['"=== CHECK FILE ==="; Get-Content file.txt', "powershell"],
+    ["& 'C:\\Python312\\python.exe' -c 'print(1)'", "powershell"],
+    ["update-alternatives --list java", "shellscript"],
+    ["echo Get-Content; git status", "shellscript"],
+    ["FOO=1 npm test", "shellscript"],
+    ["echo $HOME && ls", "shellscript"],
   ])("%s", (command, language) => {
     expect(commandHighlightLanguage(command)).toBe(language);
   });

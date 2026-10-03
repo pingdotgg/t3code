@@ -1410,7 +1410,15 @@ function withoutShellWrapper(command: string): string {
 
 const POWERSHELL_PROGRAMS = new Set(["powershell", "pwsh"]);
 
-/** The grammar to highlight a command with: PowerShell when pwsh or powershell runs it. */
+// Common approved PowerShell verbs. Cmdlets are capitalized Verb-Noun, which
+// keeps lowercase Linux tools such as `update-alternatives` out.
+const POWERSHELL_CMDLET =
+  /^(?:Add|Clear|Compare|Compress|ConvertFrom|ConvertTo|Copy|Expand|Export|ForEach|Format|Get|Group|Import|Invoke|Join|Measure|Move|New|Out|Pop|Push|Read|Remove|Rename|Resolve|Select|Set|Sort|Split|Start|Stop|Test|Wait|Where|Write)-[A-Z][A-Za-z]*$/u;
+
+/**
+ * The grammar to highlight a command with: PowerShell when pwsh or powershell
+ * runs it, or when it is written in PowerShell, as Windows agents run it.
+ */
 export function commandHighlightLanguage(command: string): "powershell" | "shellscript" {
   const program = /^(?:&\s*)?(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(command.trim());
   const name = (program?.[1] ?? program?.[2] ?? program?.[3] ?? "")
@@ -1418,5 +1426,27 @@ export function commandHighlightLanguage(command: string): "powershell" | "shell
     .at(-1)
     ?.toLowerCase()
     .replace(/\.exe$/u, "");
-  return name && POWERSHELL_PROGRAMS.has(name) ? "powershell" : "shellscript";
+  if (name && POWERSHELL_PROGRAMS.has(name)) return "powershell";
+  return isPowerShellScript(command) ? "powershell" : "shellscript";
+}
+
+/** Whether any statement starts like PowerShell and never like POSIX shell. */
+function isPowerShellScript(command: string): boolean {
+  let rest: string | null = command.trim();
+  // A leading call operator; POSIX shell cannot start a command with `&`.
+  if (/^&\s*\S/u.test(rest)) return true;
+  for (let segment = 0; rest && segment < MAX_COMMAND_SEGMENTS; segment += 1) {
+    const { firstCommand, remainingCommand } = splitFirstShellCommand(rest);
+    const statement = firstCommand.trim();
+    if (
+      // `$env:NAME` or `$name = value`; neither parses as POSIX shell.
+      /^\$(?:env|global|local|script):/iu.test(statement) ||
+      /^\$[A-Za-z_]\w*\s+=/u.test(statement) ||
+      POWERSHELL_CMDLET.test(statement.match(/^\S+/u)?.[0] ?? "")
+    ) {
+      return true;
+    }
+    rest = remainingCommand;
+  }
+  return false;
 }
