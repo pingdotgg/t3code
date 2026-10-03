@@ -84,7 +84,7 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   const filePath = file.value;
   // `stream: true` keeps a multi-byte character split across reads intact;
   // invalid bytes become U+FFFD.
-  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let decoder = new TextDecoder("utf-8", { fatal: false });
   let offset = 0;
   let last = yield* Deferred.isDone(input.stop);
   while (true) {
@@ -105,6 +105,8 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
       if (Option.isSome(bytes)) {
         // Skipped output must not splice two unrelated lines together.
         const skipped = start > offset;
+        // Bytes held from before the gap belong to a character we never finished reading.
+        if (skipped) decoder = new TextDecoder("utf-8", { fatal: false });
         offset = start + bytes.value.byteLength;
         const text = (skipped ? "\n" : "") + decoder.decode(bytes.value, { stream: true });
         if (text.length > 0) yield* input.onChunk(text);

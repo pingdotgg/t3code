@@ -496,7 +496,11 @@ export function appendTerminalOutput(
     const length = lineLength(line);
     if (length <= maxChars) return line;
     truncated = true;
-    if (row === terminal.row) terminal.col = Math.max(0, terminal.col - (length - maxChars));
+    const removed = length - maxChars;
+    if (row === terminal.row) terminal.col = Math.max(0, terminal.col - removed);
+    if (terminal.saved !== null && terminal.saved.row === row) {
+      terminal.saved = { ...terminal.saved, col: Math.max(0, terminal.saved.col - removed) };
+    }
     return sliceLine(line, length - maxChars, length);
   });
   const settled = terminalOutputTail(terminal.settled, maxChars);

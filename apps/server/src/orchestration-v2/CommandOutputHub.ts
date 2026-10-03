@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "./EventSink.ts";
@@ -78,6 +79,8 @@ export interface CommandOutputHubShape {
 export class CommandOutputHub extends Context.Service<CommandOutputHub, CommandOutputHubShape>()(
   "t3/orchestration-v2/CommandOutputHub",
 ) {}
+
+const isCommandOutputError = Schema.is(OrchestrationV2CommandOutputError);
 
 function commandKey(target: CommandOutputTarget): string {
   return `${target.threadId}\u0000${target.itemId}`;
@@ -297,7 +300,7 @@ export const make = Effect.gen(function* () {
         );
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof OrchestrationV2CommandOutputError
+          isCommandOutputError(cause)
             ? cause
             : new OrchestrationV2CommandOutputError({
                 threadId: target.threadId,
