@@ -43,7 +43,7 @@ import {
   selectedThreadContextRecords,
   serializeThreadContextClipboard,
 } from "./threadContextAttach";
-import { pruneUnreferencedThreadContextRecords } from "./composerDraftStore";
+import { pruneUnreferencedThreadContextRecords, useComposerDraftStore } from "./composerDraftStore";
 
 const ENV = EnvironmentId.make("env-repair");
 const SELF = ThreadId.make("self-thread");
@@ -84,6 +84,85 @@ it("reattaches deleted references alongside new threads in one batch", () => {
   expect(mixed.records).toHaveLength(2);
   expect(mixed.prompt).toContain(first.records[0]!.contextId);
   expect(buildThreadContextForSend(mixed.prompt, mixed.records)?.records).toHaveLength(2);
+});
+
+function fullContextHistory() {
+  const result = attachThreadContexts({
+    existingPrompt: "",
+    existingRecords: [],
+    refs: Array.from({ length: 32 }, (_, index) =>
+      scopeThreadRef(ENV, ThreadId.make(`history-${index}`)),
+    ),
+    environmentId: ENV,
+    selfThreadId: SELF,
+    capabilities: SUPPORTED,
+    resolveThread,
+  });
+  expect(result.ok).toBe(true);
+  return result;
+}
+
+describe("active attachment budget excludes undo history", () => {
+  it("attaches a new thread after all 32 earlier chips were deleted, preserving undo records", () => {
+    const history = fullContextHistory();
+    const next = attach("new-active", "", history.records);
+    expect(next.ok).toBe(true);
+    expect(next.records).toHaveLength(33);
+    expect(countReferencedThreadContexts(next.prompt, next.records)).toBe(1);
+    expect(buildThreadContextForSend(history.prompt, next.records)?.records).toHaveLength(32);
+  });
+  it("pastes into an empty composer with 32 retained records", () => {
+    const history = fullContextHistory();
+    const source = attach("pasted-active");
+    const next = mergeThreadContextClipboard({
+      pastedText: source.prompt,
+      pastedRecords: source.records,
+      existingPrompt: "",
+      existingRecords: history.records,
+      environmentId: ENV,
+      selfThreadId: SELF,
+      capabilities: SUPPORTED,
+      resolveThread,
+    });
+    expect(next.ok).toBe(true);
+    expect(next.records).toHaveLength(33);
+    expect(buildThreadContextForSend(next.prompt, next.records)?.records).toEqual(source.records);
+  });
+  it("still rejects a 33rd visible reference, including reactivating a retained one", () => {
+    const history = fullContextHistory();
+    const extra = attach("inactive-extra");
+    const records = [...history.records, ...extra.records];
+    const next = attach("inactive-extra", history.prompt, records);
+    expect(next.ok).toBe(false);
+    expect(next.prompt).toBe(history.prompt);
+    expect(next.records).toEqual(records);
+  });
+  it("stores new active records past the old history limit and persists only active bindings", () => {
+    const history = fullContextHistory();
+    const fresh = attach("new-store-active");
+    const target = scopeThreadRef(ENV, ThreadId.make("history-store-target"));
+    const store = useComposerDraftStore.getState();
+    store.clearComposerContent(target);
+    store.addThreadContexts(target, history.prompt, history.records);
+    store.setPrompt(target, "");
+    store.addThreadContexts(target, fresh.prompt, fresh.records);
+    const draft = useComposerDraftStore.getState().getComposerDraft(target)!;
+    expect(draft.threadContexts).toHaveLength(33);
+    expect(buildThreadContextForSend(draft.prompt, draft.threadContexts)?.records).toEqual(
+      fresh.records,
+    );
+    const serialized = useComposerDraftStore.persist.getOptions().partialize!(
+      useComposerDraftStore.getState(),
+    );
+    const serializedText = JSON.stringify(serialized);
+    expect(serializedText).toContain(fresh.records[0]!.contextId);
+    expect(serializedText).not.toContain(history.records[0]!.contextId);
+    store.setThreadContexts(target, [...history.records, ...fresh.records]);
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.threadContexts).toHaveLength(
+      33,
+    );
+    store.clearComposerContent(target);
+  });
 });
 
 describe("cross-composer copy/cut/paste", () => {

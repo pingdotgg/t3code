@@ -237,6 +237,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildThreadContextForSend,
+  countReferencedThreadContexts,
   isComposerDraftCleared,
   canStartThreadTurn,
   createThreadPlanCatalogSelector,
@@ -3394,7 +3395,7 @@ function ChatViewBody(
       prompt: promptForSend,
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
-      threadContextCount: composerThreadContexts.length,
+      threadContextCount: countReferencedThreadContexts(promptForSend, composerThreadContexts),
     });
     const threadContextForSend = buildThreadContextForSend(promptForSend, composerThreadContexts);
     const referencedContextIds = new Set(
@@ -3423,7 +3424,7 @@ function ChatViewBody(
       const composerHasNonPromptContent =
         composerImages.length > 0 ||
         composerTerminalContexts.length > 0 ||
-        composerThreadContexts.length > 0 ||
+        countReferencedThreadContexts(promptForSend, composerThreadContexts) > 0 ||
         composerPreviewAnnotations.length > 0;
       if ("error" in piSessionCommand || composerHasNonPromptContent) {
         toastManager.add(

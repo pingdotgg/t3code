@@ -75,6 +75,23 @@ export function collectThreadContextReferences(text: string): ThreadContextRefer
   return occurrences;
 }
 
+/** Undo-retained payloads are not active attachments unless their id is present in the text. */
+export function countReferencedThreadContexts(
+  text: string,
+  records: ReadonlyArray<ThreadContextRecord>,
+): number {
+  if (records.length === 0) return 0;
+  const referenced = new Set(
+    collectThreadContextReferences(text).map((occurrence) => occurrence.contextId),
+  );
+  if (referenced.size === 0) return 0;
+  const active = new Set<ThreadContextId>();
+  for (const record of records) {
+    if (referenced.has(record.contextId)) active.add(record.contextId);
+  }
+  return active.size;
+}
+
 export function replaceThreadContextReferences(
   text: string,
   replace: (occurrence: ThreadContextReferenceOccurrence) => string,

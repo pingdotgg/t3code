@@ -13,6 +13,7 @@ import { THREAD_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { matchThreadContextTitle, scopedThreadKey } from "@t3tools/client-runtime";
 import {
   collectThreadContextReferences,
+  countReferencedThreadContexts,
   formatThreadContextReference,
   replaceThreadContextReferences,
   sanitizeThreadContextLabel,
@@ -246,13 +247,6 @@ export function attachThreadContexts(
     seenInBatch.add(key);
     freshRefs.push(ref);
   }
-  if (input.existingRecords.length + freshRefs.length > THREAD_CONTEXT_MAX_RECORDS) {
-    return {
-      ...unchanged,
-      ok: false,
-      reason: `Thread context is limited to ${THREAD_CONTEXT_MAX_RECORDS} threads.`,
-    };
-  }
   const nextRecords: ThreadContextRecord[] = [...input.existingRecords];
   const insertions: string[] = [];
   const insertedIds: string[] = [];
@@ -292,6 +286,13 @@ export function attachThreadContexts(
   }
   if (insertions.length === 0) return { ...unchanged, ok: true, reason: null };
   const inserted = insertReferencesAtCaret(input.existingPrompt, insertions, input.caret);
+  if (countReferencedThreadContexts(inserted.prompt, nextRecords) > THREAD_CONTEXT_MAX_RECORDS) {
+    return {
+      ...unchanged,
+      ok: false,
+      reason: `Thread context is limited to ${THREAD_CONTEXT_MAX_RECORDS} threads.`,
+    };
+  }
   return {
     ok: true,
     reason: null,
@@ -483,12 +484,6 @@ export function mergeThreadContextClipboard(
     rewritten.set(record.contextId, imported);
     accepted.push(imported);
   }
-  if (input.existingRecords.length + accepted.length > THREAD_CONTEXT_MAX_RECORDS) {
-    return {
-      ...unchanged,
-      reason: `Thread context is limited to ${THREAD_CONTEXT_MAX_RECORDS} threads.`,
-    };
-  }
   // The pasted text lands at the caret; unrelated draft content is retained.
   const at = caretOrEnd(input.existingPrompt, input.caret);
   const before = input.existingPrompt.slice(0, at);
@@ -499,11 +494,18 @@ export function mergeThreadContextClipboard(
   });
   const spacer = before.length > 0 && !/\s$/.test(before) && text.length > 0 ? " " : "";
   const nextPrompt = `${before}${spacer}${text}${after}`;
+  const nextRecords = [...input.existingRecords, ...accepted];
+  if (countReferencedThreadContexts(nextPrompt, nextRecords) > THREAD_CONTEXT_MAX_RECORDS) {
+    return {
+      ...unchanged,
+      reason: `Thread context is limited to ${THREAD_CONTEXT_MAX_RECORDS} threads.`,
+    };
+  }
   return {
     ok: true,
     reason: null,
     prompt: nextPrompt,
-    records: [...input.existingRecords, ...accepted],
+    records: nextRecords,
     insertedIds: accepted.map((record) => String(record.threadId)),
     cursor: (before + spacer + text).length,
   };

@@ -32,7 +32,10 @@ import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import {
+  collectThreadContextReferences,
+  countReferencedThreadContexts,
+} from "@t3tools/shared/threadContext";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -703,7 +706,10 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   );
 }
 
-export function normalizePersistedThreadContextRecords(value: unknown): ThreadContextRecord[] {
+function normalizeThreadContextRecords(
+  value: unknown,
+  maxRecords = Infinity,
+): ThreadContextRecord[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const out: ThreadContextRecord[] = [];
@@ -713,9 +719,13 @@ export function normalizePersistedThreadContextRecords(value: unknown): ThreadCo
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(entry);
-    if (out.length >= THREAD_CONTEXT_MAX_RECORDS) break;
+    if (out.length >= maxRecords) break;
   }
   return out;
+}
+
+export function normalizePersistedThreadContextRecords(value: unknown): ThreadContextRecord[] {
+  return normalizeThreadContextRecords(value, THREAD_CONTEXT_MAX_RECORDS);
 }
 
 /**
@@ -3164,9 +3174,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         setThreadContexts: (threadRef, contexts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
-          const normalized = normalizePersistedThreadContextRecords(contexts);
+          const normalized = normalizeThreadContextRecords(contexts);
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            if (
+              countReferencedThreadContexts(existing.prompt, normalized) >
+              THREAD_CONTEXT_MAX_RECORDS
+            )
+              return state;
             const nextDraft: ComposerThreadDraftState = { ...existing, threadContexts: normalized };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3190,10 +3205,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               if (seen.has(key)) continue;
               seen.add(key);
               accepted.push(entry);
-              if (existing.threadContexts.length + accepted.length >= THREAD_CONTEXT_MAX_RECORDS) {
-                break;
-              }
             }
+            // Keep unreferenced payloads for native undo, but budget only visible references.
+            const threadContexts = [...existing.threadContexts, ...accepted];
+            if (countReferencedThreadContexts(prompt, threadContexts) > THREAD_CONTEXT_MAX_RECORDS)
+              return state;
             if (accepted.length === 0) {
               if (existing.prompt === prompt) return state;
               return {
@@ -3209,10 +3225,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 [threadKey]: {
                   ...existing,
                   prompt,
-                  threadContexts: [...existing.threadContexts, ...accepted].slice(
-                    0,
-                    THREAD_CONTEXT_MAX_RECORDS,
-                  ),
+                  threadContexts,
                 },
               },
             };

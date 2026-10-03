@@ -178,7 +178,7 @@ describe("attachThreadContexts", () => {
     expect(gated.reason).toMatch(/server|support|capabilit/i);
   });
 
-  it("dedups already-attached threads and enforces the 32-record limit", () => {
+  it("dedups already-attached threads and enforces the 32-active-reference limit", () => {
     const existingRecords = [
       {
         version: 1 as const,
@@ -213,7 +213,9 @@ describe("attachThreadContexts", () => {
       title: `T ${index}`,
     }));
     const overflow = attachThreadContexts({
-      existingPrompt: "",
+      existingPrompt: full
+        .map((record) => `[${record.label}](t3-context://v1/thread/${record.contextId}) `)
+        .join(""),
       existingRecords: full,
       refs: [{ environmentId: ENV_A, threadId: selfThreadId("t-new") }],
       environmentId: ENV_A,

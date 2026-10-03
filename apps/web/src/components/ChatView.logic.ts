@@ -363,22 +363,7 @@ export function buildThreadContextForSend(
   return { version: 1, records: filtered };
 }
 
-/** Records in `records` that `prompt` actually references. Only these are sendable. */
-export function countReferencedThreadContexts(
-  prompt: string,
-  records: ReadonlyArray<ThreadContextRecord>,
-): number {
-  if (records.length === 0) return 0;
-  const referencedIds = new Set(
-    collectThreadContextReferences(prompt).map((occurrence) => String(occurrence.contextId)),
-  );
-  if (referencedIds.size === 0) return 0;
-  let count = 0;
-  for (const record of records) {
-    if (referencedIds.has(String(record.contextId))) count += 1;
-  }
-  return count;
-}
+export { countReferencedThreadContexts } from "@t3tools/shared/threadContext";
 
 /**
  * Context envelope for `thread.queued-turn.update`. Referenced records are
