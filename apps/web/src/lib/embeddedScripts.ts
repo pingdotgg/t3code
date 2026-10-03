@@ -307,7 +307,7 @@ function commandScripts(
   const stdinLanguage = readsStdinScript ? interpreter?.language : undefined;
   const writtenLanguage = writtenFileLanguage(name, command, args);
   for (const redirect of command.redirects) {
-    const toStdin = redirect.descriptor === undefined || isStdinDescriptor(redirect.descriptor);
+    const toStdin = isDescriptor(redirect.descriptor, 0);
     if (redirect.type === "HereString" && toStdin && stdinLanguage && redirect.target) {
       const mapped = wordText(redirect.target, source);
       if (mapped) scripts.push({ language: stdinLanguage, mapped });
@@ -321,8 +321,11 @@ function commandScripts(
   return scripts;
 }
 
-function isStdinDescriptor(descriptor: NonNullable<HereDoc["descriptor"]>): boolean {
-  return descriptor.type === "FileDescriptor" && descriptor.value === 0;
+/** Whether a redirection without a descriptor, or with `fd`, targets file descriptor `fd`. */
+function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
+  return (
+    descriptor === undefined || (descriptor.type === "FileDescriptor" && descriptor.value === fd)
+  );
 }
 
 interface ScriptArgument {
@@ -398,7 +401,11 @@ function writtenFileLanguage(
   let path: string | undefined;
   if (name === "cat") {
     for (const redirect of command.redirects) {
-      if (redirect.type === "Redirect" && [">", ">>", ">|"].includes(redirect.operator)) {
+      if (
+        redirect.type === "Redirect" &&
+        [">", ">>", ">|", "&>", "&>>"].includes(redirect.operator) &&
+        isDescriptor(redirect.descriptor, 1)
+      ) {
         path = redirect.target?.value;
       }
     }
