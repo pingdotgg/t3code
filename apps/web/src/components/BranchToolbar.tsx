@@ -87,7 +87,7 @@ interface BranchToolbarProps {
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
-  availableEnvironments?: readonly EnvironmentOption[];
+  availableEnvironments?: readonly Omit<EnvironmentOption, "projectId">[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
@@ -100,7 +100,7 @@ interface MobileRunContextSelectorProps {
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
-  availableEnvironments: readonly EnvironmentOption[] | undefined;
+  availableEnvironments: readonly Omit<EnvironmentOption, "projectId">[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;

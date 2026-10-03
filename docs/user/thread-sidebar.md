@@ -19,7 +19,9 @@ A thread does not need a project. To start one without a project, click **or
 start without a project** under a new thread's heading, pick **No project** from
 the project menu in that heading or from **New thread in...** in the command
 palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
-list. To move a draft into a project, pick the project in the heading.
+list. It starts on your current machine; before sending, pick another machine
+from the machine menu to move it there. To move a draft into a project, pick the
+project in the heading.
 
 Each thread without a project works in its own folder under `~/.t3/scratch` (the
 `scratch` folder of your T3 data directory), named after its date, the first words

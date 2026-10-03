@@ -52,7 +52,7 @@ export interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   isGitRepo: boolean;
   envLocked: boolean;
-  availableEnvironments: readonly EnvironmentOption[];
+  availableEnvironments: readonly Omit<EnvironmentOption, "projectId">[];
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   onEnvironmentChange: (environmentId: EnvironmentId) => void;
