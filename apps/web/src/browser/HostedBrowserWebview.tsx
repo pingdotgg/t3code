@@ -21,6 +21,7 @@ import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
+import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
@@ -181,7 +182,7 @@ export function HostedBrowserWebview(props: {
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
-  const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
   const viewportAspectRatio =
@@ -200,8 +201,8 @@ export function HostedBrowserWebview(props: {
   const hiddenSize =
     viewport._tag !== "fill"
       ? {
-          width: viewport.width * normalizedZoomFactor,
-          height: viewport.height * normalizedZoomFactor,
+          width: viewport.width * layoutZoomFactor,
+          height: viewport.height * layoutZoomFactor,
         }
       : {
           width: hiddenContentSize?.width ?? lastRect?.width ?? 1280,
@@ -219,22 +220,18 @@ export function HostedBrowserWebview(props: {
   } = useBrowserViewportResize({
     tabId: runtimeTabId,
     viewport,
-    zoomFactor,
+    zoomFactor: layoutZoomFactor,
     containerSize,
     deviceToolbarVisible,
     aspectRatio: lockedAspectRatio,
   });
   const fittedSourceViewport =
     presentation.fitSourceContent && lastRect
-      ? resolveFittedBrowserViewport(
-          viewport,
-          presentation.fittedSourceContent,
-          normalizedZoomFactor,
-        )
+      ? resolveFittedBrowserViewport(viewport, presentation.fittedSourceContent, layoutZoomFactor)
       : null;
   const layout =
     fittedSourceViewport && lastRect
-      ? resolveBrowserViewportLayout(lastRect, fittedSourceViewport, normalizedZoomFactor)
+      ? resolveBrowserViewportLayout(lastRect, fittedSourceViewport, layoutZoomFactor)
       : viewportLayout;
 
   const syncContentPresentation = useCallback(() => {
@@ -318,14 +315,14 @@ export function HostedBrowserWebview(props: {
             fittedSourceViewport
               ? fittedSourceViewport.width
               : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportWidth / normalizedZoomFactor))
+                ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
                 : effectiveViewport.width
           }
           data-preview-css-height={
             fittedSourceViewport
               ? fittedSourceViewport.height
               : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
+                ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
                 : effectiveViewport.height
           }
           aria-hidden={active ? undefined : true}

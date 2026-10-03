@@ -4,10 +4,50 @@ import {
   resizeBrowserViewportFromRail,
   resizeFreeformViewport,
   resolveBrowserDeviceViewportLayout,
+  resolveBrowserLayoutZoomFactor,
   resolveFittedBrowserViewport,
   resolveBrowserViewportLayout,
   resolveResponsiveBrowserViewportSize,
 } from "./browserViewportLayout";
+
+describe("resolveBrowserLayoutZoomFactor", () => {
+  it("shrinks the element when the app window is zoomed in so the guest measures the requested size", () => {
+    // View > Zoom In once: 1.2 ** 0.5.
+    const windowZoom = 1.0954;
+    const layoutZoom = resolveBrowserLayoutZoomFactor(1, windowZoom);
+    const layout = resolveBrowserViewportLayout(
+      { width: 1600, height: 1000 },
+      { _tag: "freeform", width: 1280, height: 800 },
+      layoutZoom,
+    );
+    expect(layout.viewportScale).toBe(1);
+    expect(Math.round(layout.viewportWidth * windowZoom)).toBe(1280);
+    expect(Math.round(layout.viewportHeight * windowZoom)).toBe(800);
+  });
+
+  it("grows the element when the app window is zoomed out", () => {
+    // View > Zoom Out once: 1.2 ** -0.5.
+    const windowZoom = 0.9129;
+    const layout = resolveBrowserDeviceViewportLayout(
+      { width: 1600, height: 1000 },
+      { _tag: "preset", width: 375, height: 667, presetId: "iphone-se" },
+      resolveBrowserLayoutZoomFactor(1, windowZoom),
+    );
+    expect(layout.viewportScale).toBe(1);
+    expect(Math.round(layout.viewportWidth * windowZoom)).toBe(375);
+    expect(Math.round(layout.viewportHeight * windowZoom)).toBe(667);
+  });
+
+  it("keeps the preview zoom on top of the window zoom", () => {
+    expect(resolveBrowserLayoutZoomFactor(1.5, 1.0954)).toBeCloseTo(1.5 / 1.0954, 6);
+    expect(resolveBrowserLayoutZoomFactor(1.25, 1)).toBe(1.25);
+  });
+
+  it("treats a missing or invalid window zoom as 1", () => {
+    expect(resolveBrowserLayoutZoomFactor(1, Number.NaN)).toBe(1);
+    expect(resolveBrowserLayoutZoomFactor(1, 0)).toBe(1);
+  });
+});
 
 describe("resolveBrowserViewportLayout", () => {
   it("uses the current fixed viewport instead of stale fitted source dimensions", () => {
