@@ -43,6 +43,9 @@ import {
   preflightLinuxDesktopBuild,
   preflightMacDesktopBuild,
   preflightWindowsDesktopBuild,
+  LINUX_METAINFO_PATH,
+  STAGE_PACKAGE_NAME,
+  renderAppStreamMetainfo,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
@@ -2012,6 +2015,46 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
+
+  it.effect("installs an AppStream component bound to the packaged launcher", () =>
+    Effect.gen(function* () {
+      const version = "1.2.3-nightly.20260815.1";
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        version,
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "x64",
+        "/tmp/stage/metainfo.xml",
+      );
+      const metainfo = renderAppStreamMetainfo({ version, buildDate: "2026-09-01" });
+      const linux = config.linux as Record<string, unknown>;
+
+      assert.deepStrictEqual((config.deb as Record<string, unknown>).fpm, [
+        `/tmp/stage/metainfo.xml=${LINUX_METAINFO_PATH}`,
+      ]);
+      // Software centres drop the component unless these match the launcher
+      // and package electron-builder installs.
+      assert.include(
+        metainfo,
+        `<launchable type="desktop-id">${String(linux.executableName)}.desktop</launchable>`,
+      );
+      assert.include(metainfo, `<pkgname>${STAGE_PACKAGE_NAME}</pkgname>`);
+      assert.include(metainfo, `<name>${String(config.productName)}</name>`);
+      assert.include(metainfo, `<release version="${version}" date="2026-08-15" />`);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it("dates a stable AppStream release by its build", () => {
+    assert.include(
+      renderAppStreamMetainfo({ version: "1.2.3", buildDate: "2026-09-01" }),
+      `<release version="1.2.3" date="2026-09-01" />`,
+    );
+  });
 
   it.effect("keeps executable resource editing enabled for unsigned Windows builds", () =>
     Effect.gen(function* () {

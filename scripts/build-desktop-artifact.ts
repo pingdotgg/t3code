@@ -40,6 +40,7 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -930,6 +931,7 @@ interface StagePackageJson {
   readonly packageManager: string;
   readonly description: string;
   readonly homepage: string;
+  readonly license: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
@@ -2648,6 +2650,58 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+// Also the .deb package name: electron-builder takes it from package.json.
+export const STAGE_PACKAGE_NAME = "t3code";
+const LINUX_SYNOPSIS = "Desktop GUI for coding agents";
+const LINUX_DESCRIPTION =
+  "Control Claude Code, Codex, Cursor, Grok Build, OpenCode and Google Antigravity from one app, with your existing subscriptions.";
+export const LINUX_METAINFO_PATH = `/usr/share/metainfo/${DESKTOP_APP_ID}.metainfo.xml`;
+
+// Software centres build a listing from AppStream, not the .deb control
+// fields. The component only binds to the installed package and launcher
+// through <pkgname> and <launchable>, so both must match what electron-builder
+// installs: STAGE_PACKAGE_NAME and `${executableName}.desktop`. <name> must
+// match the launcher's Name, which is the product name. A nightly's release
+// date is the one in its version, so rebuilding it later keeps the date;
+// other versions are released when they are built.
+export function renderAppStreamMetainfo(input: {
+  readonly version: string;
+  readonly buildDate: string;
+}): string {
+  const nightlyDate = /-nightly\.(\d{4})(\d{2})(\d{2})\.\d+$/.exec(input.version);
+  const releaseDate = nightlyDate
+    ? `${nightlyDate[1]}-${nightlyDate[2]}-${nightlyDate[3]}`
+    : input.buildDate;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>${DESKTOP_APP_ID}</id>
+  <pkgname>${STAGE_PACKAGE_NAME}</pkgname>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>${escapeXml(resolveDesktopProductName(input.version))}</name>
+  <summary>${LINUX_SYNOPSIS}</summary>
+  <description>
+    <p>${escapeXml(LINUX_DESCRIPTION)}</p>
+  </description>
+  <developer id="codes.t3">
+    <name>T3 Tools</name>
+  </developer>
+  <launchable type="desktop-id">t3code.desktop</launchable>
+  <icon type="stock">t3code</icon>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://t3.codes</url>
+  <url type="bugtracker">https://github.com/pingdotgg/t3code/issues</url>
+  <url type="vcs-browser">https://github.com/pingdotgg/t3code</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="${escapeXml(input.version)}" date="${escapeXml(releaseDate)}" />
+  </releases>
+</component>
+`;
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2666,6 +2720,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  // Linux only: an AppStream component already written outside the stage.
+  linuxMetainfoPath?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2771,7 +2827,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icons",
       category: "Development",
-      synopsis: "Desktop GUI for coding agents",
+      synopsis: LINUX_SYNOPSIS,
+      description: LINUX_DESCRIPTION,
       // Required by the .deb control file.
       maintainer: "T3 Tools <hello@t3.codes>",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
@@ -2805,6 +2862,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         "libxtst6",
         "xdg-utils",
       ],
+      // fpm installs each src=dest pair it is handed.
+      ...(linuxMetainfoPath ? { fpm: [`${linuxMetainfoPath}=${LINUX_METAINFO_PATH}`] } : {}),
     };
   }
 
@@ -3641,6 +3700,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  // Written beside the stage, not into it: everything under stageAppDir is
+  // packed into app.asar.
+  const linuxMetainfoPath =
+    options.platform === "linux" ? path.join(stageRoot, "metainfo.xml") : undefined;
+  if (linuxMetainfoPath) {
+    yield* fs.writeFileString(
+      linuxMetainfoPath,
+      renderAppStreamMetainfo({
+        version: appVersion,
+        buildDate: DateTime.formatIsoDateUtc(yield* DateTime.now),
+      }),
+    );
+  }
+
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
@@ -3692,7 +3765,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: STAGE_PACKAGE_NAME,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3701,6 +3774,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     description: "T3 Code desktop build",
     // Required by the .deb control file.
     homepage: "https://t3.codes",
+    license: "MIT",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
@@ -3718,6 +3792,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      linuxMetainfoPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
