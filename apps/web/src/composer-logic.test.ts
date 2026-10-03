@@ -129,6 +129,14 @@ describe("composerSubmissionIntentForKey", () => {
           ...input,
           platform,
           sendShortcut,
+          event: { ...modEnter, altKey: true },
+        }),
+      ).toBe("background");
+      expect(
+        composerSubmissionIntentForKey({
+          ...input,
+          platform,
+          sendShortcut,
           isDraftThread: true,
           event: modEnter,
         }),

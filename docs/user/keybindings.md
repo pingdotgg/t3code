@@ -11,11 +11,12 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
 `mod+Enter` to do the opposite for one message, even when the send shortcut
-requires a modifier. In a new thread, `mod+Alt+Enter` starts the thread in the
-background and opens a fresh composer. Change either shortcut in
-**Settings → Keybindings** under **Composer: Opposite Queue or Steer Action** or
-**Composer: Start in Background**. These bindings take priority over the send
-shortcut. Click the send button to use the configured follow-up behavior.
+requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
+background, and opens a fresh new-thread composer. Change these
+shortcuts in **Settings → Keybindings** under **Composer: Opposite Queue or
+Steer Action**, **Composer: Start in Background**, or **Composer: Send and Start
+New Thread**. These bindings take priority over the send shortcut. Click the
+send button to use the configured follow-up behavior.
 
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
