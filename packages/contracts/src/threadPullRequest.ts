@@ -105,8 +105,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   checks: Schema.NullOr(Schema.Literals(["passing", "failing"])),
   /** Remarks from others created up to this host time were reported. */
   remarksThrough: IsoDateTime,
+  /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
+  remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
-  /** Wakes since the head commit last moved. Watching stops at a limit, so bots cannot loop it. */
+  /** Wakes since checks last started over. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;

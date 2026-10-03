@@ -2203,6 +2203,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("pr-watch-record"),
         threadId,
         ...key,
+        startedAt: started.startedAt,
         watch: recorded,
       });
       assert.deepEqual(yield* watchOf, recorded);
@@ -2216,19 +2217,30 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         watching: false,
       });
-      // Progress read before the stop must not bring the watch back.
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("pr-watch-late-record"),
-        threadId,
-        ...key,
-        watch: { ...recorded, wakes: 2 },
-      });
+      // A wake read before the stop must neither wake the agent nor bring the watch back.
+      const late = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-late-record"),
+          threadId,
+          ...key,
+          startedAt: started.startedAt,
+          watch: { ...recorded, wakes: 2 },
+          wake: {
+            messageId: MessageId.make("pr-watch-late-wake"),
+            text: "Update",
+            notification: { source: { kind: "monitor" }, outcome: "updated", summary: "#7" },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(late._tag, "OrchestratorDispatchError");
       assert.isUndefined(yield* watchOf);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(messages, []);
     }),
   );
 
-  it.effect("wakes a watched thread once when its pull request's checks fail", () =>
+  it.effect("wakes a watched thread once for failed checks and a late thread reply", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-pull-request-watch-wake");
@@ -2325,13 +2337,38 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.succeed(detail),
+              // A long review thread: its later replies only arrive through threadComments.
               activity: () =>
                 Effect.succeed({
                   comments: [],
-                  commentCount: 0,
-                  commentsTruncated: false,
-                  reviewThreads: [],
+                  commentCount: 11,
+                  commentsTruncated: true,
+                  reviewThreads: [
+                    {
+                      id: "thread-1",
+                      path: "src/index.ts",
+                      line: 1,
+                      side: "right",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: [],
+                      nextCommentsCursor: "page-2",
+                    },
+                  ],
                   commits: [],
+                }),
+              threadComments: () =>
+                Effect.succeed({
+                  comments: [
+                    {
+                      id: "late-reply",
+                      author: { login: "reviewer", name: null, avatarUrl: null },
+                      body: "One more thing.",
+                      createdAt: "2999-01-01T00:00:00.000Z",
+                      url: null,
+                    },
+                  ],
+                  nextCursor: null,
                 }),
             }),
           ),
@@ -2345,7 +2382,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         messages.flatMap((message) =>
           message.notification === undefined ? [] : [message.notification.summary],
         ),
-        ["#7: checks failed"],
+        ["#7: checks failed, new comments"],
       );
       const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
       assert.deepEqual(

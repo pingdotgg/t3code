@@ -1,13 +1,15 @@
 import type {
   OrchestrationV2Notification,
-  PullRequestActivity,
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 
-/** Wakes allowed without a new push before watching stops, so a chatty bot cannot loop an agent. */
+/**
+ * Wakes allowed before checks start over (a push or a rerun), so a chatty bot cannot loop an
+ * agent that is only replying to it.
+ */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
@@ -43,21 +45,26 @@ function checksOutcome(
 
 /**
  * Compares a watched pull request with what its agent was last told. A check result is
- * reported once per head commit, as soon as any check fails or once every check passed.
- * Remarks count when someone other than the viewer or the pull request's author wrote them:
- * the agent posts as the viewer, so its own replies never wake it.
+ * reported as soon as any check fails or once every check passed, and again only after the
+ * head commit moves or the checks start over. Remarks count when someone other than the
+ * viewer or the pull request's author wrote them: the agent posts as the viewer, so its own
+ * replies never wake it. `remarks` is null when the conversation could not be read whole;
+ * remarks are then left for a later pass rather than skipped.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<PullRequestDetail, "headSha" | "checks" | "mergeability" | "viewer" | "author">,
-  activity: Pick<PullRequestActivity, "comments">,
+  remarks: ReadonlyArray<PullRequestComment> | null,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
-  const headMoved = headSha !== watch.headSha;
-
-  let checks = headMoved ? null : watch.checks;
   const outcome = checksOutcome(detail.checks);
+  // Hosts that report no head commit still show a push or a rerun as checks starting over.
+  const restarted =
+    headSha !== watch.headSha ||
+    (watch.checks !== null && (outcome === "pending" || outcome === null));
+
+  let checks = restarted ? null : watch.checks;
   if ((outcome === "failing" || outcome === "passing") && outcome !== checks) {
     changes.push(
       outcome === "failing"
@@ -70,18 +77,22 @@ export function evaluatePullRequestWatch(
   const own = new Set(
     [detail.viewer, detail.author?.login].flatMap((login) => (login ? [login.toLowerCase()] : [])),
   );
-  const reportedThrough = Date.parse(watch.remarksThrough);
-  const remarks = activity.comments.filter(
-    (remark) =>
-      Date.parse(remark.createdAt) > reportedThrough &&
-      !own.has(remark.author?.login.toLowerCase() ?? ""),
-  );
-  if (remarks.length > 0) changes.push({ kind: "remarks", remarks });
-  const remarksThrough = remarks.reduce(
-    (latest, remark) =>
-      Date.parse(remark.createdAt) > Date.parse(latest) ? remark.createdAt : latest,
-    watch.remarksThrough,
-  );
+  const through = Date.parse(watch.remarksThrough);
+  const fresh = (remarks ?? []).filter((remark) => {
+    const at = Date.parse(remark.createdAt);
+    return (
+      (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
+      !own.has(remark.author?.login.toLowerCase() ?? "")
+    );
+  });
+  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const latest = Math.max(through, ...fresh.map((remark) => Date.parse(remark.createdAt)));
+  const atLatest = fresh.filter((remark) => Date.parse(remark.createdAt) === latest);
+  const remarksThrough = latest === through ? watch.remarksThrough : atLatest[0]!.createdAt;
+  const remarkIds = [
+    ...(latest === through ? watch.remarkIds : []),
+    ...atLatest.map((remark) => remark.id),
+  ];
 
   if (detail.mergeability === "conflicting" && !watch.conflicting) {
     changes.push({ kind: "conflicting" });
@@ -90,10 +101,18 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
-  const wakes = (headMoved ? 0 : watch.wakes) + (changes.length > 0 ? 1 : 0);
+  const wakes = (restarted ? 0 : watch.wakes) + (changes.length > 0 ? 1 : 0);
   return {
     changes,
-    next: { startedAt: watch.startedAt, headSha, checks, remarksThrough, conflicting, wakes },
+    next: {
+      startedAt: watch.startedAt,
+      headSha,
+      checks,
+      remarksThrough,
+      remarkIds,
+      conflicting,
+      wakes,
+    },
     exhausted: changes.length > 0 && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
 }
@@ -166,7 +185,7 @@ export function pullRequestWatchMessage(input: {
     ...changes.flatMap((change) => changeLines(change, context)),
     "",
     exhausted
-      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} updates without a new push. Call watch_pull_request to watch it again.`
+      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} updates without a new push or check run. Call watch_pull_request to watch it again.`
       : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. Call unwatch_pull_request when you no longer need updates.",
   ].join("\n");
   const failed = changes.some(

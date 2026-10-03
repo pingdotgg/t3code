@@ -353,6 +353,7 @@ it.effect.each([
       headSha: null,
       checks: null,
       remarksThrough: DateTime.formatIso(old),
+      remarkIds: [],
       conflicting: false,
       wakes: 0,
     };

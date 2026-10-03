@@ -1,6 +1,9 @@
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2Notification,
+  type PullRequestComment,
+  type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
@@ -23,6 +26,9 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
 
+/** Extra comment pages read per review thread; a longer thread leaves the read incomplete. */
+const THREAD_PAGES = 5;
+
 const logFailure =
   (message: string, fields: Record<string, unknown>) =>
   <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
@@ -36,6 +42,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.headSha === right.headSha &&
     left.checks === right.checks &&
     left.remarksThrough === right.remarksThrough &&
+    left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes
   );
@@ -74,18 +81,27 @@ export const make = Effect.gen(function* () {
       repository: link.repository,
       number: link.number,
     };
-    const stop = crypto.randomUUIDv4.pipe(
-      Effect.flatMap((uuid) =>
-        engine.dispatch({
-          type: "thread.pull-request.watch",
-          commandId: CommandId.make(`server:pr-watch-stop:${thread.id}:${uuid}`),
+    // The orchestrator applies this only while the same watch is on, so a stop or restart that
+    // lands during the host read wins.
+    const record = (
+      next: ThreadPullRequestWatch | null,
+      wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
+    ) =>
+      Effect.gen(function* () {
+        const uuid = yield* crypto.randomUUIDv4;
+        yield* engine.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`server:pr-watch:${thread.id}:${uuid}`),
           threadId: thread.id,
           ...pullRequest,
-          watching: false,
-        }),
-      ),
-    );
-    if (link.snapshot !== null && link.snapshot.state !== "open") return yield* stop;
+          startedAt: watch.startedAt,
+          watch: next,
+          ...(wake === undefined
+            ? {}
+            : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
+        });
+      });
+    if (link.snapshot !== null && link.snapshot.state !== "open") return yield* record(null);
     if (thread.settledOverride === "settled" || thread.settledAt !== null) return;
 
     const reference = { projectId: thread.projectId, ...pullRequest };
@@ -93,63 +109,58 @@ export const make = Effect.gen(function* () {
       [pullRequests.detail({ ...reference, allowStale: false }), pullRequests.activity(reference)],
       { concurrency: 2 },
     );
-    if (detail.state !== "open") return yield* stop;
+    if (detail.state !== "open") return yield* record(null);
 
-    const report = evaluatePullRequestWatch(watch, detail, activity);
+    // GitHub sends the first comments of each review thread; the rest are read here so a late
+    // reply in a long thread still counts.
+    const longThreads = activity.reviewThreads.filter(
+      (reviewThread) => reviewThread.nextCommentsCursor !== undefined,
+    );
+    const rest = yield* Effect.forEach(
+      longThreads,
+      (reviewThread) =>
+        Effect.gen(function* () {
+          const comments: Array<PullRequestComment> = [];
+          let cursor: string | null | undefined = reviewThread.nextCommentsCursor;
+          for (let page = 0; cursor != null && page < THREAD_PAGES; page += 1) {
+            const result: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
+              ...reference,
+              threadId: reviewThread.id,
+              cursor,
+            });
+            for (const comment of result.comments) {
+              comments.push({
+                ...comment,
+                kind: "review-comment",
+                path: reviewThread.path,
+                reviewState: null,
+              });
+            }
+            cursor = result.nextCursor;
+          }
+          return { comments, whole: cursor == null };
+        }),
+      { concurrency: 2 },
+    );
+    // A truncated conversation with no long thread to explain it is a degraded read.
+    const whole =
+      (!activity.commentsTruncated || longThreads.length > 0) && rest.every((read) => read.whole);
+    const remarks = whole ? [...activity.comments, ...rest.flatMap((read) => read.comments)] : null;
+
+    const report = evaluatePullRequestWatch(watch, detail, remarks);
     if (report.changes.length > 0) {
-      const { text, notification } = pullRequestWatchMessage({
-        number: link.number,
-        url: link.url,
-        baseBranch: detail.baseBranch,
-        headSha: report.next.headSha,
-        report,
-      });
-      // Derived from the watch it records, so a pass that repeats after a failed record below
-      // replays this command's receipt instead of waking the agent twice. A wake the
-      // orchestrator refuses is logged and still recorded, so the watch cannot stall on it.
-      const next = report.next;
-      const wakeId = [
-        thread.id,
-        threadPullRequestKeyOf(link),
-        Date.parse(next.startedAt),
-        next.wakes,
-        next.headSha ?? "-",
-        next.checks ?? "-",
-        Date.parse(next.remarksThrough),
-        next.conflicting ? 1 : 0,
-      ].join(":");
-      yield* engine
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`server:pr-watch:${wakeId}`),
-          threadId: thread.id,
-          messageId: MessageId.make(`message:pr-watch:${wakeId}`),
-          text,
-          notification,
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.catchCause(
-            logFailure("pull request watch wake failed", {
-              threadId: thread.id,
-              pullRequest: threadPullRequestKeyOf(link),
-            }),
-          ),
-        );
+      return yield* record(
+        report.exhausted ? null : report.next,
+        pullRequestWatchMessage({
+          number: link.number,
+          url: link.url,
+          baseBranch: detail.baseBranch,
+          headSha: report.next.headSha,
+          report,
+        }),
+      );
     }
-    if (report.exhausted) return yield* stop;
-    if (watchesEqual(report.next, watch)) return;
-    const uuid = yield* crypto.randomUUIDv4;
-    yield* engine.dispatch({
-      type: "thread.pull-request-watch.sync",
-      commandId: CommandId.make(`server:pr-watch-sync:${thread.id}:${uuid}`),
-      threadId: thread.id,
-      ...pullRequest,
-      watch: report.next,
-    });
+    if (!watchesEqual(report.next, watch)) yield* record(report.next);
   });
 
   const sweep = Effect.gen(function* () {

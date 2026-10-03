@@ -2201,6 +2201,61 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  // Checked under the thread lock: the watch or the thread can change while the host is read.
+  // The watch is recorded first so the wake's own thread events carry it.
+  const dispatchPullRequestWatchSync = Effect.fn("orchestrationV2.dispatch.pullRequestWatchSync")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.pull-request-watch.sync" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const key = normalizeThreadPullRequestKey(command);
+      const link = threadPullRequestsOf(thread).find(
+        (candidate) =>
+          candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+      );
+      const inactive =
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled" ||
+        thread.settledAt !== null;
+      if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The pull request watch ended or its thread settled while it was read.",
+        });
+      }
+      yield* dispatchThreadMutation(command, events, effects);
+      if (command.wake === undefined) return;
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: command.wake.messageId,
+          text: command.wake.text,
+          notification: command.wake.notification,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    },
+  );
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -2862,8 +2917,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const watch =
             command.type === "thread.pull-request-watch.sync"
               ? // Progress read before a stop or restart must not bring the old watch back.
-                existing.watch?.startedAt === command.watch.startedAt
-                ? command.watch
+                existing.watch?.startedAt === command.startedAt
+                ? (command.watch ?? undefined)
                 : existing.watch
               : !command.watching
                 ? undefined
@@ -2872,6 +2927,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     headSha: null,
                     checks: null,
                     remarksThrough: startedAt,
+                    remarkIds: [],
                     conflicting: false,
                     wakes: 0,
                   });
@@ -9186,7 +9242,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
       case "thread.pull-request.watch":
-      case "thread.pull-request-watch.sync":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":
@@ -9194,6 +9249,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.pull-request-watch.sync":
+        yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);

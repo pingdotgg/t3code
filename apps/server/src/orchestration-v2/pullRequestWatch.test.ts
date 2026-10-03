@@ -19,6 +19,7 @@ const watch = (overrides: Partial<ThreadPullRequestWatch> = {}): ThreadPullReque
   headSha: null,
   checks: null,
   remarksThrough: STARTED,
+  remarkIds: [],
   conflicting: false,
   wakes: 0,
   ...overrides,
@@ -57,7 +58,7 @@ const remark = (
   reviewState: null,
 });
 
-const noRemarks = { comments: [] };
+const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
   it("reports a check result once per head commit", () => {
@@ -86,16 +87,52 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("reports a new run as news on hosts that send no head commit", () => {
+    const passing = detail({ headSha: undefined, checks: [check("ci", "success")] });
+    const passed = evaluatePullRequestWatch(watch({ wakes: 3 }), passing, noRemarks);
+    assert.equal(passed.changes[0]?.kind, "checks-passed");
+    const rerun = evaluatePullRequestWatch(
+      passed.next,
+      detail({ headSha: undefined, checks: [check("ci", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    assert.equal(rerun.next.wakes, 0);
+    assert.equal(
+      evaluatePullRequestWatch(rerun.next, passing, noRemarks).changes[0]?.kind,
+      "checks-passed",
+    );
+  });
+
+  it("keeps remarks for a later pass when the conversation was not read whole", () => {
+    const comments = [remark("reviewer", "2026-10-02T12:06:00Z")];
+    const partial = evaluatePullRequestWatch(watch(), detail(), null);
+    assert.deepEqual(partial.changes, []);
+    assert.equal(
+      evaluatePullRequestWatch(partial.next, detail(), comments).changes[0]?.kind,
+      "remarks",
+    );
+  });
+
+  it("reports a remark that shows up late with the same time as a reported one", () => {
+    const first = remark("reviewer", "2026-10-02T12:06:00Z");
+    const late = { ...remark("bot", "2026-10-02T12:06:00Z"), id: "late" };
+    const reported = evaluatePullRequestWatch(watch(), detail(), [first]);
+    const again = evaluatePullRequestWatch(reported.next, detail(), [first, late]);
+    assert.deepEqual(again.changes, [{ kind: "remarks", remarks: [late] }]);
+    assert.deepEqual(again.next.remarkIds, [first.id, "late"]);
+  });
+
   it("reports remarks from others once and never the agent's own", () => {
     const comments = [
       remark("agent-user", "2026-10-02T12:05:00Z", "Fixed in the latest push."),
       remark("macroscope-app[bot]", "2026-10-02T12:06:00Z"),
       remark("reviewer", "2026-10-02T11:00:00Z", "Older than the watch."),
     ];
-    const report = evaluatePullRequestWatch(watch(), detail(), { comments });
+    const report = evaluatePullRequestWatch(watch(), detail(), comments);
     assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
-    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), { comments }).changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
   });
 
   it("reports a conflict once, until the branch is clean again", () => {
@@ -121,8 +158,8 @@ describe("evaluatePullRequestWatch", () => {
   it("stops after the wake limit unless the head moves", () => {
     const comments = [remark("reviewer", "2026-10-02T12:10:00Z")];
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
-    assert.isTrue(evaluatePullRequestWatch(tired, detail(), { comments }).exhausted);
-    const pushed = evaluatePullRequestWatch(tired, detail({ headSha: "cccccccccc" }), { comments });
+    assert.isTrue(evaluatePullRequestWatch(tired, detail(), comments).exhausted);
+    const pushed = evaluatePullRequestWatch(tired, detail({ headSha: "cccccccccc" }), comments);
     assert.isFalse(pushed.exhausted);
     assert.equal(pushed.next.wakes, 1);
   });
@@ -133,7 +170,7 @@ describe("pullRequestWatchMessage", () => {
     const report = evaluatePullRequestWatch(
       watch(),
       detail({ checks: [check("lint", "failure")] }),
-      { comments: [remark("reviewer", "2026-10-02T12:10:00Z", "<!-- bot -->Needs a test.")] },
+      [remark("reviewer", "2026-10-02T12:10:00Z", "<!-- bot -->Needs a test.")],
     );
     const message = pullRequestWatchMessage({
       number: 12,
