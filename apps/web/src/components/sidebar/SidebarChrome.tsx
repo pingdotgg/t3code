@@ -4,7 +4,7 @@ import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
-import { cn } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -63,10 +63,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       <SidebarBrand onBackdrop={backdropVariant !== null} />
       {pillLabel ? (
         <Badge
-          // Desktop titlebar controls push the brand further right, so the pill needs more room there.
+          // Next to the macOS traffic lights, the desktop titlebar controls push the
+          // brand further right, so the pill needs more room there.
           className={cn(
             "relative z-10 ml-1 hidden",
-            isElectron
+            isElectron && isMacPlatform(navigator.platform)
               ? "@[20rem]/sidebar-header:inline-flex"
               : "@[15rem]/sidebar-header:inline-flex",
           )}
