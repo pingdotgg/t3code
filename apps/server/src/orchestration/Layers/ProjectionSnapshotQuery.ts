@@ -252,6 +252,7 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
     agentTouchedPaths: Schema.fromJsonString(Schema.Array(TrimmedNonEmptyString)),
     turnFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    transitionFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
@@ -935,6 +936,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1711,6 +1713,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1922,6 +1925,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   files: row.files,
                   agentTouchedPaths: row.agentTouchedPaths,
                   turnFiles: row.turnFiles,
+                  transitionFiles: row.transitionFiles,
                   assistantMessageId: row.assistantMessageId,
                   completedAt: row.completedAt,
                 });
@@ -2511,6 +2515,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             files: row.files,
             agentTouchedPaths: row.agentTouchedPaths,
             turnFiles: row.turnFiles,
+            transitionFiles: row.transitionFiles,
             assistantMessageId: row.assistantMessageId,
             completedAt: row.completedAt,
           }),
@@ -2864,6 +2869,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           files: row.files,
           agentTouchedPaths: row.agentTouchedPaths,
           turnFiles: row.turnFiles,
+          transitionFiles: row.transitionFiles,
           assistantMessageId: row.assistantMessageId,
           completedAt: row.completedAt,
         })),

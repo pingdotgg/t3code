@@ -298,6 +298,7 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     files: checkpoint.files.map((file) => ({ ...file })),
     agentTouchedPaths: [...(checkpoint.agentTouchedPaths ?? [])],
     turnFiles: (checkpoint.turnFiles ?? []).map((file) => ({ ...file })),
+    transitionFiles: (checkpoint.transitionFiles ?? []).map((file) => ({ ...file })),
   };
 }
 
@@ -2337,6 +2338,7 @@ function applyEnvironmentOrchestrationEvent(
           files: event.payload.files,
           agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
           turnFiles: event.payload.turnFiles ?? [],
+          transitionFiles: event.payload.transitionFiles ?? [],
           assistantMessageId: event.payload.assistantMessageId,
           completedAt: event.payload.completedAt,
         });

@@ -1074,6 +1074,7 @@ export function projectEvent(
             files: payload.files,
             agentTouchedPaths: payload.agentTouchedPaths,
             turnFiles: payload.turnFiles,
+            transitionFiles: payload.transitionFiles,
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },
