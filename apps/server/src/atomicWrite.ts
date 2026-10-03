@@ -19,7 +19,15 @@ export const writeFileStringAtomically = (input: {
       });
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
+      // Rename swaps in the temp file's inode, so carry the target's mode over.
+      // New files start owner-only since some (settings.json) can hold secrets.
+      const mode = yield* fs.stat(input.filePath).pipe(
+        Effect.map((info) => info.mode & 0o777),
+        Effect.orElseSucceed(() => 0o600),
+      );
+
       yield* fs.writeFileString(tempPath, input.contents);
+      yield* fs.chmod(tempPath, mode);
       yield* fs.rename(tempPath, input.filePath);
     }),
   );
