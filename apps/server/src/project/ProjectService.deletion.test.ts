@@ -17,6 +17,20 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as PreviewManager from "../preview/Manager.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CheckpointRollbackService from "../orchestration-v2/CheckpointRollbackService.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "../orchestration-v2/ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "../orchestration-v2/ProviderTurnStartService.ts";
+import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import * as RunFinalizationService from "../orchestration-v2/RunFinalizationService.ts";
+import * as RuntimeRequestService from "../orchestration-v2/RuntimeRequestService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadTitleRegenerationService from "../orchestration-v2/ThreadTitleRegenerationService.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -197,9 +211,9 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.lengthOf(partialEvents, 1);
       assert.equal(partialEvents[0]?.stream_id, firstThreadId);
       assert.equal(partialEvents[0]?.event_type, "thread.deleted");
-      assert.lengthOf(partialCleanup, 1);
+      assert.lengthOf(partialCleanup, 2);
       assert.equal(partialCleanup[0]?.thread_id, firstThreadId);
-      assert.equal(partialCleanup[0]?.effect_type, "terminal.cleanup");
+      assert.equal(partialCleanup[0]?.effect_type, "preview.cleanup");
 
       const deletedProject = yield* service.delete(input);
       assert.isNotNull(deletedProject.deletedAt);
@@ -220,7 +234,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 2);
+      assert.lengthOf(finalCleanup, 4);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -230,6 +244,12 @@ it.effect("retries a partial project deletion without repeating child events or 
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
           [
+            {
+              effect_id: `effect:${expectedCommandId}:preview.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "preview.cleanup",
+            },
             {
               effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
               thread_id: threadId,
@@ -483,4 +503,72 @@ it.effect("deletes a project without force once its imported threads were delete
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect(
+  "forced project deletion closes previews for every child thread after draining cleanup",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:preview-deletion");
+      const threadIds = [
+        ThreadId.make("thread:preview-project:a"),
+        ThreadId.make("thread:preview-project:b"),
+      ];
+      yield* seedProject(projectId);
+      const eventSink = yield* EventSink.EventSinkV2;
+      const previews = yield* PreviewManager.PreviewManager;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* eventSink.write({
+        events: threadIds.map((threadId) => nativeThreadCreated(projectId, threadId)),
+      });
+      for (const threadId of threadIds) {
+        yield* previews.open({ threadId });
+        assert.lengthOf((yield* previews.list({ threadId })).sessions, 1);
+      }
+      const commandId = CommandId.make("command:preview-project-delete");
+      const service = yield* ProjectService.make;
+      yield* service.delete({ commandId, projectId, force: true });
+
+      assert.equal(yield* worker.drain(), 4);
+      for (const threadId of threadIds) {
+        assert.isEmpty((yield* previews.list({ threadId })).sessions);
+        const rows = yield* outbox.listByCommandId(
+          CommandId.make(`${commandId}:delete-thread:${threadId}`),
+        );
+        assert.lengthOf(rows, 2);
+        assert.isTrue(rows.every((row) => row.status === "succeeded"));
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          servicesLayer,
+          EffectWorker.layer.pipe(
+            Layer.provide(
+              EffectWorker.executorLayer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+                    Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+                    Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+                    Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+                    Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+                    Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+                    Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+                    Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                    ServerSettings.layerTest(),
+                    ResourceCleanupService.live.pipe(
+                      Layer.provide(
+                        Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Layer.provideMerge(EffectOutbox.layer),
+          ),
+        ).pipe(Layer.provideMerge(PreviewManager.layer), Layer.provideMerge(databaseLayer)),
+      ),
+    ),
 );

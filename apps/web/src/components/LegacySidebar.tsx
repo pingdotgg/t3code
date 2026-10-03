@@ -81,6 +81,7 @@ import { isElectron } from "../env";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { releaseProjectDraftUploads } from "../lib/composerDraftUploads";
+import { clearThreadPreviewState } from "../previewStateStore";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -1530,15 +1531,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return result;
       }
       const draftStore = useComposerDraftStore.getState();
-      releaseProjectDraftUploads(
-        memberProjectRef,
-        sidebarThreads
-          .filter(
-            (thread) =>
-              thread.environmentId === member.environmentId && thread.projectId === member.id,
-          )
-          .map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-      );
+      const memberThreadRefs = sidebarThreads
+        .filter(
+          (thread) =>
+            thread.environmentId === member.environmentId && thread.projectId === member.id,
+        )
+        .map((thread) => scopeThreadRef(thread.environmentId, thread.id));
+      releaseProjectDraftUploads(memberProjectRef, memberThreadRefs);
+      for (const threadRef of memberThreadRefs) clearThreadPreviewState(threadRef);
       const projectDraftThread = draftStore.getDraftThreadByProjectRef(memberProjectRef);
       if (projectDraftThread) {
         draftStore.clearDraftThread(projectDraftThread.draftId);

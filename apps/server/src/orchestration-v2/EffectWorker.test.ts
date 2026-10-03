@@ -1,6 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  PreviewSessionLookupError,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -14,11 +16,18 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerConfig from "../config.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as PreviewManager from "../preview/Manager.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -800,3 +809,94 @@ it.effect("settles a delegated child once its restart continuation fails for goo
     }).pipe(Effect.provide(layer));
   }),
 );
+
+function makePreviewWorkerLayer(previewLayer: Layer.Layer<PreviewManager.PreviewManager>) {
+  const cleanupLayer = ResourceCleanupService.live.pipe(
+    Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void })),
+  );
+  const executor = Layer.unwrap(
+    Ref.make<ReadonlyArray<string>>([]).pipe(
+      Effect.map((events) => makeExecutorLayer({ events }).pipe(Layer.provide(cleanupLayer))),
+    ),
+  );
+  return EffectWorker.layer.pipe(
+    Layer.provide(executor),
+    Layer.provideMerge(EffectOutbox.layer),
+    Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(previewLayer),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "preview-cleanup-test-" })),
+    Layer.provide(NodeServices.layer),
+  );
+}
+
+it.effect("drains preview cleanup for every tab of one thread and preserves another thread", () =>
+  Effect.gen(function* () {
+    const previews = yield* PreviewManager.PreviewManager;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const threadA = ThreadId.make("thread:preview-cleanup:a");
+    const threadB = ThreadId.make("thread:preview-cleanup:b");
+    yield* previews.open({ threadId: threadA });
+    yield* previews.open({ threadId: threadA });
+    yield* previews.open({ threadId: threadB });
+    assert.lengthOf((yield* previews.list({ threadId: threadA })).sessions, 2);
+    const otherSessions = (yield* previews.list({ threadId: threadB })).sessions;
+    const commandId = CommandId.make("command:preview-cleanup");
+    yield* outbox.enqueue([
+      {
+        id: "effect:preview-cleanup",
+        commandId,
+        threadId: threadA,
+        request: { type: "preview.cleanup" },
+      },
+    ]);
+
+    assert.equal(yield* worker.drain(), 1);
+    assert.isEmpty((yield* previews.list({ threadId: threadA })).sessions);
+    assert.deepEqual((yield* previews.list({ threadId: threadB })).sessions, otherSessions);
+    const rows = yield* outbox.listByCommandId(commandId);
+    assert.lengthOf(rows, 1);
+    assert.equal(rows[0]?.status, "succeeded");
+    assert.equal(yield* worker.drain(), 0);
+  }).pipe(Effect.provide(makePreviewWorkerLayer(PreviewManager.layer))),
+);
+
+it.effect("warns and succeeds a preview cleanup outbox row when closing previews fails", () => {
+  const warnings: unknown[] = [];
+  const failure = new PreviewSessionLookupError({ threadId, tabId: "tab:failed-close" });
+  const logger = Logger.make(({ logLevel, message }) => {
+    if (logLevel === "Warn") warnings.push(message);
+  });
+  return Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const commandId = CommandId.make("command:preview-cleanup-failure");
+    yield* outbox.enqueue([
+      {
+        id: "effect:preview-cleanup-failure",
+        commandId,
+        threadId,
+        request: { type: "preview.cleanup" },
+      },
+    ]);
+
+    assert.equal(yield* worker.drain(), 1);
+    const rows = yield* outbox.listByCommandId(commandId);
+    assert.lengthOf(rows, 1);
+    assert.equal(rows[0]?.status, "succeeded");
+    assert.equal(rows[0]?.attemptCount, 1);
+    assert.isNull(rows[0]?.lastError);
+    assert.deepEqual(warnings, [["Failed to close thread previews", { threadId, error: failure }]]);
+    assert.equal(yield* worker.drain(), 0);
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        makePreviewWorkerLayer(
+          Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.fail(failure) }),
+        ),
+        Logger.layer([logger], { mergeWithExisting: false }),
+      ),
+    ),
+    Effect.provideService(References.MinimumLogLevel, "Warn"),
+  );
+});

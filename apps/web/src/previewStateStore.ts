@@ -10,10 +10,12 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type DesktopPreviewColorScheme,
   type DesktopPreviewFavicon,
+  type EnvironmentId,
   type PreviewEvent,
   type PreviewListResult,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -240,6 +242,28 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
   });
 }
 
+/**
+ * Apply a server close to a thread whose preview view may not be mounted, such
+ * as an archived thread removed with its project or a thread deleted on
+ * another device. Threads without live tabs are skipped to avoid creating state.
+ */
+export function applyBackgroundPreviewClose(
+  environmentId: EnvironmentId,
+  event: PreviewEvent,
+): void {
+  if (event.type !== "closed") return;
+  const ref = { environmentId, threadId: ThreadId.make(event.threadId) };
+  if (!appAtomRegistry.get(activePreviewThreadKeysAtom).keys.has(scopedThreadKey(ref))) return;
+  // A new server epoch means the stored tabs died with the old process, and an
+  // unmounted thread has no sync to re-list them.
+  const { serverEpoch } = readThreadPreviewState(ref);
+  if (serverEpoch !== null && serverEpoch !== event.serverEpoch) {
+    clearThreadPreviewState(ref);
+    return;
+  }
+  applyPreviewServerEvent(ref, event);
+}
+
 export function applyPreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot | null,
@@ -397,6 +421,18 @@ export function applyPreviewDesktopState(
       desktopOverlay: current.activeTabId === tabId ? overlay : current.desktopOverlay,
     };
   });
+}
+
+/**
+ * Forget every preview of a deleted thread. Its sync atom is usually gone by
+ * the time the server's `closed` events arrive, so the desktop host would keep
+ * the guests alive otherwise. Closing each tab keeps the revision guards and
+ * suppression, so an in-flight list response cannot bring the tabs back.
+ */
+export function clearThreadPreviewState(ref: ScopedThreadRef): void {
+  for (const tabId of Object.keys(readThreadPreviewState(ref).sessions)) {
+    beginPreviewSessionClose(ref, tabId);
+  }
 }
 
 export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {

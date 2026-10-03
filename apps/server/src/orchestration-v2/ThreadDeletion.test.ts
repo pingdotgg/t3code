@@ -291,8 +291,28 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
           revokeMcpCredential: true,
         },
         { type: "terminal.cleanup" },
+        { type: "preview.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
+    );
+  }).pipe(Effect.provide(IdAllocator.layer)),
+);
+
+it.effect("queues preview cleanup without provider sessions or attachments", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    assert.isEmpty(projection.providerSessions);
+    assert.isEmpty(projection.messages);
+    const plan = yield* planThreadDeletion({
+      command,
+      projection,
+      attachmentIds: [],
+      now: deletedAt,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+    });
+    assert.deepEqual(
+      plan.effects.map((effect) => effect.request),
+      [{ type: "terminal.cleanup" }, { type: "preview.cleanup" }],
     );
   }).pipe(Effect.provide(IdAllocator.layer)),
 );

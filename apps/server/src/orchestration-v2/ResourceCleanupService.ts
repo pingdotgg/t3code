@@ -1,3 +1,4 @@
+import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -6,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
 export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
@@ -20,12 +22,15 @@ export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupErro
 
 export class ResourceCleanupService extends Context.Reference<{
   readonly cleanupTerminals: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
+  /** Closes every preview session of the thread. Failures are logged, never retried. */
+  readonly cleanupPreviews: (threadId: ThreadId) => Effect.Effect<void>;
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
 }>("t3/orchestration-v2/ResourceCleanupService", {
   defaultValue: () => ({
     cleanupTerminals: () => Effect.void,
+    cleanupPreviews: () => Effect.void,
     cleanupAttachments: () => Effect.void,
   }),
 }) {}
@@ -34,6 +39,7 @@ export const live = Layer.effect(
   ResourceCleanupService,
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;
+    const previews = yield* PreviewManager.PreviewManager;
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     return {
@@ -43,6 +49,15 @@ export const live = Layer.effect(
           .pipe(
             Effect.mapError(
               (cause) => new ResourceCleanupError({ operation: "terminal", threadId, cause }),
+            ),
+          ),
+      // Preview sessions live in memory, so a retry cannot do better than this attempt.
+      cleanupPreviews: (threadId: ThreadId) =>
+        previews
+          .close({ threadId })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to close thread previews", { threadId, error }),
             ),
           ),
       cleanupAttachments: (attachmentIds: ReadonlyArray<string>) =>

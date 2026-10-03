@@ -5,15 +5,19 @@ import {
   type PreviewSessionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { act, createElement, useEffect } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   __testing,
+  applyBackgroundPreviewClose,
   applyPreviewDesktopState,
   applyPreviewServerEvent as applyPreviewServerEventImpl,
   applyPreviewServerSnapshot,
   beginPreviewSessionClose,
   cancelPreviewSessionClose,
+  clearThreadPreviewState,
   previewStateAtom,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
@@ -21,8 +25,9 @@ import {
   resetPreviewStateForTests,
   setActivePreviewTab,
   updatePreviewServerSnapshot,
+  useActivePreviewSessions,
 } from "./previewStateStore";
-import { appAtomRegistry } from "./rpc/atomRegistry";
+import { AppAtomRegistryProvider, appAtomRegistry } from "./rpc/atomRegistry";
 
 const environmentId = "env-1" as EnvironmentId;
 const ref = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
@@ -58,6 +63,166 @@ const applyPreviewServerEvent = (eventRef: typeof ref, event: PreviewEventDraft)
 beforeEach(() => {
   nextServerRevision = 0;
   resetPreviewStateForTests();
+});
+
+describe("background preview closes", () => {
+  let renderer: ReactTestRenderer | null = null;
+  let activeSessions: ReturnType<typeof useActivePreviewSessions>;
+
+  function ActiveSessionsObserver() {
+    const sessions = useActivePreviewSessions();
+    useEffect(() => {
+      activeSessions = sessions;
+    }, [sessions]);
+    return null;
+  }
+
+  beforeEach(async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(
+        createElement(AppAtomRegistryProvider, null, createElement(ActiveSessionsObserver)),
+      );
+    });
+  });
+
+  afterEach(async () => {
+    await act(async () => renderer?.unmount());
+    renderer = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("removes an unmounted archived thread from active sessions", async () => {
+    const snapshot = makeSnapshot();
+    await act(async () => {
+      applyPreviewServerEvent(ref, {
+        type: "opened",
+        threadId: ref.threadId,
+        tabId: snapshot.tabId,
+        createdAt: snapshot.updatedAt,
+        snapshot,
+      });
+    });
+    expect(activeSessions[scopedThreadKey(ref)]?.sessions).toEqual({
+      [snapshot.tabId]: snapshot,
+    });
+
+    await act(async () => {
+      applyBackgroundPreviewClose(environmentId, {
+        type: "closed",
+        threadId: ref.threadId,
+        tabId: snapshot.tabId,
+        serverEpoch,
+        revision: nextServerRevision + 1,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+    });
+
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+    expect(activeSessions).not.toHaveProperty(scopedThreadKey(ref));
+  });
+
+  it("clears old-epoch tabs when a background close arrives from a new server epoch", async () => {
+    const first = makeSnapshot({ tabId: "t1" });
+    const second = makeSnapshot({ tabId: "t2" });
+    await act(async () => {
+      reconcilePreviewServerSessions(ref, {
+        sessions: [first, second],
+        serverEpoch: "epoch-1",
+        revision: 2,
+      });
+    });
+    expect(activeSessions[scopedThreadKey(ref)]?.sessions).toEqual({ t1: first, t2: second });
+
+    await act(async () => {
+      applyBackgroundPreviewClose(environmentId, {
+        type: "closed",
+        threadId: ref.threadId,
+        tabId: "t-new",
+        serverEpoch: "epoch-2",
+        revision: 1,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({});
+    expect(activeSessions).not.toHaveProperty(scopedThreadKey(ref));
+    expect(state.serverEpoch).toBe("epoch-1");
+    expect(state.serverRevision).toBe(2);
+    expect(state.suppressedTabIds).toEqual(new Set(["t1", "t2"]));
+  });
+
+  it("removes only the closed tab when a background close has the same server epoch", async () => {
+    const first = makeSnapshot({ tabId: "t1" });
+    const second = makeSnapshot({ tabId: "t2" });
+    await act(async () => {
+      reconcilePreviewServerSessions(ref, {
+        sessions: [first, second],
+        serverEpoch: "epoch-1",
+        revision: 2,
+      });
+    });
+    expect(activeSessions[scopedThreadKey(ref)]?.sessions).toEqual({ t1: first, t2: second });
+
+    await act(async () => {
+      applyBackgroundPreviewClose(environmentId, {
+        type: "closed",
+        threadId: ref.threadId,
+        tabId: "t1",
+        serverEpoch: "epoch-1",
+        revision: 3,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+    });
+
+    expect(readThreadPreviewState(ref).sessions).toEqual({ t2: second });
+    expect(activeSessions[scopedThreadKey(ref)]?.sessions).toEqual({ t2: second });
+  });
+
+  it("skips an unknown thread without creating state or changing active sessions", async () => {
+    await act(async () => applyPreviewServerSnapshot(ref, makeSnapshot()));
+    const before = activeSessions;
+    const unknownRef = scopeThreadRef(environmentId, ThreadId.make("unknown-background-close"));
+    const unknownAtom = previewStateAtom(scopedThreadKey(unknownRef));
+    expect(appAtomRegistry.getNodes().has(unknownAtom)).toBe(false);
+
+    await act(async () => {
+      applyBackgroundPreviewClose(environmentId, {
+        type: "closed",
+        threadId: unknownRef.threadId,
+        tabId: "unknown-tab",
+        serverEpoch,
+        revision: 1,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+    });
+
+    expect(appAtomRegistry.getNodes().has(unknownAtom)).toBe(false);
+    expect(activeSessions).toBe(before);
+  });
+
+  it("ignores opened events for a thread with live tabs", async () => {
+    await act(async () => applyPreviewServerSnapshot(ref, makeSnapshot()));
+    const before = activeSessions;
+    const state = readThreadPreviewState(ref);
+    const snapshot = makeSnapshot({ tabId: "ignored-tab" });
+
+    await act(async () => {
+      applyBackgroundPreviewClose(environmentId, {
+        type: "opened",
+        threadId: ref.threadId,
+        tabId: snapshot.tabId,
+        snapshot,
+        serverEpoch,
+        revision: 1,
+        createdAt: snapshot.updatedAt,
+      });
+    });
+
+    expect(readThreadPreviewState(ref)).toBe(state);
+    expect(activeSessions).toBe(before);
+  });
 });
 
 describe("previewStateStore (single-tab)", () => {
@@ -451,6 +616,17 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.sessions).toEqual({});
     expect(state.activeTabId).toBeNull();
     expect(state.snapshot).toBeNull();
+  });
+
+  it("keeps a cleared thread's tabs closed when a stale list response lands", () => {
+    const first = makeSnapshot({ tabId: "tab_a" });
+    const second = makeSnapshot({ tabId: "tab_b" });
+    reconcilePreviewServerSessions(ref, { sessions: [first, second], serverEpoch, revision: 1 });
+
+    clearThreadPreviewState(ref);
+    reconcilePreviewServerSessions(ref, { sessions: [first, second], serverEpoch, revision: 1 });
+
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
   });
 
   it("ignores a list response older than the latest server event", () => {

@@ -17,6 +17,8 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { clearThreadPreviewState } from "../previewStateStore";
+import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -245,6 +247,7 @@ export function useAcknowledgeThreadWoke() {
 
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
+  const closePreviews = useAtomCommand(previewEnvironment.close, { reportFailure: false });
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
     reportFailure: false,
   });
@@ -421,6 +424,7 @@ export function useThreadActions() {
         });
         if (result._tag === "Success") {
           refreshArchivedThreadsForEnvironment(target.environmentId);
+          clearThreadPreviewState(target);
         }
         return result;
       }
@@ -497,6 +501,11 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId, deleteHistory: true },
       });
+      // Without a tab id the server closes every preview tab of the thread.
+      await closePreviews({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
 
       const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
       const currentRouteThreadRef = getCurrentRouteThreadRef();
@@ -524,6 +533,7 @@ export function useThreadActions() {
         threadRef,
       );
       clearTerminalUiState(threadRef);
+      clearThreadPreviewState(threadRef);
 
       if (shouldNavigateToFallback) {
         const fallbackThread = fallbackThreadId
@@ -597,6 +607,7 @@ export function useThreadActions() {
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalUiState,
+      closePreviews,
       closeTerminal,
       deleteThreadMutation,
       getCurrentRouteThreadRef,

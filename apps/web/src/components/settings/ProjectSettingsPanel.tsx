@@ -15,6 +15,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
+import { clearThreadPreviewState } from "../../previewStateStore";
 import { readLocalApi } from "../../localApi";
 import {
   type SidebarProjectGroupMember,
@@ -358,10 +359,11 @@ function ProjectDetail({
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
-        releaseProjectDraftUploads(
-          projectRef,
-          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        const memberThreadRefs = memberThreads.map((thread) =>
+          scopeThreadRef(thread.environmentId, thread.id),
         );
+        releaseProjectDraftUploads(projectRef, memberThreadRefs);
+        for (const threadRef of memberThreadRefs) clearThreadPreviewState(threadRef);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);
