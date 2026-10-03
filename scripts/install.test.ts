@@ -112,4 +112,77 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
       }
     },
   );
+
+  it("hints at UEK8 when the extracted executable cannot exec", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-enoexec-"));
+    const version = "1.2.3";
+    const installerPlatform = HostProcessPlatform.defaultValue() === "darwin" ? "darwin" : "linux";
+    const stem = `t3-${version}-${installerPlatform}-${HostProcessArchitecture.defaultValue()}`;
+    const archiveName = `${stem}.tar.gz`;
+    await NodeFSP.mkdir(NodePath.join(root, stem));
+    const elf = Buffer.alloc(64);
+    elf.write("\x7fELF");
+    elf[4] = 2;
+    elf[5] = 1;
+    elf[6] = 1;
+    await NodeFSP.writeFile(NodePath.join(root, stem, "t3"), elf, { mode: 0o755 });
+    NodeChildProcess.execFileSync("tar", [
+      "-czf",
+      NodePath.join(root, archiveName),
+      "-C",
+      root,
+      stem,
+    ]);
+    const archive = await NodeFSP.readFile(NodePath.join(root, archiveName));
+    const checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
+    const server = NodeHttp.createServer((request, response) => {
+      if (request.url?.endsWith("/SHA256SUMS")) {
+        response.end(`${checksum}  ${archiveName}\n`);
+      } else {
+        response.end(archive);
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+    const child = NodeChildProcess.spawn(
+      "sh",
+      [NodePath.resolve(import.meta.dirname, "install.sh")],
+      {
+        env: {
+          ...process.env,
+          T3CODE_VERSION: version,
+          T3CODE_HOME: NodePath.join(root, "home"),
+          T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+          T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    const collect = (chunk: Buffer) => {
+      output += chunk.toString();
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    try {
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
+      });
+      expect(code).not.toBe(0);
+      expect(output).toContain("the downloaded executable does not run");
+      expect(output).toContain("UEK8");
+      expect(output).toContain("RHCK");
+      expect(output).toContain("PT_NOTE");
+      expect(output).toContain("p_filesz");
+      expect(output).toContain("node apps/server/dist/bin.mjs");
+      expect(await NodeFSP.readdir(NodePath.join(root, "home/runtime/versions"))).toEqual([]);
+    } finally {
+      if (child.exitCode === null) child.kill();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
 });

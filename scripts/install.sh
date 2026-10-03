@@ -208,7 +208,15 @@ else
   step "Extracting T3 Code..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
   rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
-  "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
+  # Some shells retry ENOEXEC as a script, so stderr may not mention it.
+  # Keep this diagnostic aligned with linuxCliExecFormatErrorHint in
+  # packages/shared/src/legacyCliLauncher.ts (PT_NOTE p_filesz cap).
+  if ! "${staging}/t3" --version >/dev/null 2>&1; then
+    if [ "$platform" = linux ]; then
+      fail "the downloaded executable does not run. This can be caused by Oracle Linux UEK8 kernels rejecting Node SEA PT_NOTE segments larger than 4 MB (ENOEXEC). Boot Oracle RHCK or a mainline-based kernel; patch the installed binary's PT_NOTE p_filesz down to 4 MB (reapply after every update); or build from source and run node apps/server/dist/bin.mjs. ENOEXEC can also mean a corrupt or wrong-architecture file."
+    fi
+    fail "the downloaded executable does not run"
+  fi
   printf '%s\n' "$version" > "${staging}/.install-complete"
 
   rm -rf "$target_dir"

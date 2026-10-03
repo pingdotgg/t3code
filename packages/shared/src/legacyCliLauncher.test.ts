@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 
-import { legacyCliLauncherScript } from "./legacyCliLauncher.ts";
+import { legacyCliLauncherScript, linuxCliExecFormatErrorHint } from "./legacyCliLauncher.ts";
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- This test launches a real host executable.
 const hostPlatform = NodeOS.platform();
@@ -50,6 +50,44 @@ process.send({ args: process.argv.slice(2) });
       const exit = NodeEvents.EventEmitter.once(child, "exit");
       child.kill("SIGTERM");
       expect(await exit).toEqual([23, null]);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exit = NodeEvents.EventEmitter.once(child, "exit");
+        child.kill("SIGTERM");
+        await exit;
+      }
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(hostPlatform !== "linux")(
+  "hints at UEK8 when the platform executable cannot exec",
+  async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-legacy-enoexec-"));
+    const entry = NodePath.join(root, "node_modules/t3/dist/bin.mjs");
+    const executable = NodePath.join(
+      root,
+      `node_modules/@t3code/t3-${hostPlatform}-${hostArch}/t3`,
+    );
+    await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+    await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(NodePath.dirname(executable), "package.json"),
+      '{"type":"commonjs"}',
+    );
+    await NodeFSP.writeFile(entry, legacyCliLauncherScript());
+    await NodeFSP.writeFile(executable, "#!/bin/sh\nexit 126\n");
+    await NodeFSP.chmod(executable, 0o755);
+    const child = NodeChildProcess.fork(entry, ["--version"], { silent: true });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const [code] = await NodeEvents.EventEmitter.once(child, "exit");
+      expect(code).toBe(126);
+      expect(stderr).toContain(linuxCliExecFormatErrorHint);
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
         const exit = NodeEvents.EventEmitter.once(child, "exit");
