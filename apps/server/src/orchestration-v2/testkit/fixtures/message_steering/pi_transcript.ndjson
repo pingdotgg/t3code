@@ -14,7 +14,7 @@
 {"type":"expect_outbound","label":"set_session_name","frame":{"type":"set_session_name","name":"Replay fixture: message_steering","id":"t3-5"}}
 {"type":"emit_inbound","label":"session_info_changed","frame":{"type":"session_info_changed","name":"Replay fixture: message_steering"}}
 {"type":"emit_inbound","label":"response:set_session_name","frame":{"id":"t3-5","type":"response","command":"set_session_name","success":true}}
-{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: steering fixture initial response"}}
+{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: steering fixture initial response","streamingBehavior":"steer"}}
 {"type":"emit_inbound","label":"response:prompt","frame":{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}}
 {"type":"emit_inbound","label":"agent_start","frame":{"type":"agent_start"}}
 {"type":"emit_inbound","label":"turn_start","frame":{"type":"turn_start"}}

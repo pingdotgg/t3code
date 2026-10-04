@@ -36,7 +36,7 @@ export function assertPiMessageSteeringOutput(
   assert.deepEqual(
     prompts.map((frame) => [frameField(frame, "message"), frameField(frame, "streamingBehavior")]),
     [
-      [MESSAGE_STEERING_INITIAL_PROMPT, undefined],
+      [MESSAGE_STEERING_INITIAL_PROMPT, "steer"],
       [MESSAGE_STEERING_STEER_PROMPT, "steer"],
     ],
   );

@@ -2355,9 +2355,13 @@ export function makePiAdapterV2(
                   kind: "turn_start",
                 });
               } else if (payload !== null) {
+                // An extension can already be streaming when the turn starts.
+                // Pi rejects a bare prompt then; steer joins that run, and an
+                // idle Pi ignores streamingBehavior.
                 yield* connection.send({
                   type: "prompt",
                   message: payload.message,
+                  streamingBehavior: "steer",
                   ...(payload.images.length === 0 ? {} : { images: payload.images }),
                 });
                 pendingPromptResponses.push({
