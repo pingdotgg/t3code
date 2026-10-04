@@ -47,6 +47,7 @@ import { assistantTurnCount } from "./Utils.ts";
 import { findCanonicalActiveWorktreeOwner } from "./worktreeOwnership.ts";
 import {
   childNudgePrompt,
+  childPendingRequestUpdate,
   childWakeReason,
   isAutomaticChildNudgeBlocked,
   queueChildNudge,
@@ -5236,6 +5237,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         lifecycle === "approval-required" || lifecycle === "input-required"
           ? (requestId ?? command.activity.id)
           : (command.activity.turnId ?? thread.latestTurn?.turnId ?? command.activity.id);
+      const originTurnId = command.activity.turnId ?? undefined;
+      const delegation = thread.nudging?.delegation;
+      // Route a delegated child's pending request to its parent. Unproven
+      // provenance keeps the plain lifecycle history instead of being fenced away.
+      const requestReport =
+        (lifecycle === "approval-required" || lifecycle === "input-required") &&
+        requestId !== undefined &&
+        delegation?.completedAt === null &&
+        ["authorized", "unfenced"].includes(
+          classifyExecutionProvenance({ delegation, claimedTurnId: originTurnId }),
+        )
+          ? childPendingRequestUpdate({
+              child: thread,
+              delegation,
+              lifecycle,
+              requestId,
+              payload: command.activity.payload,
+            })
+          : undefined;
       return appendChildLifecycleNotification({
         readModel,
         childThread: thread,
@@ -5244,7 +5264,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         lifecycle,
         sourceKey,
         createdAt: command.createdAt,
-        ...(command.activity.turnId !== null ? { originTurnId: command.activity.turnId } : {}),
+        ...(originTurnId !== undefined ? { originTurnId } : {}),
+        ...(requestReport ? { report: requestReport } : {}),
       });
     }
 

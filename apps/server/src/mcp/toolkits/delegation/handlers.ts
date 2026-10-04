@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { Effect, Option } from "effect";
 
+import { ThreadId } from "@t3tools/contracts";
+
 import { ServerConfig } from "../../../config.ts";
 import { ProviderSessionDirectory } from "../../../provider/Services/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
@@ -13,6 +15,7 @@ import {
   listThreadPullRequestsTool,
   reportToParentTool,
   resolveMcpCliInvocation,
+  respondToChildRequestTool,
   sendToThreadTool,
   setChildWaitTool,
   switchWorkspaceTool,
@@ -22,8 +25,13 @@ import {
 } from "../../../mcpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { pendingActivitiesFor } from "../../../cli/pendingRequests.ts";
 
-import { DelegationToolkit, DelegationToolError } from "./tools.ts";
+import {
+  DelegationToolkit,
+  DelegationToolError,
+  type RespondToChildRequestToolInput,
+} from "./tools.ts";
 
 const toolError = (message: string) => new DelegationToolError({ message });
 
@@ -104,6 +112,62 @@ const runLegacyTool = (
     });
   });
 
+/**
+ * Only the direct parent may answer a child's provider request, and only while
+ * it is still pending; the request's own kind decides which answer is required.
+ */
+const respondToChildRequest = Effect.fn("DelegationToolkit.respondToChildRequest")(function* (
+  input: RespondToChildRequestToolInput,
+) {
+  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  const projections = yield* ProjectionSnapshotQuery;
+  const child = yield* projections
+    .getThreadDetailById(ThreadId.make(input.thread))
+    .pipe(
+      Effect.mapError((cause) =>
+        toolError(`Could not read thread ${input.thread}: ${String(cause)}`),
+      ),
+    );
+  if (Option.isNone(child) || child.value.parentThreadId !== invocation.threadId) {
+    return yield* toolError(
+      `Thread ${input.thread} is not a child of this thread; pass the child's exact thread id.`,
+    );
+  }
+  const isPending = (
+    requestedKind: "approval.requested" | "user-input.requested",
+    resolvedKind: "approval.resolved" | "user-input.resolved",
+  ) =>
+    pendingActivitiesFor({ thread: child.value, requestedKind, resolvedKind }).some(
+      (pending) => pending.requestId === input.requestId,
+    );
+  const thread = child.value.id;
+  if (isPending("approval.requested", "approval.resolved")) {
+    if (!input.decision || input.answers) {
+      return yield* toolError(
+        `Request ${input.requestId} is an approval; pass decision (accept, acceptForSession, decline, or cancel) and no answers.`,
+      );
+    }
+    const decision = input.decision;
+    return yield* runLegacyTool((options) =>
+      respondToChildRequestTool(options, { thread, requestId: input.requestId, decision }),
+    );
+  }
+  if (isPending("user-input.requested", "user-input.resolved")) {
+    if (!input.answers || input.decision) {
+      return yield* toolError(
+        `Request ${input.requestId} is a question; pass answers keyed by question id and no decision.`,
+      );
+    }
+    const answers = input.answers;
+    return yield* runLegacyTool((options) =>
+      respondToChildRequestTool(options, { thread, requestId: input.requestId, answers }),
+    );
+  }
+  return yield* toolError(
+    `Child ${input.thread} has no pending request ${input.requestId}; it may already be answered.`,
+  );
+});
+
 const asRecord = (input: unknown): Record<string, unknown> => input as Record<string, unknown>;
 
 export const DelegationToolkitHandlersLive = DelegationToolkit.toLayer({
@@ -127,6 +191,8 @@ export const DelegationToolkitHandlersLive = DelegationToolkit.toLayer({
 
   report_to_parent: (input) =>
     runLegacyTool((options) => reportToParentTool(options, asRecord(input))),
+
+  respond_to_child_request: respondToChildRequest,
 
   set_child_wait: (input) =>
     runLegacyTool((options) =>

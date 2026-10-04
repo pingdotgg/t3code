@@ -156,6 +156,31 @@ function collectAfterBootstrap(
 }
 
 describe("collectThreadCompletionNotifications", () => {
+  it("leaves child completions to the parent unless the parent is gone", () => {
+    const childId = ThreadId.make("child-1");
+    const parentId = ThreadId.make("parent-1");
+    const withChild = (parentPresent: boolean): EnvironmentState => {
+      const state = makeEnvironmentState({
+        bootstrapComplete: true,
+        threadId: childId,
+        turnId: TurnId.make("child-turn"),
+      });
+      const child = { ...state.sidebarThreadSummaryById[childId]!, parentThreadId: parentId };
+      return {
+        ...state,
+        sidebarThreadSummaryById: {
+          [childId]: child,
+          ...(parentPresent
+            ? { [parentId]: { ...child, id: parentId, parentThreadId: null, latestTurn: null } }
+            : {}),
+        },
+      };
+    };
+
+    expect(collectAfterBootstrap(withChild(true)).requests).toEqual([]);
+    expect(collectAfterBootstrap(withChild(false)).requests).toHaveLength(1);
+  });
+
   it("does not notify completed turns from the first bootstrapped snapshot after app restart", () => {
     const tracker = makeTracker();
 

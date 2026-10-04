@@ -168,6 +168,7 @@ describe("DelegationToolkit cross-thread surface", () => {
     "link_pull_request",
     "list_thread_pull_requests",
     "report_to_parent",
+    "respond_to_child_request",
     "send_to_thread",
     "set_child_wait",
     "switch_workspace",

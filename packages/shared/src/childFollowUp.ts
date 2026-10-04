@@ -17,7 +17,12 @@ export interface ChildFollowUpThread {
 }
 
 export function childReportNeedsAttention(report: ChildNudgeUpdate): boolean {
-  return report.kind === "decision-needed" || report.kind === "failed" || report.kind === "blocked";
+  return (
+    report.kind === "decision-needed" ||
+    report.kind === "failed" ||
+    report.kind === "blocked" ||
+    report.wakeReason === "decision-required"
+  );
 }
 
 function childWaitAssignmentIsSettled(

@@ -2183,6 +2183,33 @@ export async function setChildWaitTool(
   return result.stdout.trim();
 }
 
+export async function respondToChildRequestTool(
+  options: McpServeOptions,
+  request:
+    | { readonly thread: string; readonly requestId: string; readonly decision: string }
+    | {
+        readonly thread: string;
+        readonly requestId: string;
+        readonly answers: Readonly<Record<string, unknown>>;
+      },
+): Promise<string> {
+  const result = await runCommand(options.cwd, options.cliCommand, [
+    ...(options.cliArgsPrefix ?? []),
+    ...("decision" in request
+      ? ["approval", "respond", request.thread, request.requestId, "--decision", request.decision]
+      : [
+          "input",
+          "respond",
+          request.thread,
+          request.requestId,
+          "--answers",
+          JSON.stringify(request.answers),
+        ]),
+    ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+  ]);
+  return result.stdout.trim();
+}
+
 export async function reportToParentTool(
   options: McpServeOptions,
   args: Record<string, unknown>,

@@ -1596,6 +1596,114 @@ describe("child nudging", () => {
     expect(readModel.threads[0]!.queuedTurns).toEqual([]);
   });
 
+  function fencedChild() {
+    const child = thread("child", true);
+    child.nudging = {
+      delegation: {
+        ...child.nudging!.delegation!,
+        dispatchId: "dispatch-1",
+        dispatchSequence: 1,
+        dispatchTurnId: TurnId.make("turn-a"),
+      },
+    };
+    return child;
+  }
+
+  function pendingRequest(
+    kind: "approval.requested" | "user-input.requested",
+    payload: Record<string, unknown>,
+    turnId: TurnId | null = TurnId.make("turn-a"),
+  ): Extract<OrchestrationCommand, { type: "thread.activity.append" }> {
+    return {
+      type: "thread.activity.append",
+      commandId: CommandId.make(`request-${kind}`),
+      threadId: ThreadId.make("child"),
+      activity: {
+        id: EventId.make(`activity-${kind}`),
+        kind,
+        tone: "approval",
+        summary: "Request",
+        payload,
+        turnId,
+        createdAt: finished,
+      },
+      createdAt: finished,
+    };
+  }
+
+  it("routes a child's user-input question to its parent instead of the user", async () => {
+    const { readModel } = await apply(
+      model(fencedChild()),
+      pendingRequest("user-input.requested", {
+        requestId: "req-input",
+        questions: [
+          {
+            id: "policy",
+            header: "Policy",
+            question: "How should external files be authorized?",
+            options: [
+              { label: "Read-only grant", description: "Exact-file grant" },
+              { label: "Deny", description: "Keep workspace only" },
+            ],
+          },
+        ],
+      }),
+    );
+    const [queued] = readModel.threads[0]!.queuedTurns!;
+    expect(queued!.origin).toMatchObject({
+      kind: "child-nudge",
+      updates: [
+        {
+          id: "request:child:req-input",
+          kind: "important-update",
+          wakeReason: "decision-required",
+          dispatchId: "dispatch-1",
+          decision: {
+            question: "Policy (policy): How should external files be authorized?",
+            options: ["Read-only grant", "Deny"],
+          },
+        },
+      ],
+    });
+    expect(queued!.message.text).toContain("respond_to_child_request");
+    expect(queued!.message.text).toContain("req-input");
+    // The child's own request stays the source of truth; no parallel decision gate.
+    expect(readModel.threads[1]!.nudging?.delegation?.decision).toBeUndefined();
+  });
+
+  it("routes a child's approval request to its parent", async () => {
+    const { readModel } = await apply(
+      model(fencedChild()),
+      pendingRequest("approval.requested", {
+        requestId: "req-approval",
+        requestKind: "command",
+        detail: "git push origin HEAD",
+      }),
+    );
+    expect(readModel.threads[0]!.queuedTurns![0]!.origin).toMatchObject({
+      kind: "child-nudge",
+      updates: [
+        {
+          id: "request:child:req-approval",
+          wakeReason: "decision-required",
+          decision: {
+            question: "Approve command request: git push origin HEAD",
+            options: ["accept", "acceptForSession", "decline", "cancel"],
+          },
+        },
+      ],
+    });
+  });
+
+  it("keeps an unproven child request as parent history without waking the parent", async () => {
+    const { readModel, events } = await apply(
+      model(fencedChild()),
+      pendingRequest("approval.requested", { requestId: "req-unproven" }, null),
+    );
+    expect(events.some((event) => event.type === "thread.child-lifecycle-notified")).toBe(true);
+    expect(readModel.threads[0]!.queuedTurns).toEqual([]);
+  });
+
   it("keeps progress history but requires proof for state-changing reports", async () => {
     const child = thread("child", true);
     child.nudging = {

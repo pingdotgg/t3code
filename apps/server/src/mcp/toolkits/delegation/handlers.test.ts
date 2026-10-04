@@ -29,11 +29,55 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
+const requestActivity = (
+  kind: string,
+  requestId: string,
+  payload: Record<string, unknown> = {},
+) => ({
+  id: `${kind}-${requestId}`,
+  kind,
+  tone: "approval",
+  summary: kind,
+  payload: { requestId, ...payload },
+  turnId: null,
+  createdAt: "2026-09-09T00:00:00.000Z",
+});
+
+// A child of the caller with one pending approval, one pending question, and
+// one already-answered approval; plus a thread the caller does not own.
+const threadDetails = new Map<string, unknown>([
+  [
+    "child-thread",
+    {
+      id: "child-thread",
+      title: "Child",
+      parentThreadId: callerThreadId,
+      activities: [
+        requestActivity("approval.requested", "approval-1"),
+        requestActivity("user-input.requested", "input-1"),
+        requestActivity("approval.requested", "approval-done"),
+        requestActivity("approval.resolved", "approval-done"),
+      ],
+    },
+  ],
+  [
+    "stranger-thread",
+    {
+      id: "stranger-thread",
+      title: "Stranger",
+      parentThreadId: ThreadId.make("someone-else"),
+      activities: [requestActivity("approval.requested", "approval-2")],
+    },
+  ],
+]);
+
 const projectionLayer = Layer.succeed(ProjectionSnapshotQuery, {
   getThreadCheckpointContext: () =>
     Effect.succeed(
       Option.some({ threadId: callerThreadId, workspaceRoot: tmpdir(), worktreePath: null }),
     ),
+  getThreadDetailById: (threadId: string) =>
+    Effect.succeed(Option.fromNullishOr(threadDetails.get(threadId))),
 } as unknown as ProjectionSnapshotQuery["Service"]);
 
 const directoryLayer = Layer.succeed(ProviderSessionDirectory, {
@@ -173,6 +217,68 @@ it.layer(testLayer)("DelegationToolkit handlers", (it) => {
     ),
   );
 
+  it.effect("lets a parent approve its child's pending approval request", () =>
+    withFakeCli(
+      Effect.gen(function* () {
+        const output = yield* invokeTool("respond_to_child_request", {
+          thread: "child-thread",
+          requestId: "approval-1",
+          decision: "accept",
+        });
+        assert.deepEqual(output.split("\n").slice(0, 5), [
+          "approval",
+          "respond",
+          "child-thread",
+          "approval-1",
+          "--decision",
+        ]);
+        assert.include(output, "accept");
+      }),
+    ),
+  );
+
+  it.effect("lets a parent answer its child's pending question", () =>
+    withFakeCli(
+      Effect.gen(function* () {
+        const output = yield* invokeTool("respond_to_child_request", {
+          thread: "child-thread",
+          requestId: "input-1",
+          answers: { policy: "Deny" },
+        });
+        assert.deepEqual(output.split("\n").slice(0, 4), [
+          "input",
+          "respond",
+          "child-thread",
+          "input-1",
+        ]);
+        assert.include(output, JSON.stringify({ policy: "Deny" }));
+      }),
+    ),
+  );
+
+  it.effect("refuses requests that are not the caller's to answer", () =>
+    withFakeCli(
+      Effect.gen(function* () {
+        const cases = [
+          [
+            { thread: "stranger-thread", requestId: "approval-2", decision: "accept" },
+            "not a child",
+          ],
+          [
+            { thread: "child-thread", requestId: "approval-done", decision: "accept" },
+            "no pending",
+          ],
+          [{ thread: "child-thread", requestId: "approval-1", answers: { a: "b" } }, "decision"],
+          [{ thread: "child-thread", requestId: "input-1", decision: "accept" }, "answers"],
+        ] as const;
+        for (const [input, message] of cases) {
+          const error = yield* Effect.flip(invokeTool("respond_to_child_request", input));
+          assert.include(String(error), message);
+        }
+      }),
+    ),
+  );
+
   it.effect("advertises a handler for every toolkit tool", () =>
     Effect.gen(function* () {
       const toolkit = yield* DelegationToolkit;
@@ -186,6 +292,7 @@ it.layer(testLayer)("DelegationToolkit handlers", (it) => {
         "link_pull_request",
         "list_thread_pull_requests",
         "report_to_parent",
+        "respond_to_child_request",
         "send_to_thread",
         "set_child_wait",
         "switch_workspace",

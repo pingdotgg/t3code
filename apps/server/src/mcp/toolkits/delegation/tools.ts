@@ -163,6 +163,14 @@ export const ReportToParentToolInput = Schema.Struct({
   originTurnId: TrimmedNonEmptyString,
 });
 
+export const RespondToChildRequestToolInput = Schema.Struct({
+  thread: TrimmedNonEmptyString,
+  requestId: TrimmedNonEmptyString,
+  decision: Schema.optional(Schema.Literals(["accept", "acceptForSession", "decline", "cancel"])),
+  answers: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type RespondToChildRequestToolInput = typeof RespondToChildRequestToolInput.Type;
+
 /**
  * `condition` is optional rather than required-with-null on purpose. Pi's
  * extension strips `null` arguments before calling the tool, so a required
@@ -262,6 +270,19 @@ export const ReportToParentTool = Tool.make("report_to_parent", {
   dependencies,
 })
   .annotate(Tool.Title, "Report progress or a decision to the parent")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
+export const RespondToChildRequestTool = Tool.make("respond_to_child_request", {
+  description:
+    "Answer a pending approval or user-input request raised by one of this thread's own children. Child requests are routed to the parent instead of the user. For an approval pass decision (accept, acceptForSession, decline, or cancel); for a question pass answers keyed by question id. Decide within the user's original intent and your own permissions; if the request needs human judgement or exceeds that authority, alert the user instead of answering.",
+  parameters: RespondToChildRequestToolInput,
+  success: Schema.String,
+  failure: DelegationToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Respond to a child's approval or question")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
@@ -367,6 +388,7 @@ export const DelegationToolkit = Toolkit.make(
   SendToThreadTool,
   AssignToThreadTool,
   ReportToParentTool,
+  RespondToChildRequestTool,
   SetChildWaitTool,
   CreateIsolatedWorkspaceTool,
   SwitchWorkspaceTool,
