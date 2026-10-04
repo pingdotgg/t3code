@@ -145,7 +145,7 @@ function providerEnvironmentSecretName(input: {
 }
 
 /**
- * On disk a hub key or Bitbucket token is replaced by this marker and the
+ * On disk a hub key, Bitbucket token, or BUSY Bar token is replaced by this marker and the
  * real value lives in the secret store, mirroring provider environment
  * secrets. A client that sends the marker back means "keep what you have".
  */
@@ -155,11 +155,26 @@ function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
-const BITBUCKET_SECRET_NAMES = {
-  accessToken: "bitbucket-access-token",
-  apiToken: "bitbucket-api-token",
-} as const;
-const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
+// Integration tokens stored in the secret store, keyed by settings group and field.
+const GROUP_SECRETS = [
+  { group: "bitbucket", field: "accessToken", secretName: "bitbucket-access-token" },
+  { group: "bitbucket", field: "apiToken", secretName: "bitbucket-api-token" },
+  { group: "busyBar", field: "token", secretName: "busy-bar-token" },
+] as const;
+
+/** Mutable copies of the settings groups that hold `GROUP_SECRETS`. */
+function copySecretGroups(settings: ServerSettings) {
+  const groups = { bitbucket: { ...settings.bitbucket }, busyBar: { ...settings.busyBar } };
+  const fields = (entry: (typeof GROUP_SECRETS)[number]): Record<string, unknown> =>
+    groups[entry.group];
+  return {
+    groups,
+    get: (entry: (typeof GROUP_SECRETS)[number]) => fields(entry)[entry.field] as string,
+    set: (entry: (typeof GROUP_SECRETS)[number], value: string) => {
+      fields(entry)[entry.field] = value;
+    },
+  };
+}
 
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
@@ -199,12 +214,9 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  const bitbucket = {
-    ...settings.bitbucket,
-    accessToken: redactSecret(settings.bitbucket.accessToken),
-    apiToken: redactSecret(settings.bitbucket.apiToken),
-  };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket };
+  const secrets = copySecretGroups(settings);
+  for (const entry of GROUP_SECRETS) secrets.set(entry, redactSecret(secrets.get(entry)));
+  return { ...settings, providerInstances, usageLimitSources, ...secrets.groups };
 }
 
 export function applyProviderInstanceMutation(
@@ -682,32 +694,30 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Moves Bitbucket tokens hand-edited into settings.json into the secret store as they load,
+   * Moves integration tokens hand-edited into settings.json into the secret store as they load,
    * so plaintext does not stay on disk. If the store is unavailable, the token keeps working
    * from the file and the move is retried on the next load.
    */
-  const moveInlineBitbucketTokens = (settings: ServerSettings) =>
+  const moveInlineSecretTokens = (settings: ServerSettings) =>
     Effect.gen(function* () {
-      const bitbucket = { ...settings.bitbucket };
+      const secrets = copySecretGroups(settings);
       let moved = false;
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        const value = bitbucket[field];
+      for (const entry of GROUP_SECRETS) {
+        const value = secrets.get(entry);
         if (value.length === 0 || value === SECRET_REDACTED) continue;
-        const stored = yield* secretStore
-          .set(BITBUCKET_SECRET_NAMES[field], textEncoder.encode(value))
-          .pipe(
-            Effect.as(true),
-            Effect.catch(() =>
-              Effect.logWarning("failed to move a Bitbucket token into the secret store", {
-                field,
-              }).pipe(Effect.as(false)),
-            ),
-          );
+        const stored = yield* secretStore.set(entry.secretName, textEncoder.encode(value)).pipe(
+          Effect.as(true),
+          Effect.catch(() =>
+            Effect.logWarning("failed to move a token into the secret store", {
+              secretName: entry.secretName,
+            }).pipe(Effect.as(false)),
+          ),
+        );
         if (!stored) continue;
-        bitbucket[field] = SECRET_REDACTED;
+        secrets.set(entry, SECRET_REDACTED);
         moved = true;
       }
-      return moved ? { ...settings, bitbucket } : settings;
+      return moved ? { ...settings, ...secrets.groups } : settings;
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
@@ -795,7 +805,7 @@ const make = Effect.gen(function* () {
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
-    const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
+    const migrated = settingsFileTrusted ? yield* moveInlineSecretTokens(folded) : folded;
     if (migrated !== loaded) {
       yield* writeSettingsAtomically(migrated);
     }
@@ -866,23 +876,23 @@ const make = Effect.gen(function* () {
           managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         };
       }
-      const bitbucket = { ...settings.bitbucket };
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        if (bitbucket[field] !== SECRET_REDACTED) continue;
+      const secrets = copySecretGroups(settings);
+      for (const entry of GROUP_SECRETS) {
+        if (secrets.get(entry) !== SECRET_REDACTED) continue;
         const secret = yield* secretStore
-          .get(BITBUCKET_SECRET_NAMES[field])
+          .get(entry.secretName)
           .pipe(
             Effect.mapError(
               (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
             ),
           );
-        bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+        secrets.set(entry, Option.isSome(secret) ? textDecoder.decode(secret.value) : "");
       }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-        bitbucket,
+        ...secrets.groups,
       };
     });
 
@@ -1024,23 +1034,24 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const bitbucket = { ...next.bitbucket };
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        let value = bitbucket[field];
+      const secrets = copySecretGroups(next);
+      const currentSecrets = copySecretGroups(current);
+      for (const entry of GROUP_SECRETS) {
+        let value = secrets.get(entry);
         if (value === SECRET_REDACTED) {
           // The marker keeps what is saved. A plaintext value hand-edited into settings.json
           // is not in the secret store yet, so move it there instead of dropping it.
-          const inline = current.bitbucket[field];
+          const inline = currentSecrets.get(entry);
           if (inline === SECRET_REDACTED || inline.length === 0) continue;
           value = inline;
         }
-        const secretName = BITBUCKET_SECRET_NAMES[field];
+        const { secretName } = entry;
         if (value.length === 0) {
           changes.push({ kind: "remove", secretName, operation: "remove-secret" });
           continue;
         }
         changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
-        bitbucket[field] = SECRET_REDACTED;
+        secrets.set(entry, SECRET_REDACTED);
       }
 
       return {
@@ -1048,7 +1059,7 @@ const make = Effect.gen(function* () {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-          bitbucket,
+          ...secrets.groups,
         },
         changes,
       };

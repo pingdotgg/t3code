@@ -1566,6 +1566,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
   );
 
+  it.effect("keeps the BUSY Bar token in the secret store", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const saved = yield* serverSettings.updateSettings({
+        busyBar: { enabled: true, address: "192.168.1.20", token: "busy-secret" },
+      });
+      assert.equal(saved.busyBar.token, "busy-secret");
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "busy-secret");
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).busyBar;
+      assert.notInclude(forClient.token, "busy-secret");
+      yield* serverSettings.updateSettings({ busyBar: forClient });
+      assert.equal((yield* serverSettings.getSettings).busyBar.token, "busy-secret");
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
   it.effect("removes a Bitbucket secret once its token is cleared by hand in settings.json", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

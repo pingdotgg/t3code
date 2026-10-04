@@ -64,6 +64,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverGetBusyBarStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthOrchestrationOperateScope,
