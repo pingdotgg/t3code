@@ -1,5 +1,5 @@
 import type { OrchestrationQueuedTurn, QueuedTurnId } from "@t3tools/contracts";
-import { ArrowDown, ArrowUp, Check, PauseCircle, Pencil, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Pause, Pencil, Play, Trash2, X } from "lucide-react";
 import { memo } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -70,6 +70,12 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   const visibleQueuedTurns = queuedTurns.flatMap((queuedTurn, queueIndex) =>
     isHiddenQueuedTurn(queuedTurn) ? [] : [{ queuedTurn, queueIndex }],
   );
+  // A stale hold outlives its queue: deleting the last queued turn leaves
+  // queueHeldAt set with nothing left to run. There is nothing to release, so
+  // render nothing rather than a Resume control for an empty queue.
+  if (queuedTurns.length === 0) {
+    return null;
+  }
   // The hold banner must render even with no visible rows: crash recovery holds
   // queues whose only turns are hidden ones (a child nudge, a healthy workspace
   // handoff), and those live on dedicated surfaces that have no resume control.
@@ -77,6 +83,13 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   if (visibleQueuedTurns.length === 0 && queueHeldAt === null) {
     return null;
   }
+  const hiddenHeldCount = queuedTurns.length - visibleQueuedTurns.length;
+  const holdDetail =
+    queueHeldAt !== null && visibleQueuedTurns.length === 0
+      ? hiddenHeldCount === 1
+        ? "1 queued follow-up will not run until you resume it."
+        : `${hiddenHeldCount} queued follow-ups will not run until you resume them.`
+      : "These messages will not run until you resume them.";
 
   return (
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
@@ -217,13 +230,20 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
         })}
       </ul>
       {queueHeldAt !== null ? (
-        <div className="mt-1.5 flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
-          <PauseCircle className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="composer-input-font-secondary min-w-0 flex-1 text-muted-foreground">
-            Queue held after restart. These messages will not run until you resume them.
+        <div className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-border/55 bg-muted/30 px-2.5 py-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <Pause className="size-3.5" aria-hidden="true" />
           </span>
-          <Button type="button" size="xs" onClick={onReleaseQueue}>
-            Resume queue
+          <span className="min-w-0 flex-1">
+            <span className="composer-input-font-secondary block font-medium text-foreground">
+              Queue held after restart
+            </span>
+            <span className="composer-input-font-secondary block text-muted-foreground">
+              {holdDetail}
+            </span>
+          </span>
+          <Button type="button" size="xs" className="shrink-0" onClick={onReleaseQueue}>
+            <Play /> Resume queue
           </Button>
         </div>
       ) : null}

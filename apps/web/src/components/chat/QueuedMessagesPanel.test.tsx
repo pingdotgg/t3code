@@ -142,6 +142,22 @@ describe("QueuedMessagesPanel hold banner", () => {
     expect(html).toContain("Resume queue");
   });
 
+  it("renders nothing when held but the queue is literally empty", () => {
+    const html = renderHeld([]);
+
+    expect(html).toBe("");
+    expect(html).not.toContain("Resume queue");
+  });
+
+  it("names the hidden follow-ups when no queued message is visible", () => {
+    const html = renderHeld([
+      queuedTurn("nudge", "Generated prompt", { kind: "child-nudge" } as never),
+    ]);
+
+    expect(html).toContain("1 queued follow-up");
+    expect(html).not.toContain("These messages");
+  });
+
   it("still renders nothing when unheld and every turn is hidden", () => {
     const html = renderToStaticMarkup(
       <QueuedMessagesPanel
