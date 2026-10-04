@@ -1616,6 +1616,7 @@ function SavedBackendListRow({
           environmentId={environmentId}
           serverLabel={`${environment.label} server`}
           selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
+          installation={environment.serverConfig?.environment.capabilities.serverInstallation}
           desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
           threadContinuation={supportsServerUpdateThreadContinuation(environment.serverConfig)}
           targetVersion={versionMismatch.clientVersion}
@@ -1913,6 +1914,7 @@ export function ConnectionsSettings() {
             environmentId: environment.environmentId,
             serverLabel: environment.label,
             selfUpdate,
+            installation: environment.serverConfig?.environment.capabilities.serverInstallation,
             desktopAppUpdate,
             threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
             continueThreadsAfterServerUpdate:
@@ -3366,6 +3368,9 @@ export function ConnectionsSettings() {
                         primaryEnvironment ? `${primaryEnvironment.label} server` : "server"
                       }
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
+                      installation={
+                        primaryServerConfig?.environment.capabilities.serverInstallation
+                      }
                       desktopAppUpdate={supportsDesktopAppUpdate(primaryServerConfig)}
                       threadContinuation={supportsServerUpdateThreadContinuation(
                         primaryServerConfig,
