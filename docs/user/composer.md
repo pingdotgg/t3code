@@ -217,6 +217,12 @@ opens it when selected. Your prompt only carries a reference: the agent reads th
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
+Dropping a thread from another environment attaches a saved transcript file. The source
+environment must be connected and up to date. The transcript includes the visible history and
+saved text context at the time of the drop; later messages and the contents of attached files
+are not copied. The agent can read the saved transcript after the source disconnects. Normal
+file attachment limits apply.
+
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files

@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -33,6 +34,7 @@ import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 import {
   boundedThreadSnapshotLoaderLayer,
   fetchEnvironmentBoundedThreadSnapshot,
@@ -87,6 +89,12 @@ const THREAD = {
   snapshotSequence: 2,
   projection: v2Projection,
 } satisfies OrchestrationV2ThreadDetailSnapshot;
+const TRANSCRIPT = {
+  threadId: v2Projection.thread.id,
+  title: v2Projection.thread.title,
+  updatedAt: v2Projection.updatedAt,
+  items: v2Projection.visibleTurnItems,
+} satisfies OrchestrationV2ThreadTranscript;
 const BOUNDED_THREAD = {
   ...THREAD,
   historyCursor: "older-page",
@@ -216,6 +224,15 @@ const LOADERS: ReadonlyArray<{
         ...input,
         threadId: THREAD.projection.thread.id,
       }),
+  },
+  {
+    name: "thread transcript",
+    method: "GET",
+    path: `/api/orchestration/threads/${TRANSCRIPT.threadId}/transcript`,
+    response: Schema.encodeSync(OrchestrationV2ThreadTranscript)(TRANSCRIPT),
+    expected: TRANSCRIPT,
+    load: (input: HttpInput) =>
+      fetchEnvironmentThreadTranscript({ ...input, threadId: TRANSCRIPT.threadId }),
   },
   {
     name: "bounded thread snapshot",
