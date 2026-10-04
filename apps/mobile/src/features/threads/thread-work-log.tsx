@@ -1146,9 +1146,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 call.argsText,
               ]
                 .filter((line): line is string => Boolean(line))
-                .map((line) => (
+                .map((line, index) => (
                   <Text
-                    key={line}
+                    key={`${index}:${line}`}
                     selectable
                     className="font-mono text-2xs leading-normal text-foreground"
                   >
