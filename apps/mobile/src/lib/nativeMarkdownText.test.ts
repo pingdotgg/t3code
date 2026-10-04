@@ -150,7 +150,7 @@ describe("nativeMarkdownTextRuns", () => {
         {
           type: "link",
           href: "file:///repo/README.md#L12",
-          children: [{ type: "text", content: "ignored label" }],
+          children: [{ type: "text", content: "validates the input" }],
         },
       ],
     };
@@ -163,12 +163,114 @@ describe("nativeMarkdownTextRuns", () => {
       },
       { text: " " },
       {
+        text: "validates the input ",
+        href: "file:///repo/README.md#L12",
+        sourceText: "[validates the input](<file:///repo/README.md#L12>)",
+      },
+      {
         text: "README.md:12",
         href: "file:///repo/README.md#L12",
         fileIcon: "markdown",
+        sourceText: "[validates the input](<file:///repo/README.md#L12>)",
       },
     ]);
   });
+
+  it.each([true, false])("copies descriptive file links with collapsed chips=%s", (collapsed) => {
+    const link: MarkdownNode = {
+      type: "link",
+      href: "/repo/src/example.ts:12",
+      children: [
+        { type: "text", content: "validates " },
+        { type: "bold", children: [{ type: "text", content: "the input" }] },
+      ],
+    };
+    const runs = nativeMarkdownTextRuns({ type: "paragraph", children: [link, link] });
+    expect(runs.map((run) => run.text).join("")).toBe(
+      "validates the input example.ts:12validates the input example.ts:12",
+    );
+    expect(runs.filter((run) => run.bold).map((run) => run.text)).toEqual([
+      "the input",
+      "the input",
+    ]);
+    const ranges = nativeMarkdownContextCopyRanges(
+      runs.map((run) => ({
+        run,
+        text: collapsed && run.fileIcon ? "" : run.text,
+        inlineImageLength: run.fileIcon ? 1 : 0,
+      })),
+    );
+    const length = "validates the input ".length + (collapsed ? 1 : "example.ts:12".length + 1);
+    expect(ranges).toEqual([
+      { start: 0, end: length, text: "[validates **the input**](</repo/src/example.ts:12>)" },
+      {
+        start: length,
+        end: length * 2,
+        text: "[validates **the input**](</repo/src/example.ts:12>)",
+      },
+    ]);
+  });
+
+  it("keeps filename-labelled links as chips", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "/repo/src/example.ts:12",
+            children: [{ type: "code_inline", content: "src/example.ts:12" }],
+          },
+        ],
+      }),
+    ).toEqual([{ text: "example.ts:12", href: "/repo/src/example.ts:12", fileIcon: "typescript" }]);
+  });
+
+  it.each([
+    [{ type: "italic", children: [{ type: "text", content: "details" }] }, "*details*"],
+    [{ type: "strikethrough", children: [{ type: "text", content: "details" }] }, "~~details~~"],
+    [{ type: "code_inline", content: "`details`" }, "`` `details` ``"],
+    [{ type: "code_inline", content: " details " }, "`  details  `"],
+    [{ type: "text", content: "[details] *literal*" }, "\\[details\\] \\*literal\\*"],
+    [{ type: "soft_break" }, "\n"],
+    [{ type: "line_break" }, "  \n"],
+    [
+      { type: "image", alt: "details", href: "https://example.com/icon.png" },
+      "![details](<https://example.com/icon.png>)",
+    ],
+  ] satisfies ReadonlyArray<readonly [MarkdownNode, string]>)(
+    "keeps descriptive label markup when copying %j",
+    (child, source) => {
+      const runs = nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "/repo/a.ts",
+            children: [{ type: "text", content: "see " }, child],
+          },
+        ],
+      });
+      expect(
+        nativeMarkdownContextCopyRanges(
+          runs.map((run) => ({
+            run,
+            text: run.fileIcon ? "" : run.text,
+            inlineImageLength: run.fileIcon ? 1 : 0,
+          })),
+        ),
+      ).toEqual([
+        {
+          start: 0,
+          end:
+            runs
+              .filter((run) => !run.fileIcon)
+              .reduce((length, run) => length + run.text.length, 0) + 1,
+          text: `[see ${source}](</repo/a.ts>)`,
+        },
+      ]);
+    },
+  );
 
   it("keeps hard breaks and collapses soft breaks", () => {
     const node: MarkdownNode = {
