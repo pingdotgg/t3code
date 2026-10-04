@@ -12,11 +12,13 @@ import { ActivityIndicator, Alert, AppState, Platform, Pressable, View } from "r
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText } from "../../components/AppText";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ScreenHeader, type ScreenHeaderMenuItem } from "../../components/ScreenHeader";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
 import {
@@ -70,6 +72,7 @@ function DevicePreviewScreen({
   readonly threadId: ThreadId;
   readonly onClose: () => void;
 }) {
+  const { layout } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
@@ -268,34 +271,36 @@ function DevicePreviewScreen({
           />
         </NativeHeaderToolbar>
       ) : null}
-      {preview && focused && foreground ? (
-        <OpenDevicePreview
-          key={`${preview.key}:${streamAttempt}`}
-          environmentId={environmentId}
-          preview={preview}
-          streamRef={streamRef}
-          onInputConnected={onInputConnected}
-        />
-      ) : (
-        <View className="flex-1 items-center justify-center gap-4 px-6">
-          {state.error ? (
-            <>
-              <AppText selectable className="text-center text-sm text-foreground-muted">
-                {state.error}
-              </AppText>
-              <Pressable
-                accessibilityRole="button"
-                className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-                onPress={state.refresh}
-              >
-                <AppText className="text-secondary-foreground">Retry</AppText>
-              </Pressable>
-            </>
-          ) : focused && foreground ? (
-            <ActivityIndicator color={themeVariables["--color-icon"]} />
-          ) : null}
-        </View>
-      )}
+      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+        {preview && focused && foreground ? (
+          <OpenDevicePreview
+            key={`${preview.key}:${streamAttempt}`}
+            environmentId={environmentId}
+            preview={preview}
+            streamRef={streamRef}
+            onInputConnected={onInputConnected}
+          />
+        ) : (
+          <View className="flex-1 items-center justify-center gap-4 px-6">
+            {state.error ? (
+              <>
+                <AppText selectable className="text-center text-sm text-foreground-muted">
+                  {state.error}
+                </AppText>
+                <Pressable
+                  accessibilityRole="button"
+                  className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
+                  onPress={state.refresh}
+                >
+                  <AppText className="text-secondary-foreground">Retry</AppText>
+                </Pressable>
+              </>
+            ) : focused && foreground ? (
+              <ActivityIndicator color={themeVariables["--color-icon"]} />
+            ) : null}
+          </View>
+        )}
+      </MaterialScreenContent>
     </View>
   );
 }
