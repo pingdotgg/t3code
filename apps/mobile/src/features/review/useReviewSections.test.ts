@@ -1,12 +1,12 @@
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import {
   AuthFilesystemReadScope,
   CheckpointRef,
   EnvironmentId,
   MessageId,
   ThreadId,
-  TurnId,
+  RunId,
   type AuthSessionState,
-  type OrchestrationCheckpointSummary,
 } from "@t3tools/contracts";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -15,9 +15,12 @@ const state = vi.hoisted(() => ({
   sessionError: null as string | null,
   sessionAtom: {},
   effects: [] as Array<() => void>,
-  checkpoints: [] as ReadonlyArray<OrchestrationCheckpointSummary>,
+  checkpoints: [] as ReadonlyArray<ThreadCheckpointSummary>,
 }));
 
+vi.mock("@t3tools/client-runtime/state/thread-checkpoints", () => ({
+  deriveThreadCheckpointSummaries: () => state.checkpoints,
+}));
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: (effect: () => void) => state.effects.push(effect),
@@ -33,7 +36,7 @@ vi.mock("../../state/presentation", () => ({
   }),
 }));
 vi.mock("../../state/use-thread-detail", () => ({
-  useSelectedThreadDetail: () => ({ checkpoints: state.checkpoints }),
+  useSelectedThreadProjection: () => ({ projection: {} }),
 }));
 vi.mock("../../state/use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/repo" }),
@@ -70,7 +73,7 @@ beforeEach(() => {
   state.sessionError = null;
   state.checkpoints = [
     {
-      turnId: TurnId.make("turn-1"),
+      runId: RunId.make("turn-1"),
       checkpointTurnCount: 1,
       checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/1"),
       status: "ready",

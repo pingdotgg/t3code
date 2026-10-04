@@ -45,7 +45,9 @@ export function useAssetUrlState(
   });
   const canReadResource =
     fileAccess.canReadFiles ||
-    (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
+    (resource?._tag !== "workspace-file" &&
+      resource?._tag !== "media-file" &&
+      resource?._tag !== "draft-workspace-file");
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = fileEnvironment.presentation?.connection.phase ?? "available";
   const result = useAtomValue(

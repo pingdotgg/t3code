@@ -1062,7 +1062,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
-      ) : selectedTurnId === null && !canReadFiles ? (
+      ) : selectedRunId === null && !canReadFiles ? (
         fileAccess.isPending ? (
           <DiffPanelLoadingState label="Checking file access..." />
         ) : (

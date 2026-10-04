@@ -2,6 +2,7 @@ import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
+  AssetCreateUrlInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -228,6 +229,16 @@ const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
+  if (method === WS_METHODS.assetsCreateUrl) {
+    const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
+    return [
+      resource._tag === "workspace-file" ||
+      resource._tag === "media-file" ||
+      resource._tag === "draft-workspace-file"
+        ? AuthFilesystemReadScope
+        : AuthOrchestrationReadScope,
+    ];
+  }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   const guarded = clientRpcRequiredScopes(method, payload);
   if (guarded.length > 0) return guarded;

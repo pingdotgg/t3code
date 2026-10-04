@@ -24,7 +24,9 @@ export function useAssetUrlState(
   const fileAccess = useFilesystemReadAccess(environmentId);
   const canReadResource =
     fileAccess.canReadFiles ||
-    (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
+    (resource?._tag !== "workspace-file" &&
+      resource?._tag !== "media-file" &&
+      resource?._tag !== "draft-workspace-file");
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     !canReadResource || environmentId === null || resource === null
@@ -67,7 +69,10 @@ export function useAssetUrls(
       canReadFiles
         ? resources
         : resources.filter(
-            (resource) => resource._tag !== "workspace-file" && resource._tag !== "media-file",
+            (resource) =>
+              resource._tag !== "workspace-file" &&
+              resource._tag !== "media-file" &&
+              resource._tag !== "draft-workspace-file",
           ),
     [canReadFiles, resources],
   );
@@ -81,7 +86,12 @@ export function useAssetUrls(
     if (preparedConnection._tag === "None") return resources.map(() => null);
     let resultIndex = 0;
     return resources.map((resource) => {
-      if (!canReadFiles && (resource._tag === "workspace-file" || resource._tag === "media-file"))
+      if (
+        !canReadFiles &&
+        (resource._tag === "workspace-file" ||
+          resource._tag === "media-file" ||
+          resource._tag === "draft-workspace-file")
+      )
         return null;
       const result = results[resultIndex++];
       return result && AsyncResult.isSuccess(result)

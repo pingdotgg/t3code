@@ -90,7 +90,9 @@ it("stops waiting for an unresolved grant when the connection is offline", () =>
 });
 
 it("lets the server authorize an explicit refresh before the client grant loads", async () => {
-  await expect(useAssetUrlRefresh(environmentId, resource)()).resolves.toBeUndefined();
+  await expect(useAssetUrlRefresh(environmentId, resource)()).resolves.toBe(
+    "https://host.test/api/assets/image.png",
+  );
   expect(state.mint).toHaveBeenCalledWith({ environmentId, input: { resource } });
 
   const denied = new EnvironmentAuthorizationError({
