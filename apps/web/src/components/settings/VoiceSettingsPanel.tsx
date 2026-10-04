@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   AudioLinesIcon,
+  BookOpenIcon,
   CheckIcon,
   DownloadIcon,
   GaugeIcon,
@@ -30,6 +31,7 @@ import {
   HardDriveIcon,
   LanguagesIcon,
   RefreshCwIcon,
+  StarIcon,
   TargetIcon,
   Trash2Icon,
   XIcon,
@@ -196,7 +198,21 @@ function ModelCard(props: {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-semibold leading-5">{model.name}</span>
-            {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
+            {model.recommended ? (
+              <Badge variant="outline">
+                <StarIcon className="mr-1 size-3" />
+                Recommended
+              </Badge>
+            ) : null}
+            {model.supportsRecognitionHints ? (
+              <Badge
+                variant="outline"
+                title="Uses dictionary words as hints during speech recognition."
+              >
+                <BookOpenIcon className="mr-1 size-3" />
+                Recognition hints
+              </Badge>
+            ) : null}
             {model.supportsStreaming ? (
               <Badge variant="outline">
                 <AudioLinesIcon className="mr-1 size-3" />
@@ -978,7 +994,7 @@ export function VoiceSettingsPanel() {
           settingKeys={projectId ? ["speechProjectCustomWords"] : []}
           title="Dictionary"
           description={
-            "Add names and uncommon terms to improve transcription. Add misheard versions as aliases to correct them in future transcripts. The current project's name is included automatically. " +
+            "Words guide models with Recognition hints; other models use fuzzy correction. Aliases fix misspellings on all models. The project name is included automatically. " +
             (projectId
               ? "Project words are combined with your personal dictionary."
               : "Personal words are used across all projects.")

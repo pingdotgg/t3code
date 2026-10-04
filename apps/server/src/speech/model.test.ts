@@ -28,6 +28,17 @@ describe("speech model catalog", () => {
     expect(new Set(SPEECH_MODELS.map((model) => model.filename)).size).toBe(SPEECH_MODELS.length);
   });
 
+  it("advertises recognition hints only for Whisper-family models", () => {
+    expect(
+      SPEECH_MODELS.filter((model) => model.supportsRecognitionHints).map((model) => model.name),
+    ).toEqual(expect.arrayContaining(["Whisper Medium", "Breeze-ASR-25"]));
+    for (const model of SPEECH_MODELS) {
+      expect(model.supportsRecognitionHints).toBe(
+        model.name.startsWith("Whisper ") || model.name === "Breeze-ASR-25",
+      );
+    }
+  });
+
   it("offers Handy's complete pinned catalog with five recommended models", () => {
     expect(SPEECH_MODELS).toHaveLength(69);
     expect(SPEECH_MODELS.filter((model) => model.recommended)).toHaveLength(5);

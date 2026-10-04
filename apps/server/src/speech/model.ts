@@ -124,9 +124,10 @@ export type SpeechModel = {
   readonly supportsStreaming: boolean;
   readonly supportsLanguageDetection: boolean;
   readonly supportsTranslation: boolean;
+  readonly supportsRecognitionHints: boolean;
 };
 
-export const SPEECH_MODELS = [
+const speechModelDefinitions = [
   {
     id: "handy-computer/moonshine-streaming-tiny-gguf",
     revision: "85ddff612fa3a2cf40b2f745abcfa90ef82f293b",
@@ -241,7 +242,15 @@ export const SPEECH_MODELS = [
   },
   // Additional models from Handy's transcribe.cpp catalog (2026-08-17), one pinned GGUF each.
   ...catalog,
-] satisfies readonly SpeechModel[];
+] satisfies readonly Omit<SpeechModel, "supportsRecognitionHints">[];
+
+export const SPEECH_MODELS = speechModelDefinitions.map((model) => ({
+  ...model,
+  // transcribe-cpp 0.2.4 exposes vocabulary prompts only for the Whisper family.
+  supportsRecognitionHints:
+    model.id.startsWith("handy-computer/whisper-") ||
+    model.id === "handy-computer/Breeze-ASR-25-gguf",
+}));
 
 export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-gguf";
 export const getSpeechModel = (modelId: string): SpeechModel | undefined =>

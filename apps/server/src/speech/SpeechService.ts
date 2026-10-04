@@ -581,6 +581,7 @@ export const make = Effect.gen(function* () {
             supportsStreaming: definition.supportsStreaming,
             supportsLanguageDetection: definition.supportsLanguageDetection,
             supportsTranslation: definition.supportsTranslation,
+            supportsRecognitionHints: definition.supportsRecognitionHints,
             active: ready && selected.id === definition.id,
             state: operation
               ? operation.verifying

@@ -60,6 +60,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   supportsStreaming: Schema.Boolean,
   supportsLanguageDetection: Schema.Boolean,
   supportsTranslation: Schema.Boolean,
+  supportsRecognitionHints: Schema.optionalKey(Schema.Boolean),
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
