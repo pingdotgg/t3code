@@ -83,10 +83,9 @@ async function renderPanel(overrides: Partial<ComponentProps<typeof RightPanelTa
           device: { available: false, onOpen: noop },
           "pull-request": { available: false, onOpen: noop },
           "pull-requests": { available: false, onOpen: noop },
+          files: { available: true, onOpen: addFiles },
         }}
         onAddBrowserInProfile={noop}
-        onAddFiles={addFiles}
-        filesAvailable
         {...overrides}
       >
         content

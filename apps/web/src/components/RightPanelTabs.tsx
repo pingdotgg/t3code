@@ -25,7 +25,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronLeft, ChevronRight, Files, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type ComponentProps,
@@ -125,8 +125,6 @@ interface RightPanelTabsProps {
   /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
   panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
-  onAddFiles: () => void;
-  filesAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -177,7 +175,7 @@ interface SurfaceAction {
   onClick: () => void;
 }
 
-type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels" | "onAddFiles" | "filesAvailable">;
+type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels">;
 
 /**
  * The surfaces the empty launcher and the add menu offer, in launcher order.
@@ -203,16 +201,7 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
   return [
     registered("preview"),
     registered("terminal"),
-    {
-      id: "files",
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      unavailableHint: "Available when a project is open.",
-      unavailableReason: "Files are only available when a project is open.",
-      onClick: props.onAddFiles,
-    },
+    registered("files"),
     registered("diff"),
     registered("pull-request"),
     registered("pull-requests"),
@@ -547,7 +536,7 @@ function surfaceTitle(
     case "diff":
       return getSidePanelMetadata("diff").title;
     case "files":
-      return "Files";
+      return getSidePanelMetadata("files").title;
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -625,8 +614,10 @@ function SurfaceIcon({
       const Icon = getSidePanelMetadata("diff").icon;
       return <Icon className="size-3 shrink-0" />;
     }
-    case "files":
-      return <Files className="size-3 shrink-0" />;
+    case "files": {
+      const Icon = getSidePanelMetadata("files").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "file":
       return (
         <PierreEntryIcon

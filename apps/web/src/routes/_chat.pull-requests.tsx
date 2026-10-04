@@ -279,6 +279,7 @@ const UNAVAILABLE_SIDE_PANELS = {
   device: { available: false, onOpen: () => undefined },
   "pull-request": { available: false, onOpen: () => undefined },
   "pull-requests": { available: false, onOpen: () => undefined },
+  files: { available: false, onOpen: () => undefined },
 };
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
@@ -2256,8 +2257,6 @@ function PullRequestsRouteView() {
             onCopyFilePath={() => undefined}
             panels={UNAVAILABLE_SIDE_PANELS}
             onAddBrowserInProfile={() => undefined}
-            onAddFiles={() => undefined}
-            filesAvailable={false}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel

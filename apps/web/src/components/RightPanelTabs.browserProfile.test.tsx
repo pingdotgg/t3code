@@ -87,10 +87,9 @@ function Harness() {
         device: { available: false, onOpen: () => undefined },
         "pull-request": { available: false, onOpen: () => undefined },
         "pull-requests": { available: false, onOpen: () => undefined },
+        files: { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={openBrowser}
-      onAddFiles={() => undefined}
-      filesAvailable={false}
     >
       {null}
     </RightPanelTabs>

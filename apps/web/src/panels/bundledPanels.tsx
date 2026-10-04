@@ -1,4 +1,4 @@
-import { FileDiff, Globe2, Smartphone, TerminalSquare } from "lucide-react";
+import { FileDiff, Files, Globe2, Smartphone, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -63,6 +63,15 @@ const bundledPanels = createPanelRegistry([
     unavailableReason: "No linked pull requests are available for this thread.",
     fallback: <PullRequestPanelPending label="Loading pull requests" />,
     load: () => import("./pullRequest/PullRequestsSidePanel"),
+  },
+  {
+    id: "files",
+    title: "Files",
+    icon: Files,
+    launcherKey: "F",
+    unavailableHint: "Available when a project is open.",
+    unavailableReason: "Files are only available when a project is open.",
+    load: () => import("./files/FilesSidePanel"),
   },
 ]);
 

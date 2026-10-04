@@ -10,6 +10,7 @@ const loaded = vi.hoisted(() => ({
   device: 0,
   pullRequest: 0,
   pullRequests: 0,
+  files: 0,
   previewRenders: [] as unknown[],
 }));
 vi.mock("./diff/DiffSidePanel", () => {
@@ -22,6 +23,10 @@ vi.mock("./terminal/TerminalSidePanel", () => {
 });
 vi.mock("./device/DeviceSidePanel", () => {
   loaded.device += 1;
+  return { default: () => null };
+});
+vi.mock("./files/FilesSidePanel", () => {
+  loaded.files += 1;
   return { default: () => null };
 });
 vi.mock("./preview/PreviewSidePanel", () => {
@@ -69,6 +74,7 @@ describe("bundled side panels", () => {
       device: 0,
       pullRequest: 0,
       pullRequests: 0,
+      files: 0,
     });
     await act(async () => {
       create(
@@ -86,6 +92,7 @@ describe("bundled side panels", () => {
       device: 0,
       pullRequest: 0,
       pullRequests: 0,
+      files: 0,
     });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
@@ -121,6 +128,17 @@ describe("bundled side panels", () => {
     expect(loaded).toMatchObject({ diff: 0, terminal: 1 });
   });
 });
+
+const filesProps = {
+  cwd: "/repo",
+  projectName: "repo",
+  relativePath: null,
+  availableEditors: [],
+  revealLine: null,
+  revealRequestId: 0,
+  onPendingChange: () => undefined,
+  selectedFilePending: false,
+};
 
 // Never called. The project typecheck compiles these pairings, and each
 // expect-error directive fails it if a wrong pairing starts to compile.
@@ -177,6 +195,13 @@ export function typeFixtures(
       <RegisteredSidePanel id="preview" shortcutsEnabled />
       {/* @ts-expect-error The host owns the composer draft target. */}
       <RegisteredSidePanel id="pull-request" {...pullRequest} composerDraftTarget={threadRef} />
+      <RegisteredSidePanel id="files" {...filesProps} />
+      {/* @ts-expect-error Files props on Preview. */}
+      <RegisteredSidePanel id="preview" cwd="/repo" />
+      {/* @ts-expect-error Files needs its surface inputs. */}
+      <RegisteredSidePanel id="files" cwd="/repo" />
+      {/* @ts-expect-error The host owns the composer draft target. */}
+      <RegisteredSidePanel id="files" {...filesProps} composerDraftTarget={threadRef} />
       {/* @ts-expect-error Preview props on Diff. */}
       <RegisteredSidePanel id="diff" tabId="tab-1" />
       {/* @ts-expect-error Device props on Preview. */}
