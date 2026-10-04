@@ -260,6 +260,8 @@ patchedDependencies:
   # Link http(s) URLs with a port or a single-label host. md4c otherwise requires a dotted host and stops at ':'.
   react-native-nitro-markdown@0.5.8: patches/react-native-nitro-markdown@0.5.8.patch
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
+  # Keep Android image previews fitted to the current window after resizing (#13854).
+  react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
