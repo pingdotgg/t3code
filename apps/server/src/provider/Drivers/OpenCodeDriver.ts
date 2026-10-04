@@ -312,6 +312,21 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
             ),
           ),
         ),
+        // integration.list awaits Plugin.awaitActivation in OpenCode 2, unlike
+        // model.list, which explicitly returns a possibly partial snapshot.
+        openCode2Server.withConnection(({ client }) =>
+          client.integration.list({ location: { directory: serverConfig.cwd } }).pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              (cause) =>
+                new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "integration.list",
+                  detail: "The OpenCode server could not finish loading its provider plugins.",
+                  cause,
+                }),
+            ),
+          ),
+        ),
       );
       // A 2.x server lists skills and commands per directory, so one server
       // answers every workspace. Its event stream says when a directory it had

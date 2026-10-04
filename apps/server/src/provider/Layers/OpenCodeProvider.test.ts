@@ -786,23 +786,103 @@ it.effect("waits for a fresh OpenCode 2 server to list its models", () =>
   Effect.gen(function* () {
     // A fresh server lists nothing until its catalog loads.
     const replies: Array<ReadonlyArray<OpenCode2Model>> = [[], [], [bigPickle]];
-    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [bigPickle]));
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => replies.shift() ?? [bigPickle]),
+      Effect.void,
+    );
     const fiber = yield* load.pipe(Effect.forkChild);
     yield* TestClock.adjust("1 second");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("waits for plugin activation despite a stable built-in-only model snapshot", () =>
+  Effect.gen(function* () {
+    const custom: OpenCode2Model = {
+      providerID: "custom-provider",
+      id: "custom-model",
+      name: "Custom model",
+      variants: [],
+    };
+    const activated = yield* Deferred.make<void>();
+    let reads = 0;
+    let models: ReadonlyArray<OpenCode2Model> = [bigPickle];
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => (++reads === 1 ? [] : models)),
+      Deferred.await(activated),
+    );
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("3 seconds");
+    models = [bigPickle, custom];
+    yield* Deferred.succeed(activated, undefined);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle, custom]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect("keeps the last OpenCode 2 model list while a fresh server's stays empty", () =>
   Effect.gen(function* () {
     let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
-    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => listed));
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => listed),
+      Effect.void,
+    );
     NodeAssert.deepEqual(yield* load, [bigPickle]);
     listed = [];
     const fiber = yield* load.pipe(Effect.forkChild);
     yield* TestClock.adjust("6 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
   }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("keeps the last model list when plugin activation never settles", () =>
+  Effect.gen(function* () {
+    let activated: Effect.Effect<void> = Effect.void;
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.succeed([bigPickle]),
+      Effect.suspend(() => activated),
+    );
+    NodeAssert.deepEqual(yield* load, [bigPickle]);
+    activated = Effect.never;
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("6 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("propagates model-list errors on refresh and retries the next refresh", () =>
+  Effect.gen(function* () {
+    let fail = false;
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.suspend(() => (fail ? Effect.fail("unavailable") : Effect.succeed([bigPickle]))),
+      Effect.void,
+    );
+    NodeAssert.deepEqual(yield* load, [bigPickle]);
+    fail = true;
+    NodeAssert.deepEqual(yield* load.pipe(Effect.flip), "unavailable");
+    fail = false;
+    NodeAssert.deepEqual(yield* load, [bigPickle]);
+  }),
+);
+
+it.effect("continues model discovery when plugin activation fails", () =>
+  Effect.gen(function* () {
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.succeed([bigPickle]),
+      Effect.fail("activation failed"),
+    );
+    NodeAssert.deepEqual(yield* load, [bigPickle]);
+  }),
+);
+
+it.effect("propagates model-list errors after plugin activation fails", () =>
+  Effect.gen(function* () {
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.fail("model list failed"),
+      Effect.fail("activation failed"),
+    );
+    NodeAssert.deepEqual(yield* load.pipe(Effect.flip), "model list failed");
+  }),
 );
 
 // What 2.0.18 lists for a directory once it has scanned it (live, 2026-09-29).

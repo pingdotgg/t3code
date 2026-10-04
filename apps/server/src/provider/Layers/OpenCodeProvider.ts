@@ -387,21 +387,27 @@ export interface OpenCode2Model {
 }
 
 /**
- * A server loads its catalog lazily and lists nothing for its first few
- * hundred milliseconds, and a local instance starts a fresh server for each
- * status check. So an empty list is read again for a while, and the last
- * non-empty list stands in if the catalog still has not loaded.
+ * Model snapshots can contain built-ins before provider plugins finish loading.
+ * The readiness barrier awaits plugin activation before listing when available;
+ * a stable non-empty snapshot alone cannot prove that custom providers loaded.
+ * Activation errors fall back to listing; both steps share a bounded deadline.
  */
-export const makeOpenCode2ModelLoader = <E>(
+export const makeOpenCode2ModelLoader = <E, E2>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  activated: Effect.Effect<void, E2>,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
-    return list.pipe(
-      Effect.repeat({
-        until: (models) => models.length > 0,
-        schedule: Schedule.spaced("250 millis"),
-      }),
+    return activated.pipe(
+      Effect.catch(() => Effect.void),
+      Effect.andThen(
+        list.pipe(
+          Effect.repeat({
+            until: (models) => models.length > 0,
+            schedule: Schedule.spaced("250 millis"),
+          }),
+        ),
+      ),
       Effect.timeoutOption("5 seconds"),
       Effect.map((loaded) => {
         if (loaded._tag === "Some" && loaded.value.length > 0) lastLoaded = loaded.value;
