@@ -37,6 +37,7 @@ import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
+import * as DesktopRunningLocalServers from "./app/DesktopRunningLocalServers.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
@@ -140,7 +141,7 @@ const desktopFoundationLayer = Layer.mergeAll(
   MacPermissions.layer,
   DesktopState.layer,
   DesktopShutdown.layer,
-  DesktopAppSettings.layer,
+  DesktopRunningLocalServers.layer.pipe(Layer.provideMerge(DesktopAppSettings.layer)),
   DesktopClientSettings.layer,
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,

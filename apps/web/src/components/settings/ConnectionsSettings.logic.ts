@@ -1,6 +1,54 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopWslState,
+  RunningLocalServer,
+} from "@t3tools/contracts";
+
+import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import type { EnvironmentPresentation } from "../../state/environments";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+export type LocalServerPairingStatus = "pair" | "pair-again" | "paired" | "version-mismatch";
+
+export interface LocalServerPairingCandidate {
+  readonly server: RunningLocalServer;
+  readonly status: LocalServerPairingStatus;
+}
+
+/**
+ * Discovered servers this client could pair with. This machine's own and
+ * desktop-managed backends are never candidates. A saved environment is only
+ * offered again once its connection has failed.
+ */
+export function selectLocalServerPairingCandidates(
+  servers: ReadonlyArray<RunningLocalServer>,
+  environments: ReadonlyArray<
+    Pick<EnvironmentPresentation, "environmentId" | "entry" | "connection">
+  >,
+): ReadonlyArray<LocalServerPairingCandidate> {
+  return servers.flatMap((server): LocalServerPairingCandidate[] => {
+    const saved = environments.find(
+      (environment) => environment.environmentId === server.environmentId,
+    );
+    if (
+      saved?.entry.target._tag === "PrimaryConnectionTarget" ||
+      (saved !== undefined && isDesktopLocalConnectionTarget(saved.entry.target))
+    ) {
+      return [];
+    }
+    const status: LocalServerPairingStatus =
+      saved !== undefined && saved.connection.phase !== "error"
+        ? "paired"
+        : server.pairing === "version-mismatch"
+          ? "version-mismatch"
+          : saved !== undefined
+            ? "pair-again"
+            : "pair";
+    return [{ server, status }];
+  });
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

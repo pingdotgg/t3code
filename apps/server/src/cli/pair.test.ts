@@ -7,9 +7,14 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { LocalServerPairCommandOutput } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Runtime from "effect/Runtime";
+import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
@@ -143,6 +148,10 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
     (server) => Effect.sync(() => server.close()),
   );
 
+const decodePairJsonOutput = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(LocalServerPairCommandOutput),
+);
+
 describe("t3 pair", () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
@@ -194,6 +203,69 @@ describe("t3 pair", () => {
         off: () => undefined,
       }),
     ),
+  );
+
+  it.effect("keeps --json stdout to one JSON line while logs go to stderr", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-json-test-"));
+        // A corrupt userdata state file logs a warning before discovery
+        // falls through to the live dev server.
+        NodeFS.mkdirSync(NodePath.join(baseDir, "userdata"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(baseDir, "userdata", "server-runtime.json"), "{");
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "dev", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const { stdout, stderr } = yield* provideCliTestLayers(
+          Effect.gen(function* () {
+            yield* runCli(["pair", "--base-dir", baseDir, "--log-level", "warn", "--json"]);
+            return { stdout: yield* TestConsole.logLines, stderr: yield* TestConsole.errorLines };
+          }),
+        );
+
+        assert.equal(stdout.length, 1);
+        const decoded = yield* decodePairJsonOutput(stdout[0]);
+        assert.equal(decoded.environmentId, testDescriptor.environmentId);
+        assert.equal(decoded.label, testDescriptor.label);
+        assert.equal(new URL(decoded.pairingUrl).hash.slice("#token=".length), decoded.token);
+        assert.isTrue(
+          stderr.some((line) => String(line).includes("Failed to decode server runtime state")),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports --json failures as one stderr line and a nonzero exit", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-json-none-"));
+
+      const { exit, stdout, stderr } = yield* provideCliTestLayers(
+        Effect.gen(function* () {
+          const exit = yield* Effect.exit(runCli(["pair", "--base-dir", baseDir, "--json"]));
+          return {
+            exit,
+            stdout: yield* TestConsole.logLines,
+            stderr: yield* TestConsole.errorLines,
+          };
+        }),
+      );
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause);
+        assert.isFalse(Runtime.getErrorReported(error));
+        assert.equal(Runtime.getErrorExitCode(error), 1);
+      }
+      assert.deepEqual(stdout, []);
+      assert.equal(stderr.length, 1);
+      assert.include(String(stderr[0]), "No running T3 Code server found.");
+      assert.notInclude(String(stderr[0]), "\n");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("pairs through the recorded dev web URL for dev servers", () =>

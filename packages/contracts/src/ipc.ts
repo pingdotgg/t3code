@@ -23,6 +23,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+import type { LocalServerPairingResult, RunningLocalServer } from "./localServerDiscovery.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1144,6 +1145,8 @@ export interface DesktopBridge {
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
+  discoverLocalServers?: () => Promise<readonly RunningLocalServer[]>;
+  pairLocalServer?: (environmentId: EnvironmentId) => Promise<LocalServerPairingResult>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;

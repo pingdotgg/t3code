@@ -205,3 +205,9 @@ history, and saved connections are kept, and you keep working through pairing, T
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.
+
+If you run your own server on this computer with `t3 serve` or `t3 service`, keep **Local
+environment** off and pair with that server instead. When it uses the same T3 Code data directory
+as the desktop app, **Settings → Connections** lists it under **Available on this computer** and
+pairs with it in one click, as long as both run the same T3 Code version. Otherwise, run `t3 pair`
+on this computer and paste the link under **Add environment**.

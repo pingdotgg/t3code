@@ -12,6 +12,7 @@
 import {
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
+  type LocalServerPairCommandOutput,
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
@@ -23,14 +24,17 @@ import {
   ensureTailscaleServe,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import {
@@ -194,6 +198,61 @@ const formatPairOutput = (input: {
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
   ].join("\n");
+
+const formatPairJsonOutput = (input: {
+  readonly pairingUrl: string;
+  readonly token: string;
+  readonly expiresAt: DateTime.Utc;
+  readonly environmentId: LocalServerPairCommandOutput["environmentId"];
+  readonly label: string;
+}): string =>
+  JSON.stringify({
+    pairingUrl: input.pairingUrl,
+    token: input.token,
+    expiresAt: DateTime.formatIso(input.expiresAt),
+    environmentId: input.environmentId,
+    label: input.label,
+  } satisfies LocalServerPairCommandOutput);
+
+export class JsonTailscaleUnsupportedError extends Schema.TaggedError<JsonTailscaleUnsupportedError>()(
+  "JsonTailscaleUnsupportedError",
+  {},
+) {
+  override get message(): string {
+    return "--json cannot be combined with --tailscale. Run `t3 pair --tailscale` without --json.";
+  }
+}
+
+/** Already printed to stderr, so runMain exits nonzero without logging it to stdout. */
+class PairJsonFailedError extends Schema.TaggedError<PairJsonFailedError>()(
+  "PairJsonFailedError",
+  {},
+) {
+  override readonly [Runtime.errorReported] = false;
+}
+
+/**
+ * Keeps stdout to the single JSON line: logs go to stderr, and failures become
+ * one stderr line plus a nonzero exit.
+ */
+const asJsonCommand = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  logLevel: ServerConfig.ServerConfig["Service"]["logLevel"],
+) =>
+  effect.pipe(
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) => {
+        const error = Cause.squash(cause);
+        const message = error instanceof Error ? error.message : String(error);
+        return Console.error(message.replace(/\s*\n\s*/g, " ")).pipe(
+          Effect.andThen(new PairJsonFailedError()),
+        );
+      },
+    ),
+    Effect.provideService(References.MinimumLogLevel, logLevel),
+    Effect.provideService(Logger.LogToStderr, true),
+  );
 
 /**
  * Three outcomes, because they drive different decisions: a T3 descriptor
@@ -463,6 +522,11 @@ const labelFlag = Flag.String("label").pipe(
   Flag.optional,
 );
 
+const jsonFlag = Flag.Boolean("json").pipe(
+  Flag.withDescription("Emit JSON instead of human-readable output."),
+  Flag.withDefault(false),
+);
+
 const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDescription(
     "Publish the server over Tailscale Serve HTTPS and pair through the tailnet URL.",
@@ -480,6 +544,7 @@ export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   ttl: ttlFlag,
   label: labelFlag,
+  json: jsonFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
@@ -488,50 +553,65 @@ export const pairCommand = Command.make("pair", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      const cliLogLevel = yield* GlobalFlag.LogLevel;
-      // Default to Warn so storage/migration chatter cannot bury the QR code;
-      // an explicit --log-level still wins.
-      const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
-
-      const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
-
-      const notes: Array<string> = [];
-      let pairingBaseUrl: string;
-      if (flags.tailscale) {
-        const resolved = yield* resolveTailscalePairingBase({
-          target,
-          servePort: flags.tailscaleServePort,
-        });
-        pairingBaseUrl = resolved.baseUrl;
-        notes.push(...resolved.notes);
-      } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
-        if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
-          notes.push(
-            "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
-          );
-        }
-        if (target.variant === "dev" && target.state.devUrl === undefined) {
-          notes.push(
-            "This dev server did not record its web URL; restart it so pairing can go through the web origin.",
-          );
-        }
-      }
-
-      const config = yield* makePairServerConfig({ target, logLevel });
-      const issued = yield* mintPairingLink({ config, ttl: flags.ttl, label: flags.label });
-      const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
-
-      yield* Console.log(
-        formatPairOutput({
-          serverLabel: target.descriptor.label,
-          origin: target.state.origin,
-          pairingUrl,
-          token: issued.credential,
-          expiresAt: issued.expiresAt,
-          notes,
-        }),
+      // Quiet by default so storage/migration chatter cannot bury the QR code
+      // or the JSON line; an explicit --log-level still wins.
+      const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () =>
+        flags.json ? ("Error" as const) : ("Warn" as const),
       );
-    }).pipe(Effect.provide(FetchHttpClient.layer)),
+      const run = Effect.gen(function* () {
+        if (flags.json && flags.tailscale) {
+          return yield* new JsonTailscaleUnsupportedError();
+        }
+
+        const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+
+        const notes: Array<string> = [];
+        let pairingBaseUrl: string;
+        if (flags.tailscale) {
+          const resolved = yield* resolveTailscalePairingBase({
+            target,
+            servePort: flags.tailscaleServePort,
+          });
+          pairingBaseUrl = resolved.baseUrl;
+          notes.push(...resolved.notes);
+        } else {
+          pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+          if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
+            notes.push(
+              "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
+            );
+          }
+          if (target.variant === "dev" && target.state.devUrl === undefined) {
+            notes.push(
+              "This dev server did not record its web URL; restart it so pairing can go through the web origin.",
+            );
+          }
+        }
+
+        const config = yield* makePairServerConfig({ target, logLevel });
+        const issued = yield* mintPairingLink({ config, ttl: flags.ttl, label: flags.label });
+        const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
+
+        yield* Console.log(
+          flags.json
+            ? formatPairJsonOutput({
+                pairingUrl,
+                token: issued.credential,
+                expiresAt: issued.expiresAt,
+                environmentId: target.descriptor.environmentId,
+                label: target.descriptor.label,
+              })
+            : formatPairOutput({
+                serverLabel: target.descriptor.label,
+                origin: target.state.origin,
+                pairingUrl,
+                token: issued.credential,
+                expiresAt: issued.expiresAt,
+                notes,
+              }),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer));
+      return yield* flags.json ? asJsonCommand(run, logLevel) : run;
+    }),
   ),
 );
