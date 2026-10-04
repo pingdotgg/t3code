@@ -1,3 +1,0 @@
-"@effect/sql":
-  replacement: "effect/unstable/sql"
-  note: "The @effect/sql package was merged into the effect package; import the effect/unstable/sql barrel or import specific modules directly (e.g. effect/unstable/sql/<Module>)."

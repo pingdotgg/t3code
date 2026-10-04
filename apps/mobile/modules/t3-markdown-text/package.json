@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/mobile-markdown-text",
+  "name": "@t3mobile/markdown",
   "version": "0.0.0",
   "private": true,
   "source": "./index.ts",
@@ -7,12 +7,10 @@
     "android",
     "assets",
     "expo-module.config.json",
-    "ios",
     "src",
     "index.ts",
     "LICENSE",
     "UPSTREAM.md",
-    "T3MarkdownText.podspec",
     "react-native.config.js"
   ],
   "main": "./index.ts",
@@ -29,8 +27,6 @@
     "./types": "./src/SelectableMarkdownText.types.ts"
   },
   "peerDependencies": {
-    "@t3tools/client-runtime": "*",
-    "@t3tools/shared": "*",
     "expo": "*",
     "expo-asset": "*",
     "expo-clipboard": "*",
@@ -39,19 +35,5 @@
     "react": "*",
     "react-native": "*",
     "react-native-nitro-markdown": "*"
-  },
-  "codegenConfig": {
-    "name": "T3MarkdownTextSpec",
-    "type": "all",
-    "jsSrcsDir": "src",
-    "ios": {
-      "componentProvider": {
-        "T3MarkdownText": "T3MarkdownText",
-        "T3MarkdownTextRun": "T3MarkdownTextRun"
-      }
-    },
-    "outputDir": {
-      "ios": "ios/generated"
-    }
   }
 }

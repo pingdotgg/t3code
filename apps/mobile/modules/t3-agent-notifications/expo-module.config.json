@@ -1,4 +1,0 @@
-{
-  "platforms": ["android"],
-  "android": { "modules": ["expo.modules.t3agentnotifications.T3AgentNotificationsModule"] }
-}

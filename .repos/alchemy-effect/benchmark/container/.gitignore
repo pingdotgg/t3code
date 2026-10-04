@@ -1,4 +1,0 @@
-# Per-run raw samples (regenerated every run; keep out of git).
-data/
-.alchemy/
-!contexts/*/*.js

@@ -1,6 +1,0 @@
-node_modules/
-dist/
-lib/
-.alchemy/
-.wrangler/
-*.tsbuildinfo

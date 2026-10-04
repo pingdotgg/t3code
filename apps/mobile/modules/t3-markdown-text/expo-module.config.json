@@ -1,6 +1,1 @@
-{
-  "platforms": ["android"],
-  "android": {
-    "modules": ["expo.modules.t3markdowntext.T3MarkdownTextSelectionModule"]
-  }
-}
+{"platforms":["android"],"android":{"modules":["expo.modules.t3markdowntext.T3MarkdownTextSelectionModule"]}}

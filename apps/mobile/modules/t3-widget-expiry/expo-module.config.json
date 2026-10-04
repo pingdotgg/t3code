@@ -1,4 +1,0 @@
-{
-  "platforms": ["android"],
-  "android": { "modules": ["expo.modules.t3widgetexpiry.T3WidgetExpiryModule"] }
-}

@@ -1,3 +1,0 @@
-module org.kde.kwin
-singleton Workspace 1.0 Workspace.qml
-DBusCall 1.0 DBusCall.qml

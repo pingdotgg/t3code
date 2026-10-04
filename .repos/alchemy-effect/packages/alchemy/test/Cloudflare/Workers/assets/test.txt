@@ -1,3 +1,0 @@
-This is a test file from assets.
-Version: 1
-

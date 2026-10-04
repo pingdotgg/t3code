@@ -1,6 +1,0 @@
-"@effect/sql/SqlSchema#single":
-  replacement: "effect/unstable/sql/SqlSchema#findOne"
-  note: "Renamed with the same first-row-or-fail behavior; empty results use Cause.NoSuchElementError and schema failures use Schema.SchemaError."
-"@effect/sql/SqlSchema#void":
-  replacement: "effect/unstable/sql/SqlSchema#void"
-  note: "Moved with the same encode, execute, and discard-result pattern; schema failures now use Schema.SchemaError."

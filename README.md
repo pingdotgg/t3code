@@ -1,134 +1,89 @@
-# T3 Code
+# T3 Mobile
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+An Android interface for coding agents running on your phone through Termux.
+This fork reuses T3 Code's mobile presentation components, selectable Markdown, diff rendering, typography, palettes
+and Android Ghostty terminal renderer. It replaces T3's server and client runtime with
+our own local backend. Codex is the first integrated agent. This is an experimental first build; physical
+Android/Termux validation is still pending.
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
+## Run the backend in Termux
 
-## "Wait, what are you selling me?"
+Use an Android ARM64 phone with Android 10 or later and a current Termux installation.
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
-
-## Installation
-
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
-> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
-
-### Command line
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
+```sh
+pkg update
+pkg install nodejs-lts git
+npm install -g @mmmbuto/codex-cli-termux
+codex login
+git clone https://github.com/screen-gd/t3mobile.git
+cd t3mobile/apps/runtime
+npm install --workspaces=false --omit=dev
+npm start
 ```
 
-On Windows, in PowerShell:
+Node 22.18 or newer is required. The backend runs `codex app-server` as a subprocess;
+there are no native Node addons, desktop SDKs or cloud relay dependencies.
+If your Codex binary has another name/path, set `T3MOBILE_CODEX_BIN` before starting.
+The community Termux Codex package is maintained at
+[DioNanos/codex-termux](https://github.com/DioNanos/codex-termux).
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
+The backend listens on `127.0.0.1:8787`. On first start it creates a local pairing
+credential below `~/.t3mobile` with private file permissions. Follow the terminal's
+instructions to copy the credential into the app. Never share it: it grants control
+of Codex and its projects. `T3MOBILE_HOME` can select another data directory, and
+`T3MOBILE_PORT` can select another port.
+
+Keep project repositories in Termux's home directory, where git and executable
+permissions work normally. Android shared storage can behave differently.
+
+## Build the mobile app
+
+On a development computer:
+
+```sh
+npm install
+npm run dev:mobile
+# In another terminal, with an Android emulator/device and Android SDK configured:
+npm run android --workspace @t3mobile/mobile
 ```
 
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
+A native development build is required; Expo Go does not contain the local terminal
+module. For a self-contained APK, use the `preview` profile in `apps/mobile/eas.json`
+with your own EAS account, or build a release locally with the Android SDK.
 
-To try it once without installing, run `npx t3@latest` instead.
+In the app, connect to `ws://127.0.0.1:8787` and enter the backend's pairing credential.
+On an emulator connected to a backend on your development computer, use
+`adb reverse tcp:8787 tcp:8787` first. Select a project by its **Termux path**, then
+create a Codex session and send a prompt. Codex credentials stay in Termux.
 
-### Desktop app
+Sessions are read-only by default. The explicit full-access setting lets Codex write
+files and execute commands without OS sandboxing; command approval policy remains
+`untrusted`. Android sandbox capabilities vary by Codex build. Full access is never
+enabled automatically after a sandbox failure. Approval requests and agent questions
+appear in the conversation. Stop interrupts the active turn.
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+The backend keeps conversations and diffs across restarts. A restarted backend marks
+unfinished turns interrupted; it does not silently rerun them. Keep Termux running
+while working. Android may stop background processes; reconnect restores stored
+history but cannot guarantee that an interrupted process continued.
 
-#### Windows (`winget`)
+## Development checks
 
-```bash
-winget install T3Tools.T3Code
+Run only the checks for the scope you changed:
+
+```sh
+npm run typecheck:runtime
+npm run typecheck:mobile
+npm run export:android --workspace @t3mobile/mobile
 ```
 
-#### macOS (Homebrew)
+Backend protocol: `packages/protocol`. Backend and Codex adapter: `apps/runtime`.
+Mobile interface and connection module: `apps/mobile`. Other agents are not enabled
+in this first implementation.
 
-```bash
-brew install --cask t3-code
-```
+## Attribution
 
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
-
-## Documentation
-
-Full docs live in [docs/](./docs). There's no docs site yet.
-
-- [Install and first run](./docs/user/install.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Keeping app and server in sync](./docs/user/updating.md)
-- [Source control integrations](./docs/user/source-control.md)
-- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
-
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
-
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+T3 Code's retained UI is MIT licensed; see `LICENSE`. The Android terminal renderer
+retains its upstream notices in `apps/mobile/modules/t3-terminal/THIRD_PARTY_NOTICES.md`.
+Matt Pocock's installed skills and source revisions are recorded in `.agents/skills`
+and `skills-lock.json`.
