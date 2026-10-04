@@ -1,5 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
+import { useShortcutModifierState } from "~/shortcutModifierState";
+import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -342,6 +344,9 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 
 function PullRequestsRouteView() {
   useEscapeToGoBack();
+  const modifiers = useShortcutModifierState(true);
+  const speedMode =
+    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -952,6 +957,16 @@ function PullRequestsRouteView() {
   };
   /** The detail panel's own writes, by row, so its failure takes back its own note. */
   const detailOverrideTokens = useRef(new Map<string, number | null>());
+  const speedActionRef = useRef<(result: PullRequestSpeedActionResult) => void>(() => {});
+  speedActionRef.current = ({ entry, action }) => {
+    // Some hosts accept a merge before it completes. Let the next host read declare it merged.
+    if (action !== "merge") overrideEntry(entry, action);
+    setDetailRefreshToken((token) => token + 1);
+    refreshListAndStats(undefined, entry.environmentId);
+  };
+  const onSpeedAction = useCallback((result: PullRequestSpeedActionResult) => {
+    speedActionRef.current(result);
+  }, []);
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
@@ -1395,11 +1410,11 @@ function PullRequestsRouteView() {
     [statsBatches],
   );
   const statsObserver = useRef<IntersectionObserver | null>(null);
-  const statsRows = useRef(new Set<HTMLButtonElement>());
+  const statsRows = useRef(new Set<HTMLDivElement>());
   const statsPending = useRef(true);
   const statsPolicyRef = useRef(statsPolicy);
   statsPolicyRef.current = statsPolicy;
-  const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
+  const registerStatsRow = useCallback((node: HTMLDivElement | null) => {
     if (node === null || typeof IntersectionObserver === "undefined") return;
     statsRows.current.add(node);
     statsObserver.current?.observe(node);
@@ -1817,6 +1832,8 @@ function PullRequestsRouteView() {
                       selected.number === entry.number
                     }
                     onSelect={selectEntry}
+                    speedMode={speedMode}
+                    onActed={onSpeedAction}
                   />
                 );
               })}

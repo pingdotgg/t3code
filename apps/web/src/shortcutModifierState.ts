@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isEditableFocused } from "./lib/editableFocus";
 
 export interface ShortcutModifierState {
   metaKey: boolean;
@@ -26,7 +27,7 @@ export function areShortcutModifierStatesEqual(
   );
 }
 
-export function useShortcutModifierState(): ShortcutModifierState {
+export function useShortcutModifierState(ignoreEditable = false): ShortcutModifierState {
   const [state, setState] = useState(EMPTY_SHORTCUT_MODIFIER_STATE);
   const stateRef = useRef(EMPTY_SHORTCUT_MODIFIER_STATE);
 
@@ -39,7 +40,11 @@ export function useShortcutModifierState(): ShortcutModifierState {
       setState(next);
     };
     const onKeyboardEvent = (event: KeyboardEvent) => {
-      updateState(shortcutModifierStateAfterKeyboardEvent(stateRef.current, event));
+      updateState(
+        ignoreEditable && isEditableFocused(event.target)
+          ? EMPTY_SHORTCUT_MODIFIER_STATE
+          : shortcutModifierStateAfterKeyboardEvent(stateRef.current, event),
+      );
     };
     // Dictation tools (Wispr Flow) paste with a synthetic ⌘V whose Meta keyup
     // never reaches the page, so the tracked state stays "⌘ held" forever and
@@ -50,17 +55,22 @@ export function useShortcutModifierState(): ShortcutModifierState {
       updateState(EMPTY_SHORTCUT_MODIFIER_STATE);
     };
 
+    const onFocus = (event: FocusEvent) => {
+      if (ignoreEditable && isEditableFocused(event.target)) onResetEvent();
+    };
+    window.addEventListener("focusin", onFocus);
     window.addEventListener("keydown", onKeyboardEvent, true);
     window.addEventListener("keyup", onKeyboardEvent, true);
     window.addEventListener("paste", onResetEvent, true);
     window.addEventListener("blur", onResetEvent);
     return () => {
+      window.removeEventListener("focusin", onFocus);
       window.removeEventListener("keydown", onKeyboardEvent, true);
       window.removeEventListener("keyup", onKeyboardEvent, true);
       window.removeEventListener("paste", onResetEvent, true);
       window.removeEventListener("blur", onResetEvent);
     };
-  }, []);
+  }, [ignoreEditable]);
 
   return state;
 }

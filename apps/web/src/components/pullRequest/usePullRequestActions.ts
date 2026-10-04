@@ -8,12 +8,23 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  ProjectId,
   PullRequestAction,
   PullRequestDetail,
   PullRequestMergeMethod,
   PullRequestRef,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+} from "~/logicalProject";
+import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
+import { useProjects } from "~/state/entities";
+import { usePrimaryEnvironmentId } from "~/state/environments";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
@@ -25,8 +36,48 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
 
+/** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
+export function usePullRequestDefaultMergeMethodResolver(
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+) {
+  const projectDefault = useEnvironmentSettings(
+    environmentId,
+    (settings) => resolveProjectSettings(settings, projectId).settings.pullRequestMergeMethod,
+  );
+  const legacyOverrides = useClientSettings((settings) => settings.pullRequestMergeMethodOverrides);
+  const grouping = useClientSettings(selectProjectGroupingSettings);
+  const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  return useCallback(() => {
+    if (projectDefault != null) return projectDefault;
+    if (Object.keys(legacyOverrides).length === 0) return undefined;
+    const project = projects.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+    );
+    if (!project) return undefined;
+    // Duplicate sidebar rows borrow their logical group key from their siblings.
+    const key =
+      buildPhysicalToLogicalProjectKeyMap({
+        projects,
+        settings: grouping,
+        primaryEnvironmentId,
+      }).get(derivePhysicalProjectKey(project)) ??
+      deriveLogicalProjectKeyFromSettings(project, grouping);
+    return legacyOverrides[key];
+  }, [
+    projectDefault,
+    projects,
+    environmentId,
+    projectId,
+    grouping,
+    primaryEnvironmentId,
+    legacyOverrides,
+  ]);
+}
+
 const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
-  merge: "Pull request merged",
+  merge: "Merge requested",
   ready: "Marked ready for review",
   draft: "Converted to draft",
   close: "Pull request closed",
@@ -80,37 +131,41 @@ export function usePullRequestActionRunner({
   environmentId,
   reference,
   onSuccess,
+  resolveMergeMethod,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef | null;
   onSuccess?: (action: PullRequestAction) => void;
+  /** Small surfaces resolve repository settings on the click, not for every visible row. */
+  resolveMergeMethod?: () => Promise<PullRequestMergeMethod>;
 }) {
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const [actionPending, setActionPending] = useState(false);
+  const pendingRef = useRef(false);
 
   const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
-    if (actionPending || reference === null) return;
+    if (pendingRef.current || reference === null) return;
+    pendingRef.current = true;
     setActionPending(true);
-    const result = await runAction({
-      environmentId,
-      input: { ...reference, action, ...(method ? { mergeMethod: method } : {}) },
-    });
-    setActionPending(false);
-    if (result._tag === "Failure") {
-      // The host's own sentence, because it is the only thing that says why. A merge strategy a
-      // branch policy forbids is refused at completion and nowhere earlier — Azure DevOps
-      // publishes no per-strategy availability to hide the control with — so "action failed"
-      // would leave the reader pressing the same button again.
-      const failure = squashAtomCommandFailure(result);
+    try {
+      const mergeMethod = method ?? (action === "merge" ? await resolveMergeMethod?.() : undefined);
+      const result = await runAction({
+        environmentId,
+        input: { ...reference, action, ...(mergeMethod ? { mergeMethod } : {}) },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
+      onSuccess?.(action);
+    } catch (failure) {
       toastManager.add({
         type: "error",
         title: ACTION_FAILURE_LABELS[action],
         description: readableFailure(failure, ACTION_FAILURE_HINTS[action]),
       });
-      return;
+    } finally {
+      pendingRef.current = false;
+      setActionPending(false);
     }
-    toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
-    onSuccess?.(action);
   };
 
   return { actionPending, perform };
