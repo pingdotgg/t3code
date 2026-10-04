@@ -1900,7 +1900,7 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
       appThreadId: input.threadId,
       nativeThreadRef: input.importedNativeThread.ref,
       status: "not_loaded",
-      nativeMetadata: input.importedNativeThread.metadata,
+      nativeMetadata: { ...input.importedNativeThread.metadata, nativeThreadOrigin: "imported" },
     });
     assert.equal(
       launched.projection.thread.activeProviderThreadId,
