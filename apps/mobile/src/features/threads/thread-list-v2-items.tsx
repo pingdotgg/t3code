@@ -61,13 +61,16 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 // Status hues follow the system-wide convention set by sidebar v1 and the
 // Live Activity/widgets (amber approval, indigo input, sky working) so a
-// thread reads the same color everywhere it surfaces.
+// thread reads the same color everywhere it surfaces. Waiting is calm
+// background presence, as on the web sidebar: no hue, the row's muted text
+// (`className: null`), so it stays legible on selected and sidebar rows.
 const STATUS_LABEL_BY_STATUS: Partial<
-  Record<ThreadListV2Status, { label: string; className: string }>
+  Record<ThreadListV2Status, { label: string; className: string | null }>
 > = {
   approval: { label: "Approval", className: "text-warning-foreground" },
   input: { label: "Input", className: "text-adaptive-indigo-600-300" },
   working: { label: "Working", className: "text-adaptive-sky-600-400" },
+  waiting: { label: "Waiting", className: null },
   failed: { label: "Failed", className: "text-danger-foreground" },
   limited: { label: "Limited", className: "text-warning-foreground" },
 };
@@ -956,9 +959,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           className={cn(
             "text-xs tabular-nums",
             statusLabel?.className ??
-              (selected
-                ? selectedThreadRowColors.foregroundClassName
-                : rowAppearance.tertiaryForegroundClassName),
+              (statusLabel
+                ? selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : rowAppearance.mutedForegroundClassName
+                : selected
+                  ? selectedThreadRowColors.foregroundClassName
+                  : rowAppearance.tertiaryForegroundClassName),
           )}
         >
           {statusLabel?.label ?? timeLabel}
