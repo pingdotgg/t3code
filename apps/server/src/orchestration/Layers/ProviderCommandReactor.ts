@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import {
   checkpointBaselineRefForThreadTurn,
@@ -1523,7 +1523,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  // Per-thread FIFO: one thread's slow turn start (checkpoint, session boot)
+  // must not delay every other thread. A fork also orders against its source.
+  const worker = yield* makeKeyedDrainableWorker(processDomainEventSafely, (event) =>
+    event.type === "thread.provider-fork-requested"
+      ? [event.payload.threadId, event.payload.sourceThreadId]
+      : [event.payload.threadId],
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {

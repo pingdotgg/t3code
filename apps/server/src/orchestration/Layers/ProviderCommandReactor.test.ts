@@ -640,6 +640,66 @@ describe("ProviderCommandReactor", () => {
     );
   }
 
+  it("starts another thread's turn while one thread's turn start is still blocked", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-2-create"),
+        threadId: ThreadId.make("thread-2"),
+        projectId: asProjectId("project-1"),
+        title: "Thread 2",
+        modelSelection: harness.modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: harness.workspacePath2,
+        createdAt: now,
+      }),
+    );
+    let releaseThreadOne!: () => void;
+    const threadOneGate = new Promise<void>((resolve) => {
+      releaseThreadOne = resolve;
+    });
+    const startSessionImpl = harness.startSession.getMockImplementation()!;
+    harness.startSession.mockImplementation((threadId, input) =>
+      threadId === ThreadId.make("thread-1")
+        ? Effect.promise(() => threadOneGate).pipe(
+            Effect.andThen(startSessionImpl(threadId, input)),
+          )
+        : startSessionImpl(threadId, input),
+    );
+    const sentThreadIds = () =>
+      harness.sendTurn.mock.calls.map((call) => (call[0] as { threadId: ThreadId }).threadId);
+
+    for (const threadId of ["thread-1", "thread-2"] as const) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-${threadId}`),
+          threadId: ThreadId.make(threadId),
+          message: {
+            messageId: asMessageId(`user-message-${threadId}`),
+            role: "user",
+            text: `hello ${threadId}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+    }
+
+    await waitFor(() => sentThreadIds().includes(ThreadId.make("thread-2")));
+    expect(sentThreadIds()).toEqual([ThreadId.make("thread-2")]);
+
+    releaseThreadOne();
+    await waitFor(() => sentThreadIds().length === 2);
+    expect(sentThreadIds()).toEqual([ThreadId.make("thread-2"), ThreadId.make("thread-1")]);
+  });
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

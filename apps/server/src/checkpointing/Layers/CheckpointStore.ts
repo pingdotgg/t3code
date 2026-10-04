@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import nodePath from "node:path";
 
-import { Cache, Data, Duration, Effect, Exit, Layer, FileSystem, Path } from "effect";
+import { Cache, Data, Duration, Effect, Exit, Layer, FileSystem, Option, Path } from "effect";
 
 import { CheckpointInvariantError, CheckpointRefUnavailableError } from "../Errors.ts";
 import { GitCommandError } from "@t3tools/contracts";
@@ -256,6 +256,44 @@ const makeCheckpointStore = Effect.gen(function* () {
         Effect.catch(() => Effect.succeed(false)),
       );
 
+  /**
+   * Seed a scratch index with a copy of the worktree's own index so `git add -A`
+   * reuses its cached stat data and hashes only changed files. A `read-tree`
+   * seed has no stat data, which forces a re-hash of every tracked file per
+   * snapshot. The copy keeps the source mtime because racy-git detection compares
+   * entry mtimes against the index file's own mtime. Returns false when there is
+   * no index to copy, so the caller falls back to `read-tree HEAD`.
+   */
+  const seedIndexFromWorktree = Effect.fn("seedIndexFromWorktree")(function* (
+    cwd: string,
+    tempIndexPath: string,
+  ) {
+    const result = yield* git.execute({
+      operation: "CheckpointStore.seedIndexFromWorktree",
+      cwd,
+      args: ["rev-parse", "--git-path", "index"],
+      allowNonZeroExit: true,
+    });
+    const relativeIndexPath = result.stdout.trim();
+    if (result.code !== 0 || relativeIndexPath.length === 0) return false;
+    const indexPath = path.resolve(cwd, relativeIndexPath);
+    return yield* Effect.gen(function* () {
+      const info = yield* fs.stat(indexPath);
+      yield* fs.copyFile(indexPath, tempIndexPath);
+      const mtime = Option.getOrElse(info.mtime, () => new Date(0));
+      yield* fs.utimes(
+        tempIndexPath,
+        Option.getOrElse(info.atime, () => mtime),
+        mtime,
+      );
+      return true;
+    }).pipe(
+      Effect.catchTag("PlatformError", () =>
+        fs.remove(tempIndexPath, { force: true }).pipe(Effect.ignore, Effect.as(false)),
+      ),
+    );
+  });
+
   const snapshotWorkspace = Effect.fn("snapshotWorkspace")(function* (input: {
     readonly cwd: string;
     readonly operation: string;
@@ -271,8 +309,15 @@ const makeCheckpointStore = Effect.gen(function* () {
               ...process.env,
               GIT_INDEX_FILE: tempIndexPath,
             };
-            const headCommit = yield* resolveHeadCommit(input.cwd);
-            if (headCommit !== null) {
+            const [headCommit, seededFromIndex, exclusions] = yield* Effect.all(
+              [
+                resolveHeadCommit(input.cwd),
+                seedIndexFromWorktree(input.cwd, tempIndexPath),
+                foreignNestedWorktreeExclusions(input.cwd),
+              ],
+              { concurrency: "unbounded" },
+            );
+            if (!seededFromIndex && headCommit !== null) {
               yield* git.execute({
                 operation: input.operation,
                 cwd: input.cwd,
@@ -283,13 +328,7 @@ const makeCheckpointStore = Effect.gen(function* () {
             yield* git.execute({
               operation: input.operation,
               cwd: input.cwd,
-              args: [
-                "add",
-                "-A",
-                "--",
-                ".",
-                ...(yield* foreignNestedWorktreeExclusions(input.cwd)),
-              ],
+              args: ["add", "-A", "--", ".", ...exclusions],
               env,
             });
             const writeTreeResult = yield* git.execute({
