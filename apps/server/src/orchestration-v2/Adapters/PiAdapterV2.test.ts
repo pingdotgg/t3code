@@ -1155,6 +1155,102 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("persists edit patches and write content on file change items", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const patch = "--- a.ts\n+++ a.ts\n@@ -1 +1 @@\n-old\n+new\n";
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_edit",
+        toolName: "edit",
+        args: { path: "a.ts", edits: [{ oldText: "old", newText: "new" }] },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_edit",
+        toolName: "edit",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Successfully replaced 1 block(s) in a.ts." }],
+          details: { diff: "-1 old\n+1 new", patch, firstChangedLine: 1 },
+        },
+      });
+      const edit = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "file_change" &&
+          event.turnItem.status === "completed",
+      );
+      assert.isTrue(
+        edit.type === "turn_item.updated" &&
+          edit.turnItem.type === "file_change" &&
+          edit.turnItem.fileName === "a.ts" &&
+          edit.turnItem.diffStr === patch,
+      );
+
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_write",
+        toolName: "write",
+        args: { path: "b.ts", content: "export {};\n" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_write",
+        toolName: "write",
+        isError: false,
+        result: { content: [{ type: "text", text: "Successfully wrote to b.ts" }] },
+      });
+      const write = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "file_change" &&
+          event.turnItem.status === "completed",
+      );
+      assert.isTrue(
+        write.type === "turn_item.updated" &&
+          write.turnItem.type === "file_change" &&
+          write.turnItem.fileName === "b.ts" &&
+          write.turnItem.newStr === "export {};\n",
+      );
+
+      // A failed edit has no patch, so it keeps the error to show when expanded.
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_edit_failed",
+        toolName: "edit",
+        args: { path: "c.ts", edits: [{ oldText: "missing", newText: "new" }] },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_edit_failed",
+        toolName: "edit",
+        isError: true,
+        result: { content: [{ type: "text", text: "Could not find the text in c.ts." }] },
+      });
+      const failedEdit = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "file_change" &&
+          event.turnItem.status === "failed",
+      );
+      assert.isTrue(
+        failedEdit.type === "turn_item.updated" &&
+          failedEdit.turnItem.type === "file_change" &&
+          failedEdit.turnItem.diffStr === "Could not find the text in c.ts.",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("settles a command-only prompt from its deferred ack and idle probe", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

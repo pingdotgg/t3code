@@ -2645,84 +2645,86 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("does not admit a restart continuation of a failed run that lost background work", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("runtime-layer-restart-failed-source");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("restart-failed-create"),
-        threadId,
-        projectId: ProjectId.make("restart-project"),
-        title: "Restart",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: "/tmp/runtime-layer-restart-failed",
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("restart-failed-user-message"),
-        threadId,
-        messageId: MessageId.make("restart-failed-user-message"),
-        text: "Original work",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      const now = yield* DateTime.now;
-      yield* eventSink.commitCommand({
-        commandId: CommandId.make("restart-failed-reconcile"),
-        threadId,
-        commandType: "provider-runtime.reconcile",
-        acceptedAt: now,
-        events: [
-          {
-            id: EventId.make("restart-failed-run"),
-            type: "run.updated",
-            threadId,
-            runId: original.id,
-            occurredAt: now,
-            payload: { ...original, status: "failed", completedAt: now },
-          },
-          {
-            id: EventId.make("restart-failed-work"),
-            type: "run.background-work-cancelled",
-            threadId,
-            runId: original.id,
-            occurredAt: now,
-            payload: {
+  it.effect.each(["failed", "completed", "waiting", "cancelled"] as const)(
+    "does not admit a restart continuation of a %s run with only lost background work",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-restart-${status}-source`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`restart-${status}-create`),
+          threadId,
+          projectId: ProjectId.make("restart-project"),
+          title: "Restart",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-restart-failed",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`restart-${status}-user-message`),
+          threadId,
+          messageId: MessageId.make(`restart-${status}-user-message`),
+          text: "Original work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`restart-${status}-reconcile`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`restart-${status}-run`),
+              type: "run.updated",
+              threadId,
               runId: original.id,
-              restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+              occurredAt: now,
+              payload: { ...original, status, completedAt: now },
             },
-          },
-        ],
-        effects: [],
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "agent",
-        creationSource: "server",
-        commandId: CommandId.make("restart-failed-continuation"),
-        threadId,
-        messageId: MessageId.make("restart-failed-continuation"),
-        text: "Note: the T3 server restarted.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-        restartContinuationOfRunId: original.id,
-      });
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.lengthOf(projection.runs, 1);
-      assert.equal(projection.runs[0]?.status, "failed");
-    }),
+            {
+              id: EventId.make(`restart-${status}-work`),
+              type: "run.background-work-cancelled",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: {
+                runId: original.id,
+                restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+              },
+            },
+          ],
+          effects: [],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make(`restart-${status}-continuation`),
+          threadId,
+          messageId: MessageId.make(`restart-${status}-continuation`),
+          text: "Note: the T3 server restarted.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          restartContinuationOfRunId: original.id,
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(projection.runs, 1);
+        assert.equal(projection.runs[0]?.status, status);
+      }),
   );
 
   it.effect("rejects settling a thread while a run is active", () =>

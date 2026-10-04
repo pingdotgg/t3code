@@ -32,6 +32,7 @@ vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => EnvironmentId.make("env-1"),
 }));
 vi.mock("~/hooks/useSettings", () => ({
+  useEnvironmentSettings: () => undefined,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),
 }));
