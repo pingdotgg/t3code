@@ -311,7 +311,10 @@ export const makeOrchestrationIntegrationHarness = (
     const projectionSnapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive;
     const runtimeServicesLayer = Layer.mergeAll(
       projectionSnapshotQueryLayer,
-      orchestrationLayer.pipe(Layer.provide(projectionSnapshotQueryLayer)),
+      orchestrationLayer.pipe(
+        Layer.provide(projectionSnapshotQueryLayer),
+        Layer.provide(checkpointStoreLayer),
+      ),
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
       checkpointStoreLayer,

@@ -1,5 +1,8 @@
 import { Layer } from "effect";
 
+import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
+import { CheckoutCoordinatorLive } from "../git/CheckoutCoordinator.ts";
+import { GitCoreLive } from "../git/Layers/GitCore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { DelegationAuditRepositoryLive } from "../persistence/Layers/DelegationAudit.ts";
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
@@ -52,5 +55,13 @@ export const OrchestrationLayerLive = Layer.mergeAll(
   OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationInfrastructureLayerLive),
     Layer.provide(ThreadUrlBuilderLive),
+    // The engine snapshots source worktrees when forking (workflow workers),
+    // so the store is provided here — next to its other dependencies —
+    // rather than relying on a distant merge to reach the engine's build
+    // environment. The coordinator const is shared with the engine's own
+    // internal provision, so both use one lock map.
+    Layer.provide(
+      CheckpointStoreLive.pipe(Layer.provide(GitCoreLive), Layer.provide(CheckoutCoordinatorLive)),
+    ),
   ),
 );

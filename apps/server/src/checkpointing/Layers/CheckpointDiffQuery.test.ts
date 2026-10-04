@@ -103,6 +103,8 @@ describe("CheckpointDiffQueryLive", () => {
       const checkpointStore: CheckpointStoreShape = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        createWorkspaceSnapshotCommit: () =>
+          Effect.die("CheckpointDiffQuery should not snapshot worktrees"),
         hasCheckpointRef: () =>
           Effect.die("CheckpointDiffQuery should not preflight checkpoint refs"),
         checkpointRefMatchesWorkspace: () => Effect.succeed(true),

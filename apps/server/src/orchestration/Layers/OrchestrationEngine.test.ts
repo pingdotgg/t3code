@@ -34,6 +34,7 @@ import {
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { issueCrossThreadDispatchCapability } from "../CrossThreadDispatchCapability.ts";
+import { CheckpointStoreDieStubLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -112,6 +113,7 @@ async function createOrchestrationSystem(
     Layer.provideMerge(Layer.succeed(DelegationAuditRepository, delegationAuditRepository)),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CheckpointStoreDieStubLive),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -1186,6 +1188,7 @@ describe("OrchestrationEngine", () => {
       Layer.provide(Layer.succeed(OrchestrationEventStore, failOnHistoricalReplayStore)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(CheckpointStoreDieStubLive),
     );
 
     const runtime = ManagedRuntime.make(layer);
@@ -1235,6 +1238,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(SqlitePersistenceMemory),
         Layer.provideMerge(serverConfigLayer),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(CheckpointStoreDieStubLive),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -1773,6 +1777,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(SqlitePersistenceMemory),
         Layer.provideMerge(ServerConfigLayer),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(CheckpointStoreDieStubLive),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -1870,6 +1875,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(CheckpointStoreDieStubLive),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -1992,6 +1998,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(CheckpointStoreDieStubLive),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -2066,6 +2073,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(CheckpointStoreDieStubLive),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));

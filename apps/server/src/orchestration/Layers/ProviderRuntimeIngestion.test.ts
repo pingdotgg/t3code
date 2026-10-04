@@ -45,6 +45,7 @@ import {
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { CheckpointStoreDieStubLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -282,6 +283,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(CheckpointStoreDieStubLive),
     );
     const engineLayer =
       options?.failAssistantDeltaDispatch === undefined &&

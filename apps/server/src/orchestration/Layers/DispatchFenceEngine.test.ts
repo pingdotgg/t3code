@@ -20,6 +20,7 @@ import {
   makeSqlitePersistenceLive,
 } from "../../persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { CheckpointStoreDieStubLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -50,6 +51,7 @@ async function createFenceTestSystem(dbPath?: string) {
     Layer.provide(dbPath ? makeSqlitePersistenceLive(dbPath) : SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CheckpointStoreDieStubLive),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));

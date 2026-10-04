@@ -1183,3 +1183,20 @@ const makeCheckpointStore = Effect.gen(function* () {
 export const CheckpointStoreLive = Layer.effect(CheckpointStore, makeCheckpointStore).pipe(
   Layer.provideMerge(CheckoutCoordinatorLive),
 );
+
+/**
+ * Die-on-use CheckpointStore for orchestration unit tests that never fork a
+ * source worktree. Keeps the engine's snapshot dependency satisfied at layer
+ * build time without booting Git; any actual fork attempt dies loudly.
+ */
+export const CheckpointStoreDieStubLive = Layer.succeed(CheckpointStore, {
+  isGitRepository: () => Effect.die("CheckpointStore is stubbed in this test"),
+  captureCheckpoint: () => Effect.die("CheckpointStore is stubbed in this test"),
+  createWorkspaceSnapshotCommit: () => Effect.die("CheckpointStore is stubbed in this test"),
+  hasCheckpointRef: () => Effect.die("CheckpointStore is stubbed in this test"),
+  checkpointRefMatchesWorkspace: () => Effect.die("CheckpointStore is stubbed in this test"),
+  restoreCheckpoint: () => Effect.die("CheckpointStore is stubbed in this test"),
+  diffCheckpoints: () => Effect.die("CheckpointStore is stubbed in this test"),
+  diffCheckpointFiles: () => Effect.die("CheckpointStore is stubbed in this test"),
+  deleteCheckpointRefs: () => Effect.die("CheckpointStore is stubbed in this test"),
+});

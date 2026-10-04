@@ -19,6 +19,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { CheckpointStoreDieStubLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -61,6 +62,7 @@ const layer = it.layer(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-projection-agreement-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CheckpointStoreDieStubLive),
   ),
 );
 
