@@ -1700,6 +1700,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        const lastFinalAnswerByTurn = yield* Ref.make(
+          new Map<string, { readonly id: string; readonly text: string }>(),
+        );
+        const generatedImagesByTurn = yield* Ref.make(new Map<string, Map<string, string>>());
         // Native completion and the interrupt timeout share one finalization
         // path. Serialize the race so only one can publish terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
@@ -1945,6 +1949,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return updated;
             });
             yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(generatedImagesByTurn, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
               }
@@ -3060,6 +3080,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 turnItem: artifacts.turnItem,
               });
               if (finalAnswerItem && update.completed) {
+                yield* Ref.update(lastFinalAnswerByTurn, (current) =>
+                  new Map(current).set(update.turnId, { id: update.itemId, text: update.text }),
+                );
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   const updated = new Map(current);
                   const texts = new Set(updated.get(update.turnId) ?? []);
@@ -4377,6 +4400,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
 
+            if (payload.item.type === "imageGeneration") {
+              const { id, savedPath, status, failure } = payload.item;
+              if (savedPath?.trim() && status !== "failed" && failure == null) {
+                yield* Ref.update(generatedImagesByTurn, (current) => {
+                  const updated = new Map(current);
+                  const images = new Map(updated.get(payload.turnId));
+                  images.set(id, savedPath);
+                  updated.set(payload.turnId, images);
+                  return updated;
+                });
+              }
+              return;
+            }
+
             if (payload.item.type !== "agentMessage") {
               return;
             }
@@ -5301,6 +5338,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   updated.delete(input.nativeTurnId);
                   return updated;
                 });
+                yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(generatedImagesByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
@@ -5326,6 +5379,42 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
                 ? "interrupted"
                 : nativeStatus;
+            const images = (yield* Ref.get(generatedImagesByTurn)).get(payload.turn.id);
+            const firstImageItemId = images?.keys().next().value;
+            if (images !== undefined && firstImageItemId !== undefined) {
+              const finalAnswer = (yield* Ref.get(lastFinalAnswerByTurn)).get(payload.turn.id);
+              let text = finalAnswer?.text ?? "";
+              for (const path of images.values()) {
+                // Only an existing image embed counts; a plain path mention or link still needs a preview.
+                const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                if (!new RegExp(`!\\[[^\\]]*\\]\\(<?${escapedPath}>?[\\s)]`).test(text)) {
+                  text += `${text.length > 0 ? "\n\n" : ""}![](<${path.replace(/[<>]/g, "\\$&")}>)`;
+                }
+              }
+              // Settled timelines retain the final assistant message, so attach images there.
+              if (text !== (finalAnswer?.text ?? "")) {
+                const artifacts = yield* buildAgentMessageArtifacts(
+                  context,
+                  { id: finalAnswer?.id ?? firstImageItemId, text },
+                  true,
+                );
+                yield* emitProviderEvent({
+                  type: "node.updated",
+                  driver: CODEX_PROVIDER,
+                  node: artifacts.node,
+                });
+                yield* emitProviderEvent({
+                  type: "message.updated",
+                  driver: CODEX_PROVIDER,
+                  message: artifacts.message,
+                });
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: artifacts.turnItem,
+                });
+              }
+            }
             yield* finalizeCodexTurn({
               context,
               nativeTurnId: payload.turn.id,

@@ -3345,6 +3345,103 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect.each([
+    { name: "text-only final", reply: "Done.", image: {}, appends: true },
+    { name: "path mention", reply: "Saved to /tmp/generated image.png", image: {}, appends: true },
+    {
+      name: "ordinary link",
+      reply: "[Open](</tmp/generated image.png>)",
+      image: {},
+      appends: true,
+    },
+    {
+      name: "angle bracket path",
+      reply: "Done.",
+      image: { savedPath: "/tmp/a<b>.png" },
+      appends: true,
+      embed: "![](</tmp/a\\<b\\>.png>)",
+    },
+    { name: "existing image", reply: "![Generated](</tmp/generated image.png>)", image: {} },
+    {
+      name: "existing plain image",
+      reply: "![Generated](/tmp/generated.png)",
+      image: { savedPath: "/tmp/generated.png" },
+    },
+    { name: "failed status", reply: "Done.", image: { status: "failed" } },
+    {
+      name: "failure detail",
+      reply: "Done.",
+      image: { failure: { type: "usageLimitExceeded", limitId: "image-generation" } },
+    },
+    { name: "missing path", reply: "Done.", image: { savedPath: null } },
+    { name: "empty path", reply: "Done.", image: { savedPath: "" } },
+    { name: "no assistant message", reply: null, image: {} },
+  ])("projects native image generation: $name", ({ reply, image, appends, embed }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-native-image";
+        const savedPath = "/tmp/generated image.png";
+        const result = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
+        const base = finalAnswerTranscript(
+          scenario,
+          reply === null ? [] : [{ id: "image-answer", text: reply }],
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -1),
+            ...(["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              frame: {
+                method,
+                params: {
+                  threadId: `native-${scenario}-thread`,
+                  turnId: `native-${scenario}-turn`,
+                  item: {
+                    type: "imageGeneration",
+                    id: "generated-image",
+                    status: "completed",
+                    savedPath,
+                    result,
+                    ...image,
+                  },
+                },
+              },
+            })),
+            ...base.entries.slice(-1),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-native-image"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.firstTerminal;
+
+        const messages = assistantMessages(harness.events);
+        const final = messages.at(-1)?.message;
+        const markdown = embed ?? `![](<${savedPath}>)`;
+        const expected = reply === null ? markdown : appends ? `${reply}\n\n${markdown}` : reply;
+        assert.strictEqual(final?.text, expected);
+        assert.strictEqual(final?.streaming, false);
+        assert.notInclude(encodeUnknownJson(harness.events), result);
+        if (appends) {
+          assert.lengthOf(messages, 2);
+          assert.strictEqual(final?.id, messages[0]?.message.id);
+          assert.strictEqual(final?.nodeId, messages[0]?.message.nodeId);
+        } else {
+          assert.lengthOf(messages, 1);
+        }
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("suppresses a trailing empty final answer after a non-empty final answer", () =>
     Effect.scoped(
       Effect.gen(function* () {
