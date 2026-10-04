@@ -522,8 +522,10 @@ function needsRecovery(
     }
     case "runtime":
       return (
-        projection.runs.some((run) =>
-          ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+        projection.runs.some(
+          (run) =>
+            ["preparing", "starting", "running", "waiting"].includes(run.status) ||
+            (run.status === "queued" && run.queueHeld !== true),
         ) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.providerSessions.some(
@@ -915,6 +917,7 @@ type ShellThreadRow = {
   readonly blocking_failure_payload_json: string | null;
   readonly pending_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
+  readonly recent_message_preview: string | null;
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
@@ -1299,6 +1302,18 @@ function buildVisibleTurnItems(input: {
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
+  const runsById = new Map(projection.runs.map((run) => [run.id, run]));
+  const recentMessage = projection.messages.reduce<(typeof projection.messages)[number] | null>(
+    (latest, message) => {
+      const run = message.runId === null ? undefined : runsById.get(message.runId);
+      if (message.role === "system" || run?.status === "rolled_back") return latest;
+      if (latest === null) return message;
+      const time =
+        DateTime.toEpochMillis(message.createdAt) - DateTime.toEpochMillis(latest.createdAt);
+      return time > 0 || (time === 0 && message.id > latest.id) ? message : latest;
+    },
+    null,
+  );
   const providerSession =
     projection.providerSessions
       .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
@@ -1393,6 +1408,7 @@ export function threadShellFromProjection(
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
+    recentMessagePreview: recentMessage?.text.slice(0, 240) ?? "",
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
@@ -1478,6 +1494,7 @@ type ShellThreadState = {
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
   readonly latestUserMessageAt: DateTime.Utc | null;
+  readonly recentMessagePreview: string;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
@@ -1622,6 +1639,7 @@ function shellFromState(input: {
             createdAt: input.state.pendingRuntimeRequest.createdAt,
           },
     latestVisibleMessage: null,
+    recentMessagePreview: input.state.recentMessagePreview,
     latestUserMessageAt: input.state.latestUserMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
@@ -2674,7 +2692,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHEN (SELECT COUNT(*) FROM turn_anchors) >= ${THREAD_HISTORY_MAX_RAW_TURNS + 2}
                       THEN (SELECT MIN(ordinal) FROM turn_anchors)
                     ELSE 0
-                  END AS ordinal, (SELECT COUNT(*) FROM turn_anchors) AS anchors
+                  END AS ordinal
                   FROM user_anchors
                 ), selected AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type
@@ -2683,7 +2701,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
-                    WHEN (SELECT anchors FROM boundary) > 0 THEN -1
+                    WHEN (SELECT COUNT(*) FROM user_anchors) > 0 THEN -1
                     ELSE ${window.rowLimit}
                   END
                 ), retained AS (
@@ -3163,7 +3181,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           localWindow !== undefined &&
           localWindow.rowLimit > 0 &&
           projection.turnItems.length >= localWindow.rowLimit &&
-          !projection.turnItems.some(isThreadHistoryTurnStart)
+          !projection.turnItems.some(isThreadHistoryUserTurn)
         ) {
           return withLocalVisibleTurnItems(projection);
         }
@@ -3307,7 +3325,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 latest.status = 'cancelled'
                 AND json_extract(latest.payload_json, '$.startedAt') IS NULL
               )
-            ORDER BY latest.ordinal DESC, latest.run_id DESC LIMIT 1
+            -- latestExecutedRun: the run that ended last (runRanAfter).
+            ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
+              latest.ordinal DESC, latest.run_id DESC
+            LIMIT 1
           ) AND r.status = 'failed'
           INNER JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
             SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
@@ -3433,7 +3454,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ELSE 0 END
                 )
                 SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+                UNION
+                -- A held queue already went through recovery; rereading it on
+                -- every boot costs a projection read per held thread.
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status = 'queued'
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
+                    ELSE 1 END
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
@@ -3804,6 +3833,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
                     WHERE latest.thread_id = ${threadId}
                     ORDER BY latest.ordinal DESC LIMIT 1
+                  )
+                  -- Retain the latest run for each provider thread with lost
+                  -- background work, including owners used before a handoff.
+                  OR run.run_id IN (
+                    SELECT (
+                      SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
+                      WHERE ended.thread_id = ${threadId}
+                        AND ended.provider_thread_id = roster.provider_thread_id
+                        AND ended.status NOT IN ('queued', 'rolled_back')
+                      ORDER BY ended.completed_at IS NULL DESC, ended.completed_at DESC,
+                        ended.ordinal DESC
+                      LIMIT 1
+                    )
+                    FROM orchestration_v2_projection_provider_threads AS roster
+                    WHERE roster.thread_id = ${threadId}
+                      AND CASE WHEN json_valid(roster.payload_json)
+                        THEN json_array_length(roster.payload_json, '$.pendingBackgroundTasks') > 0
+                        ELSE 0 END
                   )
                   OR run.run_id IN (
                     SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
@@ -4856,6 +4903,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,
+              (
+                SELECT substr(json_extract(message.payload_json, '$.text'), 1, 240)
+                FROM orchestration_v2_projection_messages message
+                LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = message.run_id
+                WHERE message.thread_id = t.thread_id
+                  AND message.role IN ('user', 'assistant')
+                  AND (message.run_id IS NULL OR r.status <> 'rolled_back')
+                ORDER BY message.created_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS recent_message_preview,
               EXISTS (
                 SELECT 1
                 FROM orchestration_v2_projection_plans plan
@@ -4899,7 +4956,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   candidate.status = 'cancelled'
                   AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
                 )
-              ORDER BY candidate.ordinal DESC, candidate.run_id DESC LIMIT 1
+              -- latestExecutedRun: the run that ended last (runRanAfter).
+              ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
+                candidate.ordinal DESC, candidate.run_id DESC
+              LIMIT 1
             ) AND blocked.status = 'failed'
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               location === "active"
@@ -5287,6 +5347,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.last_error,
           ),
           pendingRuntimeRequest,
+          recentMessagePreview: row.recent_message_preview?.slice(0, 240) ?? "",
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null
@@ -6085,7 +6146,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             );
             const anchorLimit = (options.userTurnLimit ?? 0) + 2;
             const start =
-              turnAnchors.length > 0
+              anchors.length > 0
                 ? anchors.length < anchorLimit
                   ? rawStart
                   : anchors.at(-anchorLimit)!

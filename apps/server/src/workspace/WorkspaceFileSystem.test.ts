@@ -249,6 +249,28 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("preserves read failures during a conditional save without creating the file", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const resolvedPath = path.join(cwd, "missing.md");
+        const error = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "missing.md",
+            expectedContents: "Original",
+            contents: "My edit",
+          })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({ operation: "read", operationPath: resolvedPath });
+        expect(error.cause).toBeDefined();
+        expect(yield* fileSystem.exists(resolvedPath)).toBe(false);
+      }),
+    );
+
     it.effect("rejects a stale save without changing newer disk contents", () =>
       Effect.gen(function* () {
         const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;

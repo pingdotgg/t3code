@@ -336,13 +336,19 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (input.expectedContents !== undefined) {
-      const current = yield* fileSystem
-        .readFileString(target.absolutePath)
-        .pipe(
-          Effect.mapError(
-            () => new WorkspaceFileConflictError({ relativePath: input.relativePath }),
-          ),
-        );
+      const current = yield* fileSystem.readFileString(target.absolutePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: target.absolutePath,
+              operation: "read",
+              cause,
+            }),
+        ),
+      );
       if (current !== input.expectedContents)
         return yield* new WorkspaceFileConflictError({ relativePath: input.relativePath });
     }

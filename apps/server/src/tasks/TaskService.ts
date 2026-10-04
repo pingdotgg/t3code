@@ -156,11 +156,24 @@ const make = Effect.gen(function* () {
     }
     if (!stored) return yield* invalid("Connect a task source for this project first.");
     const { source, token } = stored;
+    let externalWriteStarted = false;
     const request: TaskTransport = Effect.fn("TaskService.request")(function* (
       path,
       body,
       method = body === undefined ? "GET" : "POST",
     ) {
+      // Read-only preflight requests (including GraphQL queries over POST) do
+      // not make a subsequent retry ambiguous. Once a mutation starts, retain
+      // the journal even if its response is lost or rejected.
+      const isGraphql = path === "graphql";
+      const isMutation = isGraphql
+        ? typeof body === "object" &&
+          body !== null &&
+          "query" in body &&
+          typeof body.query === "string" &&
+          /^\s*mutation\b/.test(body.query)
+        : method !== "GET";
+      if (isMutation) externalWriteStarted = true;
       if (source.provider === "github") {
         const response = yield* github
           .execute({
@@ -286,7 +299,15 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    const page = yield* runTaskProvider(source, input, request);
+    const page = yield* runTaskProvider(source, input, request).pipe(
+      Effect.onError(() =>
+        write && !externalWriteStarted
+          ? sql`DELETE FROM external_task_writes WHERE operation_id = ${input.operationId!}`.pipe(
+              Effect.orDie,
+            )
+          : Effect.void,
+      ),
+    );
     if (write)
       yield* sql`UPDATE external_task_writes SET state = 'confirmed', result_json = ${yield* encodeTaskResult({ ...result, ...page }).pipe(Effect.mapError(unavailable))} WHERE operation_id = ${input.operationId!}`.pipe(
         Effect.mapError(unavailable),

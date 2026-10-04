@@ -1721,6 +1721,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
+  /** Bounded list preview; full message bodies remain in thread detail. */
+  recentMessagePreview: Schema.optional(Schema.String.check(Schema.isMaxLength(240))),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   hasActionableProposedPlan: Schema.Boolean,
   // Normalized post-settlement background work for sidebar Waiting pills.

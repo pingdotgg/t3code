@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { defaultWorkspaceLayout } from "./rightPanelLayout";
 
 import {
   migratePersistedRightPanelState,
@@ -143,6 +144,23 @@ describe("rightPanelStore", () => {
   );
 
   it.each([
+    {
+      choice: "workspace layout",
+      choose: () =>
+        useRightPanelStore.getState().setWorkspaceLayout(refA, defaultWorkspaceLayout(["diff"])),
+    },
+    {
+      choice: "maximize pane",
+      choose: () =>
+        useRightPanelStore
+          .getState()
+          .setWorkspaceLayout(refA, defaultWorkspaceLayout(["diff"]), "conversation-pane"),
+    },
+    {
+      choice: "reset layout",
+      choose: () =>
+        useRightPanelStore.getState().setWorkspaceLayout(refA, defaultWorkspaceLayout(["diff"])),
+    },
     { choice: "file", choose: () => useRightPanelStore.getState().openFile(refA, "src/app.ts") },
     {
       choice: "pull request",

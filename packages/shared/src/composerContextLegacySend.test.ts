@@ -64,6 +64,22 @@ const annotation = {
 } satisfies ComposerContextRecord;
 
 describe("serializeLegacyContextMessage", () => {
+  it("preserves stale review source metadata across the legacy transport", () => {
+    const record = { ...review, sourceRevision: 'revision<&"1', sourceStale: true };
+    const legacy = serializeLegacyContextMessage({
+      text: formatComposerContextReference(record),
+      records: [record],
+    });
+    const reopened = upgradeLegacyContextMessage(legacy);
+    expect(reopened.records).toHaveLength(1);
+    expect(reopened.records[0]).toMatchObject({
+      sourceRevision: record.sourceRevision,
+      sourceStale: true,
+      filePath: review.filePath,
+      diff: review.diff,
+    });
+  });
+
   it("carries terminal payloads an older server would otherwise discard", () => {
     const text = `Look at ${formatComposerContextReference(terminal)} please`;
     const legacy = serializeLegacyContextMessage({ text, records: [terminal] });

@@ -37,9 +37,7 @@ export interface QuitShortcutOptions {
   readonly quit: () => void;
 }
 
-export function makeQuitShortcutHandler(
-  options: QuitShortcutOptions,
-): (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => void {
+export function makeQuitShortcutHandler(options: QuitShortcutOptions) {
   const modifierKey = options.platform === "darwin" ? "meta" : "control";
   let watchdog: NodeJS.Timeout | undefined;
   let holding = false;
@@ -99,7 +97,9 @@ export function makeQuitShortcutHandler(
     watchdog = setTimeout(quitNow, quietPeriodMs);
   };
 
-  return (event, input) => {
+  let disposed = false;
+  const handler = (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => {
+    if (disposed) return;
     const key = input.key.toLowerCase();
     if (input.type === "keyUp") {
       if (key === "q") {
@@ -218,4 +218,36 @@ export function makeQuitShortcutHandler(
       },
     );
   };
+  return Object.assign(handler, {
+    dispose: () => {
+      disposed = true;
+      release();
+      clearWatchdog();
+      lastPressAt = 0;
+    },
+  });
+}
+
+export function installQuitShortcutHandler(
+  window: {
+    webContents: {
+      on(
+        event: "before-input-event",
+        listener: (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => void,
+      ): unknown;
+      removeListener(
+        event: "before-input-event",
+        listener: (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => void,
+      ): unknown;
+    };
+    once(event: "closed", listener: () => void): unknown;
+  },
+  options: QuitShortcutOptions,
+) {
+  const handler = makeQuitShortcutHandler(options);
+  window.webContents.on("before-input-event", handler);
+  window.once("closed", () => {
+    window.webContents.removeListener("before-input-event", handler);
+    handler.dispose();
+  });
 }

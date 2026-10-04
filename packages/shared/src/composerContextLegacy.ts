@@ -259,6 +259,8 @@ function reviewRecord(
     startIndex: Math.min(Number(startIndex), Number(endIndex)),
     endIndex: Math.max(Number(startIndex), Number(endIndex)),
     rangeLabel,
+    ...(attributes.sourceRevision ? { sourceRevision: attributes.sourceRevision } : {}),
+    ...(attributes.sourceStale === "true" ? { sourceStale: true } : {}),
     text: rawBody.slice(0, fence?.index ?? rawBody.length).trim(),
     diff: fence?.[3] ?? "",
     fenceLanguage: fence?.[2]?.trim() || "diff",

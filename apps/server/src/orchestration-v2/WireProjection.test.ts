@@ -143,6 +143,9 @@ describe("orchestration V2 wire projection", () => {
           id: MessageId.make("message-shell-budget"),
           role: "assistant",
           text: "x".repeat(1_000_000),
+          runId: null,
+          nodeId: null,
+          createdAt: now,
           updatedAt: now,
         },
       ],
@@ -157,6 +160,7 @@ describe("orchestration V2 wire projection", () => {
     const shell = threadShellFromProjection(projection);
 
     expect(shell.latestVisibleMessage).toBeNull();
+    expect(shell.recentMessagePreview).toBe("x".repeat(240));
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
   });
 

@@ -29,7 +29,7 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { installQuitShortcutHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
@@ -603,8 +603,32 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
+    const installWindowQuitShortcut = (target: typeof window) =>
+      installQuitShortcutHandler(target, {
+        platform: environment.platform,
+        getMode: () =>
+          runPromise(
+            Effect.map(
+              clientSettings.get,
+              Option.match({
+                onNone: () => DEFAULT_CLIENT_SETTINGS.confirmQuit,
+                onSome: (settings) => settings.confirmQuit,
+              }),
+            ),
+          ),
+        notify: (hint) => {
+          // The dashboard is a portal; its confirmation UI lives in the opener.
+          if (!window.isDestroyed()) window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
+        },
+        concealWindow: () => concealPendingQuitWindow(target),
+        quit: () => {
+          void runPromise(electronApp.quit);
+        },
+      });
+    installWindowQuitShortcut(window);
     window.webContents.on("did-create-window", (child, details) => {
       if (details.frameName !== "t3-agent-dashboard") return;
+      installWindowQuitShortcut(child);
       child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       child.webContents.on("will-navigate", (event) => event.preventDefault());
       const closeDashboard = () => {
@@ -659,34 +683,7 @@ export const make = Effect.gen(function* () {
     // close-terminal shortcut can outlive the terminal that handled its first
     // press, so reject repeats before they reach the native window accelerator.
     // Deliberate presses still flow through the renderer or native menu.
-    // Intercept the quit accelerator before the native menu sees it and apply
-    // the configured direct, hold, or double-press behavior.
-    const quitShortcutHandler = makeQuitShortcutHandler({
-      platform: environment.platform,
-      getMode: () =>
-        runPromise(
-          Effect.map(
-            clientSettings.get,
-            Option.match({
-              onNone: () => DEFAULT_CLIENT_SETTINGS.confirmQuit,
-              onSome: (settings) => settings.confirmQuit,
-            }),
-          ),
-        ),
-      notify: (hint) => {
-        if (!window.isDestroyed()) {
-          window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
-        }
-      },
-      // Keep the transparent window focused until the physical shortcut is
-      // released so its remaining repeats cannot reach the next app.
-      concealWindow: () => concealPendingQuitWindow(window),
-      quit: () => {
-        void runPromise(electronApp.quit);
-      },
-    });
     window.webContents.on("before-input-event", (event, input) => {
-      quitShortcutHandler(event, input);
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {

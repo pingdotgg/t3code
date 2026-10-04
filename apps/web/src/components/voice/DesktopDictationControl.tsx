@@ -3,6 +3,7 @@ import { Mic, Square, X } from "lucide-react";
 import type { DesktopDictationResult, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   VoiceInputController,
+  voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
@@ -22,6 +23,7 @@ export function DesktopDictationControl(props: {
   readDraft: () => { text: string; cursor: number };
   insertDraft: (text: string, cursor: number) => void;
   composerFocused: () => boolean;
+  onStateChange: (ownerKey: string, state: VoiceInputState) => void;
 }) {
   const settings = useClientSettings();
   const updateSettings = useUpdateClientSettings();
@@ -35,7 +37,8 @@ export function DesktopDictationControl(props: {
   const [message, setMessage] = useState("");
   const [transcript, setTranscript] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [executable, setExecutable] = useState(settings.dictationExecutablePath);
+  const [executableEdit, setExecutable] = useState<string | null>(null);
+  const executable = executableEdit ?? settings.dictationExecutablePath;
   const latest = useRef({ props, settings });
   useLayoutEffect(() => {
     latest.current = { props, settings };
@@ -45,8 +48,7 @@ export function DesktopDictationControl(props: {
   const held = useRef<string | null>(null);
   const modelOperation = useRef<string | null>(null);
   const bridge = window.desktopBridge?.dictation;
-  const active =
-    voice.phase === "preparing" || voice.phase === "recording" || voice.phase === "transcribing";
+  const active = voiceInputBlocksSubmission(voice);
   const checkModel = useCallback(async () => {
     if (!bridge) return null;
     try {
@@ -159,7 +161,10 @@ export function DesktopDictationControl(props: {
         }
       },
       onStateChange: (state) => {
-        if (mounted.current) setVoice(state);
+        if (mounted.current) {
+          latest.current.props.onStateChange(props.ownerKey, state);
+          setVoice(state);
+        }
       },
       getTranscriber: () => ({
         prepare: async ({ signal }) => {
@@ -212,6 +217,11 @@ export function DesktopDictationControl(props: {
     return () => {
       mounted.current = false;
       instance.dispose();
+      latest.current.props.onStateChange(props.ownerKey, {
+        phase: "idle",
+        error: null,
+        errorAction: null,
+      });
       void recorder.release();
       if (modelOperation.current)
         void bridge({ action: "cancel", operationId: modelOperation.current });

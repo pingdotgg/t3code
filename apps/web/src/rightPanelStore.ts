@@ -616,13 +616,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       setWorkspaceLayout: (ref, workspaceLayout, maximizedPaneId = null) =>
-        set((state) => ({
-          byThreadKey: updateThreadStateMap(state.byThreadKey, scopedThreadKey(ref), (current) => ({
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             workspaceLayout,
             maximizedPaneId,
           })),
-        })),
+        ),
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {

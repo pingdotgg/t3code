@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import * as NodeEvents from "node:events";
 
 import {
   makeQuitShortcutHandler,
+  installQuitShortcutHandler,
   QUIT_DOUBLE_PRESS_MS,
   QUIT_HOLD_DURATION_MS,
   QUIT_HOLD_RELEASE_GRACE_MS,
@@ -68,6 +70,57 @@ describe("makeQuitShortcutHandler", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it.each(["darwin", "win32", "linux"] as const)(
+    "protects a dashboard window from the native quit accelerator on %s",
+    async (platform) => {
+      const window = Object.assign(new NodeEvents.EventEmitter(), {
+        webContents: new NodeEvents.EventEmitter(),
+      });
+      const quit = vi.fn();
+      const notify = vi.fn();
+      const preventDefault = vi.fn();
+      installQuitShortcutHandler(window, {
+        platform,
+        getMode: async () => "double-click",
+        notify,
+        quit,
+        concealWindow: vi.fn(),
+      });
+      const input = makeInput({ meta: platform === "darwin", control: platform !== "darwin" });
+      window.webContents.emit("before-input-event", { preventDefault }, input);
+      await Promise.resolve();
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(quit).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(DOUBLE_CLICK_DOWN);
+      window.webContents.emit("before-input-event", { preventDefault }, input);
+      expect(quit).toHaveBeenCalledOnce();
+      window.emit("closed");
+      expect(window.webContents.listenerCount("before-input-event")).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("cancels a pending mode read when a dashboard closes", async () => {
+    const window = Object.assign(new NodeEvents.EventEmitter(), {
+      webContents: new NodeEvents.EventEmitter(),
+    });
+    const mode = Promise.withResolvers<QuitConfirmationMode>();
+    const quit = vi.fn();
+    installQuitShortcutHandler(window, {
+      platform: "darwin",
+      getMode: () => mode.promise,
+      notify: vi.fn(),
+      quit,
+      concealWindow: vi.fn(),
+    });
+    window.webContents.emit("before-input-event", { preventDefault: vi.fn() }, makeInput({}));
+    window.emit("closed");
+    mode.resolve("direct");
+    await Promise.resolve();
+    expect(quit).not.toHaveBeenCalled();
+    expect(window.webContents.listenerCount("before-input-event")).toBe(0);
   });
 
   it("shows the hint on a tap without quitting, even when the release is never seen", async () => {

@@ -63,6 +63,89 @@ const comment: TaskRequest = {
   comment: "Review this",
   operationId: "write-one",
 };
+it.effect(
+  "allows corrected requests to reuse an operation ID when validation sent no write",
+  () => {
+    let writes = 0;
+    return Effect.gen(function* () {
+      yield* migration;
+      const service = yield* TaskService;
+      yield* service.configure({
+        projectId,
+        source: { provider: "github", baseUrl: "https://github.com", scope: "org/repo" },
+      });
+      for (const invalidRequest of [
+        { ...comment, id: "https://github.com/another/repo/issues/7" },
+        { ...comment, action: "update" as const, changes: { priority: "1" } },
+      ]) {
+        const error = yield* service.execute(invalidRequest).pipe(Effect.flip);
+        assert.equal(error.code, "invalid");
+        assert.equal(writes, 0);
+      }
+      yield* service.execute(comment);
+      yield* service.execute(comment);
+      assert.equal(writes, 1);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provide(
+            dependencies(() =>
+              Effect.sync(() => {
+                writes++;
+                return result;
+              }),
+            ),
+          ),
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "allows retry after Linear scope preflight fails, but never repeats an ambiguous mutation",
+  () => {
+    let requests = 0;
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests++;
+        const response =
+          requests === 1
+            ? { data: { issue: { team: { id: "other-team" } } } }
+            : requests === 2
+              ? { data: { issue: { team: { id: "team-id" } } } }
+              : { error: "Response lost" };
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(encodeJson(response), { status: requests === 3 ? 502 : 200 }),
+        );
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* migration;
+      const service = yield* TaskService;
+      yield* service.configure({
+        projectId,
+        source: { provider: "linear", baseUrl: "https://linear.app", scope: "team-id" },
+        token: Redacted.make("private-token"),
+      });
+      assert.equal((yield* service.execute(comment).pipe(Effect.flip)).code, "invalid");
+      assert.equal(requests, 1);
+      assert.equal((yield* service.execute(comment).pipe(Effect.flip)).code, "unavailable");
+      assert.equal(requests, 3);
+      assert.equal((yield* service.execute(comment).pipe(Effect.flip)).code, "uncertain-write");
+      assert.equal(requests, 3);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provide(dependencies(() => Effect.die("Unexpected GitHub request"), http)),
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+        ),
+      ),
+    );
+  },
+);
 it.effect("journals confirmed external writes and rejects reuse for a different change", () => {
   let writes = 0;
   return Effect.gen(function* () {

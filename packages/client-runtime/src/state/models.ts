@@ -242,7 +242,8 @@ export function presentThreadShell(
     latestRun,
     runtime: shellRuntime(thread),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
-    recentMessage: thread.latestVisibleMessage?.text.slice(0, 240) ?? "",
+    recentMessage:
+      thread.recentMessagePreview ?? thread.latestVisibleMessage?.text.slice(0, 240) ?? "",
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&

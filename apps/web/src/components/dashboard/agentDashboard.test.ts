@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
 import { RunId } from "@t3tools/contracts";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { makeThreadFixture } from "../../test-fixtures";
 import { classifyDashboardThread, dashboardThreadMatches } from "./agentDashboard";
 
 describe("agent dashboard", () => {
   const thread = makeThreadFixture();
+  it("presents shell previews without requiring a full message or thread detail", () => {
+    const hydrated = presentThreadShell(thread.environmentId, {
+      ...thread.source,
+      latestVisibleMessage: null,
+      recentMessagePreview: "Fixing the parser",
+    });
+    expect(hydrated.recentMessage).toBe("Fixing the parser");
+    const updated = presentThreadShell(thread.environmentId, {
+      ...hydrated.source,
+      recentMessagePreview: "Parser tests now pass",
+    });
+    expect(updated.recentMessage).toBe("Parser tests now pass");
+    const legacy = { ...thread.source };
+    delete legacy.recentMessagePreview;
+    expect(presentThreadShell(thread.environmentId, legacy).recentMessage).toBe("");
+  });
   const completed = {
     ...thread,
     latestRun: {

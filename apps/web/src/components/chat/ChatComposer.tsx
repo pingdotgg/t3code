@@ -1,4 +1,5 @@
 import { DesktopDictationControl } from "../voice/DesktopDictationControl";
+import { useDictationSubmission } from "../voice/useDictationSubmission";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -1785,6 +1786,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
+  const {
+    blocked: dictationActive,
+    isSubmissionBlocked: dictationBlocksSubmission,
+    onStateChange: onDictationStateChange,
+  } = useDictationSubmission(composerDraftTargetKey);
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
   // the real phase keeps reading `props.threadSyncPhase`.
@@ -2158,6 +2164,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
   );
   const sendDisabledReason =
+    (dictationActive ? "Finish or cancel dictation before sending." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -4102,7 +4109,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       dispatchMode?: ComposerDispatchMode,
       submissionIntent?: ComposerSubmissionIntent,
     ) => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSendDisabled || dictationBlocksSubmission()) {
         event?.preventDefault();
         return;
       }
@@ -4166,6 +4173,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       attachmentTargetKey,
       blurMobileComposerAfterSend,
       isSendDisabled,
+      dictationBlocksSubmission,
       noProviderAvailable,
       onSend,
       settings.followUpBehavior,
@@ -7470,6 +7478,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <DesktopDictationControl
                       key={composerDraftTargetKey}
                       ownerKey={composerDraftTargetKey}
+                      onStateChange={onDictationStateChange}
                       disabled={
                         isComposerApprovalState ||
                         !!activePendingProgress ||

@@ -1,5 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import * as Cause from "effect/Cause";
+import type { ProjectReadFileResult } from "@t3tools/contracts";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -10,7 +13,18 @@ const { writeFile, confirmFile } = vi.hoisted(() => ({
 }));
 vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }));
-vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
+vi.mock("./projectFilesQueryState", () => ({
+  confirmProjectFileQueryData: confirmFile,
+  optimisticFileAtom: (...identity: string[]) => draftAtoms(JSON.stringify(identity)),
+}));
+const draftAtoms = Atom.family((_key: string) =>
+  Atom.make<{
+    data: ProjectReadFileResult;
+    expectedContents: string;
+    confirmedAgainst: undefined;
+    saveError?: string;
+  } | null>(null).pipe(Atom.keepAlive),
+);
 
 import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -31,7 +45,26 @@ function ChangeSource(_props: { onChange: (contents: string) => void }) {
 
 function FileSurface(props: Parameters<typeof useFileSaveCoordinator>[0]) {
   const coordinator = useFileSaveCoordinator(props);
-  return <ChangeSource onChange={(contents) => coordinator.change(contents)} />;
+  return (
+    <ChangeSource
+      onChange={(contents) => {
+        appAtomRegistry.set(
+          draftAtoms(JSON.stringify([props.environmentId, props.cwd, props.relativePath])),
+          {
+            expectedContents: "disk contents",
+            confirmedAgainst: undefined,
+            data: {
+              relativePath: props.relativePath,
+              contents,
+              byteLength: contents.length,
+              truncated: false,
+            },
+          },
+        );
+        coordinator.change(contents);
+      }}
+    />
+  );
 }
 
 function mount(props = defaultProps) {
@@ -55,6 +88,7 @@ beforeEach(() => {
   writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   confirmFile.mockReset();
   onPendingChange.mockReset();
+  appAtomRegistry.reset();
 });
 
 afterEach(async () => {
@@ -71,7 +105,12 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(writeFile).toHaveBeenCalledExactlyOnceWith({
       environmentId,
-      input: { cwd: "/workspace", relativePath: "file.txt", contents: "AUDIT7907NATIVE\n" },
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "AUDIT7907NATIVE\n",
+        expectedContents: "disk contents",
+      },
     });
     expect(confirmFile).toHaveBeenCalledExactlyOnceWith(
       environmentId,
@@ -89,7 +128,12 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(writeFile).toHaveBeenCalledExactlyOnceWith({
       environmentId,
-      input: { cwd: "/workspace", relativePath: "README.md", contents: "- [x] task\n" },
+      input: {
+        cwd: "/workspace",
+        relativePath: "README.md",
+        contents: "- [x] task\n",
+        expectedContents: "disk contents",
+      },
     });
   });
 
@@ -146,7 +190,12 @@ describe("file-save React lifecycle", () => {
     expect(writeFile.mock.calls.map(([request]) => request)).toEqual([
       {
         environmentId,
-        input: { cwd: "/workspace", relativePath: "file.txt", contents: "old file edit" },
+        input: {
+          cwd: "/workspace",
+          relativePath: "file.txt",
+          contents: "old file edit",
+          expectedContents: "disk contents",
+        },
       },
       {
         environmentId: nextProps.environmentId,
@@ -154,6 +203,7 @@ describe("file-save React lifecycle", () => {
           cwd: nextProps.cwd,
           relativePath: nextProps.relativePath,
           contents: "new file edit",
+          expectedContents: "disk contents",
         },
       },
     ]);
@@ -170,5 +220,31 @@ describe("file-save React lifecycle", () => {
     await vi.runAllTimersAsync();
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(writeFile.mock.calls[0]![0].input.contents).toBe("current contents");
+  });
+
+  it("skips a discarded draft when its debounce fires", async () => {
+    mount();
+    changeHandler()("discarded edit");
+    appAtomRegistry.set(
+      draftAtoms(JSON.stringify([environmentId, "/workspace", "file.txt"])),
+      null,
+    );
+    await vi.runAllTimersAsync();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("retains the optimistic draft and the save error after a conflict", async () => {
+    writeFile.mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("Changed on disk"))));
+    mount();
+    changeHandler()("unsaved edit");
+    await vi.runAllTimersAsync();
+    expect(
+      appAtomRegistry.get(draftAtoms(JSON.stringify([environmentId, "/workspace", "file.txt"]))),
+    ).toMatchObject({
+      data: { contents: "unsaved edit" },
+      expectedContents: "disk contents",
+      saveError: "Changed on disk",
+    });
+    expect(confirmFile).not.toHaveBeenCalled();
   });
 });
