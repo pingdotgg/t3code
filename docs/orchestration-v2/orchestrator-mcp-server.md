@@ -7,12 +7,13 @@ agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
-- cancel an active delegated task; and
+- cancel an active delegated task;
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
-- send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- send or steer follow-up messages;
+- wait for or interrupt ordinary thread runs; and
+- create and manage recurring scheduled tasks.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -34,8 +35,8 @@ The orchestration tools share the existing authenticated HTTP MCP endpoint:
 http://127.0.0.1:<server-port>/mcp
 ```
 
-The provider-visible server key is `t3-code`. The endpoint registers both the
-preview toolkit and the orchestration toolkit.
+The provider-visible server key is `t3-code`. The endpoint registers the
+orchestration toolkit alongside preview, project, and other app toolkits.
 
 Before `ProviderSessionManager` opens a new V2 provider session, it asks
 `McpSessionRegistry` for a credential scoped to:
@@ -183,7 +184,8 @@ provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+See [OrchestratorToolkit](../../apps/server/src/mcp/toolkits/orchestrator/tools.ts)
+for the current registered orchestration tools and their contracts.
 
 ### `orchestrator_capabilities`
 
@@ -287,6 +289,17 @@ even when `task_status` reports `hasPendingChildRuns: true`. Published task resu
 remain available. It accepts an optional cancellation reason. Use
 `t3_thread_interrupt` to stop a later active run.
 
+### Recurring scheduled tasks
+
+`schedule_task` creates persistent recurring work that can run without an active
+provider turn. Runs post to the calling thread by default; set
+`bindToCurrentThread: false` to create a fresh top-level thread per run. Provider,
+model, and runtime settings inherit from the calling thread.
+
+`list_scheduled_tasks` lists tasks in the calling thread's project. Use a returned
+`scheduledTaskId` with `update_scheduled_task` to change the task or pause and
+resume it through `enabled`, or with `delete_scheduled_task` to remove it.
+
 ### `create_threads`
 
 Creates between one and twenty ordinary top-level T3 threads:
@@ -314,6 +327,9 @@ sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
 without a prompt remain idle.
 
 ### `t3_thread_launch`
+
+This tool belongs to [ProjectToolkit](../../apps/server/src/mcp/toolkits/project/tools.ts),
+which shares the `/mcp` endpoint.
 
 Launches one ordinary top-level thread through the app's launch service. Use an
 explicit `workspaceStrategy` to create a new worktree (`worktree` with `baseRef`),
@@ -496,6 +512,7 @@ Coverage includes:
 - spawn and result context transfers;
 - async status polling;
 - cancellation;
+- recurring-task creation, project-scoped listing, pausing, and deletion;
 - batch ordinary-thread creation;
 - project-scoped thread listing and timeline reads;
 - ordinary-thread send, wait, steering, and interruption;
