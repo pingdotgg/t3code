@@ -339,6 +339,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const admissionDeps: WorkspaceAdmissionDeps = {
     findThread: (threadId) => readModel.threads.find((entry) => entry.id === threadId),
     findProject: (projectId) => readModel.projects.find((entry) => entry.id === projectId),
+    listThreads: () => readModel.threads,
     claimOwnership: (input) => workspaceOwnership.claim(input),
     hasCleanupReservationByPath: (canonicalPath) =>
       worktreeCleanupJobs.hasReservationByPath(canonicalPath),
