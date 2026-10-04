@@ -2,17 +2,23 @@ import { changeRequestUrlFor as changeRequestWebUrl } from "@t3tools/shared/chan
 export { changeRequestUrlFor as changeRequestWebUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   pullRequestHostOf,
+  type PullRequestPreview,
   type ScopedThreadRef,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useDebouncedValue } from "~/state/queries";
+import { useEnvironmentQuery } from "~/state/query";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { resolvePullRequestState } from "./pullRequestPresentation";
 import { Atom } from "effect/unstable/reactivity";
 import { Button } from "../ui/button";
 import {
@@ -39,6 +45,9 @@ const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).
 export function openLinkPullRequestDialog(threadRef: ScopedThreadRef): void {
   appAtomRegistry.set(linkPullRequestDialogThreadAtom, threadRef);
 }
+
+/** Long enough to skip the reads for a number still being typed. */
+const LOOKUP_DELAY_MS = 300;
 
 interface LinkPullRequestDialogProps {
   open: boolean;
@@ -151,6 +160,7 @@ function LinkPullRequestDialog({
     };
   }, [environmentProjects, projectId]);
   const linking = usePullRequestLinking(threadRef.environmentId);
+  const thread = useThreadShell(threadRef);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
@@ -172,9 +182,38 @@ function LinkPullRequestDialog({
     [linking, ownProject, reference],
   );
 
+  // Looked up once typing pauses, so each keystroke does not cost a host read.
+  const target = resolved !== null && "link" in resolved ? resolved.link : null;
+  const settledUrl = useDebouncedValue(target?.url ?? null, LOOKUP_DELAY_MS);
+  const lookup = target !== null && settledUrl === target.url ? target : null;
+  const previewTarget = useMemo(() => {
+    // Reparsed for the authority, which keeps a non-default port the host alone drops.
+    const link = lookup === null ? null : parseChangeRequestUrl(lookup.url);
+    if (link === null) return null;
+    const project = findProjectOnChangeRequestHost(environmentProjects, link);
+    return project === undefined
+      ? null
+      : {
+          environmentId: threadRef.environmentId,
+          input: {
+            projectId: project.id,
+            host: link.authority ?? link.host,
+            repository: link.repository,
+            number: link.number,
+          },
+        };
+  }, [environmentProjects, lookup, threadRef.environmentId]);
+  const previewQuery = useEnvironmentQuery(
+    previewTarget === null ? null : pullRequestEnvironment.preview(previewTarget),
+  );
+  const preview = lookup === null ? null : previewQuery.data;
+  const previewError = lookup === null ? null : previewQuery.error;
+  const alreadyLinked = target !== null && linking.isLinked(thread ?? null, target.url);
+  const lookingUp = target !== null && preview === null && previewError === null;
+
   const submit = useCallback(async () => {
     setDirty(true);
-    if (resolved === null || "error" in resolved) return;
+    if (resolved === null || "error" in resolved || alreadyLinked) return;
     setSubmitError(null);
     setPending(true);
     try {
@@ -186,7 +225,7 @@ function LinkPullRequestDialog({
       setPending(false);
     }
     onOpenChange(false);
-  }, [linking, onOpenChange, resolved, threadRef]);
+  }, [alreadyLinked, linking, onOpenChange, resolved, threadRef]);
 
   const validation = !dirty
     ? null
@@ -196,7 +235,7 @@ function LinkPullRequestDialog({
         ? "Use a pull request URL, 123, or #123."
         : "error" in resolved
           ? resolved.error
-          : null;
+          : previewError;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
@@ -215,6 +254,7 @@ function LinkPullRequestDialog({
             value={reference}
             onChange={(event) => {
               setDirty(true);
+              setSubmitError(null);
               setReference(event.target.value);
             }}
             onKeyDown={(event) => {
@@ -223,13 +263,13 @@ function LinkPullRequestDialog({
               void submit();
             }}
           />
-          {resolved !== null && "link" in resolved ? (
-            <p className="truncate text-muted-foreground text-xs">
-              {resolved.link.host}/{resolved.link.repository} #{resolved.link.number}
-            </p>
+          {preview !== null ? (
+            <PullRequestLinkPreview preview={preview} alreadyLinked={alreadyLinked} />
+          ) : lookingUp ? (
+            <p className="text-muted-foreground text-xs">Looking up the pull request...</p>
           ) : null}
-          {(validation ?? submitError) ? (
-            <p className="text-destructive text-xs">{validation ?? submitError}</p>
+          {(submitError ?? validation) ? (
+            <p className="text-destructive text-xs">{submitError ?? validation}</p>
           ) : null}
         </DialogPanel>
         <DialogFooter>
@@ -246,12 +286,44 @@ function LinkPullRequestDialog({
             type="button"
             size="sm"
             onClick={() => void submit()}
-            disabled={pending || resolved === null || "error" in resolved}
+            disabled={pending || resolved === null || "error" in resolved || alreadyLinked}
           >
             {pending ? "Linking..." : "Link"}
           </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/** The pull request the input names, as its host reports it, so the user links what they meant. */
+function PullRequestLinkPreview({
+  preview,
+  alreadyLinked,
+}: {
+  preview: PullRequestPreview;
+  alreadyLinked: boolean;
+}) {
+  const state = resolvePullRequestState({ state: preview.state, isDraft: preview.isDraft });
+  return (
+    <div className="flex min-w-0 items-start gap-2.5 rounded-lg border border-border/70 px-3 py-2.5">
+      <state.Icon aria-hidden className={`mt-0.5 size-4 shrink-0 ${state.toneClassName}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+          <span className="min-w-0 truncate font-mono">
+            {preview.repository}#{preview.number}
+          </span>
+          <span aria-hidden>·</span>
+          <span className="shrink-0">{state.label}</span>
+          {alreadyLinked ? (
+            <span className="ml-auto shrink-0">Already linked to this thread</span>
+          ) : null}
+        </div>
+        <p className="mt-0.5 line-clamp-2 font-medium text-sm leading-snug">{preview.title}</p>
+        <p className="mt-1 truncate text-muted-foreground text-xs">
+          {preview.author?.login ?? "ghost"} · opened {formatRelativeTimeLabel(preview.createdAt)}
+        </p>
+      </div>
+    </div>
   );
 }
