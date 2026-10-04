@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -143,8 +143,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         return yield* serverEnvironment.getDescriptor;
       }).pipe(
         Effect.provide(makeServerEnvironmentLayer(baseDir)),
-        Effect.provideService(HostProcessPlatform, host.platform),
-        Effect.provideService(HostProcessArchitecture, host.architecture),
+        Effect.provideService(HostProcess.HostProcessPlatform, host.platform),
+        Effect.provideService(HostProcess.HostProcessArchitecture, host.architecture),
       );
 
       expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
