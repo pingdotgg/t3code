@@ -1568,6 +1568,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(queuedMessage.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: queuedMessage.scheduledTaskId }),
+          ...(queuedMessage.settleOnCompletion === undefined
+            ? {}
+            : { settleOnCompletion: queuedMessage.settleOnCompletion }),
           ...(queuedMessage.senderThreadId === undefined
             ? {}
             : { senderThreadId: queuedMessage.senderThreadId }),
@@ -3742,6 +3745,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(input.scheduledTaskId === undefined
               ? {}
               : { scheduledTaskId: input.scheduledTaskId }),
+            ...(!("settleOnCompletion" in input) || typeof input.settleOnCompletion !== "boolean"
+              ? {}
+              : { settleOnCompletion: input.settleOnCompletion }),
             ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
             id: input.messageId,
             threadId: input.command.threadId,
@@ -4664,6 +4670,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.settleOnCompletion === undefined
+            ? {}
+            : { settleOnCompletion: command.settleOnCompletion }),
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
@@ -4848,6 +4857,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.settleOnCompletion === undefined
+            ? {}
+            : { settleOnCompletion: command.settleOnCompletion }),
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
@@ -5188,6 +5200,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.settleOnCompletion === undefined
+            ? {}
+            : { settleOnCompletion: command.settleOnCompletion }),
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
@@ -5211,6 +5226,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.settleOnCompletion === undefined
+            ? {}
+            : { settleOnCompletion: command.settleOnCompletion }),
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
@@ -5882,6 +5900,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
+        ...(command.settleOnCompletion === undefined
+          ? {}
+          : { settleOnCompletion: command.settleOnCompletion }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         id: command.messageId,
         threadId: command.threadId,
@@ -5903,6 +5924,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
+        ...(command.settleOnCompletion === undefined
+          ? {}
+          : { settleOnCompletion: command.settleOnCompletion }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
         threadId: command.threadId,
@@ -7189,6 +7213,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(queuedMessage.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: queuedMessage.scheduledTaskId }),
+        ...(queuedMessage.settleOnCompletion === undefined
+          ? {}
+          : { settleOnCompletion: queuedMessage.settleOnCompletion }),
         ...(queuedMessage.senderThreadId === undefined
           ? {}
           : { senderThreadId: queuedMessage.senderThreadId }),

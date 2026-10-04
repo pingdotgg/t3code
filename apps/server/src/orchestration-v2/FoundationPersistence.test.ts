@@ -22,6 +22,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -128,6 +129,194 @@ function threadCreatedEvent(input: {
     payload: input.thread,
   };
 }
+
+it.effect.each([
+  "enabled",
+  "disabled",
+  "manual-steer",
+  "same-transaction-steer",
+  "newer-queued",
+  "newer-running",
+  "newer-completed",
+  "steered-older-run",
+] as const)("scheduled completion settlement: %s", (scenario) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make(`thread:scheduled-settle:${scenario}`);
+    const runId = RunId.make(`run:${threadId}`);
+    const messageId = MessageId.make(`message:${threadId}`);
+    const run: OrchestrationV2Run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: messageId,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "waiting",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const scheduledMessage = {
+      id: messageId,
+      threadId,
+      runId,
+      nodeId: null,
+      role: "user" as const,
+      text: "Scheduled work",
+      attachments: [],
+      streaming: false,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      scheduledTaskId: ScheduledTaskId.make("task:settle"),
+      settleOnCompletion: scenario !== "disabled",
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* sink.write({
+      events: [
+        threadCreatedEvent({
+          id: `event:${threadId}:thread`,
+          thread: makeThread(threadId, now),
+          now,
+        }),
+        {
+          id: EventId.make(`event:${threadId}:run`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: run,
+        },
+        {
+          id: EventId.make(`event:${threadId}:message`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: scheduledMessage,
+        },
+      ],
+    });
+    if (scenario === "manual-steer") {
+      const { scheduledTaskId: _task, settleOnCompletion: _settle, ...manual } = scheduledMessage;
+      const later = DateTime.add(now, { milliseconds: 1 });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:${threadId}:manual`),
+            type: "message.updated",
+            threadId,
+            occurredAt: later,
+            payload: {
+              ...manual,
+              id: MessageId.make(`manual:${threadId}`),
+              createdAt: later,
+              updatedAt: later,
+            },
+          },
+        ],
+      });
+    }
+    if (scenario.startsWith("newer-") || scenario === "steered-older-run") {
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:${threadId}:newer`),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...run,
+              id: RunId.make(`newer:${threadId}`),
+              ordinal: 2,
+              status:
+                scenario === "newer-running"
+                  ? "running"
+                  : scenario === "newer-completed"
+                    ? "completed"
+                    : "queued",
+            },
+          },
+        ],
+      });
+    }
+    const completed = { ...run, status: "completed" as const, completedAt: now };
+    const committed = yield* sink.commitCommand({
+      commandId: CommandId.make(`complete:${threadId}`),
+      threadId,
+      commandType: "checkpoint.capture",
+      acceptedAt: now,
+      effects: [],
+      events: [
+        ...(scenario === "same-transaction-steer"
+          ? [
+              {
+                id: EventId.make(`event:${threadId}:completion-steer`),
+                type: "message.updated" as const,
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...scheduledMessage,
+                  id: MessageId.make(`manual:${threadId}`),
+                  settleOnCompletion: false,
+                  createdAt: DateTime.add(now, { milliseconds: 1 }),
+                },
+              },
+            ]
+          : []),
+        {
+          id: EventId.make(`event:${threadId}:completed`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: completed,
+        },
+      ],
+    });
+    assert.equal(
+      committed.storedEvents.some((stored) => stored.event.type === "thread.settled"),
+      scenario === "enabled",
+    );
+    assert.equal(
+      (yield* projections.getThread(threadId)).settledOverride,
+      scenario === "enabled" ? "settled" : null,
+    );
+    if (scenario === "enabled") {
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:${threadId}:unsettle`),
+            type: "thread.unsettled",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...(yield* projections.getThread(threadId)),
+              settledOverride: "active",
+              settledAt: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${threadId}:duplicate-completion`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: completed,
+          },
+        ],
+      });
+      assert.equal((yield* projections.getThread(threadId)).settledOverride, "active");
+    }
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("rebuilds event history one bounded page at a time", () =>
   Effect.gen(function* () {
@@ -2812,6 +3001,28 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         events: [
           threadCreatedEvent({ id: "event:foundation-process-loss:thread", thread, now }),
           {
+            id: EventId.make("event:foundation-process-loss:scheduled-message"),
+            type: "message.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("message:foundation-process-loss"),
+              threadId,
+              runId,
+              nodeId: null,
+              role: "user",
+              text: "Scheduled work",
+              createdBy: "user",
+              creationSource: "web",
+              scheduledTaskId: ScheduledTaskId.make("task:process-loss"),
+              settleOnCompletion: true,
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
             id: EventId.make("event:foundation-process-loss:run"),
             type: "run.created",
             threadId,
@@ -2871,6 +3082,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.equal(first.retiredEffects, 1);
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "cancelled");
+      assert.equal(projection.thread.settledOverride, "settled");
       const effect = yield* outbox.get("effect:foundation-process-loss");
       assert.isTrue(Option.isSome(effect));
       if (Option.isSome(effect)) assert.equal(effect.value.status, "cancelled");

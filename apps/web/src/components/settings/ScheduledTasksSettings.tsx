@@ -98,6 +98,7 @@ const EMPTY_DRAFT: DraftState = {
   title: "",
   prompt: "",
   enabled: true,
+  settleOnCompletion: false,
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
@@ -600,6 +601,7 @@ function ScheduledTaskEditorDialog({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
+      settleOnCompletion: draft.settleOnCompletion,
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
@@ -907,6 +909,22 @@ function ScheduledTaskEditorDialog({
                 aria-describedby="scheduled-task-enabled-description"
                 checked={draft.enabled}
                 onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="scheduled-task-settle">Settle thread when complete</Label>
+                <p id="scheduled-task-settle-description" className="text-sm text-muted-foreground">
+                  Move the task's thread out of the active list after its run finishes.
+                </p>
+              </div>
+              <Switch
+                id="scheduled-task-settle"
+                aria-describedby="scheduled-task-settle-description"
+                checked={draft.settleOnCompletion}
+                onCheckedChange={(settleOnCompletion) =>
+                  setDraft((current) => ({ ...current, settleOnCompletion }))
+                }
               />
             </div>
           </fieldset>

@@ -185,6 +185,7 @@ const legacyTask: ScheduledTask = {
   title: "Review issues",
   prompt: "Review open issues",
   enabled: true,
+  settleOnCompletion: false,
   schedule: { type: "interval", everyMs: 60_000 },
   projectId: ProjectId.make("project"),
   threadId: null,
