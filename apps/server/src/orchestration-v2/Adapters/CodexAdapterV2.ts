@@ -31,7 +31,7 @@ import {
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
@@ -631,10 +631,6 @@ const decodeTurnApprovalPolicy = Schema.decodeUnknownEffect(
 const decodeTurnSandboxPolicy = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__SandboxPolicy, Schema.Null]),
 );
-const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
-  Schema.Union([CodexSchema.V2TurnStartParams__ReasoningEffort, Schema.Null]),
-);
-
 const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
@@ -698,6 +694,7 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  readonly providerReasoningEffort?: CodexSchema.ClientRequest__ReasoningEffort | null;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
@@ -714,12 +711,6 @@ export function buildCodexTurnStartParams(input: {
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
-    const selectedEffort = getModelSelectionStringOptionValue(
-      input.modelSelection,
-      "reasoningEffort",
-    );
-    const effort =
-      selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
     const serviceTier =
       input.omitServiceTier === true
         ? undefined
@@ -731,7 +722,7 @@ export function buildCodexTurnStartParams(input: {
     const additionalContext =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
+            { model: input.modelSelection.model },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
@@ -745,7 +736,9 @@ export function buildCodexTurnStartParams(input: {
             mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
             settings: {
               model: input.modelSelection.model,
-              reasoning_effort: effort ?? "medium",
+              ...(input.providerReasoningEffort == null
+                ? {}
+                : { reasoning_effort: input.providerReasoningEffort }),
               ...(developerInstructions === undefined
                 ? {}
                 : { developer_instructions: developerInstructions }),
@@ -766,7 +759,6 @@ export function buildCodexTurnStartParams(input: {
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
-      ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
       ...(collaborationMode === undefined ? {} : { collaborationMode }),
     });
@@ -5553,11 +5545,31 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ? yield* toCodexInput(turnInput)
                   : [];
               const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
+              const hasCollaborationMode =
+                turnInput.runtimePolicy.interactionMode === "plan" || mcpSession !== undefined;
+              const providerConfig = hasCollaborationMode
+                ? (yield* client.request("config/read", {
+                    cwd: turnInput.runtimePolicy.cwd ?? session.cwd,
+                  })).config
+                : undefined;
+              const planReasoningEffort = providerConfig?.plan_mode_reasoning_effort;
+              let providerReasoningEffort =
+                turnInput.runtimePolicy.interactionMode === "plan" &&
+                typeof planReasoningEffort === "string"
+                  ? planReasoningEffort
+                  : providerConfig?.model_reasoning_effort;
+              if (hasCollaborationMode && providerReasoningEffort == null) {
+                providerReasoningEffort = (yield* client.request("thread/read", {
+                  threadId,
+                  includeTurns: false,
+                })).thread.reasoningEffort;
+              }
               const turnStartParams = yield* buildCodexTurnStartParams({
                 nativeThreadId: threadId,
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
+                ...(providerReasoningEffort === undefined ? {} : { providerReasoningEffort }),
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,

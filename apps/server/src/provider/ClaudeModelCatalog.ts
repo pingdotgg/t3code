@@ -29,6 +29,18 @@ import {
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
 
+function useProviderConfiguredOptions(model: ServerProviderModel): ServerProviderModel {
+  const descriptors = model.capabilities?.optionDescriptors;
+  if (!descriptors) return model;
+  return {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: descriptors.filter(({ id }) => id !== "effort" && id !== "contextWindow"),
+    },
+  };
+}
+
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
   readonly runtime: ClaudeCodeProfile;
@@ -49,7 +61,7 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
     models.push({
-      model: entry.model,
+      model: useProviderConfiguredOptions(entry.model),
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -75,8 +87,8 @@ export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MO
  * Scope the catalog to one instance's settings: custom model slugs stay opaque
  * (a built-in alias they shadow is dropped, canonical slugs and capabilities
  * are preserved), and custom entries that declare their own capabilities are
- * appended so the adapter resolves effort / fast mode / thinking against the
- * user's descriptors instead of the empty default. Custom entries carry no
+ * appended so the adapter resolves fast mode / thinking against the user's
+ * descriptors instead of the empty default. Custom entries carry no
  * runtime profile, so option values pass through to Claude Code verbatim.
  */
 export function scopeClaudeModelCatalog(
@@ -104,12 +116,12 @@ export function scopeClaudeModelCatalog(
   for (const entry of customEntries) {
     if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
     customCatalogModels.push({
-      model: {
+      model: useProviderConfiguredOptions({
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
         capabilities: entry.capabilities,
-      },
+      }),
       runtime: {},
       compatibility: {},
     });
@@ -215,7 +227,7 @@ export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined
   return effort === "ultracode";
 }
 
-export function resolveClaudeCatalogContextWindow(
+function resolveClaudeCatalogContextWindow(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection | undefined,
 ): string | undefined {

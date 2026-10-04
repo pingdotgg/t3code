@@ -482,6 +482,9 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.collaborationMode?.mode, "default");
+      assert.isUndefined(params.effort);
+      assert.isUndefined(params.collaborationMode?.settings.reasoning_effort);
+      assert.notInclude(params.additionalContext?.t3_code_runtime?.value ?? "", "reasoning effort");
       assert.include(
         params.additionalContext?.t3_code_orchestration?.value ?? "",
         "Use `delegate_task`",
@@ -562,7 +565,7 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
+  it.effect("ignores saved Codex effort while keeping service tier and cwd", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
@@ -584,11 +587,11 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.model, "gpt-5.4");
-      assert.equal(params.effort, "xhigh");
+      assert.isUndefined(params.effort);
       assert.equal(params.serviceTier, "priority");
       assert.equal(params.cwd, "/workspace/model-options");
       assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
-      assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
+      assert.isUndefined(params.collaborationMode?.settings.reasoning_effort);
 
       // ChatGPT token sharing rejects service tiers, so managed sessions drop a stale pick.
       const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -1728,6 +1731,208 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect.each([
+    {
+      interactionMode: "plan",
+      hasT3Mcp: false,
+      providerEffort: "low",
+      planEffort: "high",
+      threadEffort: "low",
+    },
+    {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      providerEffort: "low",
+      planEffort: "high",
+      threadEffort: "high",
+    },
+    { interactionMode: "plan", hasT3Mcp: false, providerEffort: "high", threadEffort: "low" },
+    { interactionMode: "default", hasT3Mcp: true, providerEffort: "high", threadEffort: "low" },
+    { interactionMode: "plan", hasT3Mcp: false, providerEffort: null, threadEffort: "high" },
+    { interactionMode: "default", hasT3Mcp: true, providerEffort: null, threadEffort: "high" },
+    { interactionMode: "plan", hasT3Mcp: false, providerEffort: null, threadEffort: null },
+    { interactionMode: "default", hasT3Mcp: false, providerEffort: null, threadEffort: "high" },
+  ] as const)(
+    "uses provider effort for $interactionMode with MCP=$hasT3Mcp and effort=$providerEffort/$threadEffort",
+    (input) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "provider-effort-thread";
+        const nativeTurnId = "provider-effort-turn";
+        const runtimePolicy = {
+          ...CODEX_TEST_RUNTIME_POLICY,
+          interactionMode: input.interactionMode,
+        };
+        const modelSelection = {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        };
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "work" }],
+          runtimePolicy,
+          modelSelection,
+          hasT3Mcp: input.hasT3Mcp,
+        });
+        const hasCollaborationMode = input.interactionMode === "plan" || input.hasT3Mcp;
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const planEffort = "planEffort" in input ? input.planEffort : undefined;
+        const configuredEffort =
+          input.interactionMode === "plan"
+            ? (planEffort ?? input.providerEffort)
+            : input.providerEffort;
+        const readsThreadEffort = hasCollaborationMode && configuredEffort === null;
+        const effectiveEffort = configuredEffort ?? input.threadEffort;
+        const turnRequestId = hasCollaborationMode ? (readsThreadEffort ? 5 : 4) : 3;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "provider-effort",
+          entries: [
+            ...entries.slice(0, 5),
+            ...(hasCollaborationMode
+              ? [
+                  {
+                    type: "expect_outbound" as const,
+                    label: "config/read",
+                    frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+                  },
+                  {
+                    type: "emit_inbound" as const,
+                    label: "config/read",
+                    frame: {
+                      id: 3,
+                      result: {
+                        config: {
+                          model_reasoning_effort: input.providerEffort,
+                          ...(planEffort === undefined
+                            ? {}
+                            : { plan_mode_reasoning_effort: planEffort }),
+                        },
+                        origins: {},
+                      },
+                    },
+                  },
+                ]
+              : []),
+            ...(readsThreadEffort
+              ? [
+                  {
+                    type: "expect_outbound" as const,
+                    label: "thread/read",
+                    frame: {
+                      id: 4,
+                      method: "thread/read",
+                      params: { threadId: nativeThreadId, includeTurns: false },
+                    },
+                  },
+                  {
+                    type: "emit_inbound" as const,
+                    label: "thread/read",
+                    frame: {
+                      id: 4,
+                      result: {
+                        thread: {
+                          id: nativeThreadId,
+                          sessionId: nativeThreadId,
+                          preview: "",
+                          ephemeral: true,
+                          modelProvider: "openai",
+                          createdAt: 1782622440,
+                          updatedAt: 1782622440,
+                          status: { type: "idle" as const },
+                          cwd: "/workspace",
+                          cliVersion: "0.156.1",
+                          source: "vscode" as const,
+                          projectId: null,
+                          turns: [],
+                          reasoningEffort: input.threadEffort,
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
+            {
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: {
+                id: turnRequestId,
+                method: "turn/start",
+                params: {
+                  ...params,
+                  ...(params.collaborationMode === undefined
+                    ? {}
+                    : {
+                        collaborationMode: {
+                          ...params.collaborationMode,
+                          settings: {
+                            ...params.collaborationMode.settings,
+                            ...(effectiveEffort === null
+                              ? {}
+                              : { reasoning_effort: effectiveEffort }),
+                          },
+                        },
+                      }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/start",
+              frame: {
+                id: turnRequestId,
+                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              },
+            },
+            entries[7]!,
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, actual) =>
+            Effect.sync(() => {
+              if (method !== "turn/start") return;
+              assert.notProperty(actual, "effort");
+              if (hasCollaborationMode) {
+                assert.nestedPropertyVal(actual, "collaborationMode.mode", input.interactionMode);
+                if (effectiveEffort === null)
+                  assert.notNestedProperty(actual, "collaborationMode.settings.reasoning_effort");
+                else
+                  assert.nestedPropertyVal(
+                    actual,
+                    "collaborationMode.settings.reasoning_effort",
+                    effectiveEffort,
+                  );
+              } else assert.notProperty(actual, "collaborationMode");
+            }),
+        );
+        if (input.hasT3Mcp) {
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make("test"),
+            threadId: harness.threadId,
+            providerSessionId: "provider-effort-session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer test",
+            browserToolsAvailable: true,
+          });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
+          );
+        }
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("provider-effort-attempt"),
+            text: "work",
+          }),
+          runtimePolicy,
+          modelSelection,
+        });
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
     (response) =>
@@ -2387,6 +2592,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
+          providerReasoningEffort: "medium",
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration?.value ?? "",
@@ -2399,10 +2605,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...entries.slice(0, 5),
             {
               type: "expect_outbound",
-              label: "context turn",
-              frame: { id: 3, method: "turn/start", params },
+              label: "config/read",
+              frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
             },
-            ...entries.slice(6),
+            {
+              type: "emit_inbound",
+              label: "config/read",
+              frame: {
+                id: 3,
+                result: { config: { model_reasoning_effort: "medium" }, origins: {} },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "context turn",
+              frame: { id: 4, method: "turn/start", params },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/start",
+              frame: {
+                id: 4,
+                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              },
+            },
+            entries[7]!,
             {
               type: "emit_inbound",
               label: "compacted",
@@ -2419,7 +2646,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "expect_outbound",
               label: "restore context",
               frame: {
-                id: 4,
+                id: 5,
                 method: "thread/inject_items",
                 params: {
                   threadId: nativeThreadId,
@@ -2431,7 +2658,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
-            { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+            { type: "emit_inbound", label: "restored", frame: { id: 5, result: {} } },
             {
               type: "emit_inbound",
               label: "done",

@@ -98,11 +98,6 @@ import {
   makeClaudeEnvironment,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
-  resolveClaudeCatalogContextWindow,
-  resolveClaudeCatalogContextWindowTokens,
-} from "../../provider/ClaudeModelCatalog.ts";
-import {
   boundProviderEventForLogging,
   type EventNdjsonLogger,
   shouldPersistProviderEvent,
@@ -138,15 +133,6 @@ import {
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
-function claudeContextWindow(modelSelection: ModelSelection): number | null {
-  if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
-    return 1_000_000;
-  }
-  return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
-    ? 1_000_000
-    : 200_000;
-}
-
 export function claudeProviderTurnTokenUsage(
   usage: {
     readonly input_tokens: number;
@@ -154,8 +140,8 @@ export function claudeProviderTurnTokenUsage(
     readonly cache_read_input_tokens?: number | null;
     readonly output_tokens: number;
   },
-  modelSelection: ModelSelection,
   updatedAt: string,
+  maxTokens: number | null = null,
 ) {
   const inputTokens =
     usage.input_tokens +
@@ -164,7 +150,7 @@ export function claudeProviderTurnTokenUsage(
   const outputTokens = usage.output_tokens;
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens: claudeContextWindow(modelSelection),
+    maxTokens,
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
@@ -2655,6 +2641,8 @@ interface ActiveClaudeTurnContext {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
+  mainModel: string | null;
+  tokenUsage: OrchestrationV2ProviderTurn["tokenUsage"];
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
@@ -2729,9 +2717,11 @@ interface ActiveClaudeSubagent {
 
 interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
+  readonly cwd: string | null;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   readonly selectionKey: string;
+  contextWindow: { readonly model: string; readonly maxTokens: number } | null;
   readonly closed: Deferred.Deferred<void, never>;
   // Whether this CLI process echoes a prompt's uuid on the first frame of
   // the turn answering it ("early") or only on its result. Learned from the
@@ -3713,6 +3703,9 @@ export function makeClaudeAdapterV2(
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...(input.context.tokenUsage === undefined
+            ? {}
+            : { tokenUsage: input.context.tokenUsage }),
         });
 
         const buildToolCallArtifacts = (input: {
@@ -5649,6 +5642,11 @@ export function makeClaudeAdapterV2(
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
+              context.tokenUsage = {
+                usedTokens: afterTokenCount,
+                maxTokens: liveQuery.contextWindow?.maxTokens ?? null,
+                updatedAt: DateTime.formatIso(now),
+              };
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -5667,11 +5665,7 @@ export function makeClaudeAdapterV2(
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: {
-                    usedTokens: afterTokenCount,
-                    maxTokens: claudeContextWindow(context.input.modelSelection),
-                    updatedAt: DateTime.formatIso(now),
-                  },
+                  tokenUsage: context.tokenUsage,
                 },
               });
             }
@@ -5795,6 +5789,15 @@ export function makeClaudeAdapterV2(
             const now = yield* DateTime.now;
             yield* completeProviderRetry(context, now);
             if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
+              context.mainModel = message.message.model;
+              if (liveQuery.contextWindow?.model !== context.mainModel) {
+                liveQuery.contextWindow = null;
+              }
+              context.tokenUsage = claudeProviderTurnTokenUsage(
+                message.message.usage,
+                DateTime.formatIso(now),
+                liveQuery.contextWindow?.maxTokens ?? null,
+              );
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -5813,11 +5816,7 @@ export function makeClaudeAdapterV2(
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: claudeProviderTurnTokenUsage(
-                    message.message.usage,
-                    context.input.modelSelection,
-                    DateTime.formatIso(now),
-                  ),
+                  tokenUsage: context.tokenUsage,
                 },
               });
             }
@@ -6317,6 +6316,28 @@ export function makeClaudeAdapterV2(
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               return;
+            }
+            const reportedWindow =
+              context.mainModel === null
+                ? undefined
+                : message.modelUsage[context.mainModel]?.contextWindow;
+            if (
+              typeof reportedWindow === "number" &&
+              Number.isInteger(reportedWindow) &&
+              reportedWindow > 0 &&
+              context.mainModel !== null
+            ) {
+              liveQuery.contextWindow = {
+                model: context.mainModel,
+                maxTokens: reportedWindow,
+              };
+            }
+            if (context.tokenUsage !== undefined) {
+              context.tokenUsage = {
+                ...context.tokenUsage,
+                maxTokens: liveQuery.contextWindow?.maxTokens ?? null,
+                updatedAt: DateTime.formatIso(completedAt),
+              };
             }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
@@ -7043,9 +7064,11 @@ export function makeClaudeAdapterV2(
           const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             nativeThreadId,
+            cwd: turnInput.runtimePolicy.cwd,
             query: querySession,
             queryPolicyKey,
             selectionKey: compiledSelection.queryIdentity,
+            contextWindow: null,
             closed,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
@@ -7129,6 +7152,8 @@ export function makeClaudeAdapterV2(
               input: turnInput,
               nativeTurnId,
               nativeMessageCursor: null,
+              mainModel: null,
+              tokenUsage: undefined,
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
@@ -7459,8 +7484,19 @@ export function makeClaudeAdapterV2(
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          getModelContextWindow: (selection) =>
-            resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
+          getModelContextWindow: (selection, cwd) => {
+            const liveQuery = Ref.getUnsafe(queryContext);
+            if (
+              selection.instanceId !== adapterOptions.instanceId ||
+              liveQuery === null ||
+              liveQuery.stopping ||
+              liveQuery.selectionKey !== compileClaudeModelSelection(selection).queryIdentity ||
+              (cwd !== undefined && cwd !== liveQuery.cwd)
+            ) {
+              return undefined;
+            }
+            return liveQuery.contextWindow?.maxTokens;
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.gen(function* () {
             // Session capability: any native thread with pending work pins idle.
