@@ -508,14 +508,25 @@ const loadImmutableBuildAssets = Effect.gen(function* () {
   );
 });
 
+// Electron's asar-patched `fs` can stat and read packed files but not open them, so a failed
+// open falls back to reading the whole file lazily. HEAD and 304 responses never pull the stream.
 const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   // Reject directories and special files before opening. Response metadata comes from the handle.
   const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
   if (pathInfo?.type !== "File") return null;
-  const file = yield* fileSystem.open(filePath, { flag: "r" });
+  const file = yield* fileSystem
+    .open(filePath, { flag: "r" })
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+      ),
+    );
+  if (file === null) {
+    return { info: pathInfo, body: Stream.fromEffect(fileSystem.readFile(filePath)) };
+  }
   const info = yield* file.stat;
-  return info.type === "File" ? { file, info } : null;
+  return info.type === "File" ? { info, body: streamStaticFile(file, info.size) } : null;
 });
 
 const streamStaticFile = (file: FileSystem.File, size: bigint) =>
@@ -648,7 +659,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
     // HEAD still passes through compression, which selects headers without reading the stream.
-    return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {
+    return HttpServerResponse.stream(opened.body, {
       headers,
       contentType,
       contentLength: Number(fileInfo.size),
