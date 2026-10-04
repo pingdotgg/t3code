@@ -140,7 +140,7 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
   );
 }
 
-export function ComposerSpeechStatus(props: {
+function ComposerSpeechStatus(props: {
   state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
   level: number;
@@ -175,7 +175,7 @@ export function ComposerSpeechStatus(props: {
   );
 }
 
-export function ComposerSpeechCancelButton(props: {
+function ComposerSpeechCancelButton(props: {
   state: VoiceInputState<true>;
   shortcutLabel?: string | null;
   onCancel(): void;

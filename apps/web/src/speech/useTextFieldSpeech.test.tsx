@@ -53,9 +53,7 @@ vi.mock("~/hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("~/components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("~/components/chat/ComposerSpeechButton", () => ({
   ComposerSpeechButton: () => null,
-  ComposerSpeechCancelButton: () => null,
   ComposerSpeechRecordingPill: () => null,
-  ComposerSpeechStatus: () => null,
 }));
 
 let root: Root;
