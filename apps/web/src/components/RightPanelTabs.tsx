@@ -25,15 +25,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  Smartphone,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Files,
-  Plus,
-  TerminalSquare,
-} from "lucide-react";
+import { Smartphone, ChevronDown, ChevronLeft, ChevronRight, Files, Plus } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type ComponentProps,
@@ -133,12 +125,10 @@ interface RightPanelTabsProps {
   /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
   panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
-  onAddTerminal: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  terminalAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
@@ -197,12 +187,10 @@ interface SurfaceAction {
 type SurfaceActionInputs = Pick<
   RightPanelTabsProps,
   | "panels"
-  | "onAddTerminal"
   | "onAddFiles"
   | "onAddPullRequest"
   | "onAddPullRequests"
   | "onAddDevice"
-  | "terminalAvailable"
   | "filesAvailable"
   | "pullRequestAvailable"
   | "pullRequestsAvailable"
@@ -232,16 +220,7 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
   };
   return [
     registered("preview"),
-    {
-      id: "terminal",
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      unavailableHint: "Available when a project is open.",
-      unavailableReason: "Terminal surfaces are only available from a project thread.",
-      onClick: props.onAddTerminal,
-    },
+    registered("terminal"),
     {
       id: "files",
       label: "Files",
@@ -703,8 +682,10 @@ function SurfaceIcon({
           className="size-3"
         />
       );
-    case "terminal":
-      return <TerminalSquare className="size-3 shrink-0" />;
+    case "terminal": {
+      const Icon = getSidePanelMetadata("terminal").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "pull-request":
       return (
         <PullRequestSurfaceIcon

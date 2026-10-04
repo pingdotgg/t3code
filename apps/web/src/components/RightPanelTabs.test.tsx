@@ -31,13 +31,12 @@ describe("right panel surface actions", () => {
     panels: {
       preview: { available: true, onOpen: () => undefined },
       diff: { available: true, onOpen: () => undefined },
+      terminal: { available: true, onOpen: () => undefined },
     },
-    onAddTerminal: () => undefined,
     onAddFiles: () => undefined,
     onAddPullRequest: () => undefined,
     onAddPullRequests: () => undefined,
     onAddDevice: () => undefined,
-    terminalAvailable: true,
     filesAvailable: true,
     pullRequestAvailable: true,
     pullRequestsAvailable: true,
@@ -169,14 +168,13 @@ function renderTabs(
       panels={{
         preview: { available: true, onOpen: () => undefined },
         diff: { available: false, onOpen: () => undefined },
+        terminal: { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={() => undefined}
-      onAddTerminal={() => undefined}
       onAddPullRequest={() => undefined}
       onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
       onAddDevice={() => undefined}
-      terminalAvailable={false}
       filesAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}

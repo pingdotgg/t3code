@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ResolvedKeybindingsConfig, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
@@ -9,7 +10,10 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import type { TerminalContextSelection } from "~/lib/terminalContext";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { useProject, useThreadShell } from "~/state/entities";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useKnownTerminalSessions } from "~/state/terminalSessions";
+
+import { usePanelHost } from "../panelHost";
 
 export interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -38,7 +42,7 @@ interface PersistentThreadTerminalPanelProps {
   closeShortcutLabel?: string | undefined;
 }
 
-export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
+const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   visible,
   threadRef,
   surface,
@@ -190,3 +194,23 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     />
   );
 });
+
+/**
+ * Registered right-panel body. ChatView rebuilds the host on every render, so
+ * the host is read here, outside the memo: renders that leave the thread,
+ * visibility and terminal props unchanged still skip the terminal.
+ */
+export default function TerminalSidePanel(
+  props: Omit<PersistentThreadTerminalPanelProps, "threadRef" | "visible" | "keybindings">,
+) {
+  const { threadRef, visible } = usePanelHost();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  return (
+    <PersistentThreadTerminalPanel
+      {...props}
+      threadRef={threadRef}
+      visible={visible}
+      keybindings={keybindings}
+    />
+  );
+}

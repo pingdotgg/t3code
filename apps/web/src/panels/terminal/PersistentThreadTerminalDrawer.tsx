@@ -23,7 +23,7 @@ import { useKnownTerminalSessions } from "~/state/terminalSessions";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "~/terminalUiStateStore";
 
-import type { PersistentTerminalLaunchContext } from "./PersistentThreadTerminalPanel";
+import type { PersistentTerminalLaunchContext } from "./TerminalSidePanel";
 
 /** Same terminal ids (order ignored) — avoids reconcile when only server session ordering differs. */
 function terminalIdListsEqual(left: readonly string[], right: readonly string[]): boolean {

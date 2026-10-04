@@ -172,10 +172,7 @@ import {
   type ThreadAnnotationSender,
 } from "~/panels/panelHost";
 import { PersistentThreadTerminalDrawer } from "~/panels/terminal/PersistentThreadTerminalDrawer";
-import {
-  PersistentThreadTerminalPanel,
-  type TerminalLaunchContext,
-} from "~/panels/terminal/PersistentThreadTerminalPanel";
+import type { TerminalLaunchContext } from "~/panels/terminal/TerminalSidePanel";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -10438,13 +10435,11 @@ export default function ChatView(props: ChatViewProps) {
         configuredUrls={configuredPreviewUrls}
       />
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
-      <PersistentThreadTerminalPanel
-        visible={rightPanelOpen}
-        threadRef={activeThreadRef}
+      <RegisteredSidePanel
+        id="terminal"
         surface={renderedRightPanelSurface}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
-        keybindings={keybindings}
         onAddTerminalContext={addTerminalContextToDraft}
         onSplitTerminal={splitPanelTerminal}
         onSplitTerminalVertical={splitPanelTerminalVertical}
@@ -10580,6 +10575,10 @@ export default function ChatView(props: ChatViewProps) {
   const sidePanelLaunchers = {
     preview: { available: canOperatePreview && browserAvailable, onOpen: createBrowserSurface },
     diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurface },
+    terminal: {
+      available: activeProject !== null && canOperateTerminal,
+      onOpen: addTerminalSurface,
+    },
   };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
@@ -11417,12 +11416,10 @@ export default function ChatView(props: ChatViewProps) {
           onCopyFilePath={copyRightPanelFilePath}
           panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
-          onAddTerminal={addTerminalSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
-          terminalAvailable={activeProject !== null && canOperateTerminal}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
@@ -11473,12 +11470,10 @@ export default function ChatView(props: ChatViewProps) {
             onCopyFilePath={copyRightPanelFilePath}
             panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
-            onAddTerminal={addTerminalSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
-            terminalAvailable={activeProject !== null && canOperateTerminal}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}

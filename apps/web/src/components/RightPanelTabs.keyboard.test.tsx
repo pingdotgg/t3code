@@ -79,14 +79,13 @@ async function renderPanel(overrides: Partial<ComponentProps<typeof RightPanelTa
         panels={{
           preview: { available: false, onOpen: noop },
           diff: { available: false, onOpen: noop },
+          terminal: { available: false, onOpen: noop },
         }}
         onAddBrowserInProfile={noop}
-        onAddTerminal={noop}
         onAddFiles={addFiles}
         onAddPullRequest={noop}
         onAddPullRequests={noop}
         onAddDevice={noop}
-        terminalAvailable={false}
         filesAvailable
         pullRequestAvailable={false}
         pullRequestsAvailable={false}
