@@ -1,13 +1,149 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
   parseFileUrlHref,
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
+import { repairMarkdownFileLinks } from "./repairMarkdownFileLinks.ts";
+import {
+  renderCodexDirectivesForCopy,
+  renderCodexFileCitationsAsMarkdown,
+  splitCodexArtifactTemplateMarkdown,
+} from "./codexMarkdownDirectives.ts";
+
+describe("repairMarkdownFileLinks", () => {
+  it.each([
+    "CONTRIBUTING.md",
+    "local/path/file.md",
+    "docs/My Folder/file.md",
+    "./scripts/deploy",
+    "~/notes/today.md",
+    "/home/me/My Folder/file.md",
+    "/tmp/reports/",
+    "C:\\Users\\me\\My Folder\\file.md",
+    "file:///home/me/file.md",
+    "src/main.ts:12:5",
+  ])("repairs a complete local destination: %s", (path) => {
+    const source = `- [file](<${path})`;
+    const rendered = repairMarkdownFileLinks(source);
+    expect(rendered).toBe(`- [file](<${path}>)`);
+    expect(unified().use(remarkParse).parse(rendered).children[0]).toMatchObject({
+      type: "list",
+      children: [{ children: [{ children: [{ type: "link" }] }] }],
+    });
+    expect(repairMarkdownFileLinks(rendered)).toBe(rendered);
+  });
+
+  it.each([
+    "ordinary prose",
+    "[file](<CONTRIBUTING.md>)",
+    "[site](<https://example.com/docs)",
+    "[route](</chat/settings)",
+    "[prose](<not a file)",
+    "[file](<src/main.ts",
+    "[file](<src/main.ts>",
+    "[file](<./file(one).md)",
+    "[file](<./file.md))",
+    "[file](<./file)name.md)",
+    "[file](<./file\\).md)",
+    "![image](<./file.png)",
+    "\\\\![image](<./file.png)",
+    "\\\\\\\\![image](<./file.png)",
+    "\\[file](<./file.md)",
+    "\\\\\\[file](<./file.md)",
+    "`[file](<./file.md)`",
+    "``[file](<./file.md)``",
+    "```md\n[file](<./file.md)\n```",
+    "~~~md\n[file](<./file.md)\n~~~",
+    "    [file](<./file.md)",
+    "<div>\n[file](<./file.md)\n</div>",
+    "HTML <span>[file](<./file.md)</span>",
+    '<span title="[file](<./file.md)">text</span>',
+    "[outer [file](<./file.md)](https://example.com)",
+    "[outer [file](<./file.md)][ref]\n\n[ref]: https://example.com",
+    '[ref]: ./file.md "[file](<./other.md)"',
+    ':codex-file-citation{path="./[file](<./other.md)" purpose="output"}',
+    ':codex-file-citation{path="./[file](<./other.md)',
+    '::artifact-template{skill_name="artifact-template-example" skill_directory="/tmp/skills/example" display_name="[file](<./file.md)" artifact_kind="document"}',
+    '::artifact-template{display_name="[file](<./file.md)',
+  ])("preserves protected or uncertain syntax: %s", (source) => {
+    expect(repairMarkdownFileLinks(source)).toBe(source);
+  });
+
+  it("uses CommonMark backslash parity for link openers", () => {
+    expect(repairMarkdownFileLinks("\\\\[file](<./file.md)")).toBe("\\\\[file](<./file.md>)");
+    expect(repairMarkdownFileLinks("\\\\\\\\[file](<./file.md)")).toBe(
+      "\\\\\\\\[file](<./file.md>)",
+    );
+    expect(repairMarkdownFileLinks("\\![file](<./file.md)")).toBe("\\![file](<./file.md>)");
+  });
+
+  it("repairs ordinary segments after splitting mobile artifacts and preserves copy source", () => {
+    const link = "[file](<./file.md)";
+    const template =
+      '::artifact-template{skill_name="artifact-template-example" skill_directory="/tmp/skills/example" display_name="[file](<./file.md)" artifact_kind="document"}';
+    const citation = ':codex-file-citation{path="./report.md"}';
+    const source = `${link}\n\n${template}\n\n${citation}`;
+    const segments = splitCodexArtifactTemplateMarkdown(source);
+    const rendered = segments.map((segment) =>
+      segment.kind === "markdown"
+        ? {
+            ...segment,
+            markdown: renderCodexFileCitationsAsMarkdown(repairMarkdownFileLinks(segment.markdown)),
+          }
+        : segment,
+    );
+    expect(rendered[0]).toEqual({
+      kind: "markdown",
+      markdown: `${link.slice(0, -1)}>)\n\n`,
+      sourceOffset: 0,
+    });
+    expect(rendered[1]).toEqual(segments[1]);
+    expect(rendered[1]).toMatchObject({
+      kind: "artifact-template",
+      sourceOffset: link.length + 2,
+      template: { displayName: link, skillName: "artifact-template-example" },
+    });
+    expect(rendered[2]).toEqual({
+      kind: "markdown",
+      sourceOffset: source.indexOf("\n\n" + citation),
+      markdown: "\n\n[report.md](<./report.md>)",
+    });
+    expect(renderCodexDirectivesForCopy(source)).toBe(
+      `${link}\n\n${link} (Document template)\n\n[report.md](<./report.md>)`,
+    );
+  });
+});
+
+describe("isMarkdownFileLinkLabel", () => {
+  it.each([
+    ["validates the input", "/repo/src/example.ts:12", false],
+    ["read src/example.ts", "/repo/src/example.ts:12", false],
+    ["example.ts?why this matters", "/repo/src/example.ts", false],
+    ["example.ts", "/repo/src/example.ts:12", true],
+    ["example.ts:12", "/repo/src/example.ts:12", true],
+    ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
+    ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
+    ["example.ts:12", "/repo/src/example.ts", false],
+    ["src/example.ts:12", "/repo/src/example.ts:12", true],
+    ["./src/example.ts", "/repo/src/example.ts", true],
+    ["/repo/src/example.ts", "/repo/src/example.ts", true],
+    ["src/", "/home/me/project/src/", true],
+    ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
+    ["file name.ts", "file:///repo/file%20name.ts", true],
+    ["", "/repo/src/example.ts", true],
+  ])("classifies %s for %s", (label, href, expected) => {
+    expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
+  });
+});
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([

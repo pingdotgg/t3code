@@ -15,6 +15,15 @@ export function sortModelsByTokens(models: readonly ModelTotals[]) {
 }
 
 /**
+ * A model's share of the selected metric, or `null` for a cost share of an
+ * unknown cost. An unpriced model still has a real token share.
+ */
+export function modelShare(model: ModelTotals, metric: "cost" | "tokens"): number | null {
+  if (metric === "tokens") return model.tokenShare;
+  return isModelCostUnknown(model) ? null : model.costShare;
+}
+
+/**
  * Share of a model's input read from cache, or `null` without input. Cache
  * writes count as misses: that input was processed in full.
  */
