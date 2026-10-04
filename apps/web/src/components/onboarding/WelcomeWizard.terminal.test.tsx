@@ -113,6 +113,11 @@ vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({ useT3ConnectAuthPrompt: vi.f
 vi.mock("@clerk/react", () => ({ useAuth: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../providerInstances", () => ({ resolveDefaultProviderModelSelection: vi.fn() }));
+vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
+vi.mock("../settings/CodexSetupSection", () => ({
+  CodexSetupSection: () => null,
+  AddManagedCodexAccountDialog: () => null,
+}));
 vi.mock("../settings/providerDriverMeta", () => ({
   getDriverOption: (driver: string) => ({ label: driver }),
 }));
@@ -263,7 +268,7 @@ beforeEach(() => {
           providerInstances: {
             [signedOutCodex.instanceId]: {
               driver: signedOutCodex.driver,
-              config: { binaryPath: "/opt/codex-work" },
+              config: { binaryPath: "/opt/codex-work", setupMode: "existing" },
             },
           },
         },

@@ -751,6 +751,11 @@ function ConnectedAgentsStep({
   return (
     <section>
       <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
+      {!canOperateTerminal ? (
+        <p className="mb-2 text-sm text-muted-foreground">
+          This connection cannot control terminals.
+        </p>
+      ) : null}
       <div className="space-y-1.5">
         {primaryAgents.map(({ driver, provider, instanceId }) =>
           driver === "codex" && serverConfig !== null ? (
@@ -765,7 +770,11 @@ function ConnectedAgentsStep({
               }
               terminalOpen={terminalSession?.driver === driver}
               onOpenTerminal={() => {
-                if (provider === undefined || !readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
+                if (
+                  provider === undefined ||
+                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+                )
+                  return;
                 setTerminalSession({
                   environmentId,
                   driver,
@@ -793,7 +802,12 @@ function ConnectedAgentsStep({
               terminalOpen={terminalSession?.driver === driver}
               terminalAvailable={serverConfig !== null && canOperateTerminal}
               onOpenTerminal={() => {
-                if (provider === undefined || serverConfig === null) return;
+                if (
+                  provider === undefined ||
+                  serverConfig === null ||
+                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+                )
+                  return;
                 setTerminalSession({
                   environmentId,
                   driver,
@@ -870,6 +884,7 @@ function OnboardingCodexSetup({
   } | null;
   readonly onAutoStartConsumed: () => void;
 }) {
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
   const instanceId =
     createdAccount?.instanceId ??
@@ -917,7 +932,7 @@ function OnboardingCodexSetup({
       driver="codex"
       provider={provider}
       terminalOpen={terminalOpen}
-      terminalAvailable
+      terminalAvailable={canOperateTerminal}
       onOpenTerminal={onOpenTerminal}
     />
   ) : (

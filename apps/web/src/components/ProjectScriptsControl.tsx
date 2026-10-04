@@ -199,7 +199,7 @@ export default function ProjectScriptsControl({
             key={script.id}
             className="group"
             disabled={!onRunScript}
-              onClick={() => onRunScript?.(script)}
+            onClick={() => onRunScript?.(script)}
           >
             <ScriptIcon icon={script.icon} className="size-4" />
             <MenuItemLabel>
@@ -256,7 +256,8 @@ export default function ProjectScriptsControl({
           {primaryScript && (
             <MenuItem
               density={presentation === "menu" ? "touch" : "default"}
-              onClick={() => onRunScript(primaryScript)}
+              disabled={!onRunScript}
+              onClick={() => onRunScript?.(primaryScript)}
             >
               <ScriptIcon icon={primaryScript.icon} className="size-4" />
               <MenuItemLabel>Run {primaryScript.name}</MenuItemLabel>
