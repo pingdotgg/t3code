@@ -28,12 +28,14 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  resolveScopedNewThreadProjectRef,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useSidebarProjectScope } from "./useSidebarProjectScope";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -436,6 +438,7 @@ export function useNewThreadHandler() {
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectScope = useSidebarProjectScope();
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -470,6 +473,13 @@ export function useHandleNewThread() {
     activeThread,
     defaultProjectRef: orderedProjects[0]
       ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
+      : null,
+    // Where New chat lands while the sidebar is scoped; null when unscoped.
+    scopedNewThreadProjectRef: projectScope
+      ? resolveScopedNewThreadProjectRef(
+          { activeDraftThread, activeThread: activeThread ?? undefined },
+          projectScope,
+        )
       : null,
     handleNewThread,
     routeDraftId,

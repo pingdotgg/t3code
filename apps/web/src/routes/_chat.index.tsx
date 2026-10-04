@@ -13,6 +13,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useSidebarProjectScope } from "../hooks/useSidebarProjectScope";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -36,24 +37,32 @@ function ChatIndexRouteView() {
 
 /**
  * Landing on the index route drops straight into a draft thread for the most
- * recently active project, so the first screen is a prompt instead of a dead
- * end. Falls back to an add-project hero when no project exists yet.
+ * recently active project (within the sidebar's project scope, if any), so
+ * the first screen is a prompt instead of a dead end. Falls back to an
+ * add-project hero when no project exists yet.
  */
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
+  const projectScope = useSidebarProjectScope();
   const handleNewThread = useNewThreadHandler();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject = useMemo(
-    () =>
-      bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
-        : null,
-    [bootstrapped, projects, threads],
-  );
+  const mostRecentProject = useMemo(() => {
+    if (!bootstrapped) return null;
+    const candidates = projectScope
+      ? projects.filter((project) =>
+          projectScope.memberProjectRefs.some(
+            (projectRef) =>
+              projectRef.environmentId === project.environmentId &&
+              projectRef.projectId === project.id,
+          ),
+        )
+      : projects;
+    return sortScopedProjectsForSidebar(candidates, threads, "updated_at")[0] ?? null;
+  }, [bootstrapped, projectScope, projects, threads]);
 
   useEffect(() => {
     if (mostRecentProject === null || startingRef.current) {
