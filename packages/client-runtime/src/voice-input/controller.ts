@@ -155,8 +155,11 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const token = { abandoned: false, released: promise, release: resolve };
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const token = { abandoned: false, released, release };
   activeSession = token;
   return token;
 }
