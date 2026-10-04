@@ -1359,7 +1359,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               }
             }),
           ),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         sessionScopeTransferred = true;
         return {

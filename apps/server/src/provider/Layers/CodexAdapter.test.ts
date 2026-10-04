@@ -425,11 +425,13 @@ const lifecycleLayer = it.layer(
 function startLifecycleRuntime() {
   return Effect.gen(function* () {
     const adapter = yield* CodexAdapter;
-    yield* adapter.startSession({
-      provider: ProviderDriverKind.make("codex"),
-      threadId: asThreadId("thread-1"),
-      runtimeMode: "full-access",
-    });
+    yield* adapter
+      .startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        runtimeMode: "full-access",
+      })
+      .pipe(Effect.forkChild, Effect.flatMap(Fiber.join));
     const runtime = lifecycleRuntimeFactory.lastRuntime;
     assert.ok(runtime);
     return { adapter, runtime };
