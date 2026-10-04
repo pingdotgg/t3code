@@ -186,4 +186,40 @@ describe("child wait conditions", () => {
       ).reason,
     ).toBe(testCase.expectedReason);
   });
+
+  it("delivers a forwarded child request through a decisions-only wait without collecting", () => {
+    const pending = child("child-0", "assignment-0");
+    const parent: ChildFollowUpThread = {
+      id: parentId,
+      parentThreadId: null,
+      archivedAt: null,
+      nudging: { wait: wait("decisions-only", [undefined]) },
+    };
+    const update: ChildNudgeUpdate = {
+      id: "request:child-0:req-1",
+      childThreadId: pending.id,
+      childTitle: "Child",
+      assignmentId: MessageId.make("assignment-0"),
+      kind: "important-update",
+      wakeReason: "decision-required",
+      summary: "Child is waiting on approval",
+    };
+    const turn = nudgeTurn(update);
+
+    expect(
+      evaluateChildFollowUp(
+        parent,
+        {
+          ...turn,
+          origin: {
+            kind: "child-nudge",
+            updates: [update],
+            collectUntil: "2099-01-01T00:00:00.000Z",
+          },
+        },
+        new Map([[pending.id, pending]]),
+        now,
+      ),
+    ).toMatchObject({ reason: null, dueAt: null });
+  });
 });

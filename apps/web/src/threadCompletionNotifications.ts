@@ -85,9 +85,14 @@ export function collectThreadCompletionNotifications(
       }
 
       candidateTurnKeys.add(candidate.turnKey);
+      // Delegated children report to their parent, which decides whether to alert the user.
+      const parentSummary = candidate.summary.parentThreadId
+        ? environmentState.sidebarThreadSummaryById[candidate.summary.parentThreadId]
+        : undefined;
       if (
         isFirstCompletedBootstrap ||
         input.notificationMode === "off" ||
+        (parentSummary !== undefined && parentSummary.archivedAt === null) ||
         (input.notificationMode === "background-only" &&
           input.isDocumentFocused &&
           input.activeThreadKey === `${candidate.summary.environmentId}:${candidate.summary.id}`)

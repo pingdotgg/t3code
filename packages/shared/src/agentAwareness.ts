@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "parentThreadId"
   >;
 }
 
@@ -62,6 +63,10 @@ export function projectThreadAwareness(
   input: ProjectThreadAwarenessInput,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
+  // Delegated children escalate through their parent; only parents alert the user.
+  if (thread.parentThreadId) {
+    return null;
+  }
   const phase = resolveThreadAwarenessPhase(thread);
   if (!phase) {
     return null;

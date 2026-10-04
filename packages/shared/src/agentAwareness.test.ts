@@ -29,6 +29,7 @@ function thread(
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "parentThreadId"
 > {
   return {
     id: "thread-1" as ThreadId,
@@ -44,6 +45,16 @@ function thread(
 }
 
 describe("projectThreadAwareness", () => {
+  it("leaves a delegated child's approval to its parent instead of alerting the user", () => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({ parentThreadId: "parent-1" as ThreadId, hasPendingApprovals: true }),
+      }),
+    ).toBeNull();
+  });
+
   it("returns null for idle threads without an active awareness state", () => {
     expect(
       projectThreadAwareness({

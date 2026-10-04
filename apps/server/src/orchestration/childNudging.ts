@@ -42,6 +42,89 @@ export function childWakeReason(
   }
 }
 
+const APPROVAL_DECISIONS = ["accept", "acceptForSession", "decline", "cancel"] as const;
+
+function clip(value: string, maxChars: number): string {
+  const trimmed = value.trim();
+  return trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, maxChars - 1)}…`;
+}
+
+function stringField(record: unknown, key: string): string | undefined {
+  if (typeof record !== "object" || record === null) return undefined;
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * Child provider approvals and user-input questions are answered by the parent,
+ * not the user. This turns the pending request into an urgent parent wake that
+ * names the exact request to resolve with `respond_to_child_request`.
+ */
+export function childPendingRequestUpdate(input: {
+  readonly child: Pick<OrchestrationThread, "id" | "title">;
+  readonly delegation: { readonly assignmentId: MessageId; readonly dispatchId?: string };
+  readonly lifecycle: "approval-required" | "input-required";
+  readonly requestId: string;
+  readonly payload: unknown;
+}): ChildNudgeUpdate {
+  const { payload, requestId } = input;
+  let question: string;
+  let options: ReadonlyArray<string> | undefined;
+  let howToAnswer: string;
+  if (input.lifecycle === "approval-required") {
+    const requestKind = stringField(payload, "requestKind") ?? stringField(payload, "requestType");
+    const detail = stringField(payload, "detail");
+    question = `Approve ${requestKind ?? "tool"} request${detail ? `: ${detail}` : "?"}`;
+    options = APPROVAL_DECISIONS;
+    howToAnswer = `pass decision (${APPROVAL_DECISIONS.join(" | ")})`;
+  } else {
+    const questions =
+      typeof payload === "object" &&
+      payload !== null &&
+      Array.isArray((payload as { questions?: unknown }).questions)
+        ? ((payload as { questions: ReadonlyArray<unknown> }).questions ?? [])
+        : [];
+    const lines = questions.map((entry) => {
+      const id = stringField(entry, "id") ?? "answer";
+      const header = stringField(entry, "header");
+      return `${header ? `${header} ` : ""}(${id}): ${stringField(entry, "question") ?? "(no text)"}`;
+    });
+    question = lines.length > 0 ? lines.join("\n") : "The child is waiting for input.";
+    const firstOptions =
+      questions.length === 1 &&
+      typeof questions[0] === "object" &&
+      questions[0] !== null &&
+      Array.isArray((questions[0] as { options?: unknown }).options)
+        ? ((questions[0] as { options: ReadonlyArray<unknown> }).options ?? [])
+        : [];
+    const labels = [
+      ...new Set(
+        firstOptions
+          .map((option) => stringField(option, "label"))
+          .filter((label): label is string => label !== undefined)
+          .map((label) => clip(label, 500)),
+      ),
+    ].slice(0, 8);
+    options = labels.length > 0 ? labels : undefined;
+    howToAnswer = "pass answers as an object keyed by question id";
+  }
+  const kindLabel = input.lifecycle === "approval-required" ? "an approval" : "your input";
+  return {
+    id: `request:${input.child.id}:${requestId}`,
+    childThreadId: input.child.id,
+    childTitle: input.child.title,
+    assignmentId: input.delegation.assignmentId,
+    ...(input.delegation.dispatchId ? { dispatchId: input.delegation.dispatchId } : {}),
+    kind: "important-update",
+    wakeReason: "decision-required",
+    summary: clip(
+      `The child is blocked waiting for ${kindLabel} (request ${requestId}). Answer it yourself with respond_to_child_request (thread ${input.child.id}, requestId ${requestId}; ${howToAnswer}). The user is not prompted for child requests; alert the user only if this needs human judgement or exceeds your authority.`,
+      4000,
+    ),
+    decision: { question: clip(question, 2000), ...(options ? { options } : {}) },
+  };
+}
+
 function renderChildNudgePrompt(
   updates: ReadonlyArray<ChildNudgeUpdate>,
   summaryMaxChars: number,
