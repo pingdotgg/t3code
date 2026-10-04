@@ -1,11 +1,13 @@
 import { sha256 } from "@noble/hashes/sha2";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
+/** Fingerprint exact source text so annotations can detect changes without retaining another document copy. */
 export function markdownSourceRevision(contents: string): string {
   return [...sha256(new TextEncoder().encode(contents))]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
+/** Return updates only for current notes whose captured file revision no longer matches. */
 export function staleMarkdownNotes(
   comments: readonly ReviewCommentContext[],
   path: string,
@@ -50,12 +52,14 @@ export function rehypeMarkdownSourceLines() {
     visit(tree);
   };
 }
+/** Resolve a rendered selection through trusted source markers, rejecting ranges outside the document. */
 export function renderedMarkdownSelection(
   root: HTMLElement,
 ): { startLine: number; endLine: number } | null {
   const selection = root.ownerDocument.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0);
+  /** Find a source marker on an element or the enclosing element of a selected text node. */
   function marker(node: Node) {
     return (
       (node.nodeType === Node.ELEMENT_NODE

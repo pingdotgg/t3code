@@ -18,6 +18,7 @@ export const WHISPER_MODEL = {
   // Upstream models/README.md, blob 6ee78664501cf3f305130fcbd682af2d99861d94.
   sha1: "bd577a113a864445d4c299885e0cb97d4ba92b5f",
 };
+/** Reject audio outside the bounded PCM format accepted by desktop dictation before writing it to disk. */
 export function validateDictationWav(audio: Uint8Array): void {
   if (audio.byteLength < 46 || audio.byteLength > 16_000 * 2 * 300 + 44)
     throw new Error("Recording must contain 16 kHz mono audio, up to five minutes long.");
@@ -38,6 +39,7 @@ export function validateDictationWav(audio: Uint8Array): void {
   )
     throw new Error("Recording has an unsupported audio format.");
 }
+/** Run the approved local CLI without a shell; cancellation waits for process closure and clears timers. */
 export function runWhisperProcess(
   executable: string,
   args: string[],
@@ -121,14 +123,17 @@ export class LocalWhisper {
     this.platform = platform;
     this.fetchModel = fetchModel;
   }
+  /** Cancel work belonging to a closing renderer without interrupting a different window's operation. */
   cancelOwner(owner: number) {
     if (this.active?.owner === owner) this.active.abort.abort();
   }
+  /** Abort active native work and wait for its temporary-file cleanup before shutdown. */
   async dispose() {
     const operation = this.active;
     operation?.abort.abort();
     await operation?.done;
   }
+  /** Probe the native-approved path or platform defaults, caching only a successful CLI probe. */
   private async executable(configured: string): Promise<string | null> {
     const candidates = configured
       ? [configured]
@@ -153,6 +158,7 @@ export class LocalWhisper {
     }
     return null;
   }
+  /** Validate the installed model against the pinned upstream digest before permitting inference. */
   private async verify(): Promise<boolean> {
     if (this.verifiedModel) return true;
     try {
@@ -167,6 +173,7 @@ export class LocalWhisper {
     }
     return this.verifiedModel;
   }
+  /** Serialize installation and transcription while allowing status reads and owner-scoped cancellation. */
   async execute(
     input: DesktopDictationInput,
     owner: number,
@@ -209,6 +216,7 @@ export class LocalWhisper {
       finished.resolve();
     }
   }
+  /** Perform a local model or transcription action; only an explicit install action downloads a model. */
   private async run(
     input: DesktopDictationInput,
     owner: number,

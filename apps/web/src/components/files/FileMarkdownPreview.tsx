@@ -3,6 +3,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
+/** Render workspace Markdown with the existing sanitization, relative-file resolution, and source markers. */
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
   readonly relativePath: string;

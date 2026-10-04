@@ -47,6 +47,7 @@ interface NewThreadWorkspaceOptions {
 // The workspace options the caller passed explicitly, shaped for the draft
 // store: absent keys stay absent so they never overwrite existing draft
 // state. Every reuse path applies exactly this set.
+/** Forward only explicitly chosen workspace settings so omitted options retain the normal launch defaults. */
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
   return {
     ...(options?.branch !== undefined ? { branch: options.branch } : {}),
@@ -60,6 +61,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
   };
 }
 
+/** Launch or reopen the existing project draft with scoped environment and workspace ownership. */
 export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);

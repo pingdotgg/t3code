@@ -483,7 +483,10 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
-  /** Compare against the last disk version before saving. Older clients may omit it. */
+  /**
+   * Best-effort comparison with the last disk version before saving, not an atomic
+   * compare-and-swap against external writers. Older clients may omit it.
+   */
   expectedContents: Schema.optional(Schema.String),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;

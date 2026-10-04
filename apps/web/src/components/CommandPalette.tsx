@@ -684,6 +684,7 @@ function CommandPaletteDialog(props: {
   );
 }
 
+/** Expose existing navigation and project actions through the keyboard-accessible command palette. */
 function OpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;

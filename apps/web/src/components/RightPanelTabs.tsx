@@ -789,6 +789,7 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
+/** Render one surface group's tab controls; callers own resource lifecycle and the scope of close actions. */
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;

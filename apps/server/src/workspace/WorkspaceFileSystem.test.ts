@@ -6,6 +6,7 @@ import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -249,7 +250,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
-    it.effect("preserves read failures during a conditional save without creating the file", () =>
+    it.effect("preserves stat failures during a conditional save without creating the file", () =>
       Effect.gen(function* () {
         const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -265,7 +266,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           })
           .pipe(Effect.flip);
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
-        expect(error).toMatchObject({ operation: "read", operationPath: resolvedPath });
+        expect(error).toMatchObject({ operation: "stat", operationPath: resolvedPath });
         expect(error.cause).toBeDefined();
         expect(yield* fileSystem.exists(resolvedPath)).toBe(false);
       }),
@@ -295,6 +296,131 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect((yield* service.readFile({ cwd, relativePath: "README.md" })).contents).toBe(
           "Merged",
+        );
+      }),
+    );
+
+    it.effect("rejects large replacements before opening a comparison stream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "README.md", "Original");
+        yield* fileSystem.truncate(path.join(cwd, "README.md"), 64 * 1024 * 1024);
+        let reads = 0;
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stream: (...args) => {
+              reads++;
+              return fileSystem.stream(...args);
+            },
+          }),
+        );
+        const error = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "README.md",
+            expectedContents: "Original",
+            contents: "My edit",
+          })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkspaceFileConflictError");
+        expect(reads).toBe(0);
+        expect((yield* fileSystem.stat(path.join(cwd, "README.md"))).size).toBe(
+          64n * 1024n * 1024n,
+        );
+      }),
+    );
+
+    it.effect("bounds reads and rejects growth after the size check", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "README.md", "Original");
+        let bytesRead = 0;
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stream: (file, options) =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  yield* fileSystem.writeFileString(file, "External replacement".repeat(100_000));
+                  return fileSystem.stream(file, options).pipe(
+                    Stream.tap((chunk) =>
+                      Effect.sync(() => {
+                        bytesRead += chunk.byteLength;
+                      }),
+                    ),
+                  );
+                }),
+              ),
+          }),
+        );
+        const error = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "README.md",
+            expectedContents: "Original",
+            contents: "My edit",
+          })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkspaceFileConflictError");
+        expect(bytesRead).toBe(9);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "README.md"))).toBe(
+          "External replacement".repeat(100_000),
+        );
+      }),
+    );
+
+    it.effect("compares UTF-8 bytes and contents, including empty files and same-size edits", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        for (const original of ["", "café ☕", "Original"]) {
+          yield* writeTextFile(cwd, "README.md", original);
+          yield* service.writeFile({
+            cwd,
+            relativePath: "README.md",
+            expectedContents: original,
+            contents: "Saved",
+          });
+          expect((yield* service.readFile({ cwd, relativePath: "README.md" })).contents).toBe(
+            "Saved",
+          );
+        }
+        const error = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "README.md",
+            expectedContents: "Other",
+            contents: "My edit",
+          })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkspaceFileConflictError");
+        expect((yield* service.readFile({ cwd, relativePath: "README.md" })).contents).toBe(
+          "Saved",
+        );
+      }),
+    );
+
+    it.effect("serializes competing conditional saves made through the service", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "README.md", "Original");
+        const outcomes = yield* Effect.all(
+          ["First edit", "Second edit"].map((contents) =>
+            service
+              .writeFile({ cwd, relativePath: "README.md", expectedContents: "Original", contents })
+              .pipe(Effect.match({ onSuccess: () => "saved", onFailure: (error) => error._tag })),
+          ),
+          { concurrency: "unbounded" },
+        );
+        expect(outcomes.toSorted()).toEqual(["WorkspaceFileConflictError", "saved"]);
+        expect(["First edit", "Second edit"]).toContain(
+          (yield* service.readFile({ cwd, relativePath: "README.md" })).contents,
         );
       }),
     );

@@ -1288,6 +1288,7 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+/** Render macOS signing entitlements, including microphone access required for desktop dictation. */
 export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
 ): string {

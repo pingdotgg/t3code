@@ -32,6 +32,7 @@ const optionalOperationId = Schema.NullOr(Schema.String);
 
 const defaults: TaskSource = { provider: "github", baseUrl: "https://github.com", scope: "" };
 
+/** Select an environment-local project before browsing or configuring its native task source. */
 export function TasksPage() {
   const projects = useProjects();
   const [selected, setSelected] = useLocalStorage("t3code.tasks.project", "", Schema.String);
@@ -73,6 +74,7 @@ export function TasksPage() {
   );
 }
 
+/** Browse provider tasks and launch work through existing project drafts, retaining links across retries. */
 function ProjectTasks({ projectRef }: { projectRef: ScopedProjectRef }) {
   const config = useServerConfigs().get(projectRef.environmentId);
   const supported = config?.environment.capabilities.externalTasks === true;
@@ -149,6 +151,7 @@ function ProjectTasks({ projectRef }: { projectRef: ScopedProjectRef }) {
     // The component is keyed by environment + project; commands are stable for that owner.
   }, [supported, request]);
 
+  /** Run a provider request against the selected project and ignore results from a superseded view. */
   async function perform(action: () => Promise<void>) {
     if (operating.current) return;
     operating.current = true;
@@ -164,6 +167,7 @@ function ProjectTasks({ projectRef }: { projectRef: ScopedProjectRef }) {
       if (owner.current) setBusy(false);
     }
   }
+  /** Load one task page with explicit navigation state and provider-error recovery. */
   async function browse(
     action: "list" | "projects" | "items" = view,
     cursor?: string,
@@ -183,7 +187,9 @@ function ProjectTasks({ projectRef }: { projectRef: ScopedProjectRef }) {
       cursor && previous ? { ...value, tasks: [...previous.tasks, ...value.tasks] } : value,
     );
   }
+  /** Reuse an existing linked thread or seed a launch draft without eagerly creating another worktree. */
   async function start(task: ExternalTask, worktree: boolean) {
+    /** Add bounded task context to the existing draft once, preserving any prompt the user already wrote. */
     const seedDraft = (draftId: DraftId) => {
       const store = useComposerDraftStore.getState();
       const existing = store.getComposerDraft(draftId)?.prompt ?? "";
@@ -559,6 +565,7 @@ function ProjectTasks({ projectRef }: { projectRef: ScopedProjectRef }) {
   );
 }
 
+/** Expose supported issue fields and comments while keeping external writes separate from agent execution. */
 function TaskDetail({
   task,
   source,
@@ -598,6 +605,7 @@ function TaskDetail({
     null as string | null,
     optionalOperationId,
   );
+  /** Keep one operation ID for a pending edit so retrying cannot silently duplicate an external write. */
   async function write(action: "comment" | "update") {
     if (writing || operationId) return;
     const id = operationId ?? randomUUID();
@@ -752,6 +760,7 @@ function TaskDetail({
   );
 }
 
+/** Create an issue with a retained operation ID and preserve input after provider failures. */
 function CreateTask({
   storageKey,
   onCreate,

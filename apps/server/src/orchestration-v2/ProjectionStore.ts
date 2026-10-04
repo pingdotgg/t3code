@@ -1303,6 +1303,7 @@ function buildVisibleTurnItems(input: {
   ]);
 }
 
+/** Build the per-thread shell from current projection data and runtime attention state. */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
@@ -1594,6 +1595,7 @@ function visibleItemCountForShell(input: {
   );
 }
 
+/** Project runtime attention and completion state for shell subscribers without loading thread detail. */
 function shellFromState(input: {
   readonly state: ShellThreadState;
   readonly visibleItemCount: number;
@@ -4821,6 +4823,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    /** Read shell metadata and bounded previews in one query instead of fetching each thread's messages. */
     const selectShellThreadRows = (
       threadId?: ThreadId,
       location?: "active" | "archive",
@@ -5265,6 +5268,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
       }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    /** Hydrate a shell row with its current runtime and pending requests for incremental client updates. */
     const shellThreadStateFromRow = (input: {
       readonly row: ShellThreadRow;
       readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;

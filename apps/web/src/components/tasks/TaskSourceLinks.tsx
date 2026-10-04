@@ -3,6 +3,7 @@ import { useServerConfigs } from "../../state/entities";
 import { taskLinks } from "../../state/tasks";
 import { useEnvironmentQuery } from "../../state/query";
 
+/** Show persisted source-task references for an environment-scoped thread without exposing credentials. */
 export function TaskSourceLinks({
   projectRef,
   threadId,

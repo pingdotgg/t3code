@@ -26,6 +26,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -132,7 +134,9 @@ export class WorkspaceFileSystem extends Context.Service<
      * Write a file relative to the workspace root.
      *
      * Creates parent directories as needed and rejects paths that escape the
-     * workspace root.
+     * workspace root. expectedContents rejects changes observed before writing;
+     * the semaphore serializes this service's saves, not external editor writes.
+     * This is a best-effort check, not a filesystem compare-and-swap.
      */
     readonly writeFile: (
       input: ProjectWriteFileInput,
@@ -336,20 +340,34 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (input.expectedContents !== undefined) {
-      const current = yield* fileSystem.readFileString(target.absolutePath).pipe(
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceFileSystemOperationError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedPath: target.absolutePath,
-              operationPath: target.absolutePath,
-              operation: "read",
-              cause,
-            }),
-        ),
-      );
-      if (current !== input.expectedContents)
+      const readError = (operation: "stat" | "read") => (cause: unknown) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation,
+          cause,
+        });
+      const expectedBytes = Buffer.byteLength(input.expectedContents, "utf8");
+      const stat = yield* fileSystem
+        .stat(target.absolutePath)
+        .pipe(Effect.mapError(readError("stat")));
+      if (stat.type !== "File")
+        return yield* new WorkspacePathNotFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+        });
+      if (stat.size !== BigInt(expectedBytes))
+        return yield* new WorkspaceFileConflictError({ relativePath: input.relativePath });
+      // Bound the actual read too: a file can grow after stat. One extra byte
+      // detects growth, including when the original file was empty.
+      const current = yield* collectUint8StreamText({
+        stream: fileSystem.stream(target.absolutePath, { bytesToRead: expectedBytes + 1 }),
+        maxBytes: expectedBytes,
+      }).pipe(Effect.mapError(readError("read")));
+      if (current.truncated || current.invalidUtf8 || current.text !== input.expectedContents)
         return yield* new WorkspaceFileConflictError({ relativePath: input.relativePath });
     }
     yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(

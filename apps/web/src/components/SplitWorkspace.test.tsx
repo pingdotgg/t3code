@@ -212,3 +212,82 @@ it.each(["others", "right", "all"])(
     }
   },
 );
+
+it.each(["pointerup", "pointercancel", "lostpointercapture"])(
+  "previews a resize without persistence and handles %s without remounting resources",
+  async (finish) => {
+    const initial = useRightPanelStore.getState();
+    const ref = scopeThreadRef(EnvironmentId.make("desktop"), ThreadId.make("resize"));
+    useRightPanelStore.setState({ byThreadKey: {} });
+    useRightPanelStore.getState().openTerminal(ref, "pty");
+    const persisted = useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]!;
+    const tabs = makeTabs(ref.environmentId);
+    function Workspace() {
+      const state = useRightPanelStore((store) => store.byThreadKey[scopedThreadKey(ref)]!);
+      return (
+        <SplitWorkspace
+          threadRef={ref}
+          state={state}
+          tabs={tabs}
+          conversation={<input defaultValue="Prompt" />}
+          renderSurface={() => <textarea defaultValue="Unsaved" />}
+        />
+      );
+    }
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    let saves = 0;
+    const unsubscribe = useRightPanelStore.subscribe(() => {
+      saves++;
+    });
+    const dispatch = async (target: Element, type: string, clientX = 0) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      await act(async () => {
+        target.dispatchEvent(event);
+      });
+    };
+    try {
+      await act(async () => root.render(<Workspace />));
+      const separator = container.querySelector<HTMLElement>('[role="separator"]')!;
+      separator.setPointerCapture = vi.fn();
+      separator.releasePointerCapture = vi.fn();
+      const workspace = container.querySelector<HTMLElement>("[data-workspace-scope]")!;
+      workspace.getBoundingClientRect = () => ({
+        x: 0,
+        y: 0,
+        left: 0,
+        top: 0,
+        right: 1000,
+        bottom: 600,
+        width: 1000,
+        height: 600,
+        toJSON() {},
+      });
+      const draft = container.querySelector("textarea")!;
+      draft.value = "Still typing";
+      await dispatch(separator, "pointerdown", 550);
+      await dispatch(separator, "pointermove", 600);
+      await dispatch(separator, "pointermove", 700);
+      expect(separator.getAttribute("aria-valuenow")).toBe("70");
+      expect(saves).toBe(0);
+      expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toBe(persisted);
+      await dispatch(separator, finish, 700);
+      expect(saves).toBe(finish === "pointerup" ? 1 : 0);
+      expect(separator.getAttribute("aria-valuenow")).toBe(finish === "pointerup" ? "70" : "55");
+      expect(container.querySelector("textarea")).toBe(draft);
+      expect(draft.value).toBe("Still typing");
+      await act(async () => {
+        separator.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
+      });
+      expect(saves).toBe(finish === "pointerup" ? 2 : 1);
+      expect(separator.getAttribute("aria-valuenow")).toBe(finish === "pointerup" ? "75" : "60");
+    } finally {
+      unsubscribe();
+      await act(async () => root.unmount());
+      container.remove();
+      useRightPanelStore.setState(initial, true);
+    }
+  },
+);

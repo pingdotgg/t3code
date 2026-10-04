@@ -9,6 +9,7 @@ import {
   optimisticFileAtom,
 } from "./projectFilesQueryState";
 
+/** Expose save failures and disk conflicts without discarding the optimistic local edit. */
 export function FileSaveNotice({
   environmentId,
   cwd,

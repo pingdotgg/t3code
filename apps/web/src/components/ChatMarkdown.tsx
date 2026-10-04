@@ -3478,6 +3478,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+/** Render sanitized agent Markdown with environment-scoped file navigation and optional review source markers. */
 function ChatMarkdown({
   text,
   className,

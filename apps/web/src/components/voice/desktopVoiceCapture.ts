@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import { randomUUID } from "~/lib/utils";
 
+/** Resample capture to bounded 16 kHz mono PCM accepted by the native local-transcription service. */
 export function encodeDictationWav(
   chunks: readonly Float32Array[],
   sampleRate: number,
@@ -71,6 +72,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
     this.microphone = microphone;
     this.ended = ended;
   }
+  /** Acquire the selected microphone after user action and prepare its AudioWorklet capture graph. */
   async prepareToRecordAsync() {
     this.cancelled = false;
     this.chunks = [];
@@ -96,6 +98,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
     // its script-src policy even though ordinary workers may use Blob URLs.
     await this.context.audioWorklet.addModule(captureWorkletUrl);
   }
+  /** Begin prepared capture with an automatic duration limit and device-loss handling. */
   record({ forDuration }: { forDuration: number }) {
     if (!this.context || !this.stream || this.cancelled)
       throw new Error("No microphone is available.");
@@ -116,6 +119,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
       void this.stop().then(() => this.ended(null));
     }, forDuration * 1000);
   }
+  /** Flush captured samples before releasing the microphone so the final audio block is retained. */
   async stop() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -132,6 +136,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
       });
     await this.release();
   }
+  /** Disconnect capture nodes, stop every media track, and close the audio context after any lifecycle exit. */
   async release() {
     this.cancelled = true;
     if (this.timer) clearTimeout(this.timer);
@@ -152,9 +157,11 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
     this.context = null;
     if (context && context.state !== "closed") await context.close();
   }
+  /** Return the finished recording for local IPC transcription; callers clear it after use. */
   audio() {
     return encodeDictationWav(this.chunks, this.rate);
   }
+  /** Discard retained samples and encoded audio after transcription or cancellation. */
   clear() {
     this.chunks = [];
     this.uri = null;

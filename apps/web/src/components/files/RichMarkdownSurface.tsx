@@ -58,6 +58,7 @@ const SourceIdentity = Extension.create({
   addGlobalAttributes: () => [
     { types: blockTypes, attributes: { sourceId: { default: null, rendered: false } } },
   ],
+  /** Attach ProseMirror table roles so cell selection and keyboard navigation work with the custom nodes. */
   extendNodeSchema(extension) {
     const role = { table: "table", tableRow: "row", tableCell: "cell", tableHeader: "header_cell" }[
       extension.name
@@ -65,6 +66,7 @@ const SourceIdentity = Extension.create({
     return role ? { tableRole: role } : {};
   },
   addProseMirrorPlugins: () => [tableEditing()],
+  /** Navigate table cells with Tab while keeping edits in the current document. */
   addKeyboardShortcuts() {
     return {
       Tab: () => goToNextCell(1)(this.editor.state, this.editor.view.dispatch),
@@ -86,6 +88,7 @@ const TableRow = Node.create({
   parseHTML: () => [{ tag: "tr" }],
   renderHTML: () => ["tr", 0],
 });
+/** Define Markdown-compatible table cells without adding a second document model. */
 function cell(name: "tableCell" | "tableHeader", tag: "td" | "th") {
   return Node.create({
     name,
@@ -106,6 +109,7 @@ const ImageWorkspace = createContext<{
   relativePath: string;
   threadRef: ScopedThreadRef;
 } | null>(null);
+/** Resolve workspace images inside the owning environment and defer external image loading until requested. */
 function RichImage({ node }: NodeViewProps) {
   const workspace = useContext(ImageWorkspace);
   if (!workspace)
@@ -187,6 +191,7 @@ const tableJson: JSONContent = {
   })),
 };
 
+/** Enter rich mode only when the document can be round-tripped safely; otherwise explain the source fallback. */
 export function RichMarkdownSurface(props: {
   environmentId: EnvironmentId;
   cwd: string;
@@ -205,6 +210,7 @@ export function RichMarkdownSurface(props: {
     );
   return <RichEditor {...props} document={parsed} />;
 }
+/** Send safe block-preserving edits through the existing save coordinator and keep failed edits visible. */
 function RichEditor(
   props: Parameters<typeof RichMarkdownSurface>[0] & { document: RichMarkdownDocument },
 ) {
@@ -272,6 +278,7 @@ function RichEditor(
     { name: "Table", run: () => editor.chain().focus().insertContent(tableJson).run() },
   ];
   const stale = note !== null && note.source !== props.contents;
+  /** Map the current rich selection to the serialized source before adding agent-directed review context. */
   function captureNote() {
     if (!editor || editor.state.selection.empty) {
       setError("Select document text before adding a review note.");

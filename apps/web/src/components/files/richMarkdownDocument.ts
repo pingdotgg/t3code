@@ -20,6 +20,7 @@ type MarkdownNode = {
   align?: (string | null)[];
   children?: MarkdownNode[];
 };
+/** Restrict rich links and images to supported relative paths and safe URL schemes. */
 const safeUrl = (url: string) =>
   !/^\s*(?:javascript|vbscript|data):/i.test(url) &&
   ![...url].some((character) => character.charCodeAt(0) < 32);
@@ -29,6 +30,7 @@ const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({
   ...(marks?.length ? { marks } : {}),
 });
 
+/** Convert supported Markdown nodes into editable blocks and reject syntax that cannot be preserved safely. */
 function convert(node: MarkdownNode, marks: NonNullable<JSONContent["marks"]> = []): JSONContent[] {
   const children = () => (node.children ?? []).flatMap((child) => convert(child, marks));
   switch (node.type) {
@@ -121,9 +123,11 @@ function convert(node: MarkdownNode, marks: NonNullable<JSONContent["marks"]> = 
       throw new Error(`Markdown ${node.type} syntax requires Source mode to preserve it safely.`);
   }
 }
+/** Convert block children with fresh inline marks so formatting does not leak between blocks. */
 function convertChildren(node: MarkdownNode) {
   return (node.children ?? []).flatMap((child) => convert(child));
 }
+/** Separate emphasis-boundary whitespace to match Markdown's representable formatting semantics. */
 function formattingWhitespace(node: JSONContent): JSONContent[] {
   if (
     node.type !== "text" ||
@@ -142,6 +146,7 @@ function formattingWhitespace(node: JSONContent): JSONContent[] {
     ...(trailing ? [{ ...node, text: trailing, marks }] : []),
   ];
 }
+/** Ignore editor defaults and source IDs when deciding whether a block's authored content changed. */
 function comparable(node: JSONContent): JSONContent {
   const { sourceId: _id, ...attrs } = node.attrs ?? {};
   // Tiptap fills default attributes and empty content; they are not source changes.
@@ -182,8 +187,10 @@ function comparable(node: JSONContent): JSONContent {
     ...(content.length ? { content } : {}),
   };
 }
+/** Escape literal inline Markdown punctuation when serializing newly edited text. */
 const escapeText = (value: string) =>
   value.replace(/([\\`*_{}[\]<>~|])/g, "\\$1").replace(/^(#{1,6}|[-+]|\d+[.)]) /gm, "\\$1 ");
+/** Serialize supported inline marks while preserving code and table-specific escaping. */
 function inline(node: JSONContent, inTable = false): string {
   if (node.type === "hardBreak") return "  \n";
   if (node.type === "image")
@@ -206,10 +213,12 @@ function inline(node: JSONContent, inTable = false): string {
   }
   return value;
 }
+/** Escape Markdown link destinations without changing their relative or absolute target. */
 function destination(value: string) {
   if (!safeUrl(value)) throw new Error("Unsafe link URL.");
   return `<${value.replaceAll(">", "%3E").replaceAll("<", "%3C")}>`;
 }
+/** Serialize an edited block to supported Markdown and reject structures without a safe representation. */
 function serialize(node: JSONContent, inTable = false): string {
   const content = node.content ?? [];
   const children = () => content.map((child) => serialize(child, inTable)).join("\n\n");
@@ -286,6 +295,7 @@ export interface RichMarkdownDocument {
   }[];
   content: JSONContent;
 }
+/** Capture original blocks, separators, and front matter, or return a reason to keep the file in Source mode. */
 export function parseRichMarkdown(source: string): RichMarkdownDocument | { reason: string } {
   if (source.length > 300_000)
     return { reason: "Documents over 300 KB use Source mode for responsiveness." };
@@ -326,6 +336,7 @@ export function parseRichMarkdown(source: string): RichMarkdownDocument | { reas
     };
   }
 }
+/** Reuse unchanged raw blocks and verify that each changed block parses back into the same structure. */
 function serializeBlocks(document: RichMarkdownDocument, json: JSONContent) {
   const seen = new Set<string>();
   const originals = new Map(document.blocks.map((block) => [block.id, block]));
@@ -357,6 +368,7 @@ function serializeBlocks(document: RichMarkdownDocument, json: JSONContent) {
     return { value, separator };
   });
 }
+/** Return untouched source verbatim and rewrite only changed blocks after round-trip validation. */
 export function serializeRichMarkdown(document: RichMarkdownDocument, json: JSONContent): string {
   if (JSON.stringify(comparable(json)) === JSON.stringify(comparable(document.content)))
     return document.source;
@@ -390,6 +402,7 @@ export function richSelectionSourceLines(
   }
   return startLine === null || endLine === null ? null : { startLine, endLine };
 }
+/** Resolve an original block only while its captured document still matches the current source. */
 export function selectedMarkdownLines(
   document: RichMarkdownDocument,
   sourceId: string,

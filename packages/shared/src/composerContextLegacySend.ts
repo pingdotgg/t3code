@@ -138,6 +138,7 @@ function escapeAttribute(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Encode review context for older servers while preserving escaped source-revision and stale metadata. */
 function renderReviewComment(record: ComposerContextRecord): string {
   if (!("sectionId" in record)) return record.label;
   const attributes = [

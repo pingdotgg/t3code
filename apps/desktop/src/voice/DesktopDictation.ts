@@ -58,6 +58,7 @@ export const layer = Layer.effect(
                 totalBytes: 0,
               };
             if (!owners.has(owner)) {
+              /** Release the closing renderer's native operation and remove its ownership listener. */
               const cleanup = () => {
                 manager.cancelOwner(owner);
                 owners.delete(owner);

@@ -37,6 +37,7 @@ export interface QuitShortcutOptions {
   readonly quit: () => void;
 }
 
+/** Create a quit-confirmation state machine; dispose it when its window closes to clear pending timers. */
 export function makeQuitShortcutHandler(options: QuitShortcutOptions) {
   const modifierKey = options.platform === "darwin" ? "meta" : "control";
   let watchdog: NodeJS.Timeout | undefined;
@@ -228,6 +229,7 @@ export function makeQuitShortcutHandler(options: QuitShortcutOptions) {
   });
 }
 
+/** Apply the configured quit confirmation to a window and detach its input listener on destruction. */
 export function installQuitShortcutHandler(
   window: {
     webContents: {

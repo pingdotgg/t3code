@@ -16,6 +16,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 
+/** Own microphone capture for one composer and commit editable local transcripts only to that draft. */
 export function DesktopDictationControl(props: {
   ownerKey: string;
   disabled: boolean;
@@ -69,6 +70,7 @@ export function DesktopDictationControl(props: {
         setMessage("Microphones are unavailable. Check operating-system permissions.");
     }
   }, []);
+  /** Ask the native desktop picker to approve a CLI path; renderer text cannot select executable code. */
   async function selectExecutable(action: "choose-executable" | "reset-executable") {
     if (!bridge) return;
     try {
@@ -91,6 +93,7 @@ export function DesktopDictationControl(props: {
       };
     let revision = 0;
     let previous = "";
+    /** Snapshot the original composer's text, revision, and insertion position for safe transcript rebasing. */
     const readDraft = (): VoiceDraftSnapshot | null => {
       const current = latest.current.props;
       if (current.ownerKey !== props.ownerKey || current.disabled) return null;
@@ -106,6 +109,7 @@ export function DesktopDictationControl(props: {
         revision,
       };
     };
+    /** Present a dictation failure while preserving the current composer draft. */
     const notifyError = (error: unknown) => {
       if (!mounted.current) return;
       setMessage(
@@ -243,6 +247,7 @@ export function DesktopDictationControl(props: {
   useEffect(() => {
     if (props.disabled) controller.current?.ownerChanged();
   }, [props.disabled]);
+  /** Start or stop the current composer's voice session without submitting its draft. */
   async function toggle(expectedHold?: string) {
     const instance = controller.current;
     if (!instance || props.disabled) return;

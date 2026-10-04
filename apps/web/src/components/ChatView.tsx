@@ -1,5 +1,5 @@
 import { SplitWorkspace } from "./SplitWorkspace";
-import { defaultWorkspaceLayout, paneGroups } from "~/rightPanelLayout";
+import { restoreWorkspaceLayout, workspaceMaximizeState } from "~/rightPanelLayout";
 import { TaskSourceLinks } from "./tasks/TaskSourceLinks";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -1519,6 +1519,7 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 /** Runs with a workspace preparation retry in flight, across ChatView instances. */
 const retryingWorkspacePreparationRunIds = new Set<RunId>();
 
+/** Host the selected environment's conversation and workspace surfaces without creating new execution sessions. */
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -2312,7 +2313,21 @@ export default function ChatView(props: ChatViewProps) {
     renderedRightPanelSurface,
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized = canMaximizeRightPanel && !!rightPanelState.maximizedPaneId;
+  const workspaceLayout = useMemo(
+    () =>
+      restoreWorkspaceLayout(
+        rightPanelState.workspaceLayout,
+        rightPanelState.surfaces.map((surface) => surface.id),
+        rightPanelState.activeSurfaceId,
+      ),
+    [rightPanelState.workspaceLayout, rightPanelState.surfaces, rightPanelState.activeSurfaceId],
+  );
+  const workspaceMaximize = workspaceMaximizeState(
+    workspaceLayout,
+    rightPanelState.maximizedPaneId,
+    rightPanelState.activeSurfaceId,
+  );
+  const rightPanelMaximized = canMaximizeRightPanel && workspaceMaximize.maximizedPaneId !== null;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -5804,25 +5819,23 @@ export default function ChatView(props: ChatViewProps) {
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     if (activeThreadRef && !shouldUsePlanSidebarSheet) {
-      const layout =
-        rightPanelState.workspaceLayout ??
-        defaultWorkspaceLayout(
-          rightPanelState.surfaces.map((surface) => surface.id),
-          rightPanelState.activeSurfaceId,
-        );
-      const pane = paneGroups(layout).find((group) =>
-        group.tabs.includes(rightPanelState.activeSurfaceId ?? ""),
-      );
       useRightPanelStore
         .getState()
         .setWorkspaceLayout(
           activeThreadRef,
-          layout,
-          rightPanelState.maximizedPaneId ? null : (pane?.id ?? null),
+          workspaceLayout,
+          workspaceMaximize.maximizedPaneId ? null : workspaceMaximize.targetPaneId,
         );
       return;
     }
-  }, [canMaximizeRightPanel, activeThreadRef, shouldUsePlanSidebarSheet, rightPanelState]);
+  }, [
+    canMaximizeRightPanel,
+    activeThreadRef,
+    shouldUsePlanSidebarSheet,
+    workspaceLayout,
+    workspaceMaximize.maximizedPaneId,
+    workspaceMaximize.targetPaneId,
+  ]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -8351,6 +8364,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  /** Dispatch the current draft through the existing thread launch flow after submission and environment guards. */
   const onSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
@@ -10556,6 +10570,7 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
+  /** Render a tool using the active thread's resource identity so moving its pane preserves its session. */
   const renderRightPanelSurface = (
     renderedRightPanelSurface: RightPanelSurface | null,
     surfaceVisible = rightPanelOpen,

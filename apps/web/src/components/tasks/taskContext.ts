@@ -3,6 +3,7 @@ import { formatGeneratedBranchName } from "@t3tools/shared/git";
 import { formatReviewCommentFence } from "../../reviewCommentContext";
 import { useComposerDraftStore } from "../../composerDraftStore";
 
+/** Reopen linked work in its unpromoted draft or durable conversation as appropriate. */
 export function taskWorkRoute(threadRef: ScopedThreadRef) {
   const draft = useComposerDraftStore.getState().getDraftSessionByRef(threadRef);
   const draftId = useComposerDraftStore.getState().getDraftIdByRef(threadRef);
@@ -11,6 +12,7 @@ export function taskWorkRoute(threadRef: ScopedThreadRef) {
     : { to: "/$environmentId/$threadId" as const, params: threadRef };
 }
 
+/** Bound and delimit issue content as untrusted reference material without downloading attachments. */
 export function taskContextPrompt(task: ExternalTask): string {
   return [
     "Work on the external task described below.",
@@ -39,6 +41,7 @@ export function taskContextPrompt(task: ExternalTask): string {
   ].join("\n\n");
 }
 
+/** Apply project naming rules to the provider's suggested branch, leaving custom naming to the user. */
 export function taskBranchName(task: ExternalTask, naming: BranchNamingOptions): string | null {
   if (naming.mode === "custom") return null;
   return formatGeneratedBranchName(task.branchName || `${task.key}-${task.title}`, naming);

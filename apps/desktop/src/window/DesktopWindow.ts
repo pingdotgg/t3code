@@ -603,6 +603,7 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
+    /** Share the main window's quit policy with auxiliary windows without sharing their input listeners. */
     const installWindowQuitShortcut = (target: typeof window) =>
       installQuitShortcutHandler(target, {
         platform: environment.platform,
@@ -631,6 +632,7 @@ export const make = Effect.gen(function* () {
       installWindowQuitShortcut(child);
       child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       child.webContents.on("will-navigate", (event) => event.preventDefault());
+      /** Close the dashboard portal when its owning application window is destroyed. */
       const closeDashboard = () => {
         if (!child.isDestroyed()) child.close();
       };

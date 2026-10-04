@@ -1575,6 +1575,7 @@ function toProjectDraftSession(
   };
 }
 
+/** Create a draft with explicit environment and worktree branch preferences using existing defaults. */
 function createDraftThreadState(
   projectRef: ScopedProjectRef,
   threadId: ThreadId,
@@ -1667,6 +1668,7 @@ function isDraftThreadPromoting(draftThread: DraftThreadState | null | undefined
   return draftThread?.promotedTo !== null && draftThread?.promotedTo !== undefined;
 }
 
+/** Compare durable launch preferences, including the requested worktree branch, before replacing a stored draft. */
 function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThreadState): boolean {
   return (
     !!left &&
@@ -1723,6 +1725,7 @@ function removeDraftThreadReferences(
   };
 }
 
+/** Migrate saved drafts conservatively while retaining valid worktree branch and environment preferences. */
 function normalizePersistedDraftThreads(
   rawDraftThreadsByThreadId: unknown,
   rawProjectDraftThreadIdByProjectKey: unknown,
@@ -2575,6 +2578,7 @@ function toHydratedThreadDraft(
   };
 }
 
+/** Restore a persisted draft's launch settings and attachments without starting its agent. */
 function toHydratedDraftThreadState(
   persistedDraftThread: PersistedDraftThreadState,
 ): DraftThreadState {

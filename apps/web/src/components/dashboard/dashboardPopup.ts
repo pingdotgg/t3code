@@ -1,4 +1,5 @@
 const OPEN_EVENT = "t3code:open-agent-dashboard-window";
+/** Request the shared dashboard portal; opening it does not bootstrap another client runtime. */
 export function openAgentDashboardWindow() {
   window.dispatchEvent(new Event(OPEN_EVENT));
 }
@@ -7,6 +8,7 @@ export function openAgentDashboardWindow() {
 export function installDashboardPopupHost(onChange: (popup: Window | null) => void) {
   let child: Window | null = null;
   let observer: MutationObserver | null = null;
+  /** Remove popup theme observation and clear the portal target when the child closes. */
   const closed = () => {
     observer?.disconnect();
     observer = null;
@@ -14,6 +16,7 @@ export function installDashboardPopupHost(onChange: (popup: Window | null) => vo
     child = null;
     onChange(null);
   };
+  /** Reuse the existing dashboard window or create its empty, same-session portal target. */
   const open = () => {
     if (child && !child.closed) {
       child.focus();
@@ -22,6 +25,7 @@ export function installDashboardPopupHost(onChange: (popup: Window | null) => vo
     child = window.open("about:blank", "t3-agent-dashboard", "width=1120,height=760");
     if (!child) return;
     child.document.title = "Agent Dashboard — T3 Code";
+    /** Mirror the owning application's document attributes into the dashboard portal. */
     const syncTheme = () => {
       if (!child || child.closed) return;
       for (const attribute of Array.from(child.document.documentElement.attributes))

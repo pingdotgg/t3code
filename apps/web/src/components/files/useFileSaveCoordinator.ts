@@ -19,6 +19,7 @@ interface FileSaveOptions {
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
+/** Coordinate autosave against the optimistic draft's disk baseline while retaining edits on failure. */
 export function useFileSaveCoordinator({
   environmentId,
   cwd,

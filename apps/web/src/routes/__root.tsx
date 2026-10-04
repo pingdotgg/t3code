@@ -139,6 +139,7 @@ function RootRouteNotFoundView() {
   );
 }
 
+/** Mount shared application services and auxiliary portals once for the current client session. */
 function RootRouteView() {
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });

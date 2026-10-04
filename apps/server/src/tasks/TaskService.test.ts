@@ -2,6 +2,7 @@ import { it, assert } from "@effect/vitest";
 import { ProjectId, ThreadId, type Project, type TaskRequest } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -301,3 +302,129 @@ it.effect(
       ),
     ),
 );
+
+it.effect("retries the same write after gh could not spawn, then deduplicates success", () => {
+  let attempts = 0;
+  return Effect.gen(function* () {
+    yield* migration;
+    const service = yield* TaskService;
+    yield* service.configure({
+      projectId,
+      source: { provider: "github", baseUrl: "https://github.com", scope: "org/repo" },
+    });
+    const error = yield* service.execute(comment).pipe(Effect.flip);
+    assert.equal(error.code, "unavailable");
+    assert.include(error.message, "Install GitHub CLI");
+    const retried = yield* service.execute(comment);
+    assert.deepEqual(yield* service.execute(comment), retried);
+    assert.equal(attempts, 2);
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(
+          dependencies(() =>
+            Effect.suspend(() => {
+              attempts++;
+              return attempts === 1
+                ? Effect.fail(
+                    new GitHubCli.GitHubCliUnavailableError({
+                      command: "gh",
+                      cwd: "/repo",
+                      cause: new Error("ENOENT"),
+                    }),
+                  )
+                : Effect.succeed(result);
+            }),
+          ),
+        ),
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
+    ),
+  );
+});
+
+it.effect(
+  "logs the failing operation and category without credentials, SQL, or provider content",
+  () => {
+    const messages: unknown[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    return Effect.gen(function* () {
+      // No migration: exercise the real SQL failure without leaking its query.
+      const service = yield* TaskService;
+      yield* service.configure({
+        projectId,
+        source: { provider: "github", baseUrl: "https://github.com", scope: "org/repo" },
+      });
+      assert.equal(
+        (yield* service.execute({ projectId, action: "links" }).pipe(Effect.flip)).code,
+        "unavailable",
+      );
+      assert.equal(
+        (yield* service.execute({ projectId, action: "list" }).pipe(Effect.flip)).code,
+        "unavailable",
+      );
+      const logs = encodeJson(messages);
+      assert.include(logs, "list-links");
+      assert.include(logs, "SqlError");
+      assert.include(logs, "decode-github-response");
+      assert.include(logs, "SchemaError");
+      assert.notInclude(logs, "private-token");
+      assert.notInclude(logs, "external_task_links");
+      assert.notInclude(logs, "SELECT");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layer.pipe(
+            Layer.provide(
+              dependencies(() => Effect.succeed({ ...result, stdout: "private-token" })),
+            ),
+            Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+          ),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("redacts nested secret-store failures in server diagnostics and client errors", () => {
+  const messages: unknown[] = [];
+  const logger = Logger.make(({ message }) => {
+    messages.push(message);
+  });
+  return Effect.gen(function* () {
+    const service = yield* TaskService;
+    const error = yield* service.execute({ projectId, action: "status" }).pipe(Effect.flip);
+    assert.equal(error.code, "unavailable");
+    const logs = encodeJson(messages);
+    assert.include(logs, "read-source");
+    assert.include(logs, "SecretStoreReadError");
+    assert.notInclude(logs, "private-token");
+    assert.notInclude(encodeJson(error), "private-token");
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        layer.pipe(
+          Layer.provide(
+            Layer.merge(
+              dependencies(() => Effect.succeed(result)),
+              Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: () =>
+                  Effect.fail(
+                    new ServerSecretStore.SecretStoreReadError({
+                      resource: "private-token",
+                      cause: new Error("private-token"),
+                    }),
+                  ),
+              }),
+            ),
+          ),
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+        ),
+        Logger.layer([logger], { mergeWithExisting: false }),
+      ),
+    ),
+  );
+});

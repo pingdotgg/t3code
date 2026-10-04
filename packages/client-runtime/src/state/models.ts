@@ -200,6 +200,7 @@ export function scopeProject(
   return { ...project, environmentId };
 }
 
+/** Derive the client shell from bounded server metadata without requiring a conversation-history fetch. */
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,

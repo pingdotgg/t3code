@@ -24,6 +24,7 @@ const nodes = (value: unknown) => array(at(value, "nodes"));
 const invalid = (message: string) => new TaskIntegrationError({ code: "invalid", message });
 const emptyTask = { assignee: "", labels: [], priority: "", comments: [], relationships: [] };
 
+/** Advertise only fields implemented by the selected provider adapter. */
 export function taskEditableFields(provider: TaskSource["provider"]): TaskField[] {
   return provider === "github"
     ? ["title", "description", "status", "assignee", "labels"]
@@ -51,6 +52,7 @@ export function resolveTaskReference(source: TaskSource, reference: string): str
   return id;
 }
 
+/** Translate a GitHub issue into task data while keeping issue text as untrusted content. */
 function githubTask(value: unknown): ExternalTask {
   const v = object(value);
   return {
@@ -71,6 +73,7 @@ function githubTask(value: unknown): ExternalTask {
 }
 const LINEAR_FIELDS =
   "id identifier title description url branchName priority state { id name } assignee { id name } labels { nodes { id name } }";
+/** Translate Linear fields, comments, relationships, and suggested branch names into task data. */
 function linearTask(value: unknown): ExternalTask {
   const v = object(value);
   return {
@@ -281,6 +284,7 @@ export const runTaskProvider = Effect.fn("runTaskProvider")(function* (
       if (string(at(result, "issue", "team", "id")) !== source.scope)
         return yield* invalid("This issue is outside the selected Linear team.");
       tasks = [linearTask(result.issue)];
+      /** Convert the selected issue's team metadata into choices for editable Linear fields. */
       const options = (name: string) =>
         nodes(at(result, "issue", "team", name)).map((value) => ({
           value: string(at(value, "id")),

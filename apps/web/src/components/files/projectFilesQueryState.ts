@@ -63,6 +63,7 @@ export function getProjectFileQueryAtom(
   });
 }
 
+/** Retain the original disk contents when publishing an optimistic edit for conditional saving. */
 export function setProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
@@ -95,6 +96,7 @@ export function getOptimisticProjectFileQueryData(
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
+/** Advance the disk baseline after a successful save without discarding a newer optimistic edit. */
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,

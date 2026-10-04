@@ -501,6 +501,7 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
+/** Map workspace failures to actionable wire errors while retaining operation context for diagnostics. */
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
@@ -1178,6 +1179,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+/** Bind authorized WebSocket methods to environment services and their existing RPC instrumentation. */
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -3399,8 +3401,14 @@ const makeWsRpcLayer = (
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
-        [WS_METHODS.tasksExecute]: (input) => taskService.execute(input),
-        [WS_METHODS.tasksConfigure]: (input) => taskService.configure(input),
+        [WS_METHODS.tasksExecute]: (input) =>
+          observeRpcEffect(WS_METHODS.tasksExecute, taskService.execute(input), {
+            "rpc.aggregate": "tasks",
+          }),
+        [WS_METHODS.tasksConfigure]: (input) =>
+          observeRpcEffect(WS_METHODS.tasksConfigure, taskService.configure(input), {
+            "rpc.aggregate": "tasks",
+          }),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
           observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
             "rpc.aggregate": "review",

@@ -5,6 +5,7 @@ import {
   paneGroups,
   restoreWorkspaceLayout,
   workspacePaneRects,
+  workspaceMaximizeState,
 } from "./rightPanelLayout";
 import { migratePersistedRightPanelState, useRightPanelStore } from "./rightPanelStore";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -93,5 +94,40 @@ describe("mixed workspace layouts", () => {
       )[0]?.tabs,
     ).toContain(terminalId);
     expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]).toBeUndefined();
+  });
+});
+
+describe("workspace maximize targets", () => {
+  it("ignores deleted or split-node IDs and maximizes the active tool on the first toggle", () => {
+    const layout = defaultWorkspaceLayout(["diff"]);
+    for (const stale of ["deleted-pane", "workspace-root"]) {
+      const state = workspaceMaximizeState(layout, stale, "diff");
+      expect(state).toEqual({ maximizedPaneId: null, targetPaneId: "tools-pane" });
+      expect(workspaceMaximizeState(layout, state.targetPaneId, "diff").maximizedPaneId).toBe(
+        "tools-pane",
+      );
+    }
+  });
+  it("falls back to a pane containing tools when no tool surface is active", () => {
+    const layout = defaultWorkspaceLayout(["diff"]);
+    expect(workspaceMaximizeState(layout, null, null).targetPaneId).toBe("tools-pane");
+    const moved = moveWorkspaceSurface(layout, "diff", "conversation-pane");
+    expect(workspaceMaximizeState(moved, null, null).targetPaneId).toBe("conversation-pane");
+    expect(workspaceMaximizeState(moved, "conversation-pane", "diff").maximizedPaneId).toBe(
+      "conversation-pane",
+    );
+  });
+  it("finds active surfaces after nested moves and accepts the conversation itself", () => {
+    const layout = moveWorkspaceSurface(
+      defaultWorkspaceLayout(["diff", "terminal:1"]),
+      "terminal:1",
+      "tools-pane",
+      "bottom",
+      "terminal-pane",
+    );
+    expect(workspaceMaximizeState(layout, null, "terminal:1").targetPaneId).toBe("terminal-pane");
+    expect(workspaceMaximizeState(layout, null, "conversation").targetPaneId).toBe(
+      "conversation-pane",
+    );
   });
 });

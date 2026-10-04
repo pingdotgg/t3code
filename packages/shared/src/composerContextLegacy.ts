@@ -228,6 +228,7 @@ function unescapeAttribute(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+/** Recover legacy review-note attributes, including source revision and stale status, into typed context. */
 function reviewRecord(
   rawAttributes: string,
   rawBody: string,

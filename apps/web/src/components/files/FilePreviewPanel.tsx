@@ -850,6 +850,7 @@ function EditableFileSurface({
   );
 }
 
+/** Attach rendered selections to the existing composer review context with a captured source revision. */
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -879,6 +880,7 @@ function RenderedMarkdownSurface({
   const [noteText, setNoteText] = useState("");
   const [writingNote, setWritingNote] = useState(false);
   const surface = useRef<HTMLDivElement>(null);
+  /** Capture source lines before opening the review-note input changes the browser selection. */
   const captureSelection = () => {
     const range = surface.current ? renderedMarkdownSelection(surface.current) : null;
     if (range && !writingNote) setNote({ ...range, source: contents });
@@ -989,6 +991,7 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+/** Keep source, rendered, and rich document modes on the existing environment-scoped file cache and save flow. */
 export default function FilePreviewPanel({
   environmentId,
   cwd,

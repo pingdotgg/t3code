@@ -43,6 +43,7 @@ export function classifyDashboardThread(
   return { column: "Idle", label: status === "rolled_back" ? "Rolled back" : "Idle" };
 }
 
+/** Match shell metadata against dashboard filters while preserving environment-scoped project identity. */
 export function dashboardThreadMatches(
   thread: ThreadShell,
   filters: {
@@ -88,6 +89,7 @@ export interface DashboardEntry {
   children: DashboardEntry[];
   state: ReturnType<typeof classifyDashboardThread>;
 }
+/** Group child agents beneath parents and propagate attention without duplicating or hiding cyclic lineage. */
 export function dashboardEntries(
   threads: readonly ThreadShell[],
   connected: ReadonlySet<string>,
@@ -108,6 +110,7 @@ export function dashboardEntries(
     } else roots.push(thread);
   }
   const seen = new Set<string>();
+  /** Propagate child attention into the parent card while visiting each scoped thread once. */
   function entry(thread: ThreadShell): DashboardEntry {
     seen.add(key(thread));
     const children = (byParent.get(key(thread)) ?? [])
@@ -131,6 +134,7 @@ export function dashboardEntries(
   for (const thread of threads) if (!seen.has(key(thread))) result.push(entry(thread));
   return result;
 }
+/** Build a conversation route that retains both environment and thread identity. */
 export function dashboardThreadTarget(thread: Pick<ThreadShell, "environmentId" | "id">) {
   return {
     to: "/$environmentId/$threadId" as const,

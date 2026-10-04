@@ -15,6 +15,7 @@ import {
   paneGroups,
   restoreWorkspaceLayout,
   workspacePaneRects,
+  workspaceMaximizeState,
   type PaneEdge,
   type PaneRect,
   type WorkspacePane,
@@ -24,6 +25,7 @@ import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
 import { Button } from "./ui/button";
 
 const MIME = "application/x-t3-workspace-tab";
+/** Convert workspace-relative percentages into placement styles without reparenting mounted surfaces. */
 const position = (rect: PaneRect): CSSProperties => ({
   position: "absolute",
   left: `${rect.x}%`,
@@ -31,6 +33,7 @@ const position = (rect: PaneRect): CSSProperties => ({
   width: `${rect.width}%`,
   height: `${rect.height}%`,
 });
+/** Arrange persistent thread surfaces in nested panes; layout changes do not own their underlying processes. */
 export function SplitWorkspace({
   threadRef,
   state,
@@ -49,7 +52,7 @@ export function SplitWorkspace({
     () => new Set<string>([CONVERSATION_SURFACE]),
   );
   const scope = scopedThreadKey(threadRef);
-  const layout = useMemo(
+  const savedLayout = useMemo(
     () =>
       restoreWorkspaceLayout(
         state.workspaceLayout,
@@ -58,15 +61,38 @@ export function SplitWorkspace({
       ),
     [state.workspaceLayout, state.surfaces, state.activeSurfaceId],
   );
+  const resize = useRef<{
+    base: WorkspacePane;
+    scope: string;
+    splitId: string;
+    pointerId: number;
+    ratio: number;
+  } | null>(null);
+  const [resizePreview, setResizePreview] = useState<typeof resize.current>(null);
+  const layout = useMemo(
+    () =>
+      resizePreview?.base === savedLayout && resizePreview.scope === scope
+        ? mapWorkspacePane(savedLayout, (node) =>
+            node.id === resizePreview.splitId && node.type === "split"
+              ? { ...node, ratio: resizePreview.ratio }
+              : node,
+          )
+        : savedLayout,
+    [savedLayout, scope, resizePreview],
+  );
+  /** Discard the transient drag ratio without persisting or replacing the saved layout. */
+  function cancelResize() {
+    resize.current = null;
+    setResizePreview(null);
+  }
   const groups = paneGroups(layout);
   const [dragging, setDragging] = useState(false);
   const [drop, setDrop] = useState<{ group: string; edge?: PaneEdge } | null>(null);
   const [focused, setFocused] = useState("");
   const visibleLayout = !state.isOpen ? defaultWorkspaceLayout([]) : layout;
-  const maximized =
-    state.isOpen && groups.some((g) => g.id === state.maximizedPaneId)
-      ? state.maximizedPaneId
-      : null;
+  const maximized = state.isOpen
+    ? workspaceMaximizeState(layout, state.maximizedPaneId, state.activeSurfaceId).maximizedPaneId
+    : null;
   const frames = workspacePaneRects(visibleLayout);
   const activeFrames = frames
     .filter((frame) => frame.node.type === "group" && (!maximized || frame.node.id === maximized))
@@ -79,19 +105,23 @@ export function SplitWorkspace({
       : [],
   );
   if (newlyVisible.length) setMountedSurfaces(new Set([...mountedSurfaces, ...newlyVisible]));
+  /** Persist a layout operation under the owning environment and thread and invalidate stale proactive requests. */
   function save(next: WorkspacePane, max: string | null = maximized ?? null) {
     useRightPanelStore.getState().setWorkspaceLayout(threadRef, next, max);
   }
+  /** Select a surface in its group and synchronize the existing tool's activation state. */
   function activate(id: string) {
     const surface = state.surfaces.find((s) => s.id === id);
     if (surface) tabs.onActivate(surface);
     save(activateWorkspaceSurface(layout, id));
   }
+  /** Move a surface reference between groups while retaining its mounted resource and activation state. */
   function move(surface: string, group: string, edge?: PaneEdge) {
     save(moveWorkspaceSurface(layout, surface, group, edge, randomUUID()), null);
     const item = state.surfaces.find((s) => s.id === surface);
     if (item) tabs.onActivate(item);
   }
+  /** Focus the selected pane's editable surface, falling back to its keyboard-accessible header. */
   function focusPane(id: string) {
     setFocused(id);
     const pane = activeFrames.find((frame) => frame.node.id === id)?.node;
@@ -378,25 +408,52 @@ export function SplitWorkspace({
                 }
               }}
               onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                resize.current = {
+                  base: savedLayout,
+                  scope,
+                  splitId: node.id,
+                  pointerId: event.pointerId,
+                  ratio: node.ratio,
+                };
                 event.currentTarget.setPointerCapture(event.pointerId);
               }}
               onPointerMove={(event) => {
-                if (!event.currentTarget.hasPointerCapture(event.pointerId) || !root.current)
+                const drag = resize.current;
+                if (
+                  !drag ||
+                  drag.pointerId !== event.pointerId ||
+                  drag.base !== savedLayout ||
+                  drag.scope !== scope ||
+                  !root.current
+                )
                   return;
                 const bounds = root.current.getBoundingClientRect();
                 const ratio =
                   node.axis === "horizontal"
                     ? (((event.clientX - bounds.left) / bounds.width) * 100 - rect.x) / rect.width
                     : (((event.clientY - bounds.top) / bounds.height) * 100 - rect.y) / rect.height;
-                save(
-                  mapWorkspacePane(layout, (n) =>
-                    n.id === node.id && n.type === "split"
-                      ? { ...n, ratio: Math.min(0.85, Math.max(0.15, ratio)) }
-                      : n,
-                  ),
-                );
+                if (!Number.isFinite(ratio)) return;
+                resize.current = { ...drag, ratio: Math.min(0.85, Math.max(0.15, ratio)) };
+                setResizePreview(resize.current);
               }}
-              onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+              onPointerUp={(event) => {
+                const drag = resize.current;
+                if (drag?.pointerId !== event.pointerId) return;
+                if (drag.base === savedLayout && drag.scope === scope) {
+                  save(
+                    mapWorkspacePane(savedLayout, (pane) =>
+                      pane.id === drag.splitId && pane.type === "split"
+                        ? { ...pane, ratio: drag.ratio }
+                        : pane,
+                    ),
+                  );
+                }
+                cancelResize();
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }}
+              onPointerCancel={cancelResize}
+              onLostPointerCapture={cancelResize}
             />
           ),
         )}

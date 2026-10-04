@@ -193,6 +193,7 @@ export function terminalContextRecord(context: TerminalContextDraft): TerminalCo
   };
 }
 
+/** Encode a local review note with its source range, revision, and stale status for agent context. */
 export function reviewCommentContextRecord(
   comment: ReviewCommentContext,
 ): ReviewCommentContextRecord {
@@ -438,6 +439,7 @@ export function terminalContextDraftFromRecord(
   };
 }
 
+/** Restore review-note context without losing revision metadata needed to identify outdated ranges. */
 export function reviewCommentFromRecord(record: ReviewCommentContextRecord): ReviewCommentContext {
   return {
     id: producerIdFromComposerContextId("review-comment", record.contextId),

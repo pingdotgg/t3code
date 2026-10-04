@@ -307,6 +307,7 @@ const upsertSurface = (
   activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
 });
 
+/** Normalize a thread's surface selection and saved pane layout together before storing the next state. */
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
@@ -445,6 +446,7 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
+/** Recover saved panel state into scoped workspaces while preserving supported tabs and resource identities. */
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byThreadKey: Record<string, ThreadRightPanelState>;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;

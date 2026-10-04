@@ -40,6 +40,7 @@ const DEFAULTS = {
 };
 const COLUMNS: AgentColumn[] = ["Needs You", "Working", "Done", "Idle"];
 
+/** Display and filter live thread shells across environments, reusing the existing client subscriptions. */
 export function AgentDashboard({ detached = false }: { detached?: boolean }) {
   const threads = useThreadShells();
   const projects = useProjects();
@@ -226,6 +227,7 @@ export function AgentDashboard({ detached = false }: { detached?: boolean }) {
   );
 }
 
+/** Open an existing thread and expose delegated work without creating duplicate agent sessions. */
 function DashboardCard({
   entry,
   projectNames,

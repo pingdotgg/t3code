@@ -15,8 +15,29 @@ export type WorkspacePane =
     };
 export type PaneEdge = "left" | "right" | "top" | "bottom";
 export const CONVERSATION_SURFACE = "conversation";
+/** Enumerate leaf tab groups in layout order without touching their underlying resources. */
 export const paneGroups = (pane: WorkspacePane): Extract<WorkspacePane, { type: "group" }>[] =>
   pane.type === "group" ? [pane] : [...paneGroups(pane.first), ...paneGroups(pane.second)];
+/** Resolve maximize state from live groups, including layouts with moved conversation tabs. */
+export function workspaceMaximizeState(
+  layout: WorkspacePane,
+  storedPaneId: string | null | undefined,
+  activeSurfaceId: string | null,
+) {
+  const groups = paneGroups(layout);
+  return {
+    maximizedPaneId: groups.some((group) => group.id === storedPaneId)
+      ? (storedPaneId ?? null)
+      : null,
+    targetPaneId:
+      (
+        groups.find((group) => group.tabs.includes(activeSurfaceId ?? "")) ??
+        groups.find((group) => group.tabs.some((tab) => tab !== CONVERSATION_SURFACE)) ??
+        groups[0]
+      )?.id ?? null,
+  };
+}
+/** Place the conversation beside existing tool tabs, preserving the active surface during migration. */
 export function defaultWorkspaceLayout(
   surfaces: readonly string[],
   active?: string | null,
@@ -43,6 +64,7 @@ export function defaultWorkspaceLayout(
       }
     : conversation;
 }
+/** Validate persisted panes, discard invalid references, and restore missing live tabs without duplicating resources. */
 export function restoreWorkspaceLayout(
   value: unknown,
   surfaces: readonly string[],
@@ -106,6 +128,7 @@ export function restoreWorkspaceLayout(
   }
   return layout;
 }
+/** Apply an immutable tree transformation while retaining pane and surface identities. */
 export function mapWorkspacePane(
   node: WorkspacePane,
   map: (node: WorkspacePane) => WorkspacePane,
@@ -120,6 +143,7 @@ export function mapWorkspacePane(
       : node,
   );
 }
+/** Activate a tab in its owning group without moving it or changing another group's selection. */
 export function activateWorkspaceSurface(node: WorkspacePane, surfaceId: string): WorkspacePane {
   return mapWorkspacePane(node, (pane) =>
     pane.type === "group" && pane.tabs.includes(surfaceId) && pane.active !== surfaceId
@@ -127,6 +151,7 @@ export function activateWorkspaceSurface(node: WorkspacePane, surfaceId: string)
       : pane,
   );
 }
+/** Move one surface reference, optionally split its target, and collapse empty groups without closing resources. */
 export function moveWorkspaceSurface(
   layout: WorkspacePane,
   surface: string,
@@ -174,6 +199,7 @@ export interface PaneRect {
   width: number;
   height: number;
 }
+/** Calculate nested pane rectangles in workspace percentages for stable mounted-surface placement. */
 export function workspacePaneRects(
   node: WorkspacePane,
   rect: PaneRect = { x: 0, y: 0, width: 100, height: 100 },

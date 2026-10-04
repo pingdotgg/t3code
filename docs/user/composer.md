@@ -296,9 +296,12 @@ Rich editing requires an updated server with conflict-aware file writes.
 
 Select text in Rich or Preview mode to attach a source-linked review note to the
 agent draft. Nothing is sent until you send the draft. Notes whose document changes
-are marked outdated and keep the original excerpt. If an agent or another editor
-changes a file before your save, T3 retains your unsaved text and offers a comparison;
-copy any edits you need before discarding them and using the disk version.
+are marked outdated and keep the original excerpt. Before saving, T3 compares the
+file with the version you opened. If it detects a change, it retains your unsaved
+text and offers a comparison; copy any edits you need before discarding them and
+using the disk version. This check serializes saves made through T3, but cannot lock
+out external editors or agents. Avoid editing the same file simultaneously: an
+external write during the comparison-to-save interval can still be overwritten.
 
 ## Dictate on desktop
 

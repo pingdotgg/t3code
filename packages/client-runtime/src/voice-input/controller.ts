@@ -134,6 +134,7 @@ type VoiceInputSession = {
 let activeSession: VoiceInputSession | null = null;
 let activeTranscriptionOperation: Promise<unknown> | null = null;
 
+/** Reserve the shared voice slot so simultaneous composers cannot capture into conflicting sessions. */
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
   // Keep the shared controller compatible with the web client's ES2023 target.
@@ -212,6 +213,7 @@ export class VoiceInputController {
     return this.state;
   }
 
+  /** Capture the owning draft and acquire recorder resources before entering the recording state. */
   async start(): Promise<void> {
     if (this.state.phase !== "idle" && this.state.phase !== "error") return;
     const initiatingDraft = this.dependencies.readDraft();
@@ -374,6 +376,7 @@ export class VoiceInputController {
     }
   }
 
+  /** Finish or cancel capture, release shared ownership, and commit only a still-valid transcription. */
   private async finishRecording(
     alreadyStopped: boolean,
     completedUri: string | null,
