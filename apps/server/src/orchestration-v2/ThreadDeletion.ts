@@ -63,6 +63,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       ...projection.thread,
       deletedAt: projection.thread.deletedAt ?? now,
       titleRegeneration: null,
+      titleRefreshMessageId: null,
       updatedAt: now,
     },
   });

@@ -417,6 +417,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * First message whose completed run regenerates the title. Set when that
+   * message is a bare skill or slash command the title model cannot see into;
+   * a rename or the run ending any other way clears it.
+   */
+  titleRefreshMessageId: Schema.optional(Schema.NullOr(MessageId)),
   /** Latest accepted rollback. Only its failure is recorded in `rollbackFailure`. */
   rollbackRequestId: Schema.optional(CommandId),
   /** Latest rollback that failed after every retry; cleared when the next rollback starts. */
