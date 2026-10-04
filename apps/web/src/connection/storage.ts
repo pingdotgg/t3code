@@ -1,17 +1,18 @@
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
-  ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
-  EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   replaceCatalogValue,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -24,14 +25,7 @@ import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
-import {
-  EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadDetailSnapshot,
-  ServerConfig,
-  ThreadId,
-  VcsListRefsResult,
-} from "@t3tools/contracts";
+import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -51,28 +45,9 @@ const THREAD_STORE_NAME = "thread";
 const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-
-const StoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  snapshot: OrchestrationShellSnapshot,
-});
+const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
-// v2 stores the snapshot sequence alongside the thread so a warm cache can
-// resume via `afterSequence` instead of re-downloading the full thread body.
-// v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
-// exists for rollback safety: a pre-pagination client would decode a windowed
-// v2 record, silently drop the unknown `page` field, and treat the partial
-// thread as complete forever. Older entries fail to decode → cold cache.
-// v4 reloads pre-thinking caches: their fallback system roles cannot recover
-// settled reasoning messages by resuming afterSequence.
-const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(4),
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  snapshot: OrchestrationThreadDetailSnapshot,
-});
+const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -127,7 +102,7 @@ function persistenceError(
     | "clear-environment",
   cause: unknown,
 ) {
-  return new ConnectionPersistenceError({
+  return new Persistence.ConnectionPersistenceError({
     operation,
     message: `Could not ${operation.replaceAll("-", " ")}: ${String(cause)}`,
   });
@@ -188,7 +163,9 @@ function writeDatabaseValue(
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     const transaction = database.transaction(storeName, "readwrite");
-    transaction.addEventListener("error", () => {
+    // Every failed write fires "abort". A failed commit, such as
+    // QuotaExceededError, fires only "abort" and no "error".
+    transaction.addEventListener("abort", () => {
       resume(
         Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
       );
@@ -486,7 +463,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
-    const targetStore = ConnectionTargetStore.of({
+    const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
@@ -496,7 +473,7 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
       ),
     });
-    const registrationStore = ConnectionRegistrationStore.of({
+    const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
@@ -581,33 +558,32 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    const cacheStore = EnvironmentCacheStore.of({
+    const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
           Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
-              return Effect.succeed(Option.none());
+              return Effect.succeedNone;
             }
-            return decodeStoredShellSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-shell", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId
-                  ? Option.some(stored.snapshot)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredShellSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-shell", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId
+                    ? Option.some(stored.snapshot)
+                    : Option.none(),
+                ),
               ),
+              removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-shell", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-shell", cause)),
         ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredShellSnapshot({
-            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
@@ -623,7 +599,7 @@ export const connectionStorageLayer = Layer.effectContext(
         readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId).pipe(
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
-              return Effect.succeed(Option.none());
+              return Effect.succeedNone;
             }
             return decodeStoredServerConfig(raw).pipe(
               Effect.mapError((cause) => persistenceError("load-server-config", cause)),
@@ -661,35 +637,38 @@ export const connectionStorageLayer = Layer.effectContext(
         ).pipe(
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
-              return Effect.succeed(Option.none());
+              return Effect.succeedNone;
             }
-            return decodeStoredThreadSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-thread", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId && stored.threadId === threadId
-                  ? Option.some(stored.snapshot)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredThreadSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-thread", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId && stored.threadId === threadId
+                    ? Option.some(stored.snapshot)
+                    : Option.none(),
+                ),
+              ),
+              removeDatabaseValue(
+                database,
+                THREAD_STORE_NAME,
+                threadCacheKey(environmentId, threadId),
               ),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-thread", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-thread", cause)),
         ),
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 4,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
-            threadId: snapshot.thread.id,
+            threadId: snapshot.projection.thread.id,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
-            threadCacheKey(environmentId, snapshot.thread.id),
+            threadCacheKey(environmentId, snapshot.projection.thread.id),
             encoded,
           );
         }).pipe(
@@ -703,7 +682,7 @@ export const connectionStorageLayer = Layer.effectContext(
         readDatabaseValue(database, VCS_REFS_STORE_NAME, vcsRefsCacheKey(environmentId, cwd)).pipe(
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
-              return Effect.succeed(Option.none());
+              return Effect.succeedNone;
             }
             return decodeStoredVcsRefs(raw).pipe(
               Effect.mapError((cause) => persistenceError("load-vcs-refs", cause)),
@@ -780,13 +759,13 @@ export const connectionStorageLayer = Layer.effectContext(
         ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause))),
     });
 
-    return Context.make(ConnectionTargetStore, targetStore).pipe(
+    return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
-      Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
-      Context.add(EnvironmentCacheStore, cacheStore),
+      Context.add(Persistence.EnvironmentCacheStore, cacheStore),
     );
   }),
 );

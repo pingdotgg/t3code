@@ -16,6 +16,25 @@ export type OtlpProtocol = typeof OtlpProtocol.Type;
 export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
+/**
+ * How one signal is exported, once whichever source named that signal's
+ * endpoint has been resolved. Held per signal rather than per process, so a
+ * wire format or a credential cannot be paired by hand with an endpoint that
+ * came from somewhere else.
+ */
+export interface SignalExport {
+  readonly protocol: OtlpProtocol;
+  readonly headers: Readonly<Record<string, string>> | undefined;
+  readonly exportIntervalMs: number;
+}
+
+/** What T3 Code exports with when nothing configured a signal. */
+export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
+  protocol: "http/json",
+  headers: undefined,
+  exportIntervalMs: 10_000,
+};
+
 const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
 
@@ -479,13 +498,15 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    // Cached lookup fibers retain parent spans. Traces need success status, not result payloads.
+    const traceExit = ExitRuntime.isSuccess(exit) ? ExitRuntime.void : exit;
     this.status = {
       _tag: "Ended",
       startTime: this.status.startTime,
       endTime,
-      exit,
+      exit: traceExit,
     };
-    this.delegate.end(endTime, exit);
+    this.delegate.end(endTime, traceExit);
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -649,7 +670,7 @@ function decodeAttributes(
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
-  return compactTraceAttributes(entries);
+  return truncateTraceAttributes(compactTraceAttributes(entries));
 }
 
 function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {

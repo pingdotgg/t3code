@@ -16,14 +16,17 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
+  ProjectId,
   ProjectScript,
-  type ProjectSettingsOverrides,
+  ProjectSettingsOverrides,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
+  type ProviderInstanceMutation,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  ResponseStreamingMode,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -43,11 +46,13 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
+import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -140,15 +145,23 @@ function providerEnvironmentSecretName(input: {
 }
 
 /**
- * On disk the hub key is replaced by this marker and the real value lives in
- * the secret store, mirroring provider environment secrets. A client that
- * sends the marker back means "keep what you have".
+ * On disk a hub key or Bitbucket token is replaced by this marker and the
+ * real value lives in the secret store, mirroring provider environment
+ * secrets. A client that sends the marker back means "keep what you have".
  */
-const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
+
+const BITBUCKET_SECRET_NAMES = {
+  accessToken: "bitbucket-access-token",
+  apiToken: "bitbucket-api-token",
+} as const;
+const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
+
+const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
@@ -182,11 +195,49 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       id,
       {
         ...source,
-        managementKey: source.managementKey.length > 0 ? USAGE_LIMIT_SOURCE_KEY_REDACTED : "",
+        managementKey: redactSecret(source.managementKey),
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  const bitbucket = {
+    ...settings.bitbucket,
+    accessToken: redactSecret(settings.bitbucket.accessToken),
+    apiToken: redactSecret(settings.bitbucket.apiToken),
+  };
+  return { ...settings, providerInstances, usageLimitSources, bitbucket };
+}
+
+export function applyProviderInstanceMutation(
+  settings: ServerSettings,
+  mutation: ProviderInstanceMutation,
+): ServerSettings {
+  const providerInstances = { ...settings.providerInstances };
+  if (mutation.operation === "upsert" || mutation.operation === "create") {
+    providerInstances[mutation.instanceId] = mutation.instance;
+  } else {
+    delete providerInstances[mutation.instanceId];
+  }
+  return { ...settings, providerInstances };
+}
+
+function ensureProviderInstanceMutationAllowed(
+  settings: ServerSettings,
+  mutation: ProviderInstanceMutation,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  if (
+    mutation.operation === "create" &&
+    settings.providerInstances[mutation.instanceId] !== undefined
+  ) {
+    return Effect.fail(
+      new ServerSettingsError({
+        settingsPath,
+        operation: "create-provider-instance",
+        providerInstanceId: mutation.instanceId,
+      }),
+    );
+  }
+  return Effect.void;
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -205,6 +256,17 @@ export class ServerSettingsService extends Context.Service<
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Apply a patch and one provider-instance mutation against the same latest settings snapshot. */
+    readonly updateProviderInstance: (
+      mutation: ProviderInstanceMutation,
+      patch?: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Run an effect against a settings snapshot while settings writes are paused. */
+    readonly withSettingsSnapshot: <A, E, R>(
+      use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ServerSettingsError, R>;
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -236,18 +298,43 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const writeSemaphore = yield* Semaphore.make(1);
+    const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
-    return {
-      start: Effect.void,
-      ready: Effect.void,
-      getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
-      updateSettings: (patch) =>
+    const updateTestSettings = (
+      update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+      writeSemaphore.withPermits(1)(
         Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.flatMap(update),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
+      );
+
+    return {
+      start: Effect.void,
+      ready: Effect.void,
+      getSettings,
+      updateSettings: (patch) =>
+        updateTestSettings((currentSettings) =>
+          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        ),
+      updateProviderInstance: (mutation, patch = {}) =>
+        updateTestSettings((currentSettings) =>
+          Effect.gen(function* () {
+            yield* ensureProviderInstanceMutationAllowed(
+              currentSettings,
+              mutation,
+              "test settings",
+            );
+            const patched = applyServerSettingsPatch(currentSettings, patch);
+            return applyProviderInstanceMutation(patched, mutation);
+          }),
+        ),
+      withSettingsSnapshot: (use) =>
+        writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
       streamChanges: Stream.empty,
       subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
@@ -256,7 +343,35 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
+// Migrate saved token delivery without accepting it in settings writes or
+// letting one retired value reset the rest of the environment's settings.
+const PersistedResponseStreamingMode = Schema.Union([
+  ResponseStreamingMode,
+  Schema.Literal("token"),
+]).pipe(
+  Schema.decodeTo(
+    ResponseStreamingMode,
+    SchemaTransformation.transform({
+      decode: (mode) => (mode === "token" ? "paragraph" : mode),
+      encode: (mode) => mode,
+    }),
+  ),
+);
+const ServerSettingsJson = fromLenientJson(
+  Schema.Struct({
+    ...ServerSettings.fields,
+    responseStreamingMode: PersistedResponseStreamingMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
+    ),
+    projectSettingsOverrides: Schema.Record(
+      ProjectId,
+      Schema.Struct({
+        ...ProjectSettingsOverrides.fields,
+        responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
+      }),
+    ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }),
+);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 const PersistedOptionalProviderSettings = Schema.Struct({
   providers: Schema.optionalKey(
@@ -319,8 +434,19 @@ function restoreUsedProviders(
   };
 }
 
+const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+
+/** ACP Registry instances reject every application text-generation operation. */
+function selectionSupportsTextGeneration(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
+}
+
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
+  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
+    selectionSupportsTextGeneration(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
 }
@@ -555,6 +681,35 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  /**
+   * Moves Bitbucket tokens hand-edited into settings.json into the secret store as they load,
+   * so plaintext does not stay on disk. If the store is unavailable, the token keeps working
+   * from the file and the move is retried on the next load.
+   */
+  const moveInlineBitbucketTokens = (settings: ServerSettings) =>
+    Effect.gen(function* () {
+      const bitbucket = { ...settings.bitbucket };
+      let moved = false;
+      for (const field of BITBUCKET_SECRET_FIELDS) {
+        const value = bitbucket[field];
+        if (value.length === 0 || value === SECRET_REDACTED) continue;
+        const stored = yield* secretStore
+          .set(BITBUCKET_SECRET_NAMES[field], textEncoder.encode(value))
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() =>
+              Effect.logWarning("failed to move a Bitbucket token into the secret store", {
+                field,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+        if (!stored) continue;
+        bitbucket[field] = SECRET_REDACTED;
+        moved = true;
+      }
+      return moved ? { ...settings, bitbucket } : settings;
+    });
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let persisted: typeof PersistedOptionalProviderSettings.Type = {};
@@ -639,10 +794,12 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
-    if (folded !== loaded) {
-      yield* writeSettingsAtomically(folded);
+    // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
+    const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
+    if (migrated !== loaded) {
+      yield* writeSettingsAtomically(migrated);
     }
-    return folded;
+    return migrated;
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -693,7 +850,7 @@ const make = Effect.gen(function* () {
       }
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
-        if (source.managementKey !== USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+        if (source.managementKey !== SECRET_REDACTED) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -709,10 +866,23 @@ const make = Effect.gen(function* () {
           managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         };
       }
+      const bitbucket = { ...settings.bitbucket };
+      for (const field of BITBUCKET_SECRET_FIELDS) {
+        if (bitbucket[field] !== SECRET_REDACTED) continue;
+        const secret = yield* secretStore
+          .get(BITBUCKET_SECRET_NAMES[field])
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+        bitbucket,
       };
     });
 
@@ -829,7 +999,7 @@ const make = Effect.gen(function* () {
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
         const secretName = usageLimitSourceSecretName(sourceId);
-        if (source.managementKey === USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+        if (source.managementKey === SECRET_REDACTED) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -843,7 +1013,7 @@ const make = Effect.gen(function* () {
           secretName,
           value: textEncoder.encode(source.managementKey),
         });
-        usageLimitSources[sourceId] = { ...source, managementKey: USAGE_LIMIT_SOURCE_KEY_REDACTED };
+        usageLimitSources[sourceId] = { ...source, managementKey: SECRET_REDACTED };
       }
       for (const sourceId of Object.keys(current.usageLimitSources)) {
         if (sourceId in next.usageLimitSources) continue;
@@ -854,11 +1024,31 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const bitbucket = { ...next.bitbucket };
+      for (const field of BITBUCKET_SECRET_FIELDS) {
+        let value = bitbucket[field];
+        if (value === SECRET_REDACTED) {
+          // The marker keeps what is saved. A plaintext value hand-edited into settings.json
+          // is not in the secret store yet, so move it there instead of dropping it.
+          const inline = current.bitbucket[field];
+          if (inline === SECRET_REDACTED || inline.length === 0) continue;
+          value = inline;
+        }
+        const secretName = BITBUCKET_SECRET_NAMES[field];
+        if (value.length === 0) {
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+          continue;
+        }
+        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
+        bitbucket[field] = SECRET_REDACTED;
+      }
+
       return {
         settings: {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+          bitbucket,
         },
         changes,
       };
@@ -940,13 +1130,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateSettings = (
-    patch: ServerSettingsPatch,
+  const updateAndPersistSettings = (
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = applyServerSettingsPatch(current, patch);
+        const updated = yield* update(current);
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
@@ -975,6 +1165,15 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
+    writeSemaphore.withPermits(1)(
+      getSettingsFromCache.pipe(
+        Effect.flatMap(materializeProviderEnvironmentSecrets),
+        Effect.map(resolveTextGenerationProvider),
+        Effect.flatMap(use),
+      ),
+    );
+
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       yield* Cache.invalidate(settingsCache, cacheKey);
@@ -983,10 +1182,24 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const watchFileChanges = (filePath: string) => {
+    const directory = pathService.dirname(filePath);
+    const fileName = pathService.basename(filePath);
+    const resolvedFilePath = pathService.resolve(filePath);
+    return fs
+      .watch(directory)
+      .pipe(
+        Stream.filter(
+          (event) =>
+            event.path === fileName ||
+            event.path === filePath ||
+            pathService.resolve(directory, event.path) === resolvedFilePath,
+        ),
+      );
+  };
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
-    const settingsFile = pathService.basename(settingsPath);
-    const settingsPathResolved = pathService.resolve(settingsPath);
 
     yield* fs.makeDirectory(settingsDir, { recursive: true }).pipe(
       Effect.mapError(
@@ -1001,19 +1214,43 @@ const make = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
+    // A symlinked settings file is rewritten in its destination's directory,
+    // which a watch on the link's directory never sees. The link is resolved
+    // again whenever it changes, so repointing it moves the watch along.
+    const watchLinkTarget = Effect.gen(function* () {
+      const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
+      if (linkTargetPath === pathService.resolve(settingsPath)) {
+        return Option.none<string>();
+      }
+      yield* fs
+        .makeDirectory(pathService.dirname(linkTargetPath), { recursive: true })
+        .pipe(Effect.ignore({ log: true }));
+      return Option.some(linkTargetPath);
+    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+    const initialLinkTarget = yield* watchLinkTarget;
+    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
+      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
+      Stream.changes,
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: (linkTargetPath) =>
+            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+        }),
+      ),
+    );
+
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
-      Stream.filter((event) => {
-        return (
-          event.path === settingsFile ||
-          event.path === settingsPath ||
-          pathService.resolve(settingsDir, event.path) === settingsPathResolved
-        );
-      }),
-      Stream.debounce(Duration.millis(100)),
-    );
+    const debouncedSettingsEvents = Stream.merge(
+      watchFileChanges(settingsPath),
+      linkTargetEvents,
+    ).pipe(Stream.debounce(Duration.millis(100)));
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
       Effect.ignoreCause({ log: true }),
@@ -1050,7 +1287,19 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings,
+    updateSettings: (patch) =>
+      updateAndPersistSettings((current) =>
+        Effect.succeed(applyServerSettingsPatch(current, patch)),
+      ),
+    updateProviderInstance: (mutation, patch = {}) =>
+      updateAndPersistSettings((current) =>
+        Effect.gen(function* () {
+          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
+          const patched = applyServerSettingsPatch(current, patch);
+          return applyProviderInstanceMutation(patched, mutation);
+        }),
+      ),
+    withSettingsSnapshot,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

@@ -1,5 +1,6 @@
 import {
   type ModelCapabilities,
+  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -13,10 +14,8 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import type { VariantProps } from "class-variance-authority";
 import type { ReactNode } from "react";
 
-import type { buttonVariants } from "../ui/button";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
@@ -50,12 +49,12 @@ type TraitsRenderInput = {
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  reportedModelSelection?: ModelSelection | null | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
   planModeEnabled: boolean;
   size?: ComposerControlSize;
   hidden?: boolean;
-  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
 };
@@ -173,12 +172,12 @@ function renderTraitsControl(
     model,
     models,
     modelOptions,
+    reportedModelSelection,
     prompt,
     onPromptChange,
     planModeEnabled,
     size,
     hidden,
-    triggerVariant,
     triggerClassName,
     isComposerOwned,
   } = input;
@@ -212,12 +211,12 @@ function renderTraitsControl(
       {...(draftId ? { draftId } : {})}
       model={model}
       modelOptions={resolvedModelOptions}
+      reportedModelSelection={reportedModelSelection}
       prompt={prompt}
       onPromptChange={onPromptChange}
       planModeEnabled={planModeEnabled}
       {...(size !== undefined ? { size } : {})}
       {...(hidden !== undefined ? { hidden } : {})}
-      {...(triggerVariant !== undefined ? { triggerVariant } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
     />

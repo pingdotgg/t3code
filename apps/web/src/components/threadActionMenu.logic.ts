@@ -14,6 +14,9 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "auto-settle"
+  | "auto-settle:enabled"
+  | "auto-settle:disabled"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -26,6 +29,45 @@ export type ThreadActionMenuId =
   | "copy-thread-id"
   | "archive"
   | "delete";
+
+export type DraftActionMenuId =
+  | "copy"
+  | "copy-path"
+  | "copy-branch"
+  | "project-settings"
+  | "discard";
+
+/** Right-click menu for an unsent draft row in the sidebar. */
+export function buildDraftActionMenuItems(options: {
+  readonly hasPath: boolean;
+  readonly hasBranch: boolean;
+  readonly hasProject: boolean;
+}): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
+  return [
+    {
+      id: "copy",
+      label: "Copy",
+      icon: "copy",
+      disabled: !options.hasPath && !options.hasBranch,
+      children: [
+        ...(options.hasPath ? [{ id: "copy-path" as const, label: "Path", icon: "folder" }] : []),
+        ...(options.hasBranch
+          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+          : []),
+      ],
+    },
+    ...(options.hasProject
+      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      : []),
+    {
+      id: "discard",
+      label: "Discard draft",
+      icon: "trash",
+      destructive: true,
+      separatorBefore: true,
+    },
+  ];
+}
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
@@ -40,13 +82,17 @@ export interface ThreadActionMenuState {
   } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
+  /** False while the user has turned automatic settlement off for this thread. */
+  readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
+  /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
     readonly settlement: boolean;
+    /** Server understands thread.auto-settle.set. */
+    readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
@@ -128,6 +174,31 @@ export function buildThreadActionMenuItems(
               ? "Show all projects"
               : `Filter by ${state.projectFilter.label}`,
             icon: "folder-tree",
+          },
+        ]
+      : []),
+    // A submenu with the current option checked, not a one-shot action:
+    // this is a setting, and it sits with the other per-thread settings
+    // rather than the lifecycle verbs above. Disabled keeps long-running
+    // threads out of the settled shelf no matter how quiet they get.
+    ...(state.supports.autoSettleOptOut
+      ? [
+          {
+            id: "auto-settle" as const,
+            label: "Auto-settle behavior",
+            icon: "timer",
+            children: [
+              {
+                id: "auto-settle:enabled" as const,
+                label: "Enabled",
+                checked: state.autoSettleEnabled,
+              },
+              {
+                id: "auto-settle:disabled" as const,
+                label: "Disabled",
+                checked: !state.autoSettleEnabled,
+              },
+            ],
           },
         ]
       : []),

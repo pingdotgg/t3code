@@ -18,6 +18,9 @@ import {
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
+/** Secret store name prefix of DPoP replay markers. The server prunes expired ones. */
+export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
+
 export const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
   switch (code) {
     case "time_window":
@@ -96,7 +99,7 @@ export const verifyRequestDpopProof = (input: {
     );
     yield* secretStore
       .create(
-        `dpop-proof-${replayKey}`,
+        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
         new TextEncoder().encode(
           [
             `thumbprint=${result.thumbprint}`,
@@ -115,7 +118,7 @@ export const verifyRequestDpopProof = (input: {
                 "environment.dpop.failure_code": mapped.dpopFailureReason,
               });
             }
-            return yield* Effect.fail(mapped);
+            return yield* mapped;
           }),
         ),
       );

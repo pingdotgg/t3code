@@ -1,9 +1,13 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
+import { type RefObject, useCallback, useState } from "react";
+import { cn } from "~/lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
+  type CommandPaletteRow,
   type CommandPaletteSubmenuItem,
 } from "./CommandPalette.logic";
 import {
@@ -12,10 +16,12 @@ import {
   CommandGroupLabel,
   CommandItem,
   CommandList,
+  CommandListHeading,
+  CommandListVirtualized,
   CommandShortcut,
 } from "./ui/command";
+import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
-import { cn } from "~/lib/utils";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -26,23 +32,27 @@ interface CommandPaletteResultsProps {
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }
 
+function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActionsOnly: boolean }) {
+  return (
+    <div className="py-10 text-center text-sm text-muted-foreground">
+      {props.emptyStateMessage ??
+        (props.isActionsOnly
+          ? "No matching actions."
+          : "No matching commands, projects, or threads.")}
+    </div>
+  );
+}
+
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   if (props.groups.length === 0) {
-    return (
-      <div className="py-10 text-center text-sm text-muted-foreground">
-        {props.emptyStateMessage ??
-          (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
-      </div>
-    );
+    return <CommandPaletteEmptyState {...props} />;
   }
 
   return (
     <CommandList>
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
-          <CommandGroupLabel className="ps-[9px]">{group.label}</CommandGroupLabel>
+          {group.label ? <CommandGroupLabel>{group.label}</CommandGroupLabel> : null}
           <CommandCollection>
             {(item) =>
               item.disabled ? (
@@ -61,6 +71,87 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
         </CommandGroup>
       ))}
     </CommandList>
+  );
+}
+
+/**
+ * Scrolls a keyboard highlight into view the way the unvirtualized list did:
+ * nearest edge, clear of the scroll fade. Rows outside the rendered window
+ * fall back to the list's own scrolling.
+ */
+export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
+  const element = list?.getState?.().elementAtIndex(rowIndex);
+  if (element instanceof HTMLElement) {
+    element.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+}
+
+interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
+  rows: ReadonlyArray<CommandPaletteRow>;
+  listRef: RefObject<LegendListRef | null>;
+}
+
+/**
+ * Renders only the visible rows. The parent passes the flat item order to the
+ * Command root as `items` with `virtualized`, scrolls keyboard highlights into
+ * view through `listRef`, and runs Enter itself since the row may be unmounted.
+ */
+export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
+  const { listRef } = props;
+  const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
+  const updateScrollFade = useCallback(() => {
+    const scrollElement = listRef.current?.getScrollableNode?.();
+    if (!(scrollElement instanceof HTMLElement)) return;
+    const top = scrollElement.scrollTop > 1;
+    const bottom =
+      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    setScrollFade((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
+    );
+  }, [listRef]);
+
+  if (props.rows.length === 0) {
+    return <CommandPaletteEmptyState {...props} />;
+  }
+
+  return (
+    <CommandListVirtualized>
+      <LegendList<CommandPaletteRow>
+        ref={listRef}
+        data={props.rows}
+        keyExtractor={(row) => row.key}
+        getItemType={(row) => row.kind}
+        extraData={props.highlightedItemValue}
+        renderItem={({ item: row }) =>
+          row.kind === "label" ? (
+            <div className={row.first ? undefined : "pt-1.5"}>
+              <CommandListHeading>{row.label}</CommandListHeading>
+            </div>
+          ) : row.itemIndex === null ? (
+            <DisabledCommandPaletteResultRow item={row.item} />
+          ) : (
+            <CommandPaletteResultRow
+              index={row.itemIndex}
+              item={row.item}
+              keybindings={props.keybindings}
+              isActive={props.highlightedItemValue === row.item.value}
+              onExecuteItem={props.onExecuteItem}
+            />
+          )
+        }
+        estimatedItemSize={40}
+        drawDistance={400}
+        onLayout={updateScrollFade}
+        onScroll={updateScrollFade}
+        contentContainerClassName="px-2"
+        className={cn(
+          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain py-2",
+          getVirtualizedScrollFadeClassName(scrollFade),
+        )}
+      />
+    </CommandListVirtualized>
   );
 }
 
@@ -97,6 +188,7 @@ function DisabledCommandPaletteResultRow(props: {
 }
 
 function CommandPaletteResultRow(props: {
+  index?: number;
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
   keybindings: ResolvedKeybindingsConfig;
@@ -108,11 +200,9 @@ function CommandPaletteResultRow(props: {
 
   return (
     <CommandItem
+      {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
-      className={cn(
-        "cursor-pointer gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit",
-        props.isActive && "bg-accent! text-accent-foreground!",
-      )}
+      active={props.isActive}
       onMouseDown={(event) => {
         event.preventDefault();
       }}

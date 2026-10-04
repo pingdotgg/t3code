@@ -126,8 +126,8 @@ function ReviewHeader(
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
-                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
+                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
+                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
                       sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
                     ],
                   },
@@ -735,7 +735,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
       />
 
       <MaterialScreenContent>
-        <View className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-sheet"}>
+        <View className="flex-1 bg-sheet android:bg-sheet-solid">
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice

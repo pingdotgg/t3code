@@ -12,6 +12,10 @@ type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
   onFinish: (started: boolean) => void;
+  /** Return true to claim the move: the sort gesture then ignores this pointer position. */
+  onMove?: (point: { x: number; y: number }) => boolean;
+  /** Return true when the release was consumed elsewhere, so the sort is cancelled. */
+  onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
 /** A sidebar gesture ends on release, cancellation, or loss of its window.
@@ -30,7 +34,9 @@ export class SidebarPointerSensor {
   private readonly document: Document;
   private readonly window: Window;
 
-  constructor(private readonly props: SensorProps<Options>) {
+  // The settle sweep constructs this sensor directly, outside dnd-kit, so it
+  // takes only the props the gesture reads.
+  constructor(private readonly props: Omit<SensorProps<Options>, "activeNode" | "context">) {
     this.pointer = props.event as PointerEvent;
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
@@ -85,16 +91,22 @@ export class SidebarPointerSensor {
       this.document.addEventListener("selectionchange", this.clearSelection);
       this.clearSelection();
       this.props.onStart(this.coordinates());
-      return;
     }
+    // The move that starts a drag also moves it, so a release before the
+    // next pointermove still lands where the pointer is.
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();
+      if (this.props.options.onMove?.(coordinates) === true) return;
       this.props.onMove(coordinates);
     }
   };
 
   private end = (event: PointerEvent) => {
-    if (event.pointerId === this.pointer.pointerId) this.finish(false);
+    if (event.pointerId !== this.pointer.pointerId) return;
+    const dropped =
+      this.phase === "dragging" &&
+      this.props.options.onDrop?.({ x: event.clientX, y: event.clientY }) === true;
+    this.finish(dropped);
   };
   private pointerCancel = (event: PointerEvent) => {
     if (event.pointerId === this.pointer.pointerId) this.cancel();

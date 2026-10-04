@@ -4,6 +4,7 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
+  newProjectFolderName,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
 } from "./path.ts";
@@ -42,5 +43,18 @@ describe("path helpers", () => {
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:/"));
     // Non-root drive paths keep their trailing separator trimmed as before.
     expect(normalizeProjectPathForDispatch("C:\\repo\\")).toBe("C:\\repo");
+  });
+
+  it("names a new project's folder from any typed name", () => {
+    expect(newProjectFolderName("Pinball Stats")).toBe("pinball-stats");
+    expect(newProjectFolderName("  Café & Crème!  ")).toBe("cafe-creme");
+    expect(newProjectFolderName("../../etc")).toBe("etc");
+    // Nothing usable left, so the server falls back to a fixed name.
+    expect(newProjectFolderName("🎱🎱")).toBe("project");
+    expect(newProjectFolderName(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
+    // Windows cannot make folders with device names.
+    expect(newProjectFolderName("Con")).toBe("con-project");
+    expect(newProjectFolderName("LPT1")).toBe("lpt1-project");
+    expect(newProjectFolderName("console")).toBe("console");
   });
 });

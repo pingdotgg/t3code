@@ -1,38 +1,44 @@
 /**
  * Usage reporting contract.
  *
- * Each environment scans the provider CLIs' own on-disk session transcripts
- * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`,
- * `~/.grok/sessions/**\/updates.jsonl`) rather than relying on T3 Code's own
- * orchestration projections, so usage stays complete even for turns that were
- * never driven through T3 Code. This mirrors the approach `ccusage` takes.
+ * Each environment scans native session files and databases, including work
+ * driven outside T3 Code. Source status describes gaps in local coverage.
  *
- * Environments return pre-aggregated `(day, hourStart?, provider, model)`
+ * Environments return pre-aggregated `(day, hourStart?, provider, model, sourcePath?)`
  * buckets. Raw transcript records never cross the wire.
  *
  * @module usage
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
+ * Adding providers or other array-element variants is additive: unknown
+ * entries are skipped on decode and do not require a version bump. So are
+ * optional bucket fields, which older clients ignore.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5/v6 add providers and optional source attribution; v4 Claude/Codex
+ * buckets remain valid in mixed-version environments.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
+export const UsageProviderKind = Schema.Literals([
+  "claude",
+  "codex",
+  "grok",
+  "cursor",
+  "opencode",
+  "antigravity",
+]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
@@ -80,6 +86,18 @@ export const UsageTokenTotals = Schema.Struct({
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
 /**
+ * A bucket's cost split by token category, in USD. A provider-reported cost is
+ * split in proportion to the model's list rates.
+ */
+export const UsageCategoryCost = Schema.Struct({
+  input: Schema.Number,
+  cacheRead: Schema.Number,
+  cacheWrite: Schema.Number,
+  output: Schema.Number,
+});
+export type UsageCategoryCost = typeof UsageCategoryCost.Type;
+
+/**
  * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
  * instant of a rolling bucket and is present only for hourly requests.
  *
@@ -93,6 +111,8 @@ export const UsageBucket = Schema.Struct({
   hourStart: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
+  /** Source directory, so overlapping multi-home environments merge once per source. */
+  sourcePath: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
   /**
@@ -101,6 +121,16 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * `costUsd` by token category. Cost with no known rates stays out of it, and
+   * it is absent when nothing could be split or the server predates it.
+   */
+  categoryCostUsd: Schema.optional(UsageCategoryCost),
+  /** Cost of fast and ultrafast requests. Absent when zero; the rest is standard. */
+  fastCostUsd: Schema.optional(Schema.Number),
+  ultrafastCostUsd: Schema.optional(Schema.Number),
+  /** What fast and ultrafast requests cost above the standard rate. Absent when zero. */
+  speedPremiumUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
@@ -151,6 +181,8 @@ export const UsageSource = Schema.Struct({
    */
   distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
+  /** An action the client can offer to make this source available. */
+  action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
 });
 export type UsageSource = typeof UsageSource.Type;
 
@@ -194,8 +226,8 @@ export const UsageSummary = Schema.Struct({
   timeZone: TrimmedNonEmptyString,
   sinceDay: UsageDay,
   untilDay: UsageDay,
-  buckets: Schema.Array(UsageBucket),
-  sources: Schema.Array(UsageSource),
+  buckets: ForwardCompatibleArray(UsageBucket),
+  sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,

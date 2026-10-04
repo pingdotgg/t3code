@@ -10,16 +10,20 @@ several views need the same environment.
 
 The [supervisor](../../packages/client-runtime/src/connection/supervisor.ts) owns
 transport retry policy; resolving an endpoint and opening an RPC session are single
-attempts. Transient failures retry with capped backoff. Offline states and
-authentication failures wait for a wakeup instead of spending attempts on
-unchanged conditions.
+attempts. Transient failures retry with jittered exponential backoff, capped at
+five minutes, that resets only after a connection stays up. Without jitter, every
+client of a restarted server reconnects in the same second; with a short cap, a
+client that can never connect retries all day. Offline states and authentication
+failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
-Foregrounding needs different treatment depending on the connection's state.
-It wakes a retry immediately, leaves an ordinary in-flight attempt alone, and
-probes an established session before replacing it. A long mobile background
-suspension forces replacement because the OS can kill a socket without reporting
-closure. Treating every foreground event as a reconnect delays healthy attempts;
-treating every resume as harmless leaves suspended sockets stuck.
+Foregrounding, an explicit retry, and an offline report probe the established
+session, and only a failed probe reconnects. Offline reports are often wrong, for
+example for a loopback server. A long mobile background suspension is the one
+exception: it replaces the session at once, because the OS can kill a socket
+without reporting closure, and a probe would hold a dead socket in "Resuming"
+until it times out. That fresh attempt runs even while the network reports
+offline. Foregrounding also wakes a pending retry immediately and
+leaves an ordinary in-flight attempt alone.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
@@ -60,6 +64,15 @@ subscription lifetime from cache lifetime. Mounted consumers share one live
 stream, which stops when the last consumer unmounts; hidden mounted routes still
 count. A registry-local cache retains state and its replay cursor for five idle
 minutes so back navigation can resume without another snapshot download.
+
+The desktop app adds one consumer: a
+[keep-alive](../../apps/web/src/state/threads.ts) mounts every thread whose
+session is starting or running, in each enabled environment. Opening a running
+thread then needs no replay. The shell and detail streams are independent, so
+the shell can report a stop before the detail loads or catches up. A stopped
+thread stays mounted until its own stream is live and shows the stop, and the
+stream then closes and saves the settled state.
+Web and mobile do not keep threads alive.
 
 Retain state and cursor together only after an update finishes. Cancellation must
 not advance the cached cursor beyond the applied data, and an old scope must not

@@ -10,10 +10,11 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type UsageBucket,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { refreshUsage } from "@t3tools/client-runtime/state/usage";
+import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
@@ -29,6 +30,7 @@ export interface EnvironmentUsageStatus {
   readonly isPending: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
+  readonly needsCursorKeychainAccess: boolean;
 }
 
 /**
@@ -46,12 +48,17 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const summary = Option.getOrNull(AsyncResult.value(result));
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
         isPending: result.waiting,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
-        summary: Option.getOrNull(AsyncResult.value(result)),
+        summary,
+        needsCursorKeychainAccess: needsCursorKeychainAccess(
+          summary,
+          get(serverEnvironment.providersValueAtom(environmentId)),
+        ),
       });
     }
     return statuses;
@@ -71,6 +78,33 @@ export interface UsageView {
    */
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
+}
+
+/**
+ * Merges every environment that has answered. `keepBucket` narrows the merge,
+ * for example to one model; source ownership still applies, so the result
+ * matches that slice of the full merge. Session counts are per directory and
+ * are not narrowed.
+ */
+export function mergeAnsweredUsage(
+  environments: readonly EnvironmentUsageStatus[],
+  keepBucket?: (bucket: UsageBucket) => boolean,
+): MergedUsage {
+  const answered: EnvironmentUsage[] = environments.flatMap(({ environmentId, label, summary }) =>
+    summary === null
+      ? []
+      : [
+          {
+            environmentId,
+            label,
+            summary:
+              keepBucket === undefined
+                ? summary
+                : { ...summary, buckets: summary.buckets.filter(keepBucket) },
+          },
+        ],
+  );
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION);
 }
 
 export function useUsage(
@@ -120,20 +154,7 @@ export function useUsage(
     [selectedEnvironments, windowKey],
   );
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+  const merged = useMemo(() => mergeAnsweredUsage(selectedEnvironments), [selectedEnvironments]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,

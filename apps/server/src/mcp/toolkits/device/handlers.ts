@@ -10,7 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { ServerConfig } from "../../../config.ts";
+import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
@@ -59,7 +59,7 @@ export function agentDeviceQuickStart(
     `  ${executable} screenshot /tmp/shot.png ${target}        # or call device_screenshot`,
     `  ${executable} install <app> <path-to-.app-or-.apk> ${target}`,
     `Prefer snapshot refs over coordinates. Run ${executable} help for workflow guides and ${executable} <command> --help for flags.`,
-    "Do not call simctl, adb, xcrun, or serve-sim directly while these tools are attached; use agent-device.",
+    "Prefer agent-device for driving this device. simctl, adb, and xcrun remain available for anything it does not cover.",
     "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
     "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
     platformNotes,
@@ -175,7 +175,7 @@ const handlers = {
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const platform = yield* HostProcessPlatform;
       const shimDir = yield* ensureAgentDeviceShim({

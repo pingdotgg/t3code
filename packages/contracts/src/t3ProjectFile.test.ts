@@ -1,9 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3ProjectFile } from "./t3ProjectFile.ts";
+import { T3ProjectFile, type T3ProjectFile as T3ProjectFileType } from "./t3ProjectFile.ts";
 
-const decode = Schema.decodeUnknownSync(T3ProjectFile);
+const decode = Schema.decodeUnknownSync(T3ProjectFile as never) as (
+  input: unknown,
+) => T3ProjectFileType;
 
 describe("T3ProjectFile", () => {
   it("decodes a full project file", () => {
@@ -59,5 +61,11 @@ describe("T3ProjectFile", () => {
     expect(decode({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe("worktree");
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
     expect(() => decode({ defaultThreadEnvMode: "remote" })).toThrow();
+  });
+
+  it("decodes worktreeSubmodules and rejects unknown modes", () => {
+    expect(decode({ worktreeSubmodules: "none" }).worktreeSubmodules).toBe("none");
+    expect(decode({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe("top-level");
+    expect(() => decode({ worktreeSubmodules: "shallow" })).toThrow();
   });
 });

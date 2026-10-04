@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -925,6 +926,18 @@ it.effect("discovers editors through the service API", () =>
 for (const { platform, installPath, editor, args } of [
   {
     platform: "darwin",
+    installPath: "Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+    editor: "antigravity",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "linux",
+    installPath: ".local/bin/antigravity-ide",
+    editor: "antigravity",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "darwin",
     installPath: "Applications/Cursor.app/Contents/Resources/app/bin/code",
     editor: "cursor",
     args: ["--classic", "--goto", "/workspace with spaces/file.ts:12:4"],
@@ -1024,6 +1037,45 @@ for (const { platform, installPath, editor, args } of [
         );
         assert.deepEqual(spawned.args, args);
         assert.equal(spawned.options.shell, executable.endsWith(".cmd"));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+// `agy` is the standalone Antigravity CLI, which installs to ~/.local/bin on
+// macOS and Linux and to its own bin folder on Windows. It is not the IDE.
+for (const { platform, installPath, onPath } of [
+  { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
+  { platform: "linux", installPath: ".local/bin/agy", onPath: false },
+  { platform: "win32", installPath: "agy/bin/agy.cmd", onPath: true },
+] as const) {
+  it.effect.skipIf(windowsHost && platform !== "win32")(
+    `does not report the agy CLI as the Antigravity IDE on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cli-" });
+        const executable = path.join(home, installPath);
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          return yield* launcher.resolveAvailableEditors();
+        }).pipe(
+          Effect.provide(
+            testLayer({
+              platform,
+              env: {
+                HOME: home,
+                LOCALAPPDATA: home,
+                PATH: onPath ? path.dirname(executable) : path.join(home, "empty"),
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+            }),
+          ),
+        );
+        assert.notInclude(editors, "antigravity");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -1135,26 +1187,24 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   );
 });
 
-// A client that disconnects mid-scan interrupts the shared discovery effect on
-// the connection fiber. The cache must not retain that interrupt: doing so
-// replayed it to every later connect for the whole TTL, so `server.getConfig`
-// failed and no client could reconnect until the server restarted.
-it.effect("rescans after an interrupted discovery instead of caching the interrupt", () => {
+// Connects run discovery under a timeout and may disconnect mid-scan. Neither
+// may cancel the scan: on a busy host every connect would time out partway
+// through, cache nothing, and leave every client without editors.
+it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
-  let blockFirstScan = true;
-  let scans = 0;
+  const release = Deferred.makeUnsafe<void>();
+  let parkedStats = 0;
   const launcherLayer = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
-          // The first scan parks inside `stat` so the interrupt lands while
-          // discovery is in flight, which is what a client disconnecting
-          // mid-connect does to the shared effect.
+          // Scans park inside `stat` until released, so the interrupt lands
+          // while discovery is in flight.
           stat: () =>
             Effect.gen(function* () {
-              scans += 1;
-              if (blockFirstScan) {
-                return yield* Effect.never;
+              if (!Deferred.isDoneUnsafe(release)) {
+                parkedStats += 1;
+                yield* Deferred.await(release);
               }
               return fileInfo;
             }),
@@ -1171,16 +1221,18 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
   return Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
 
-    const fiber = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    const interrupted = yield* Effect.forkChild(launcher.resolveAvailableEditors());
     yield* Effect.yieldNow;
-    yield* Fiber.interrupt(fiber);
+    yield* Fiber.interrupt(interrupted);
 
-    // The next connect must still get a real answer well inside the TTL.
-    blockFirstScan = false;
-    scans = 0;
-    const editors = yield* launcher.resolveAvailableEditors();
+    // The next connect joins the running scan instead of starting its own.
+    const next = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    yield* Effect.yieldNow;
+    assert.equal(parkedStats, 1);
+
+    yield* Deferred.succeed(release, undefined);
+    const editors = yield* Fiber.join(next);
     assert.equal(editors.includes("vscode"), true);
-    assert.isAbove(scans, 0);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

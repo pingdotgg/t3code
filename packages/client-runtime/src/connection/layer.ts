@@ -32,11 +32,18 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               if (!current.environments.has(environmentId)) seenChecks.delete(environmentId);
             }
           }
+          const registered = yield* SubscriptionRef.get(registry.entries);
           for (const entry of current.environments.values()) {
             const status = Option.getOrNull(entry.status);
             const descriptor = status?.descriptor;
             if (status === null || descriptor === undefined) continue;
             const environmentId = entry.environment.environmentId;
+            // Discovery describes the server behind the relay route. A direct
+            // connection (the desktop's own server, a saved URL, SSH) can reach
+            // a different server with the same environment id, such as a
+            // preview app that shares the home directory. Its socket handshake
+            // already checks the protocol.
+            if (registered.get(environmentId)?.target._tag !== "RelayConnectionTarget") continue;
             const previous = seenChecks.get(environmentId);
             const fresh =
               previous?.checkedAt !== status.checkedAt ||
@@ -60,7 +67,7 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
 
 export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const driverLayer = ConnectionDriver.layer.pipe(
-    Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layerWithOptions(options))),
+    Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
   );
   const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
   const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
@@ -68,6 +75,8 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
     registryLayer,
     RelayEnvironmentDiscovery.layer,
     onboardingLayer,
+    // Exposed for updating hosts too old to connect through the driver.
+    ConnectionResolver.layer,
   );
   const connectionStartupLayer = Layer.effectDiscard(
     Effect.gen(function* () {

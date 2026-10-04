@@ -6,6 +6,7 @@ import {
   View,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
+  type TextInputInstance,
   type ViewProps,
 } from "react-native";
 
@@ -61,7 +62,7 @@ function estimateGridSize(input: {
 
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.isRunning

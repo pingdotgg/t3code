@@ -1,9 +1,12 @@
+import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
-import { Check, CircleAlert } from "lucide-react";
+import { Check } from "lucide-react";
+import { Check as CheckGlyph, CircleAlert } from "lucide";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DialogClose } from "~/components/ui/dialog";
+import { MorphIcon } from "~/components/MorphIcon";
 import { WizardHeader, WizardPanel, WizardSteps, WizardFooter } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
@@ -89,6 +92,7 @@ export function DeviceSetup(props: {
       </WizardHeader>
 
       <WizardPanel>
+        <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
         {step === 0 ? (
           <section className="space-y-3 text-sm">
             <h3 className="font-medium">Enable the device hub</h3>
@@ -201,7 +205,7 @@ export function DeviceHubSetupStatus({
   if (!pending && state.hostStatus !== "ready") return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-      {pending ? <Spinner className="size-3" /> : <Check className="size-3 text-success" />}
+      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
       {pending
         ? state.hostStatus === "installing"
           ? compact
@@ -233,7 +237,7 @@ function DevicePlatformSetup(props: {
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>
       <Button size="compact" variant="outline" disabled={props.disabled} onClick={props.onCheck}>
-        {props.checking ? <Spinner className="size-3" /> : null}
+        {props.checking ? <Spinner size="xs" /> : null}
         {props.checking ? "Checking…" : "Check again"}
       </Button>
     </div>
@@ -260,7 +264,7 @@ export function AgentDeviceSetupStatus(props: {
             : "Updating agent access…";
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Spinner className="size-3" />
+        <Spinner size="xs" />
         {label}
       </p>
     );
@@ -285,16 +289,16 @@ export function PlatformStatus(props: {
   readonly status: { readonly ready: boolean; readonly message: string };
   readonly compact?: boolean;
 }) {
-  const Icon = props.status.ready ? Check : CircleAlert;
   return (
     <div
       className={cn("flex gap-2", !props.compact && "rounded-md border border-border/60 px-3 py-2")}
     >
-      <Icon
+      <MorphIcon
         className={cn(
           "mt-0.5 size-4 shrink-0",
           props.status.ready ? "text-success" : "text-muted-foreground",
         )}
+        icon={props.status.ready ? CheckGlyph : CircleAlert}
       />
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>

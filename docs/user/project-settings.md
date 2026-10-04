@@ -1,8 +1,9 @@
 # Settings and project overrides
 
-On web and desktop, the Settings breadcrumb ends with the environment and project a change applies to. They start
-at **All environments** and **All projects** and stay selected as you move between categories or
-search for a setting.
+On web and desktop, the "Applying settings for …" sentence at the top of Settings pages picks
+the project and environment a change applies to. Pages that only hold device preferences, such as
+Appearance, don't show it. They start at **All projects** and **All environments**
+and stay selected as you move between categories or search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, always
 show and ignore the selection. Everything else is stored on a server. Choose one environment to
@@ -37,6 +38,31 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Worktree branch names
+
+In **Settings → Source Control → Worktree branch naming**, choose a static prefix,
+a model-selected semantic prefix such as `feat/` or `fix/`, or custom instructions
+for the complete name. The static prefix defaults to `t3code/`; a trailing slash is
+optional, and an empty prefix adds nothing. Invalid characters in a static prefix
+are replaced with hyphens. Custom instructions are appended to
+the naming prompt and can specify issue IDs, namespaces, and casing.
+
+These settings apply to automatically named new worktree branches. Select a project
+to override its environment defaults. Worktree directories keep their original names.
+If generation fails, or a custom name is invalid or already taken, the temporary
+branch name remains.
+
+## Scheduled tasks on mobile
+
+Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
+ones across your connected environments. Use the settings filter to narrow the
+list by environment or project. Each task runs on the environment you choose,
+using its project, model, and workspace settings. Fixed-time schedules use that
+environment's time zone, which may differ from your phone's.
+
+You can edit, pause, resume, run immediately, or delete a task from the list.
+Leaving an edited form asks before discarding unsaved changes.
+
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
@@ -49,8 +75,17 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
-For workspace mode, a project's `t3.json` preference applies when the project has no override.
+Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
+resolve in one order: a project override, then the environment setting, then `t3.json`, then the
+built-in default. Leave a setting on **Inherit** to let the next tier decide.
 Browser access changes apply when an agent session next starts.
+
+New worktrees initialize git submodules recursively. If that step is slow because the repository
+declares many nested submodules, set **Submodules** in **Settings → General** (with the project
+selected to override it there) to **Top level only** to stop at the ones the repository declares
+itself, or **Skip** to leave them for a setup script. It resolves in the same order as the
+workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
+applies when the project and environment are both on **Inherit**.
 
 ## Storage cleanup
 

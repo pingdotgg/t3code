@@ -114,25 +114,30 @@ const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown
 const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
+/**
+ * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
+ * skipped, so one malformed pull request cannot hide the rest.
+ */
+export function decodeGitHubPullRequestEntries(
+  entries: ReadonlyArray<unknown>,
+): ReadonlyArray<NormalizedGitHubPullRequestRecord> {
+  const pullRequests: NormalizedGitHubPullRequestRecord[] = [];
+  for (const entry of entries) {
+    const decodedEntry = decodeGitHubPullRequestEntry(entry);
+    if (Exit.isSuccess(decodedEntry)) {
+      pullRequests.push(normalizeGitHubPullRequestRecord(decodedEntry.value));
+    }
+  }
+  return pullRequests;
+}
+
 export function decodeGitHubPullRequestListJson(
   raw: string,
 ): Result.Result<
   ReadonlyArray<NormalizedGitHubPullRequestRecord>,
   Cause.Cause<Schema.SchemaError>
 > {
-  const result = decodeGitHubPullRequestList(raw);
-  if (Result.isSuccess(result)) {
-    const pullRequests: NormalizedGitHubPullRequestRecord[] = [];
-    for (const entry of result.success) {
-      const decodedEntry = decodeGitHubPullRequestEntry(entry);
-      if (Exit.isFailure(decodedEntry)) {
-        continue;
-      }
-      pullRequests.push(normalizeGitHubPullRequestRecord(decodedEntry.value));
-    }
-    return Result.succeed(pullRequests);
-  }
-  return Result.fail(result.failure);
+  return Result.map(decodeGitHubPullRequestList(raw), decodeGitHubPullRequestEntries);
 }
 
 export function decodeGitHubPullRequestJson(
