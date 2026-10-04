@@ -67,7 +67,8 @@ function AccountChip({ email }: { readonly email: string }) {
 
 /**
  * The same mark the model picker uses for a native instance (provider glyph,
- * initials badge, accent); hub accounts have no instance, so they get the chip.
+ * initials badge, accent). A hub account with an email and no instance gets the
+ * two-letter chip; anything else still gets the glyph, so no account is blank.
  */
 function AccountAvatar({
   account,
@@ -76,22 +77,25 @@ function AccountAvatar({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.redeem) {
+  if (!account.email || account.redeem) {
     return (
       <ProviderInstanceIcon
         driverKind={account.driver}
-        displayName={
-          account.displayName ?? getDriverOption(account.driver)?.label ?? String(account.driver)
-        }
+        displayName={account.displayName ?? account.email ?? accountLabel(account)}
         accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
+        showBadge={Boolean(account.displayName ?? account.email)}
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"
       />
     );
   }
-  return account.email ? <AccountChip email={account.email} /> : null;
+  return <AccountChip email={account.email} />;
+}
+
+/** The account's label beside its avatar: the instance name when there is one, else the driver label. */
+function accountLabel(account: LimitAccount): string {
+  return account.displayName ?? getDriverOption(account.driver)?.label ?? String(account.driver);
 }
 
 /**
@@ -114,11 +118,7 @@ function AccountName({
       </span>
     );
   }
-  return (
-    <span className={className}>
-      {getDriverOption(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
+  return <span className={className}>{accountLabel(account)}</span>;
 }
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -165,9 +165,7 @@ function SegmentPopover({
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
           <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? getDriverOption(account.driver)?.label ?? account.driver}
-          </span>
+          <span className="truncate">{accountLabel(account)}</span>
         </span>
         {account.email ? (
           <RedactedSensitiveText
@@ -236,7 +234,7 @@ function PoolSegment({
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly color: string;
   readonly now: number;
-  /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
+  /** 1-based position in the bar, placing the segment and its legend row in the same column. */
   readonly index: number;
   readonly showAccountName: boolean;
 }) {
@@ -276,16 +274,16 @@ function PoolSegment({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className="absolute inset-0 flex items-center justify-center @2xl/pool:hidden"
         >
-          {index}
+          <AccountAvatar account={account} />
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+          <AccountAvatar account={account} />
           {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
+            <span className="min-w-0 truncate font-medium text-foreground">
+              {accountLabel(account)}
+            </span>
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
           {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
@@ -307,7 +305,7 @@ function PoolSegment({
           </span>
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      <LegendRow account={account} window={window} now={now} index={index} />
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}
@@ -341,13 +339,11 @@ function PoolSegment({
 function LegendRow({
   account,
   window,
-  color,
   now,
   index,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
-  readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
@@ -360,16 +356,8 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
-        />
-        <span className="sr-only">Segment </span>
-        <span className="relative">{index}</span>
-      </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      <AccountAvatar account={account} />
+      <span className="min-w-0 truncate font-medium text-foreground">{accountLabel(account)}</span>
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
@@ -445,9 +433,9 @@ function RedeemableSegmentPopup({
  * the share of that account's quota still open. Equal widths are honest: every
  * account contributes the same share of the pool, whatever its plan.
  *
- * Wide, each segment carries its own label. Narrow, the bar is a bare strip
- * and a legend below lists the accounts in the same order; both open the
- * same popover.
+ * Wide, each segment carries its own avatar and label. Narrow, the segment
+ * shows the avatar alone and a legend below repeats it with the label; both
+ * open the same popover.
  */
 function PoolBar({
   pool,
