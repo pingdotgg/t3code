@@ -54,8 +54,21 @@ describe("retained review files", () => {
         previous: loaded,
         placeholder,
         sameFamily: true,
+        pending: true,
       }),
     ).toBe(loaded);
+  });
+
+  it("drops the open file once its replacement fails or no longer includes it", () => {
+    expect(
+      retainedReviewFile({
+        loaded: null,
+        previous: loaded,
+        placeholder,
+        sameFamily: true,
+        pending: false,
+      }),
+    ).toBe(placeholder);
   });
 
   it("uses the newly loaded patch", () => {
@@ -66,6 +79,7 @@ describe("retained review files", () => {
         previous: loaded,
         placeholder,
         sameFamily: true,
+        pending: false,
       }),
     ).toBe(next);
   });
@@ -77,6 +91,7 @@ describe("retained review files", () => {
         previous: loaded,
         placeholder,
         sameFamily: false,
+        pending: true,
       }),
     ).toBe(placeholder);
     expect(isPendingReviewFile(placeholder)).toBe(true);

@@ -97,6 +97,7 @@ export function useReviewFilePatches({
               loaded,
               previous: previousByPath.get(file.path),
               sameFamily: true,
+              pending: result === undefined || result._tag === "Initial" || result.waiting,
               placeholder: {
                 name: file.path,
                 ...(file.previousPath ? { prevName: file.previousPath } : {}),

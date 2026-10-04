@@ -468,6 +468,15 @@ describe("diff selection across agent turns", () => {
         threadKey: "env-1:thread-1",
       }),
     ).toBe(false);
+    expect(
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1")),
+        explicitThreadRef: scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1")),
+        previous: { threadKey: "env-1:thread-1", diffOpen: false },
+        threadKey: "env-1:thread-1",
+      }),
+    ).toBe(false);
   });
 
   it("does nothing while the diff is closed", () => {
