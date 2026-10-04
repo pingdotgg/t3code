@@ -32,6 +32,26 @@ records are recovered only if that original profile is reopened. Deleting or mov
 T3's own state directory can lose cleanup records; T3 never guesses ownership from
 a process name.
 
+On Linux, normal cleanup snapshots the current process group before signalling.
+T3 waits for each recorded PID/start-time identity to disappear or reach a
+non-executing zombie/dead state before cleanup returns. Its owned child exit is
+reaped through the process spawner. Within one T3 server, a per-profile gate covers cleanup and this
+verification, and is checked before another local process starts; it does not
+prevent concurrent live sessions or lock out another T3 server. Observation errors and timeouts leave a pending
+record and block new starts for that profile. Retry can clear it only after a
+successful exit observation, not merely because time elapsed. Incomplete snapshots
+require a complete fresh scan showing no executing members in the original group.
+
+This is not a supervisor or sandbox. Enumeration is not atomic: newly forked or
+escaped descendants, process-group changes and PID reuse between a native signal
+check and delivery are not fully contained. The stronger exit observation is
+Linux-only; macOS and Windows retain their existing cleanup behavior. Persisted
+pending records survive an ordinary T3 restart if the state directory remains
+intact. Failed initial writes only retain uncertainty in memory; power loss,
+corrupted/deleted records and crashes before cleanup starts do not gain a stronger
+guarantee than the existing orphan reaper. T3 does not rewrite native MCP or plugin
+configuration to enforce this lifecycle boundary.
+
 | Capability                                 | Local Kilo                                                           | Kilo Cloud                                                                              |
 | ------------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Prompts and follow-up                      | Native streaming, tools and reasoning                                | Full access; history updates, no token-streaming claim                                  |
