@@ -4,16 +4,32 @@ import {
   deviceToolUpdatePolicy,
 } from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ActivityIndicator, Alert, AppState, Platform, Pressable, View } from "react-native";
+import * as Haptics from "expo-haptics";
+import { Accelerometer } from "expo-sensors";
+import {
+  ActivityIndicator,
+  Alert,
+  AppState,
+  BackHandler,
+  Pressable,
+  StatusBar,
+  View,
+} from "react-native";
+import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SymbolView } from "../../components/AppSymbol";
 import { AppText } from "../../components/AppText";
-import { ScreenHeader, type ScreenHeaderMenuItem } from "../../components/ScreenHeader";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { GlassSurface } from "../../components/GlassSurface";
+import {
+  androidHeaderMenuActions,
+  findHeaderMenuAction,
+} from "../../components/headerMenu.android";
+import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,40 +40,26 @@ import {
   threadDevicePreviews,
   type ThreadDevicePreview,
 } from "./threadDevicePreviews";
+import { createShakeDetector } from "./shakeDetector";
 
-const DevicePreviewStack = createNativeStackNavigator<{ DevicePreview: undefined }>();
+const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
 }>;
 
-/** The nested native stack supplies the navigation bar inside the modal. */
+/** Full-screen viewer; controls live in an overlay toggled by the handle or a shake. */
 export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <DevicePreviewStack.Navigator
-        screenOptions={{
-          headerShown: Platform.OS === "ios",
-          headerBackVisible: false,
-          headerShadowVisible: false,
-          headerTransparent: false,
-          headerTitleStyle: { fontSize: 17, fontWeight: "600" },
-        }}
-      >
-        <DevicePreviewStack.Screen name="DevicePreview">
-          {() => (
-            <DevicePreviewScreen
-              environmentId={EnvironmentId.make(route.params.environmentId)}
-              threadId={ThreadId.make(route.params.threadId)}
-              onClose={onClose}
-            />
-          )}
-        </DevicePreviewStack.Screen>
-      </DevicePreviewStack.Navigator>
-    </View>
+    <DevicePreviewScreen
+      environmentId={EnvironmentId.make(route.params.environmentId)}
+      threadId={ThreadId.make(route.params.threadId)}
+      onClose={onClose}
+    />
   );
 }
 
@@ -78,6 +80,7 @@ function DevicePreviewScreen({
   const [inputConnected, setInputConnected] = useState(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
@@ -87,10 +90,11 @@ function DevicePreviewScreen({
     [state.data, threadId],
   );
   const preview = selectedThreadDevicePreview(previews, selectedKey);
-  const onInputConnected = useCallback(
-    async (connected: boolean) => setInputConnected(connected),
-    [],
-  );
+  const onInputConnected = useCallback(async (connected: boolean) => {
+    setInputConnected(connected);
+    // Controls greet the user while connecting, then get out of the stream's way.
+    if (connected) setControlsVisible(false);
+  }, []);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
       setForeground(state !== "background"),
@@ -100,6 +104,26 @@ function DevicePreviewScreen({
   useEffect(() => {
     if (focused && state.data !== null && previews.length === 0) onClose();
   }, [focused, state.data, previews.length, onClose]);
+  useEffect(() => {
+    if (!focused || !foreground) return;
+    const shaken = createShakeDetector();
+    Accelerometer.setUpdateInterval(50);
+    const subscription = Accelerometer.addListener((sample) => {
+      if (!shaken({ ...sample, timestamp: sample.timestamp * 1000 })) return;
+      void Haptics.selectionAsync();
+      setControlsVisible((visible) => !visible);
+    });
+    return () => subscription.remove();
+  }, [focused, foreground]);
+  // Android back reveals the controls first, so leaving takes a deliberate second press.
+  useEffect(() => {
+    if (controlsVisible) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setControlsVisible(true);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [controlsVisible]);
 
   const shutDownDevice = async () => {
     if (!preview || shuttingDown) return;
@@ -217,57 +241,29 @@ function DevicePreviewScreen({
       onPress: () => void shutDownDevice(),
     },
   ];
+  const pressHome = () => streamRef.current?.home();
+  const menuItems: ScreenHeaderMenuItem[] = [
+    ...(previews.length > 1
+      ? [
+          {
+            id: "devices",
+            title: "Devices",
+            inline: true,
+            items: previews.map((device) => ({
+              id: device.key,
+              title: device.name,
+              subtitle: device.description,
+              selected: device.key === preview?.key,
+              onPress: () => setSelectedKey(device.key),
+            })),
+          },
+        ]
+      : []),
+    ...controls,
+  ];
   return (
-    <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
-      <ScreenHeader
-        title={preview?.name ?? "Devices"}
-        sidebar={false}
-        onBack={onClose}
-        options={{ headerBackVisible: false }}
-        actions={[
-          {
-            accessibilityLabel: "Home",
-            icon: "house",
-            disabled: !inputConnected,
-            onPress: () => streamRef.current?.home(),
-          },
-        ]}
-        menus={[
-          {
-            title: "Device options",
-            icon: "ellipsis",
-            items: [
-              ...(previews.length > 1
-                ? [
-                    {
-                      id: "devices",
-                      title: "Devices",
-                      inline: true,
-                      items: previews.map((device) => ({
-                        id: device.key,
-                        title: device.name,
-                        subtitle: device.description,
-                        selected: device.key === preview?.key,
-                        onPress: () => setSelectedKey(device.key),
-                      })),
-                    },
-                  ]
-                : []),
-              ...controls,
-            ],
-          },
-        ]}
-      />
-      {Platform.OS === "ios" ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            icon="xmark"
-            accessibilityLabel="Close device preview"
-            onPress={onClose}
-            separateBackground
-          />
-        </NativeHeaderToolbar>
-      ) : null}
+    <View className="flex-1" style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}>
+      <StatusBar hidden animated />
       {preview && focused && foreground ? (
         <OpenDevicePreview
           key={`${preview.key}:${streamAttempt}`}
@@ -296,7 +292,76 @@ function DevicePreviewScreen({
           ) : null}
         </View>
       )}
+      {controlsVisible ? (
+        <Animated.View
+          entering={OVERLAY_ENTERING}
+          exiting={OVERLAY_EXITING}
+          pointerEvents="box-none"
+          className="absolute inset-0"
+        >
+          {inputConnected ? (
+            <Pressable
+              accessibilityLabel="Hide device controls"
+              className="absolute inset-0 bg-black/30"
+              onPress={() => setControlsVisible(false)}
+            />
+          ) : null}
+          <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
+            <GlassSurface className="flex-row items-center gap-1 p-1">
+              <ControlPill
+                accessibilityLabel="Close device preview"
+                icon="xmark"
+                onPress={onClose}
+              />
+              <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
+                {preview?.name ?? "Devices"}
+              </AppText>
+              <ControlPill
+                accessibilityLabel="Home"
+                icon="house"
+                disabled={!inputConnected}
+                onPress={pressHome}
+              />
+              <DeviceOptionsMenu items={menuItems} />
+            </GlassSurface>
+          </View>
+        </Animated.View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Show device controls"
+          accessibilityHint="Shaking the phone also shows them"
+          hitSlop={12}
+          className="absolute h-6 w-16 items-center justify-center self-center"
+          style={{ top: Math.max(insets.top - 18, 4) }}
+          onPress={() => setControlsVisible(true)}
+        >
+          <View className="h-1.5 w-10 rounded-full bg-white/40" />
+        </Pressable>
+      )}
     </View>
+  );
+}
+
+function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<ScreenHeaderMenuItem> }) {
+  return (
+    <ControlPillMenu
+      actions={androidHeaderMenuActions(items)}
+      isAnchoredToRight
+      title="Device options"
+      onPressAction={({ nativeEvent }) => {
+        const action = findHeaderMenuAction(items, nativeEvent.event);
+        if (action && !action.disabled) action.onPress();
+      }}
+    >
+      <Pressable
+        accessibilityLabel="Device options"
+        accessibilityRole="button"
+        className="size-11 items-center justify-center rounded-full bg-subtle"
+      >
+        <SymbolView name="ellipsis" size={18} tintColorClassName="accent-icon" />
+      </Pressable>
+    </ControlPillMenu>
   );
 }
 
