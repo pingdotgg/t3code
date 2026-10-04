@@ -24,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
-import { CompactVoiceWaveform } from "./ComposerDictationControl";
+import { CompactVoiceWaveform, DictationElapsedTime } from "./ComposerDictationControl";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
 import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
 
@@ -114,7 +114,6 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
   const isError = phase === "error";
   const openSettings = isError && voice.state.errorAction === "settings";
   const label = voice.label ?? "Draft";
-  const elapsedLabel = `${Math.floor(voice.elapsedSeconds / 60)}:${String(voice.elapsedSeconds % 60).padStart(2, "0")}`;
 
   return (
     <View pointerEvents="box-none" className="absolute inset-0">
@@ -149,12 +148,10 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
               ) : phase === "recording" ? (
                 <>
                   <View className="size-2 rounded-full bg-danger-foreground" />
-                  <Text
-                    className="text-xs text-foreground"
-                    style={{ fontVariant: ["tabular-nums"] }}
-                  >
-                    {elapsedLabel}
-                  </Text>
+                  <DictationElapsedTime
+                    className="text-foreground"
+                    seconds={voice.elapsedSeconds}
+                  />
                 </>
               ) : (
                 <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
@@ -202,12 +199,10 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             {phase === "recording" ? (
               <>
                 <CompactVoiceWaveform audioLevels={voice.audioLevels} />
-                <Text
-                  className="text-xs text-foreground-muted"
-                  style={{ fontVariant: ["tabular-nums"] }}
-                >
-                  {elapsedLabel}
-                </Text>
+                <DictationElapsedTime
+                  className="text-foreground-muted"
+                  seconds={voice.elapsedSeconds}
+                />
                 <Pressable
                   accessibilityLabel="Finish dictation"
                   accessibilityRole="button"

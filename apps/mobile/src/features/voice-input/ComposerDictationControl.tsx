@@ -5,6 +5,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  Text as SystemText,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -245,6 +246,25 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
   );
 });
 
+/**
+ * Renders the recording time in the system font: DM Sans has no tabular
+ * figures, so `tabular-nums` alone would still let the width jitter.
+ */
+export function DictationElapsedTime(props: {
+  readonly seconds: number;
+  readonly className?: string;
+}) {
+  return (
+    <SystemText
+      className={cn("text-xs", props.className)}
+      numberOfLines={1}
+      style={{ fontVariant: ["tabular-nums"] }}
+    >
+      {Math.floor(props.seconds / 60)}:{String(props.seconds % 60).padStart(2, "0")}
+    </SystemText>
+  );
+}
+
 function VoiceActionButton(props: {
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
@@ -322,7 +342,6 @@ export function ComposerDictationStatus(props: {
 
   if (!props.presentation.statusLabel) return null;
   const isError = props.presentation.statusKind === "error";
-  const elapsedLabel = `${Math.floor(props.elapsedSeconds / 60)}:${String(props.elapsedSeconds % 60).padStart(2, "0")}`;
   return (
     <View className="relative h-11 min-w-0 flex-1 justify-center">
       {isError ? (
@@ -357,13 +376,10 @@ export function ComposerDictationStatus(props: {
             style={waveformStyle}
           >
             <VoiceWaveform audioLevels={props.audioLevels} />
-            <Text
-              className="text-xs text-foreground-muted"
-              numberOfLines={1}
-              style={{ fontVariant: ["tabular-nums"] }}
-            >
-              {elapsedLabel}
-            </Text>
+            <DictationElapsedTime
+              className="text-foreground-muted"
+              seconds={props.elapsedSeconds}
+            />
           </Animated.View>
           <Animated.View className="absolute inset-0 justify-center px-2" style={labelStyle}>
             <Text className="text-center text-sm text-foreground-muted" numberOfLines={1}>
