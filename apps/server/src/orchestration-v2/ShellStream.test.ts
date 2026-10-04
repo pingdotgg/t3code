@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import {
+  archivedShellItemsNeedSnapshot,
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
@@ -208,6 +209,36 @@ describe("archivedShellStreamItemFromThreadShell", () => {
         shell: null,
       }),
     ).toEqual({ kind: "thread.removed", sequence: 4, threadId: "thread-a" });
+  });
+});
+
+describe("archivedShellItemsNeedSnapshot", () => {
+  const known = new Set([ProjectId.make("project-known")]);
+
+  it("needs a snapshot when a thread is archived in a project the subscriber has not seen", () => {
+    const thread = shellFixture({
+      projectId: ProjectId.make("project-new"),
+      archivedAt: "2026-07-30T00:00:00.000Z" as never,
+    });
+    expect(
+      archivedShellItemsNeedSnapshot([{ kind: "thread.updated", sequence: 4, thread }], known),
+    ).toBe(true);
+  });
+
+  it("keeps deltas for known projects and removals", () => {
+    const thread = shellFixture({
+      projectId: ProjectId.make("project-known"),
+      archivedAt: "2026-07-30T00:00:00.000Z" as never,
+    });
+    expect(
+      archivedShellItemsNeedSnapshot(
+        [
+          { kind: "thread.updated", sequence: 4, thread },
+          { kind: "thread.removed", sequence: 5, threadId: ThreadId.make("thread-b") },
+        ],
+        known,
+      ),
+    ).toBe(false);
   });
 });
 

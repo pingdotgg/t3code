@@ -1,4 +1,8 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationV2ArchivedShellSnapshot,
+  type OrchestrationV2ArchivedShellStreamItem,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
@@ -37,6 +41,25 @@ export function parseArchivedThreadsEnvironmentKey(key: string): ReadonlyArray<E
   );
 }
 
+/**
+ * Folds the archived-shell stream into a snapshot. Every (re)subscription
+ * starts with a full snapshot, so deltas before one have nothing to apply to.
+ */
+export function applyArchivedShellStreamItem(
+  snapshot: OrchestrationV2ArchivedShellSnapshot | null,
+  item: OrchestrationV2ArchivedShellStreamItem,
+): OrchestrationV2ArchivedShellSnapshot | null {
+  if (item.kind === "snapshot") return item.snapshot;
+  if (snapshot === null) return null;
+  const threadId = item.kind === "thread.updated" ? item.thread.id : item.threadId;
+  const threads = snapshot.threads.filter((thread) => thread.id !== threadId);
+  return {
+    ...snapshot,
+    snapshotSequence: item.sequence,
+    threads: item.kind === "thread.updated" ? [...threads, item.thread] : threads,
+  };
+}
+
 export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (
     environmentId: EnvironmentId,
@@ -51,7 +74,8 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
       for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
         const result = get(options.getSnapshotAtom(environmentId));
-        isLoading ||= result.waiting;
+        // Live snapshots stay `waiting` while subscribed; only the first load counts.
+        isLoading ||= result._tag === "Initial";
 
         const snapshot = Option.getOrNull(AsyncResult.value(result));
         if (snapshot !== null) {

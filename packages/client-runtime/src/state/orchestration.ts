@@ -1,6 +1,9 @@
 import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
+import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 
+import { applyArchivedShellStreamItem } from "./archivedThreads.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -54,9 +57,15 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 60_000,
     }),
-    archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:orchestration:archived-shell-snapshot",
-      tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+    // Live, so archives from agents, scheduled tasks, and other clients show up.
+    archivedShell: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:orchestration:archived-shell",
+      tag: ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.scan(null, applyArchivedShellStreamItem),
+          Stream.filter(Predicate.isNotNull),
+        ),
     }),
   };
 }

@@ -59,6 +59,7 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
+  type OrchestrationV2ArchivedShellStreamItem,
   type OrchestrationV2ShellSnapshot,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -120,6 +121,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
+  archivedShellItemsNeedSnapshot,
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
@@ -1751,26 +1753,41 @@ const makeWsRpcLayer = (
         "ws.orchestrationV2.subscribeArchivedShell",
       )(function* () {
         const snapshot = yield* getOrchestrationV2ArchivedShellSnapshot;
+        const knownProjectIds = yield* Ref.make(
+          new Set(snapshot.projects.map((project) => project.id)),
+        );
         const live = threadManagement
           .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
           .pipe(
             Stream.groupedWithin(512, Duration.millis(50)),
             Stream.mapEffect((events) =>
-              Effect.forEach(
-                coalesceStoredThreadEvents(Array.from(events)),
-                (stored) =>
-                  threadManagement
-                    .getThreadShell(stored.event.threadId)
-                    .pipe(
-                      Effect.map((shell) =>
-                        archivedShellStreamItemFromThreadShell({ stored, shell }),
+              Effect.gen(function* () {
+                const items = (yield* Effect.forEach(
+                  coalesceStoredThreadEvents(Array.from(events)),
+                  (stored) =>
+                    threadManagement
+                      .getThreadShell(stored.event.threadId)
+                      .pipe(
+                        Effect.map((shell) =>
+                          archivedShellStreamItemFromThreadShell({ stored, shell }),
+                        ),
                       ),
-                    ),
-                { concurrency: 8 },
-              ),
+                  { concurrency: 8 },
+                )).filter((item) => item !== null);
+                if (!archivedShellItemsNeedSnapshot(items, yield* Ref.get(knownProjectIds))) {
+                  return items;
+                }
+                const fresh = yield* getOrchestrationV2ArchivedShellSnapshot;
+                yield* Ref.set(
+                  knownProjectIds,
+                  new Set(fresh.projects.map((project) => project.id)),
+                );
+                return [{ kind: "snapshot" as const, snapshot: fresh }];
+              }),
             ),
-            Stream.flatMap(Stream.fromIterable),
-            Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
+            Stream.flatMap((items) =>
+              Stream.fromIterable<OrchestrationV2ArchivedShellStreamItem>(items),
+            ),
             (stream) => bufferLiveStream(stream),
             Stream.mapError(
               (cause) =>

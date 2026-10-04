@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadShellSnapshot,
+  ProjectId,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
@@ -232,6 +233,19 @@ export function shellStreamItemFromThreadShell(input: {
     location: "active",
     threadId: input.stored.event.threadId,
   };
+}
+
+/**
+ * Archive deltas carry no project metadata, so a thread archived in a project
+ * the subscriber has not seen yet needs a fresh snapshot to be grouped.
+ */
+export function archivedShellItemsNeedSnapshot(
+  items: ReadonlyArray<OrchestrationV2ArchivedShellStreamItem>,
+  knownProjectIds: ReadonlySet<ProjectId>,
+): boolean {
+  return items.some(
+    (item) => item.kind === "thread.updated" && !knownProjectIds.has(item.thread.projectId),
+  );
 }
 
 /** Converts a committed event into an archive-only delta when it changes archive membership. */

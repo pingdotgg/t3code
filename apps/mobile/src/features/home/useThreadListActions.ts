@@ -9,7 +9,6 @@ import { Alert, Platform } from "react-native";
 import { withThreadDismissal } from "./thread-dismissal";
 import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -109,9 +108,7 @@ function actionFailureTitle(action: ThreadListAction): string {
 }
 
 /** Resolves to true iff the action was dispatched and succeeded. */
-function useThreadActionExecutor(
-  onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
-) {
+function useThreadActionExecutor() {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
   const unarchiveMutation = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
@@ -176,25 +173,12 @@ function useThreadActionExecutor(
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
         }
-        // Settled threads stay in the live shell stream; only the archive
-        // lifecycle still feeds the archived-snapshot surface.
-        if (action === "archive" || action === "unarchive" || action === "delete") {
-          refreshArchivedThreadsForEnvironment(thread.environmentId);
-        }
-        onCompleted?.(action, thread);
         return true;
       } finally {
         inFlightThreadKeys.current.delete(key);
       }
     },
-    [
-      archiveMutation,
-      deleteMutation,
-      onCompleted,
-      settleMutation,
-      unarchiveMutation,
-      unsettleMutation,
-    ],
+    [archiveMutation, deleteMutation, settleMutation, unarchiveMutation, unsettleMutation],
   );
 
   return executeAction;
@@ -747,19 +731,11 @@ export function useThreadListActions(): {
   };
 }
 
-export function useArchivedThreadListActions(
-  onCompleted: (thread: EnvironmentThreadShell) => void,
-): {
+export function useArchivedThreadListActions(): {
   readonly unarchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
-  const handleCompleted = useCallback(
-    (_action: ThreadListAction, thread: EnvironmentThreadShell) => {
-      onCompleted(thread);
-    },
-    [onCompleted],
-  );
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  const executeAction = useThreadActionExecutor();
   const unarchiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       void executeAction("unarchive", thread);
