@@ -286,12 +286,14 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         pid: entry.pgid,
         port: entry.port,
       });
-      signalGroup(entry.pgid, "SIGTERM");
-      for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
-        yield* Effect.sleep(STOP_POLL_INTERVAL);
-      }
-      // The group never emptied, so its pgid cannot have been reused.
-      if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
+      yield* Effect.gen(function* () {
+        signalGroup(entry.pgid, "SIGTERM");
+        for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
+          yield* Effect.sleep(STOP_POLL_INTERVAL);
+        }
+        // The group never emptied, so its pgid cannot have been reused.
+        if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
+      }).pipe(Effect.uninterruptible);
     });
 
   const reapEntry = (entryPath: string) =>
@@ -331,9 +333,9 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         entry.users++;
         return entry;
       }),
-      // Once we signal a verified group, cancellation must not release the gate
-      // before its bounded TERM/KILL cleanup finishes. Waiting callers can cancel.
-      (entry) => entry.gate.withPermit(reapOnce.pipe(Effect.uninterruptible)),
+      // Discovery and filesystem cleanup remain interruptible. stopOrphan holds
+      // this permit through its bounded post-signal process-group cleanup.
+      (entry) => entry.gate.withPermit(reapOnce),
       (entry) =>
         Effect.sync(() => {
           if (--entry.users === 0) reapers.delete(key);

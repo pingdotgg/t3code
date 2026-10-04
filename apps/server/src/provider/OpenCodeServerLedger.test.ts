@@ -243,69 +243,118 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
   );
 });
 
-it.live.skipIf(hostPlatform !== "linux")(
-  "serializes boot and profile reapers until a TERM-resistant group has stopped",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ledger-overlap-" });
-      const group = yield* Effect.acquireRelease(
-        Effect.gen(function* () {
-          const ready = yield* Deferred.make<number>();
-          const exited = yield* Deferred.make<void>();
-          const outputClosed = yield* Deferred.make<void>();
-          const leader = NodeChildProcess.spawn(
-            process.execPath,
-            [
-              "-e",
-              `
+for (const cancel of [false, true])
+  it.live.skipIf(hostPlatform !== "linux")(
+    `serializes boot and profile reapers through group cleanup with cancellation=${cancel}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ledger-overlap-" });
+        const group = yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            const ready = yield* Deferred.make<number>();
+            const exited = yield* Deferred.make<void>();
+            const outputClosed = yield* Deferred.make<void>();
+            const leader = NodeChildProcess.spawn(
+              process.execPath,
+              [
+                "-e",
+                `
           const {spawn}=require('node:child_process');
           const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});process.send(process.pid);setInterval(()=>{},1000)"],{stdio:['ignore',process.stdout,'ignore','ipc']});
           child.once('message',pid=>process.send(pid));
           setInterval(()=>{},1000);
         `,
-            ],
-            { detached: true, stdio: ["ignore", "pipe", "ignore", "ipc"] },
-          );
-          leader.once("message", (pid) => Deferred.doneUnsafe(ready, Effect.succeed(Number(pid))));
-          leader.once("exit", () => Deferred.doneUnsafe(exited, Effect.void));
-          leader.stdout!.once("end", () => Deferred.doneUnsafe(outputClosed, Effect.void));
-          leader.stdout!.resume();
-          return {
-            pid: leader.pid!,
-            ready: Deferred.await(ready),
-            exited: Deferred.await(exited),
-            outputClosed: Deferred.await(outputClosed),
-          };
-        }),
-        (group) => killGroup(group.pid),
-      );
-      const member = yield* group.ready;
-      yield* recordFromDeadServer(stateDir, group);
-      const boot = yield* OpenCodeServerLedger.make({ stateDir });
-      const profile = yield* OpenCodeServerLedger.make({ stateDir });
-      const complete = yield* Deferred.make<void>();
-      const first = yield* boot.reapOrphans.pipe(
-        Effect.andThen(Deferred.succeed(complete, undefined)),
-        Effect.forkScoped,
-      );
-      yield* group.exited; // TERM killed the recorded leader; its child ignores TERM.
-      const running = fs.readFileString(`/proc/${member}/stat`).pipe(
-        Effect.map((stat) => !stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")),
-        Effect.orElseSucceed(() => false),
-      );
-      expect(yield* running).toBe(true);
-      yield* profile.reapOrphans;
-      expect(yield* Deferred.isDone(complete)).toBe(true);
-      expect(yield* running).toBe(false);
-      yield* group.outputClosed;
-      yield* Fiber.join(first);
-      // Coordination is released after the scan, not cached forever.
-      const later = yield* spawnGroup(SERVE_ARGS);
-      yield* recordFromDeadServer(stateDir, later);
-      yield* profile.reapOrphans;
-      yield* later.exited;
-      expect(groupExists(later.pid)).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  20_000,
-);
+              ],
+              { detached: true, stdio: ["ignore", "pipe", "ignore", "ipc"] },
+            );
+            leader.once("message", (pid) =>
+              Deferred.doneUnsafe(ready, Effect.succeed(Number(pid))),
+            );
+            leader.once("exit", () => Deferred.doneUnsafe(exited, Effect.void));
+            leader.stdout!.once("end", () => Deferred.doneUnsafe(outputClosed, Effect.void));
+            leader.stdout!.resume();
+            return {
+              pid: leader.pid!,
+              ready: Deferred.await(ready),
+              exited: Deferred.await(exited),
+              outputClosed: Deferred.await(outputClosed),
+            };
+          }),
+          (group) => killGroup(group.pid),
+        );
+        const member = yield* group.ready;
+        yield* recordFromDeadServer(stateDir, group);
+        const boot = yield* OpenCodeServerLedger.make({ stateDir });
+        const profile = yield* OpenCodeServerLedger.make({ stateDir });
+        const complete = yield* Deferred.make<void>();
+        const first = yield* boot.reapOrphans.pipe(
+          Effect.ensuring(Deferred.succeed(complete, undefined)),
+          Effect.forkScoped,
+        );
+        yield* group.exited; // TERM killed the recorded leader; its child ignores TERM.
+        const running = fs.readFileString(`/proc/${member}/stat`).pipe(
+          Effect.map((stat) => !stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")),
+          Effect.orElseSucceed(() => false),
+        );
+        expect(yield* running).toBe(true);
+        if (cancel) yield* Fiber.interrupt(first).pipe(Effect.forkScoped);
+        yield* profile.reapOrphans;
+        expect(yield* Deferred.isDone(complete)).toBe(true);
+        expect(yield* running).toBe(false);
+        yield* group.outputClosed;
+        const outcome = yield* Fiber.await(first);
+        expect(Exit.isFailure(outcome)).toBe(cancel);
+        // Coordination is released after the scan, not cached forever.
+        const later = yield* spawnGroup(SERVE_ARGS);
+        yield* recordFromDeadServer(stateDir, later);
+        yield* profile.reapOrphans;
+        yield* later.exited;
+        expect(groupExists(later.pid)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    20_000,
+  );
+
+describe.skipIf(hostPlatform !== "linux")("interruptible discovery", () => {
+  it.live.each(["readDirectory", "readFileString", "remove"] as const)(
+    "cancels stalled ledger %s and releases the handoff gate",
+    (operation) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped();
+        const group = yield* spawnGroup(SERVE_ARGS);
+        yield* recordFromDeadServer(stateDir, group);
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const stall = (kind: typeof operation, path: string) =>
+          kind === operation && path.includes("opencode-servers")
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void;
+        const stalled: FileSystem.FileSystem = {
+          ...fs,
+          readDirectory: (...args) =>
+            stall("readDirectory", args[0]).pipe(Effect.andThen(fs.readDirectory(...args))),
+          readFileString: (...args) =>
+            stall("readFileString", args[0]).pipe(Effect.andThen(fs.readFileString(...args))),
+          remove: (...args) => stall("remove", args[0]).pipe(Effect.andThen(fs.remove(...args))),
+        };
+        const blocked = yield* OpenCodeServerLedger.make({ stateDir }).pipe(
+          Effect.provideService(FileSystem.FileSystem, stalled),
+        );
+        const second = yield* OpenCodeServerLedger.make({ stateDir });
+        const running = yield* blocked.reapOrphans.pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const cancelled = yield* Fiber.interrupt(running).pipe(
+          Effect.timeout("1 second"),
+          Effect.exit,
+          Effect.ensuring(Deferred.succeed(release, undefined)),
+        );
+        yield* Fiber.await(running);
+        expect(Exit.isSuccess(cancelled)).toBe(true);
+        yield* second.reapOrphans;
+        yield* group.exited;
+        expect(groupExists(group.pid)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    20_000,
+  );
+});

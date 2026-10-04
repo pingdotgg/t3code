@@ -71,9 +71,11 @@ export class CloudJournalError extends Schema.TaggedError<CloudJournalError>()(
   "CloudJournalError",
   {
     operation: Schema.Literals(["read", "write"]),
+    reason: Schema.optional(Schema.Literal("conflict")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+const isJournalError = Schema.is(CloudJournalError);
 const codec = Schema.fromJsonString(Schema.toCodecJson(CloudIntent));
 const encode = Schema.encodeEffect(codec);
 const decode = Schema.decodeUnknownEffect(codec);
@@ -132,7 +134,6 @@ export const make = Effect.fn("KiloCloudJournal.make")(function* (directory: str
         if (!row) return yield* new CloudJournalError({ operation: "write" });
         const prior = yield* decode(row.body);
         if (
-          prior.revision !== intent.revision ||
           prior.accountId !== intent.accountId ||
           prior.repository !== intent.repository ||
           prior.branch !== intent.branch ||
@@ -146,12 +147,19 @@ export const make = Effect.fn("KiloCloudJournal.make")(function* (directory: str
             prior.state !== intent.state)
         )
           return yield* new CloudJournalError({ operation: "write" });
+        if (prior.revision !== intent.revision)
+          return yield* new CloudJournalError({ operation: "write", reason: "conflict" });
         const next = { ...intent, revision: intent.revision + 1 };
         const body = yield* encode(next);
         const updated =
           yield* sql`UPDATE intents SET state = ${intent.state}, body = ${body} WHERE operation_key = ${intent.operationKey} AND body = ${row.body} RETURNING operation_key`;
-        if (updated.length !== 1) return yield* new CloudJournalError({ operation: "write" });
+        if (updated.length !== 1)
+          return yield* new CloudJournalError({ operation: "write", reason: "conflict" });
         return next;
-      }).pipe(Effect.mapError((cause) => new CloudJournalError({ operation: "write", cause }))),
+      }).pipe(
+        Effect.mapError((cause) =>
+          isJournalError(cause) ? cause : new CloudJournalError({ operation: "write", cause }),
+        ),
+      ),
   };
 });

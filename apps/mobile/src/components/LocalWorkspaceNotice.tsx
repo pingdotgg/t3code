@@ -17,7 +17,7 @@ export function LocalWorkspaceNotice({
       {state === "loading" ? (
         <View className="items-center gap-4">
           <ActivityIndicator />
-          <AppText className="text-sm text-muted-foreground">
+          <AppText className="text-sm text-foreground-muted">
             Loading conversation workspace...
           </AppText>
         </View>

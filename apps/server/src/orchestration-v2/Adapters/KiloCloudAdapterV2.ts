@@ -147,6 +147,9 @@ const wire = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const isCloudError = Schema.is(KiloCloudError);
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+const isJournalError = Schema.is(Journal.CloudJournalError);
+const isJournalConflict = (cause: unknown) =>
+  isRecord(cause) && isJournalError(cause.cause) && cause.cause.reason === "conflict";
 
 export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -303,9 +306,15 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         const saved = {
           ...active,
           state: terminal,
-          providerTurn: { ...active.providerTurn, status: terminal, completedAt: at },
+          providerTurn: {
+            ...active.providerTurn,
+            status: terminal,
+            completedAt: active.providerTurn.completedAt ?? at,
+          },
         };
-        yield* save(saved);
+        // A terminal record adopted from another observer is already durable.
+        if (active.state !== terminal || active.providerTurn.status !== terminal)
+          yield* save(saved);
         taskState = notSubmitted || rejected ? "not_started" : (saved.remoteState ?? terminal);
         yield* options.client.forgetAdmission(options.repository, saved.messageId);
         if (thread?.nativeMetadata?.cloudExecution) {
@@ -686,6 +695,29 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         }
         return false;
       });
+      // Retry local persistence only. Never repeat a paid customer request.
+      const settleKnownOutcome = Effect.gen(function* () {
+        yield* refreshIntent;
+        return yield* finishKnownOutcome;
+      }).pipe(
+        Effect.retry({ times: 1 }),
+        Effect.timeout("8 seconds"),
+        // The timeout can lose a race to an uninterruptible terminal commit.
+        Effect.catch((cause) => (!active ? Effect.succeed(true) : Effect.fail(cause))),
+      );
+      const resumeLocalStorage = Effect.gen(function* () {
+        yield* refreshIntent;
+        if (yield* finishKnownOutcome) return true;
+        if (active) yield* save(active);
+        admissionStoragePaused = false;
+        admissionFailures = 0;
+        admissionProbeAt = 0;
+        return false;
+      }).pipe(
+        Effect.retry({ times: 1 }),
+        Effect.timeout("8 seconds"),
+        Effect.catch((cause) => (!active ? Effect.succeed(true) : Effect.fail(cause))),
+      );
       const recoverAdmission = Effect.gen(function* () {
         yield* refreshIntent;
         if (!active || (yield* finishKnownOutcome)) return;
@@ -733,6 +765,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 ["recovery_incomplete", "recovery_limit", "wrong_owner"].includes(cause.reason));
             // Count and pause locally before further I/O: an unavailable journal
             // must not let the outer reconciliation timeout erase all progress.
+            const storageWasPaused = admissionStoragePaused;
             if (paused) {
               admissionStoragePaused = true;
               monitorSandbox = false;
@@ -747,6 +780,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
             // Only an explicit resume can clear that newer durable pause.
             admissionFailures = Math.max(admissionFailures, active.admissionRecoveryFailures ?? 0);
             paused ||= active.admissionRecoveryPaused === true || admissionFailures >= 3;
+            let conflicted = false;
             yield* save({
               ...active,
               admissionRecoveryFailures: admissionFailures,
@@ -758,20 +792,38 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                   admissionStoragePaused = false;
                 }),
               ),
-              Effect.catch(() =>
-                Effect.sync(() => {
-                  if (paused) admissionStoragePaused = true;
-                }),
+              Effect.catch((writeCause) =>
+                Effect.gen(function* () {
+                  if (isJournalConflict(writeCause)) {
+                    // This probe lost to another observer. Adopt its pause/resume
+                    // instead of reapplying counters computed before its write.
+                    yield* refreshIntent.pipe(Effect.timeout("500 millis"));
+                    conflicted = true;
+                    admissionFailures = active?.admissionRecoveryFailures ?? 0;
+                    paused = active?.admissionRecoveryPaused === true;
+                    admissionStoragePaused = storageWasPaused;
+                  } else if (paused) admissionStoragePaused = true;
+                }).pipe(
+                  Effect.catch(() =>
+                    Effect.sync(() => {
+                      admissionStoragePaused = true;
+                      paused = true;
+                      conflicted = false;
+                    }),
+                  ),
+                ),
               ),
             );
             if (paused) {
               monitorSandbox = false;
               yield* status(
-                admissionStoragePaused
-                  ? "Cloud recovery is paused because its journal cannot be updated. Restore local storage and reopen history. Submission and billing remain unknown; no request was resubmitted."
-                  : isCloudError(cause) && cause.reason === "recovery_limit"
-                    ? "Cloud recovery reached the 100-page history limit. Reopening repeats this limit; contact support to resolve the existing operation. Submission and billing remain unknown; do not submit again."
-                    : `Cloud admission recovery is incomplete and automatic scanning is paused${isCloudError(cause) ? ` (${cause.recoveryCause ?? cause.reason})` : ""}. Reopen history to retry reads. Submission and billing remain unknown; do not submit again.`,
+                conflicted
+                  ? "Cloud recovery changed in another observer. Reopen history to retry reads; no request was resubmitted."
+                  : admissionStoragePaused
+                    ? "Cloud recovery is paused because its journal cannot be updated. Restore local storage and reopen history. Submission and billing remain unknown; no request was resubmitted."
+                    : isCloudError(cause) && cause.reason === "recovery_limit"
+                      ? "Cloud recovery reached the 100-page history limit. Reopening repeats this limit; contact support to resolve the existing operation. Submission and billing remain unknown; do not submit again."
+                      : `Cloud admission recovery is incomplete and automatic scanning is paused${isCloudError(cause) ? ` (${cause.recoveryCause ?? cause.reason})` : ""}. Reopen history to retry reads. Submission and billing remain unknown; do not submit again.`,
               );
             }
           }),
@@ -1073,7 +1125,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           while (hasBackgroundWork()) {
             const pollStartedAt = yield* Clock.currentTimeMillis;
             yield* watchEvents;
-            if (active || needsHistoryRestore)
+            if (!admissionStoragePaused && (active || needsHistoryRestore))
               yield* gate
                 .withPermit(reconcile().pipe(Effect.timeout("10 seconds")))
                 .pipe(
@@ -1450,18 +1502,16 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                       // Commit the rejection and terminal state together. Refresh on
                       // a CAS conflict, but never retry the paid request. If storage
                       // stays unavailable, retain the outcome only in this adapter.
-                      yield* Effect.gen(function* () {
-                        yield* refreshIntent;
-                        yield* finishKnownOutcome;
-                      }).pipe(
-                        Effect.retry({ times: 1 }),
-                        Effect.timeout("8 seconds"),
-                        Effect.catch(() =>
+                      yield* settleKnownOutcome.pipe(
+                        Effect.catch((cause) =>
                           Effect.gen(function* () {
+                            if (!active) return;
                             admissionStoragePaused = true;
-                            monitorSandbox = false;
+                            if (!binding) monitorSandbox = false;
                             yield* status(
-                              "Kilo Cloud rejected this request, but the outcome could not be saved. Restore local storage and reopen history. The reservation remains held; no request was resubmitted.",
+                              isJournalConflict(cause)
+                                ? "Cloud rejection recovery changed concurrently. Reopen history to retry local recovery; no request was resubmitted."
+                                : "Kilo Cloud rejected this request, but the outcome could not be saved. Restore local storage and reopen history. The reservation remains held; no request was resubmitted.",
                             );
                           }),
                         ),
@@ -1482,19 +1532,42 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
               Effect.gen(function* () {
                 yield* owned(request.providerThread);
                 if (!active || active.providerTurn.id !== request.providerTurnId) return false;
-                if (rejectedOperationKey === active.operationKey || active.submissionRejected) {
-                  const finished = yield* Effect.gen(function* () {
-                    yield* refreshIntent;
-                    return yield* finishKnownOutcome;
-                  }).pipe(
-                    Effect.timeout("8 seconds"),
-                    Effect.mapError(() =>
+                if (
+                  rejectedOperationKey === active.operationKey ||
+                  active.submissionRejected ||
+                  admissionStoragePaused
+                ) {
+                  const finished = yield* settleKnownOutcome.pipe(
+                    Effect.mapError((cause) =>
                       error(
-                        "Kilo Cloud rejected this request, but its outcome cannot be saved. Restore local storage and reopen history. No remote interrupt was sent.",
+                        isJournalConflict(cause)
+                          ? "Cloud rejection recovery changed concurrently. Reopen history to retry local recovery. No remote interrupt was sent."
+                          : "Kilo Cloud rejected this request, but its outcome cannot be saved. Restore local storage and reopen history. No remote interrupt was sent.",
                       ),
                     ),
                   );
-                  if (finished || !active) return false;
+                  if (finished || !active) {
+                    yield* watch;
+                    return false;
+                  }
+                  if (admissionStoragePaused) {
+                    const settled = yield* resumeLocalStorage.pipe(
+                      Effect.mapError((cause) =>
+                        error(
+                          isJournalConflict(cause)
+                            ? "Cloud recovery changed concurrently. Reopen history to retry. No remote interrupt was sent."
+                            : "Cloud recovery remains paused because its journal cannot be updated. Restore local storage and reopen history. No remote interrupt was sent.",
+                        ),
+                      ),
+                    );
+                    if (settled || !active) {
+                      yield* watch;
+                      return false;
+                    }
+                  }
+                  // Newer prepared admission is authoritative, but not a binding.
+                  // Resume its read-only recovery; Stop can be retried after binding.
+                  if (!binding) yield* watch;
                 }
                 if (active.submissionPhase === "preflight") {
                   yield* finish("interrupted");
@@ -1587,10 +1660,13 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                   admissionFailures = 0;
                   admissionStoragePaused = false;
                 }).pipe(
+                  Effect.retry({ times: 1 }),
                   Effect.timeout("8 seconds"),
-                  Effect.mapError(() =>
+                  Effect.mapError((cause) =>
                     error(
-                      "Cloud recovery remains paused because its journal cannot be updated. Restore local storage and reopen history. No request was resubmitted.",
+                      isJournalConflict(cause)
+                        ? "Cloud recovery changed concurrently. Reopen history to retry reads. No request was resubmitted."
+                        : "Cloud recovery remains paused because its journal cannot be updated. Restore local storage and reopen history. No request was resubmitted.",
                     ),
                   ),
                 );
