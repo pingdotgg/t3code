@@ -418,7 +418,16 @@ const config: ExpoConfig = {
           minSdkVersion: 24,
           // kotlinx-io uses Kotlin 2.3's return-value checker annotation, while
           // SDK 58 builds with Kotlin 2.2. It has no runtime behavior.
-          extraProguardRules: "-dontwarn kotlin.MustUseReturnValues",
+          //
+          // WorkManager 2.9 keeps InputMerger classes but not their constructors,
+          // and R8 full mode no longer keeps a default constructor implicitly.
+          // Without it no work request can start, so the Glance session behind
+          // the widget never renders and it stays on "Loading widget". WorkManager
+          // 2.10 ships this rule itself; drop it once the resolved version gets there.
+          extraProguardRules: [
+            "-dontwarn kotlin.MustUseReturnValues",
+            "-keep class * extends androidx.work.InputMerger { <init>(); }",
+          ].join("\n"),
         },
         ios: {
           deploymentTarget: "18.0",
