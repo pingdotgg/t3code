@@ -1,8 +1,15 @@
-import type { BusyBarSettings, ThreadId } from "@t3tools/contracts";
+import type {
+  BusyBarSettings,
+  BusyBarStatus,
+  ServerSettingsError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -78,14 +85,25 @@ const ALERTS: Record<
   waiting_for_input: { label: "QUESTION", color: "#2979FFFF", timeoutSeconds: 0 },
 };
 
+export class BusyBarNotifier extends Context.Service<
+  BusyBarNotifier,
+  {
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    /** Asks the saved device for its API version, so setup can tell whether it is reachable. */
+    readonly getStatus: Effect.Effect<BusyBarStatus, ServerSettingsError>;
+  }
+>()("t3/busyBar/BusyBarNotifier") {}
+
 const APPLICATION_NAME = "t3code";
 const PROXY_HOST = "api.busy.app";
+const USB_HOST = "10.0.4.20";
 
 /** The device serves `/api`; the cloud proxy serves the same API under `/busybar`. */
 export function resolveBusyBarEndpoint(settings: Pick<BusyBarSettings, "address" | "token">) {
   const raw = settings.address.trim();
   const hasProtocol = /^https?:\/\//i.test(raw);
-  const isProxy = new URL(hasProtocol ? raw : `http://${raw}`).hostname === PROXY_HOST;
+  const hostname = new URL(hasProtocol ? raw : `http://${raw}`).hostname;
+  const isProxy = hostname === PROXY_HOST;
   const origin = new URL(hasProtocol ? raw : `${isProxy ? "https" : "http"}://${raw}`).origin;
   const headers: Record<string, string> =
     settings.token.length === 0
@@ -93,7 +111,18 @@ export function resolveBusyBarEndpoint(settings: Pick<BusyBarSettings, "address"
       : isProxy
         ? { authorization: `Bearer ${settings.token}` }
         : { "x-api-token": settings.token };
-  return { baseUrl: `${origin}${isProxy ? "/busybar" : "/api"}`, headers };
+  const connection: BusyBarStatus["connection"] = isProxy
+    ? "cloud"
+    : hostname === USB_HOST
+      ? "usb"
+      : "lan";
+  return { baseUrl: `${origin}${isProxy ? "/busybar" : "/api"}`, headers, connection };
+}
+
+/** Maps the probe's HTTP status, or `null` when no response arrived, to a setup status. */
+export function busyBarProbeState(httpStatus: number | null): BusyBarStatus["state"] {
+  if (httpStatus === 401 || httpStatus === 403) return "unauthorized";
+  return httpStatus !== null && httpStatus >= 200 && httpStatus < 300 ? "connected" : "unreachable";
 }
 
 /** The device fonts are bitmap ASCII. */
@@ -196,13 +225,13 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const httpClient = yield* HttpClient.HttpClient;
 
   const tracked = new Map<ThreadId, BusyBarThreadTracking>();
   // The thread whose attention alert is on the device, so moving on can clear it.
   let attentionThreadId: ThreadId | null = null;
 
-  const device = makeBusyBarDevice(httpClient);
+  const device = makeBusyBarDevice(httpClient.pipe(HttpClient.filterStatusOk));
 
   const evaluate = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -279,5 +308,23 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  return { start, drain: worker.drain };
+  const getStatus = Effect.gen(function* () {
+    const endpoint = resolveBusyBarEndpoint((yield* serverSettings.getSettings).busyBar);
+    const httpStatus = yield* httpClient
+      .execute(
+        HttpClientRequest.get(`${endpoint.baseUrl}/version`).pipe(
+          HttpClientRequest.setHeaders(endpoint.headers),
+        ),
+      )
+      .pipe(
+        Effect.timeout("3 seconds"),
+        Effect.map((response) => response.status),
+        Effect.orElseSucceed(() => null),
+      );
+    return { connection: endpoint.connection, state: busyBarProbeState(httpStatus) };
+  });
+
+  return BusyBarNotifier.of({ start, getStatus });
 }).pipe(Effect.provide(FetchHttpClient.layer));
+
+export const layer = Layer.effect(BusyBarNotifier, make);

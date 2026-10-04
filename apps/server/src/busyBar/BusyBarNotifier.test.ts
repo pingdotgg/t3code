@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  busyBarProbeState,
   type BusyBarThreadTracking,
   nextBusyBarAlert,
   resolveBusyBarEndpoint,
@@ -47,14 +48,16 @@ describe("nextBusyBarAlert", () => {
 });
 
 describe("resolveBusyBarEndpoint", () => {
-  it("talks to a local device under /api with its access password", () => {
+  it("talks to a USB or Wi-Fi device under /api with its access password", () => {
     assert.deepEqual(resolveBusyBarEndpoint({ address: "10.0.4.20", token: "" }), {
       baseUrl: "http://10.0.4.20/api",
       headers: {},
+      connection: "usb",
     });
     assert.deepEqual(resolveBusyBarEndpoint({ address: "192.168.1.5", token: "pw" }), {
       baseUrl: "http://192.168.1.5/api",
       headers: { "x-api-token": "pw" },
+      connection: "lan",
     });
   });
 
@@ -62,6 +65,17 @@ describe("resolveBusyBarEndpoint", () => {
     assert.deepEqual(resolveBusyBarEndpoint({ address: "api.busy.app", token: "tok" }), {
       baseUrl: "https://api.busy.app/busybar",
       headers: { authorization: "Bearer tok" },
+      connection: "cloud",
     });
+  });
+});
+
+describe("busyBarProbeState", () => {
+  it("separates a rejected token from a device that never answered", () => {
+    assert.equal(busyBarProbeState(200), "connected");
+    assert.equal(busyBarProbeState(401), "unauthorized");
+    assert.equal(busyBarProbeState(403), "unauthorized");
+    assert.equal(busyBarProbeState(404), "unreachable");
+    assert.equal(busyBarProbeState(null), "unreachable");
   });
 });

@@ -636,10 +636,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "busy-bar-alerts",
-    title: "BUSY Bar alerts",
+    title: "Send events to BUSY Bar",
     to: "/settings/integrations",
     targetId: "busy-bar",
-    searchTerms: ["busy bar busy.app device led display notify notifications done approval"],
+    searchTerms: [
+      "busy bar busy.app device led display notify notifications alerts done approval usb wifi cloud token",
+    ],
     environmentOnly: true,
     scope: "environment-defaults",
   },

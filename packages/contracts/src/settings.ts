@@ -1009,6 +1009,13 @@ export const BusyBarSettings = Schema.Struct({
 });
 export type BusyBarSettings = typeof BusyBarSettings.Type;
 
+/** How the server reaches the configured BUSY Bar, and whether it answered. */
+export const BusyBarStatus = Schema.Struct({
+  connection: Schema.Literals(["usb", "lan", "cloud"]),
+  state: Schema.Literals(["connected", "unauthorized", "unreachable"]),
+});
+export type BusyBarStatus = typeof BusyBarStatus.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),

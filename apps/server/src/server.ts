@@ -508,7 +508,12 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 
 const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   AgentAwarenessRelay.layer,
-  Layer.effectDiscard(BusyBarNotifier.make.pipe(Effect.flatMap((service) => service.start()))),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* BusyBarNotifier.BusyBarNotifier;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provideMerge(BusyBarNotifier.layer)),
   ThreadSettlementWorkerLive,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),

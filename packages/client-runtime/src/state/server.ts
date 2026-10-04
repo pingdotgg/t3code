@@ -1057,6 +1057,13 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    // Probes the device on every mount; nothing else holds the result.
+    busyBarStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:busy-bar-status",
+      tag: WS_METHODS.serverGetBusyBarStatus,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
