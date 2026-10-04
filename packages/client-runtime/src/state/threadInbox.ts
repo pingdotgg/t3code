@@ -23,7 +23,11 @@ type WorkingThreadInput = Pick<
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.runtime?.status === "failed") return false;
-  if (!threadRuntimeIsActive(thread.runtime) && thread.pendingBackgroundTasks.length === 0) {
+  if (
+    !threadRuntimeIsActive(thread.runtime) &&
+    thread.runtime?.status !== "idle" &&
+    thread.pendingBackgroundTasks.length === 0
+  ) {
     return false;
   }
   // A plan prompt outranks lingering background work: the user has to act on it.

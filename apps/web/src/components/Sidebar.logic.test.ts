@@ -2155,10 +2155,7 @@ describe("Working shelf (beta)", () => {
     }
   });
 
-  it("keeps idle and failed threads without live work in the inbox", () => {
-    expect(isSidebarThreadWorking({ ...idle, runtime: { ...runtime, status: "idle" } })).toBe(
-      false,
-    );
+  it("keeps a failed thread in the inbox while a command still runs", () => {
     expect(
       isSidebarThreadWorking({
         ...idle,
