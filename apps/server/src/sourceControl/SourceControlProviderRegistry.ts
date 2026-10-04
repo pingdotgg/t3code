@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
@@ -19,8 +20,11 @@ import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   probeSourceControlProvider,
+  probeUnknownRemoteProvider,
   refineUnknownRemoteProvider,
+  selectUnknownRemoteProvider,
   type SourceControlProviderDiscoverySpec,
+  type UnknownRemoteProbe,
 } from "./SourceControlProviderDiscovery.ts";
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -28,6 +32,17 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
+// Refining an unknown remote spawns every hosting CLI, and the answer belongs to the host
+// rather than to a checkout. Keeping the verdict - including "nobody claimed it" - for a few
+// minutes is what stops a workspace of projects on one unrecognised host from re-probing the
+// CLIs on every read. The window is the delay before newly authenticated CLIs are noticed.
+const UNKNOWN_REMOTE_CACHE_CAPACITY = 512;
+const UNKNOWN_REMOTE_CACHE_TTL = Duration.minutes(5);
+
+/** Nothing to probe with: the request that would have supplied a checkout is already gone. */
+class UnprobedRemote {
+  readonly _tag = "UnprobedRemote";
+}
 
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
@@ -212,6 +227,84 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
 
+    const unknownRemoteKey = (remoteUrl: string): string | null => {
+      // Only the probe is keyed, and the probe reads a host. Which remote on that host asked
+      // changes nothing - except for `fj`, which reports its logins over http when the asking
+      // remote is http, so the scheme rides along.
+      const host = detectSourceControlProviderFromRemoteUrl(remoteUrl)?.baseUrl;
+      if (host === undefined) return null;
+      return `${host}\u0000${/^http:\/\//iu.test(remoteUrl) ? "http" : "https"}`;
+    };
+
+    // Any checkout of a host is an equally good place to probe from, so the lookup takes the
+    // request that most recently asked for this key. `Cache.get` collapses concurrent misses
+    // into one probe.
+    const unknownRemoteRequests = new Map<string, { readonly cwd: string; readonly url: string }>();
+
+    const unknownRemoteCache = yield* Cache.makeWith<
+      string,
+      ReadonlyArray<UnknownRemoteProbe>,
+      UnprobedRemote
+    >(
+      (key) =>
+        Effect.suspend(() => {
+          const request = unknownRemoteRequests.get(key);
+          if (request === undefined) return Effect.fail(new UnprobedRemote());
+          return probeUnknownRemoteProvider({
+            specs: discoverySpecs,
+            process,
+            cwd: request.cwd,
+            remoteUrl: request.url,
+          });
+        }),
+      {
+        capacity: UNKNOWN_REMOTE_CACHE_CAPACITY,
+        // A spec that could not run has nothing to say about the host, and keeping its silence
+        // would settle the host on nothing. Expiring at once drops the entry while still
+        // letting everyone waiting on this probe share its answer.
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) && exit.value.every((probe) => probe.answered)
+            ? UNKNOWN_REMOTE_CACHE_TTL
+            : Duration.zero,
+      },
+    );
+
+    const refineWithHostCache = Effect.fn("SourceControlProviderRegistry.refineUnknownRemote")(
+      function* (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProvider.SourceControlProviderContext | null;
+      }) {
+        const context = input.context;
+        if (context === null || context.provider.kind !== "unknown") return context;
+        const key = unknownRemoteKey(context.remoteUrl);
+        if (key === null) {
+          return yield* refineUnknownRemoteProvider({
+            specs: discoverySpecs,
+            process,
+            cwd: input.cwd,
+            context,
+          });
+        }
+        const request = { cwd: input.cwd, url: context.remoteUrl };
+        unknownRemoteRequests.set(key, request);
+        const probes = yield* Cache.get(unknownRemoteCache, key).pipe(
+          Effect.option,
+          Effect.ensuring(
+            // Retire only our own request. An entry that expired at once is dropped before
+            // this runs, so a later call may already have installed the request its own
+            // lookup is about to read.
+            Effect.sync(() => {
+              if (unknownRemoteRequests.get(key) === request) unknownRemoteRequests.delete(key);
+            }),
+          ),
+        );
+        // The probe reads the host; the match reads this remote. Sharing the first and
+        // repeating the second is what keeps a mounted instance from inheriting its
+        // neighbour's verdict.
+        return Option.isNone(probes) ? context : selectUnknownRemoteProvider(probes.value, context);
+      },
+    );
+
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
         const handle = yield* vcsRegistry.resolve({ cwd }).pipe(
@@ -240,12 +333,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         );
         const context = selectProviderContext(remotes.remotes);
 
-        return yield* refineUnknownRemoteProvider({
-          specs: discoverySpecs,
-          process,
-          cwd,
-          context,
-        });
+        return yield* refineWithHostCache({ cwd, context });
       },
     );
 
@@ -261,12 +349,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
         ? Cache.get(providerContextCache, input.cwd)
-        : refineUnknownRemoteProvider({
-            specs: discoverySpecs,
-            process,
-            cwd: input.cwd,
-            context: input.context,
-          })
+        : refineWithHostCache({ cwd: input.cwd, context: input.context })
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? "unknown";
@@ -289,15 +372,21 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
-      discover: Effect.forEach(
-        discoverySpecs,
-        (spec) =>
-          probeSourceControlProvider({
-            spec,
-            process,
-            cwd: config.cwd,
-          }),
-        { concurrency: "unbounded" },
+      // An explicit re-discovery is how a freshly installed or authenticated CLI announces
+      // itself, so the cached host verdicts must not outlive it.
+      discover: Cache.invalidateAll(unknownRemoteCache).pipe(
+        Effect.andThen(
+          Effect.forEach(
+            discoverySpecs,
+            (spec) =>
+              probeSourceControlProvider({
+                spec,
+                process,
+                cwd: config.cwd,
+              }),
+            { concurrency: "unbounded" },
+          ),
+        ),
       ),
     });
   },

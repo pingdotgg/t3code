@@ -4,8 +4,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import {
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+  VcsRepositoryDetectionError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -42,6 +47,7 @@ function makeRegistry(input: {
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
+  readonly forgejo?: Partial<ForgejoCli.ForgejoCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -96,7 +102,10 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
-        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () => Effect.succeed([]),
+          ...input.forgejo,
+        }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -344,4 +353,305 @@ it.effect(
         );
       }
     }).pipe(Effect.scoped),
+);
+
+const spawnFailure = (input: VcsProcess.VcsProcessInput, reason: PlatformError.SystemError) =>
+  Effect.fail(
+    new VcsProcessSpawnError({
+      operation: input.operation,
+      command: input.command,
+      cwd: input.cwd,
+      cause: new PlatformError.PlatformError(reason),
+    }),
+  );
+
+/** What `processRunner` reports when the executable is not on PATH. */
+const missingExecutable = (command: string) =>
+  new PlatformError.SystemError({
+    _tag: "NotFound",
+    module: "ChildProcess",
+    method: "spawn",
+    syscall: `spawn ${command}`,
+  });
+
+/** What it reports when the checkout the probe would run in is gone. */
+const missingCheckout = (cwd: string) =>
+  new PlatformError.SystemError({
+    _tag: "NotFound",
+    module: "FileSystem",
+    method: "access",
+    pathOrDescriptor: cwd,
+  });
+
+const unknownEnterpriseRemote = (repository: string) =>
+  ({
+    provider: {
+      kind: "unknown",
+      name: "acme.ghe.test",
+      baseUrl: "https://acme.ghe.test",
+    },
+    remoteName: "origin",
+    remoteUrl: `https://acme.ghe.test/${repository}.git`,
+  }) as const;
+
+it.effect("probes an unclaimable host once for every checkout that shares it", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => {
+          if (input.operation === "source-control.discovery.refine-unknown-remote") probes += 1;
+          return spawnFailure(input, missingExecutable(input.command));
+        },
+      },
+    });
+
+    const first = yield* registry.resolveHandle({
+      cwd: "/one",
+      context: unknownEnterpriseRemote("group/one"),
+    });
+    const second = yield* registry.resolveHandle({
+      cwd: "/two",
+      context: unknownEnterpriseRemote("group/two"),
+    });
+
+    assert.strictEqual(first.context?.provider.kind, "unknown");
+    assert.strictEqual(second.context?.provider.kind, "unknown");
+    assert.strictEqual(probes, 1);
+  }),
+);
+
+it.effect("keeps re-asking when the checkout itself could not be probed", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => {
+          if (input.operation === "source-control.discovery.refine-unknown-remote") probes += 1;
+          return spawnFailure(input, missingCheckout(input.cwd));
+        },
+      },
+    });
+    const refine = () =>
+      registry.resolveHandle({ cwd: "/gone", context: unknownEnterpriseRemote("group/one") });
+
+    const first = yield* refine();
+    yield* refine();
+
+    assert.strictEqual(first.context?.provider.kind, "unknown");
+    assert.strictEqual(probes, 2);
+  }),
+);
+
+it.effect("keeps re-asking when a hosting CLI probe times out", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => {
+          if (input.operation !== "source-control.discovery.refine-unknown-remote") {
+            return Effect.succeed(processOutput(""));
+          }
+          probes += 1;
+          return Effect.fail(
+            new VcsProcessTimeoutError({
+              operation: input.operation,
+              command: input.command,
+              cwd: input.cwd,
+              timeoutMs: 5_000,
+            }),
+          );
+        },
+      },
+    });
+    const refine = () =>
+      registry.resolveHandle({ cwd: "/one", context: unknownEnterpriseRemote("group/one") });
+
+    const first = yield* refine();
+    yield* refine();
+
+    assert.strictEqual(first.context?.provider.kind, "unknown");
+    assert.strictEqual(probes, 2);
+  }),
+);
+
+it.effect("collapses concurrent misses for one host into a single probe", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => {
+          if (input.operation !== "source-control.discovery.refine-unknown-remote") {
+            return Effect.succeed(processOutput(""));
+          }
+          probes += 1;
+          return spawnFailure(input, missingExecutable(input.command));
+        },
+      },
+    });
+
+    const handles = yield* Effect.forEach(
+      ["/one", "/two", "/three", "/four"],
+      (cwd) => registry.resolveHandle({ cwd, context: unknownEnterpriseRemote("group/one") }),
+      { concurrency: "unbounded" },
+    );
+
+    assert.deepStrictEqual(
+      handles.map((handle) => handle.context?.provider.kind),
+      ["unknown", "unknown", "unknown", "unknown"],
+    );
+    assert.strictEqual(probes, 1);
+  }),
+);
+
+const forgejoLogin = (name: string, url: string) => ({
+  name,
+  url,
+  user: "ci",
+  default: "false",
+});
+
+const mountedRemote = (mount: string, repository: string) =>
+  ({
+    provider: { kind: "unknown", name: "acme.test", baseUrl: "https://acme.test" },
+    remoteName: "origin",
+    remoteUrl: `https://acme.test/${mount}/${repository}.git`,
+  }) as const;
+
+it.effect("keeps re-asking when the Forgejo CLI could not list its logins", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => spawnFailure(input, missingExecutable(input.command)),
+      },
+      forgejo: {
+        // No fj login anywhere, and `tea login list` fails once. The host is a Forgejo server
+        // whose name gives nothing away, so this attempt learned nothing about it.
+        listLogins: ({ command, cwd }) => {
+          if (command === "fj") return Effect.succeed([]);
+          calls += 1;
+          return calls === 1
+            ? Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "tea",
+                  cwd,
+                  detail: "tea login list timed out.",
+                }),
+              )
+            : Effect.succeed([forgejoLogin("acme", "https://acme.test/forge")]);
+        },
+      },
+    });
+
+    const first = yield* registry.resolveHandle({
+      cwd: "/gone",
+      context: mountedRemote("forge", "group/one"),
+    });
+    const second = yield* registry.resolveHandle({
+      cwd: "/healthy",
+      context: mountedRemote("forge", "group/one"),
+    });
+
+    assert.strictEqual(first.context?.provider.kind, "unknown");
+    assert.strictEqual(second.context?.provider.kind, "forgejo");
+    assert.strictEqual(second.context?.provider.baseUrl, "https://acme.test/forge");
+  }),
+);
+
+it.effect("keeps two instances mounted on one host apart, on one probe", () =>
+  Effect.gen(function* () {
+    let lists = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => spawnFailure(input, missingExecutable(input.command)),
+      },
+      forgejo: {
+        listLogins: () => {
+          lists += 1;
+          return Effect.succeed([
+            forgejoLogin("one", "https://acme.test/forge-one"),
+            forgejoLogin("two", "https://acme.test/forge-two"),
+          ]);
+        },
+      },
+    });
+
+    const one = yield* registry.resolveHandle({
+      cwd: "/one",
+      context: mountedRemote("forge-one", "group/one"),
+    });
+    const two = yield* registry.resolveHandle({
+      cwd: "/two",
+      context: mountedRemote("forge-two", "group/two"),
+    });
+
+    assert.strictEqual(one.context?.provider.baseUrl, "https://acme.test/forge-one");
+    assert.strictEqual(two.context?.provider.baseUrl, "https://acme.test/forge-two");
+    // Once for fj and once for tea, for the host, and not again for the second instance.
+    assert.strictEqual(lists, 2);
+  }),
+);
+
+it.effect("shares one probe across the namespaces of a host", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => {
+          if (input.operation === "source-control.discovery.refine-unknown-remote") probes += 1;
+          return spawnFailure(input, missingExecutable(input.command));
+        },
+      },
+    });
+
+    // A self-hosted GitLab nests repositories under subgroups. None of that is a mount.
+    for (const namespace of ["group-a/subgroup", "group-b/subgroup", "group-c"]) {
+      const handle = yield* registry.resolveHandle({
+        cwd: "/one",
+        context: mountedRemote(namespace, "repo"),
+      });
+      assert.strictEqual(handle.context?.provider.kind, "unknown");
+    }
+
+    assert.strictEqual(probes, 1);
+  }),
+);
+
+it.effect("asks tea when the fj login store could not be read", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) => spawnFailure(input, missingExecutable(input.command)),
+      },
+      forgejo: {
+        listLogins: ({ command, cwd }) =>
+          command === "fj"
+            ? Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd,
+                  detail: "Could not read fj authentication storage.",
+                }),
+              )
+            : Effect.succeed([forgejoLogin("acme", "https://acme.test/forge")]),
+      },
+    });
+
+    const handle = yield* registry.resolveHandle({
+      cwd: "/one",
+      context: mountedRemote("forge", "group/one"),
+    });
+
+    assert.strictEqual(handle.context?.provider.kind, "forgejo");
+    assert.strictEqual(handle.context?.provider.baseUrl, "https://acme.test/forge");
+  }),
 );

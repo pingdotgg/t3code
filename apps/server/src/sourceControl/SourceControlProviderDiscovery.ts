@@ -3,10 +3,13 @@ import type {
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
+  SourceControlProviderError,
   SourceControlProviderKind,
+  VcsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -27,6 +30,22 @@ interface SourceControlDiscoverySpecBase {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
   readonly installHint: string;
+}
+
+/**
+ * One discovery spec's reading of a host, ready to answer for any remote on it.
+ *
+ * Running the hosting CLIs is what costs; turning their output into a verdict is a pure
+ * match. Keeping the two apart lets the expensive half be shared by every checkout of a host
+ * while the match still sees the remote it is about - which matters because a Forgejo login
+ * mounted on a sub-path claims only the remotes beneath it.
+ */
+export interface UnknownRemoteProbe {
+  readonly match: (
+    context: SourceControlProvider.SourceControlProviderContext,
+  ) => SourceControlProviderInfo | null;
+  /** The spec spoke for the host, either by running or by having no CLI to run. */
+  readonly answered: boolean;
 }
 
 export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -50,10 +69,10 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
-  readonly refineUnknownRemote: (input: {
+  readonly probeUnknownRemote: (input: {
     readonly cwd: string;
-    readonly context: SourceControlProvider.SourceControlProviderContext;
-  }) => Effect.Effect<SourceControlProviderInfo | null>;
+    readonly remoteUrl: string;
+  }) => Effect.Effect<UnknownRemoteProbe, SourceControlProviderError>;
 };
 
 export type SourceControlProviderDiscoverySpec =
@@ -289,23 +308,42 @@ export function probeSourceControlProvider(input: {
   );
 }
 
-export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
+/**
+ * A hosting CLI that is not installed answers for every checkout at once: it claims no
+ * remote anywhere. `processRunner` reports the missing executable as a `NotFound` raised by
+ * `ChildProcess.spawn`, and an unusable checkout as a `NotFound` raised by
+ * `FileSystem.access`, so the two ENOENTs stay apart. Every other failure - a timeout, a
+ * permission error, an unreadable stream - says nothing about the host and must not settle
+ * it.
+ */
+function isMissingExecutable(error: VcsError): boolean {
+  if (error._tag !== "VcsProcessSpawnError") return false;
+  const cause = error.cause;
+  if (!(cause instanceof PlatformError.PlatformError)) return false;
+  const reason = cause.reason;
+  return reason._tag === "NotFound" && reason.module === "ChildProcess";
+}
+
+const unansweredProbe: UnknownRemoteProbe = { match: () => null, answered: false };
+
+/** Asks every spec to read the host behind a remote. The answers suit any remote on it. */
+export const probeUnknownRemoteProvider = Effect.fn("probeUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
     readonly process: VcsProcess.VcsProcess["Service"];
     readonly cwd: string;
-    readonly context: SourceControlProvider.SourceControlProviderContext | null;
-  }): Effect.fn.Return<SourceControlProvider.SourceControlProviderContext | null> {
-    if (input.context === null || input.context.provider.kind !== "unknown") {
-      return input.context;
-    }
-    const context = input.context;
-
-    const providers = yield* Effect.forEach(input.specs, (spec) => {
+    readonly remoteUrl: string;
+  }): Effect.fn.Return<ReadonlyArray<UnknownRemoteProbe>> {
+    return yield* Effect.forEach(input.specs, (spec): Effect.Effect<UnknownRemoteProbe> => {
       if (spec.type === "managed-cli") {
-        return spec.refineUnknownRemote({ cwd: input.cwd, context });
+        // A managed spec runs its own CLIs. A failure it could not absorb says nothing
+        // about the host, so it must not pass for "no provider claims this".
+        return spec
+          .probeUnknownRemote({ cwd: input.cwd, remoteUrl: input.remoteUrl })
+          .pipe(Effect.catch(() => Effect.succeed(unansweredProbe)));
       }
-      if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
+      if (!isCliRemoteRefinementSpec(spec))
+        return Effect.succeed({ match: () => null, answered: true });
       return input.process
         .run({
           operation: "source-control.discovery.refine-unknown-remote",
@@ -318,18 +356,46 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
           appendTruncationMarker: true,
         })
         .pipe(
-          Effect.map((auth) =>
-            spec.refineUnknownRemote({
-              cwd: input.cwd,
-              context,
-              auth,
-            }),
+          Effect.map((auth) => ({
+            match: (context: SourceControlProvider.SourceControlProviderContext) =>
+              spec.refineUnknownRemote({ cwd: input.cwd, context, auth }),
+            answered: true,
+          })),
+          Effect.catch((error) =>
+            Effect.succeed({ match: () => null, answered: isMissingExecutable(error) }),
           ),
-          Effect.orElseSucceed(() => null),
         );
     });
-    const provider = providers.find((candidate) => candidate !== null);
+  },
+);
 
-    return provider ? { ...context, provider } : context;
+/** The first spec to claim the remote names its provider. */
+export function selectUnknownRemoteProvider(
+  probes: ReadonlyArray<UnknownRemoteProbe>,
+  context: SourceControlProvider.SourceControlProviderContext,
+): SourceControlProvider.SourceControlProviderContext {
+  for (const probe of probes) {
+    const provider = probe.match(context);
+    if (provider) return { ...context, provider };
+  }
+  return context;
+}
+
+export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
+  function* (input: {
+    readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
+    readonly process: VcsProcess.VcsProcess["Service"];
+    readonly cwd: string;
+    readonly context: SourceControlProvider.SourceControlProviderContext | null;
+  }) {
+    const context = input.context;
+    if (context === null || context.provider.kind !== "unknown") return context;
+    const probes = yield* probeUnknownRemoteProvider({
+      specs: input.specs,
+      process: input.process,
+      cwd: input.cwd,
+      remoteUrl: context.remoteUrl,
+    });
+    return selectUnknownRemoteProvider(probes, context);
   },
 );

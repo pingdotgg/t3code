@@ -11,6 +11,7 @@ import {
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
+  type UnknownRemoteProbe,
 } from "./SourceControlProviderDiscovery.ts";
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
@@ -136,23 +137,45 @@ export const makeDiscovery = Effect.gen(function* () {
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
       return tea.status === "available" || fj.status === "missing" ? tea : fj;
     }),
-    refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
+    probeUnknownRemote: Effect.fn("ForgejoSourceControlProvider.probeUnknownRemote")(
       function* (input: {
         readonly cwd: string;
-        readonly context: SourceControlProvider.SourceControlProviderContext;
-      }) {
-        const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
-        if (!remote) return null;
+        readonly remoteUrl: string;
+      }): Effect.fn.Return<UnknownRemoteProbe, SourceControlProviderError> {
+        // Both CLIs get their turn, and one that fails does not cost the other its answer.
+        // A CLI that is not installed has no logins and says so for every checkout; any other
+        // failure is about this attempt alone and leaves the host unanswered.
+        const collected: Array<ReturnType<typeof ForgejoCli.parseForgejoLogins>> = [];
+        let failure: ForgejoCli.ForgejoCliError | null = null;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
-            remoteUrl: input.context.remoteUrl,
-          }).pipe(Effect.orElseSucceed(() => []));
-          const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
-          if (login) return { kind: "forgejo" as const, name: discovery.label, baseUrl: login.url };
+            remoteUrl: input.remoteUrl,
+          }).pipe(Effect.result);
+          if (Result.isFailure(logins)) {
+            if (logins.failure.reason !== "missing-cli") failure = logins.failure;
+            continue;
+          }
+          collected.push(logins.success);
         }
-        return null;
+        return {
+          // fj answers before tea, as it did when each list was fetched in turn. The match
+          // reads the remote's own path, so a login mounted on a sub-path claims only what
+          // sits beneath it even though these lists are shared by the whole host.
+          match: (context) => {
+            const remote = ForgejoCli.parseForgejoRemote(context.remoteUrl);
+            if (!remote) return null;
+            for (const logins of collected) {
+              const login = ForgejoCli.matchForgejoLogin(logins, remote, context.requestedHost);
+              if (login) return { kind: "forgejo", name: discovery.label, baseUrl: login.url };
+            }
+            return null;
+          },
+          // A CLI that failed may still hold a login this probe never saw, so its logins are
+          // good enough to answer with but not good enough to keep.
+          answered: failure === null,
+        };
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;
