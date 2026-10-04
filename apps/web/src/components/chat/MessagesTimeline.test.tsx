@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -629,6 +630,104 @@ describe("MessagesTimeline", () => {
     );
     expect(failed.inspector).toContain("Not added");
     expect(failed.inspector).toContain("the notes index is offline");
+  });
+
+  it("shows which plugin answered an approval, and why, when the row is expanded", async () => {
+    activityTestState.expanded = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems[0]!;
+    const approval = (
+      id: string,
+      resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
+    ): OrchestrationV2ProjectedTurnItem => ({
+      ...source,
+      sourceItemId: TurnItemId.make(id),
+      item: {
+        id: TurnItemId.make(id),
+        threadId: source.item.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: source.item.ordinal,
+        status: "completed",
+        title: null,
+        startedAt: source.item.startedAt,
+        completedAt: source.item.completedAt,
+        updatedAt: source.item.updatedAt,
+        type: "approval_request",
+        requestId: RuntimeRequestId.make(`request-${id}`),
+        requestKind: "command",
+        prompt: `Create ${id}.txt file`,
+        ...(resolvedBy
+          ? {
+              resolvedBy: {
+                _tag: "plugin" as const,
+                pluginId: "proof.policy",
+                pluginName: "Proof policy",
+                ...resolvedBy,
+              },
+            }
+          : {}),
+      },
+    });
+    const inspect = async (item: OrchestrationV2ProjectedTurnItem) => {
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                visibleTurnItems: [item],
+                optimisticMessages: [],
+              })}
+            />,
+          );
+        });
+        const collapsed = JSON.stringify(renderer!.toJSON());
+        const row = renderer!.root.find(
+          (node) => typeof node.props.onClick === "function" && "aria-expanded" in node.props,
+        );
+        await act(() => row.props.onClick());
+        const inspector = renderer!.root.find(
+          (node) => node.props["data-v2-item-inspector"] === "approval_request",
+        );
+        const inspectorText = inspector
+          .findAll((node) => typeof node.type === "string")
+          .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+          .join("\n");
+        return { collapsed, inspector: inspectorText };
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    };
+
+    const approved = await inspect(
+      approval("approved", { decision: "accept", reason: "The proof allows this exact command." }),
+    );
+    expect(approved.collapsed).not.toContain("The proof allows this exact command.");
+    expect(approved.inspector).toContain("Create approved.txt file");
+    expect(approved.inspector).toContain("Approved by plugin Proof policy");
+    expect(approved.inspector).toContain("The proof allows this exact command.");
+
+    const declined = await inspect(
+      approval("declined", {
+        decision: "decline",
+        reason: "The proof forbids this exact command.",
+      }),
+    );
+    expect(declined.inspector).toContain("Declined by plugin Proof policy");
+    expect(declined.inspector).toContain("The proof forbids this exact command.");
+
+    const answered = await inspect(approval("answered"));
+    expect(answered.inspector).toContain("Create answered.txt file");
+    expect(answered.inspector).not.toContain("by plugin");
   });
 
   it("leads an unanswered question row with the question text", async () => {

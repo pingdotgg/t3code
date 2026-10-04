@@ -115,6 +115,7 @@ export const summarizePluginManifest = (manifest: PluginManifest): PluginInstall
     ? {}
     : { actions: manifest.actions }),
   ...(manifest.transforms === undefined ? {} : { transforms: manifest.transforms }),
+  ...(manifest.approvals === undefined ? {} : { approvals: manifest.approvals }),
 });
 
 const catalogError = (

@@ -16,6 +16,7 @@ import { PLUGIN_TOOL_LIMITS, PluginToolDeclaration } from "./pluginTools.ts";
 import { PluginSettingsDeclaration } from "./pluginSettingFields.ts";
 import { PLUGIN_ACTIONS_MAX_PER_PLUGIN, PluginActionDeclaration } from "./pluginActions.ts";
 import { PluginTransformsDeclaration } from "./pluginTransforms.ts";
+import { PluginApprovalDeclaration } from "./pluginApprovals.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -78,6 +79,8 @@ export const PluginManifest = Schema.Struct({
   ),
   /** Run transforms; needs the `transforms` capability (see PluginTransforms). */
   transforms: Schema.optionalKey(PluginTransformsDeclaration),
+  /** The approval requests the plugin answers; needs the `approvals` capability (see PluginApprovals). */
+  approvals: Schema.optionalKey(PluginApprovalDeclaration),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

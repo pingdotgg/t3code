@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
+import { approvalResolutionLabel } from "@t3tools/client-runtime/state/turn-item-presentation";
 import {
   commandDisplayText,
   commandProgramName,
@@ -130,6 +131,9 @@ function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefin
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   if (entry.itemType === "system_notice") return entry.label;
+  // A plugin's answer leads with who answered; the prompt and reason stay in the detail.
+  const resolution = entry.structuredPayload && approvalResolutionLabel(entry.structuredPayload);
+  if (resolution) return resolution;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;

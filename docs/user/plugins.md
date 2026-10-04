@@ -229,6 +229,31 @@ or why none was added. A plugin that fails, answers late or too much, or is disa
 nothing, and the turn goes on without it. Disabling or removing the plugin stops it from the next turn;
 enabling it again resumes. Context is not carried over when a thread switches provider.
 
+### Approvals
+
+With the `approvals` capability and `"approvals": { "kinds": ["command"], "timeoutSeconds": 15 }`
+(kinds from `command`, `file-read`, `file-change` and `permission`; 1 to 120 seconds, default 15),
+`context.proposed.handle("t3.approval.decide", handler)` can answer the approval requests agents
+send you. The handler receives `{ requestId, kind, prompt, subject?, context: { environmentId,
+projectId, threadId, runId, provider } }` and answers `{ decision: "approve" | "deny" | "abstain",
+reason? }` (reason up to 500 characters) or `null`. Approve allows that one request only.
+
+`prompt` is the text the approval card shows, and `subject` is the operation itself when the provider
+reported it: the command line, the changed paths, or the tool and its input. Some providers' prompts
+only describe the action, so decide from `subject`, approve only exact commands you know (a command
+that starts with an allowed one can do anything after it), and abstain from everything else. The
+plugin receives these texts as the agent wrote them, which can include anything the agent put on a
+command line.
+
+Plugins only see requests a provider actually sends, so a thread in **Full access** usually sends
+none. A request is offered once its approval card appears; one whose prompt or subject is longer than
+8,000 characters goes straight to you. All approval plugins are asked at once and the first answer
+recorded wins; there is no veto. Until then you can answer it yourself, and your answer cancels the
+plugins' calls. Abstaining, failing, answering late or being disabled never approves anything: the
+request waits for you as usual. A request a plugin answered shows as "Approved by plugin" or
+"Declined by plugin" with its name; expand the row to see its reason. Disable or remove the plugin
+to answer every request yourself again.
+
 ### Publishing to npm
 
 Publish `t3-plugin.json` and the code at the package root. Because T3 Code never installs

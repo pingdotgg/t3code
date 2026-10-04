@@ -984,14 +984,8 @@ describe("PiAdapterV2", () => {
       const prompt = yield* fake.takeRequest("prompt");
       assert.equal(prompt["message"], "Continue the review");
       assert.equal(prompt["streamingBehavior"], "steer");
-      const resolved = yield* takeEvent(
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.id === dialog!.id,
-      );
-      assert.isTrue(
-        resolved.type === "runtime_request.updated" &&
-          resolved.runtimeRequest.status === "resolved",
-      );
+      // The orchestrator records the answer before asking for this response, so the
+      // adapter does not report the dialog resolved again.
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

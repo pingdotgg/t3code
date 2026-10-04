@@ -226,6 +226,10 @@ const CAPABILITY_MEANINGS = new Map([
   ["settings", "Has settings you fill in; secrets stay on the server."],
   ["events", "Hears when runs finish: the outcome and the thread's title, never message contents."],
   ["transforms", "Reads your messages and can add context to them before they reach the agent."],
+  [
+    "approvals",
+    "Sees what agents ask your permission to do, and can approve or decline each request before you answer.",
+  ],
   ["status", "Shows status on your threads."],
   ["notifications", "Can show you notifications."],
 ]);

@@ -13,6 +13,7 @@ import {
   ContextHandoffId,
   ContextTransferId,
   EventId,
+  ForwardCompatibleOptional,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -1363,6 +1364,20 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
+/**
+ * Who answered an approval when it was not the user. Plugins answer approvals
+ * through the server (see PluginApprovals); `decision` is what was sent to the
+ * provider. Clients decode it through `ForwardCompatibleOptional`: absent means
+ * the user answered, or a newer server's resolver this build does not know.
+ */
+export const OrchestrationV2ApprovalResolvedBy = Schema.TaggedStruct("plugin", {
+  pluginId: Schema.String.check(Schema.isMaxLength(128)),
+  pluginName: Schema.String.check(Schema.isMaxLength(100)),
+  decision: Schema.Literals(["accept", "decline"]),
+  reason: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
+});
+export type OrchestrationV2ApprovalResolvedBy = typeof OrchestrationV2ApprovalResolvedBy.Type;
+
 const OrchestrationV2TurnItemBaseFields = {
   toolNonExecutionKind: Schema.optional(Schema.String),
   toolSurface: Schema.optional(ToolActivitySurface),
@@ -1516,6 +1531,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: ForwardCompatibleOptional(OrchestrationV2ApprovalResolvedBy),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2305,6 +2321,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: ForwardCompatibleOptional(OrchestrationV2ApprovalResolvedBy),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3131,6 +3148,18 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /**
+   * A plugin's answer to a pending approval. Like `runtime-request.respond`, it
+   * is rejected unless the request is still pending, so the first answer
+   * recorded wins. Only approvals of a kind plugins may answer are accepted.
+   */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.plugin-respond"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    resolvedBy: OrchestrationV2ApprovalResolvedBy,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

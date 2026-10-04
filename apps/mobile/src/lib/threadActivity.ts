@@ -3,7 +3,12 @@ import type {
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  approvalRequestDetail,
+  approvalResolutionDetail,
+  approvalResolutionLabel,
+  turnItemIsWorkspacePreparation,
+} from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
@@ -262,6 +267,10 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+  // A plugin's answer leads with who answered; expanding shows the prompt and reason.
+  const resolution =
+    !expanded && entry.structuredPayload && approvalResolutionLabel(entry.structuredPayload);
+  if (resolution) return resolution;
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -599,6 +608,8 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
+  const resolution = approvalResolutionLabel(item);
+  if (resolution !== undefined) return resolution;
   const title =
     (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
     item.title?.trim();
@@ -675,7 +686,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "web_search":
       return item.patterns?.join(", ") ?? null;
     case "approval_request":
-      return item.prompt ?? null;
+      return approvalRequestDetail(item) ?? null;
     case "user_input_request":
       return item.questions.map((question) => question.question).join(" · ") || null;
     case "checkpoint":
@@ -767,13 +778,15 @@ function toWorkLogEntry(
       };
     case "checkpoint":
       return { ...common, changedFiles: item.files.map((file) => file.path), toolData: item };
-    case "approval_request":
+    case "approval_request": {
+      const detail = approvalRequestDetail(item);
       return {
         ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
+        ...(detail ? { detail } : {}),
         requestKind: item.requestKind,
         toolData: item,
       };
+    }
     case "dynamic_tool":
       return {
         ...common,
@@ -848,7 +861,9 @@ function toFeedActivity(
         ...pluginContext.blocks.map((block) => `${block.label}\n${block.text}`),
       ].join("\n\n");
     }
-    return formatItemFullDetail(row, item);
+    const json = formatItemFullDetail(row, item);
+    const approvalResolution = approvalResolutionDetail(item);
+    return approvalResolution ? `${approvalResolution}\n\n${json}` : json;
   });
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]

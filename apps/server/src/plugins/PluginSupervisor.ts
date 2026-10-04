@@ -156,25 +156,31 @@ class PluginIncompatibleError extends Schema.TaggedError<PluginIncompatibleError
   }
 }
 
-class PluginStoppedError extends Schema.TaggedError<PluginStoppedError>()("PluginStoppedError", {
-  pluginId: Schema.String,
-}) {
+export class PluginStoppedError extends Schema.TaggedError<PluginStoppedError>()(
+  "PluginStoppedError",
+  {
+    pluginId: Schema.String,
+  },
+) {
   override get message(): string {
     return `Plugin ${this.pluginId} was stopped before the call finished.`;
   }
 }
 
-class PluginTimeoutError extends Schema.TaggedError<PluginTimeoutError>()("PluginTimeoutError", {
-  pluginId: Schema.String,
-  handler: Schema.String,
-  timeoutMs: Schema.Number,
-}) {
+export class PluginTimeoutError extends Schema.TaggedError<PluginTimeoutError>()(
+  "PluginTimeoutError",
+  {
+    pluginId: Schema.String,
+    handler: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
   override get message(): string {
     return `Plugin ${this.pluginId} did not answer "${this.handler}" within ${this.timeoutMs}ms.`;
   }
 }
 
-class PluginCallFailedError extends Schema.TaggedError<PluginCallFailedError>()(
+export class PluginCallFailedError extends Schema.TaggedError<PluginCallFailedError>()(
   "PluginCallFailedError",
   { pluginId: Schema.String, handler: Schema.String, reason: Schema.String },
 ) {

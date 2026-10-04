@@ -127,7 +127,8 @@ export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
    * plugin; names starting with `t3.` are reserved, except the ones the server
-   * calls for a declared contribution: `t3.tool.<name>` and `t3.transform.enrich`.
+   * calls for a declared contribution or capability: `t3.tool.<name>`,
+   * `t3.transform.enrich` and `t3.approval.decide`.
    */
   handle(name: string, handler: PluginHandler): PluginDisposable;
   /**
