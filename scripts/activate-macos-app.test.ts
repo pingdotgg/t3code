@@ -26,7 +26,7 @@ describe("macOS app activation", () => {
         [
           Path.join(import.meta.dirname, "activate-macos-app.sh"),
           "/Applications/T3 Code (Dev).app",
-          "T3 Code (Dev)",
+          "com.t3tools.t3code.dev",
         ],
         {
           env: {
@@ -38,7 +38,7 @@ describe("macOS app activation", () => {
       );
 
       expect(FS.readFileSync(log, "utf8")).toBe(
-        'open -a /Applications/T3 Code (Dev).app\nosascript -e tell application "T3 Code (Dev)" to activate\n',
+        'open -a /Applications/T3 Code (Dev).app\nosascript -e tell application id "com.t3tools.t3code.dev" to activate\n',
       );
     } finally {
       FS.rmSync(root, { recursive: true, force: true });

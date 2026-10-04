@@ -193,8 +193,14 @@ INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionStri
 log "Installed ${APP_NAME} v${INSTALLED_VERSION}"
 
 if [[ "$DO_LAUNCH" -eq 1 ]]; then
+  INSTALLED_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    "${INSTALL_DEST}/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ -z "$INSTALLED_BUNDLE_ID" ]]; then
+    echo "Could not read the installed app bundle identifier; cannot activate the app." >&2
+    exit 1
+  fi
   log "Launching and activating..."
-  bash "${REPO_ROOT}/scripts/activate-macos-app.sh" "$INSTALL_DEST" "$APP_NAME"
+  bash "${REPO_ROOT}/scripts/activate-macos-app.sh" "$INSTALL_DEST" "$INSTALLED_BUNDLE_ID"
 fi
 
 log "Done."
