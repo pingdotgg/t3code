@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
-import { DevicePanel } from "./DevicePanel";
+import { RegisteredSidePanel } from "../bundledPanels";
+import { PanelHostContext } from "../panelHost";
 
 type CommandResult =
   | { _tag: "Success"; value: { hostId: string; deviceId: string } }
@@ -97,16 +98,33 @@ const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
   target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
 };
 
+// Mounted the way ChatView mounts it: through the registry, lazily, on the panel host.
 const render = (threadRef: ScopedThreadRef, surface = picker) => (
-  <DevicePanel
-    key={surface.id}
-    mode="embedded"
-    threadRef={threadRef}
-    surface={surface}
-    visible
-    onDismissSetup={() => undefined}
-  />
+  <PanelHostContext
+    value={{
+      threadRef,
+      visible: true,
+      composerDraftTarget: threadRef,
+      workspaceMutationId: null,
+      sendAnnotation: () => undefined,
+    }}
+  >
+    <RegisteredSidePanel
+      key={surface.id}
+      id="device"
+      surface={surface}
+      onDismissSetup={() => undefined}
+    />
+  </PanelHostContext>
 );
+const mount = async (threadRef: ScopedThreadRef, surface = picker) => {
+  const renderer = await act(async () => create(render(threadRef, surface)));
+  // Wait for the registered lazy body to load and replace the Suspense fallback.
+  await act(async () => {
+    await import("./DeviceSidePanel");
+  });
+  return renderer;
+};
 const deferred = () => {
   let settle!: (result: CommandResult) => void;
   const promise = new Promise<CommandResult>((resolve) => (settle = resolve));
@@ -123,11 +141,11 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("DevicePanel", () => {
+describe("registered Device panel", () => {
   it("opens a picked device when the pick settles in the same thread", async () => {
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    const renderer = await act(async () => create(render(picking)));
+    const renderer = await mount(picking);
 
     await startPhone(renderer);
     expect(mocks.open).toHaveBeenCalledWith({
@@ -146,7 +164,7 @@ describe("DevicePanel", () => {
 
   it("keeps the next thread's picker usable while an earlier pick is pending", async () => {
     mocks.open.mockReturnValue(deferred().promise);
-    const renderer = await act(async () => create(render(picking)));
+    const renderer = await mount(picking);
 
     await startPhone(renderer);
     await act(async () => renderer.update(render(next)));
@@ -157,7 +175,7 @@ describe("DevicePanel", () => {
   it("opens a pick that settles after a switch in the thread it started in", async () => {
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    const renderer = await act(async () => create(render(picking)));
+    const renderer = await mount(picking);
 
     await startPhone(renderer);
     await act(async () => renderer.update(render(next)));
@@ -175,7 +193,7 @@ describe("DevicePanel", () => {
   it("hides a failed pick that settles after the panel moved, even back again", async () => {
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    const renderer = await act(async () => create(render(picking)));
+    const renderer = await mount(picking);
 
     await startPhone(renderer);
     await act(async () => renderer.update(render(next)));
@@ -188,7 +206,7 @@ describe("DevicePanel", () => {
 
   it("does not carry an operation error into another thread", async () => {
     mocks.open.mockResolvedValue({ _tag: "Failure", cause: new Error("boom") });
-    const renderer = await act(async () => create(render(picking)));
+    const renderer = await mount(picking);
 
     await startPhone(renderer);
     expect(errors(renderer)).toHaveLength(1);
@@ -200,7 +218,7 @@ describe("DevicePanel", () => {
   it("closes a powered-off surface in its own thread after the panel moved", async () => {
     const powerOff = deferred();
     mocks.close.mockReturnValue(powerOff.promise);
-    const renderer = await act(async () => create(render(picking, streaming)));
+    const renderer = await mount(picking, streaming);
 
     await act(async () => {
       renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
@@ -217,7 +235,7 @@ describe("DevicePanel", () => {
 
   it("closes the surface when a power-off settles in the same thread", async () => {
     mocks.close.mockResolvedValue(opened);
-    const renderer = await act(async () => create(render(picking, streaming)));
+    const renderer = await mount(picking, streaming);
 
     await act(async () => {
       renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();

@@ -1,4 +1,4 @@
-import { FileDiff, Globe2, TerminalSquare } from "lucide-react";
+import { FileDiff, Globe2, Smartphone, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { createPanelRegistry, type PanelMetadata, type PanelProps } from "./panelRegistry";
@@ -30,6 +30,15 @@ const bundledPanels = createPanelRegistry([
     unavailableHint: "Available when a project is open.",
     unavailableReason: "Terminal surfaces are only available from a project thread.",
     load: () => import("./terminal/TerminalSidePanel"),
+  },
+  {
+    id: "device",
+    title: "Device",
+    icon: Smartphone,
+    launcherKey: "M",
+    unavailableHint: "Available from a thread.",
+    unavailableReason: "Devices are only available from a thread.",
+    load: () => import("./device/DeviceSidePanel"),
   },
 ]);
 

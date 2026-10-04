@@ -84,16 +84,15 @@ function Harness() {
         preview: { available: true, onOpen: openBrowser },
         diff: { available: false, onOpen: () => undefined },
         terminal: { available: false, onOpen: () => undefined },
+        device: { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={openBrowser}
       onAddPullRequest={() => undefined}
       onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
-      onAddDevice={() => undefined}
       filesAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
-      deviceAvailable={false}
     >
       {null}
     </RightPanelTabs>

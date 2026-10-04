@@ -706,9 +706,6 @@ function useDraftHeroLayoutTransition(
 
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
-const DevicePanel = lazy(() =>
-  import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
-);
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -10509,19 +10506,15 @@ export default function ChatView(props: ChatViewProps) {
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
-      <Suspense fallback={null}>
-        <DevicePanel
-          mode="embedded"
-          threadRef={activeThreadRef}
-          key={renderedRightPanelSurface.id}
-          surface={renderedRightPanelSurface}
-          visible={rightPanelOpen}
-          onDismissSetup={() => {
-            closeRightPanelSurface(renderedRightPanelSurface);
-            useRightPanelStore.getState().show(activeThreadRef);
-          }}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        id="device"
+        key={renderedRightPanelSurface.id}
+        surface={renderedRightPanelSurface}
+        onDismissSetup={() => {
+          closeRightPanelSurface(renderedRightPanelSurface);
+          useRightPanelStore.getState().show(activeThreadRef);
+        }}
+      />
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
@@ -10579,6 +10572,7 @@ export default function ChatView(props: ChatViewProps) {
       available: activeProject !== null && canOperateTerminal,
       onOpen: addTerminalSurface,
     },
+    device: { available: activeThreadRef !== null, onOpen: addDeviceSurface },
   };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
@@ -11419,11 +11413,9 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
-          onAddDevice={addDeviceSurface}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
-          deviceAvailable={activeThreadRef !== null}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11473,11 +11465,9 @@ export default function ChatView(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
-            onAddDevice={addDeviceSurface}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
-            deviceAvailable={activeThreadRef !== null}
           >
             {rightPanelContent}
           </RightPanelTabs>
