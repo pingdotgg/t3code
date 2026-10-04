@@ -978,9 +978,10 @@ export function VoiceSettingsPanel() {
           settingKeys={projectId ? ["speechProjectCustomWords"] : []}
           title="Dictionary"
           description={
-            projectId
-              ? "Project words are saved on the selected project environments. Your personal words are included automatically."
-              : "Personal words are saved on this client and used across projects and transcription environments."
+            "Add names and uncommon terms to improve transcription. Add misheard versions as aliases to correct them in future transcripts. The current project's name is included automatically. " +
+            (projectId
+              ? "Project words are combined with your personal dictionary."
+              : "Personal words are used across all projects.")
           }
           control={
             <div className="w-full max-w-80">
