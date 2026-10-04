@@ -20,8 +20,20 @@
  * Dialog methods become v2 runtime requests (`confirm` → approval_request,
  * `select`/`input`/`editor` → user_input_request); answers travel back as
  * `extension_ui_response`. `notify` becomes a completed activity item.
- * Terminal-only decoration such as status, widget, title, and editor-text
- * updates has no matching T3 surface and is ignored.
+ * `setStatus` feeds the thread's contribution status, an advisory channel
+ * owned by this Pi process for the T3 provider session's lifetime. Before a
+ * T3-initiated switch, new session, or fork, a queued marker clears the
+ * statuses read so far and sends later ones to the target thread; a failed
+ * registration or rollback sends them nowhere until a thread registers. A
+ * rollback's marker keeps the statuses the store held for this session; if an
+ * extension cancels the fork, the keys the session has not written since come
+ * back, and once Pi answers either way the kept copy is dropped. Pi's
+ * RPC stdout marks no native-session boundary, so old-session writes after
+ * the marker (such as session_shutdown handlers) look like the new session's
+ * and may persist, and extension-initiated switches or reloads are not
+ * tracked. Closing this session clears its statuses.
+ * Other terminal decoration (widget, title, editor text) has no matching T3
+ * surface and is ignored.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -30,6 +42,7 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ChatAttachment,
+  type ContributionStatusItem,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -53,6 +66,7 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -69,6 +83,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -393,6 +408,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
   const { continuationRequests } = options;
 
   const protocolError = (detail: string, payload?: unknown) =>
@@ -489,6 +505,37 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // serialize the two paths to stop `turn.terminal` from overtaking the
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
+      // Extensions set statuses from session_start, before the first thread
+      // registration, so the source starts on the thread this session opened for.
+      const statusSource = yield* statusStore.openSource({
+        kind: "provider-session",
+        providerSessionId: input.providerSessionId,
+        providerInstanceId: options.instanceId,
+        driver: PI_PROVIDER,
+      });
+      yield* statusSource.bindThread(input.threadId);
+      // The statuses a pending rollback's marker cleared, as the store held
+      // them, minus every key the session has written since. At most one
+      // source's capped items, dropped once the rollback's fork is answered.
+      let rollbackStatuses: Map<string, ContributionStatusItem> | null = null;
+      // Targets of `t3.status_generation` markers still queued, oldest first.
+      const statusGenerationTargets: Array<OrchestrationV2ProviderThread["appThreadId"]> = [];
+      /**
+       * Starts a new status generation on `threadId` in event order: statuses
+       * read before the marker are cleared, later ones land on `threadId`, or
+       * nowhere when it is null. A rollback's marker keeps the cleared statuses
+       * until its `t3.status_settle`.
+       */
+      const queueStatusGeneration = (
+        threadId: OrchestrationV2ProviderThread["appThreadId"],
+        rollback = false,
+      ) =>
+        Effect.sync(() => statusGenerationTargets.push(threadId)).pipe(
+          Effect.andThen(
+            Queue.offer(connection.events, { type: "t3.status_generation", rollback }),
+          ),
+          Effect.asVoid,
+        );
       let threadState: PiThreadState | null = null;
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
@@ -620,22 +667,36 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return null;
       };
 
-      const lifecycleRequest = (record: PiRpcRecord) =>
-        request(record, PI_SESSION_TIMEOUT_MS).pipe(
-          // A local timeout does not cancel Pi's lifecycle hook. Retire the
-          // process before fallback can race its eventual switch/new-session.
-          Effect.tapError((error) =>
-            Effect.logWarning("Pi session lifecycle request failed", {
-              providerSessionId: input.providerSessionId,
-              operation: record["type"],
-              errorTag: error._tag,
-            }),
+      /**
+       * Switches Pi to another native session whose statuses belong to
+       * `statusThreadId`. Pi rebinds every extension for the new session, and
+       * their startup statuses can arrive before the response, so the status
+       * generation starts before the request is written.
+       */
+      const lifecycleRequest = (
+        record: PiRpcRecord,
+        statusThreadId: OrchestrationV2ProviderThread["appThreadId"],
+        rollback = false,
+      ) =>
+        queueStatusGeneration(statusThreadId, rollback).pipe(
+          Effect.andThen(
+            request(record, PI_SESSION_TIMEOUT_MS).pipe(
+              // A local timeout does not cancel Pi's lifecycle hook. Retire the
+              // process before fallback can race its eventual switch/new-session.
+              Effect.tapError((error) =>
+                Effect.logWarning("Pi session lifecycle request failed", {
+                  providerSessionId: input.providerSessionId,
+                  operation: record["type"],
+                  errorTag: error._tag,
+                }),
+              ),
+              Effect.catchTags({
+                PiRpcTimeoutError: (error) =>
+                  connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
+              }),
+              Effect.onInterrupt(() => connection.terminate),
+            ),
           ),
-          Effect.catchTags({
-            PiRpcTimeoutError: (error) =>
-              connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
-          }),
-          Effect.onInterrupt(() => connection.terminate),
         );
 
       const tokenUsageFromStats = (
@@ -1237,6 +1298,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               },
             },
           });
+          return;
+        }
+        if (method === "setStatus") {
+          // Pi serializes a cleared status as a missing `statusText`.
+          const key = recordString(event, "statusKey");
+          if (key === undefined) return;
+          const text = recordString(event, "statusText");
+          // The session has replaced or cleared this key since the rollback marker.
+          rollbackStatuses?.delete(key);
+          yield* text === undefined ? statusSource.clear(key) : statusSource.set({ key, text });
           return;
         }
         if (
@@ -2028,6 +2099,28 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             return;
           }
+          case "t3.status_generation": {
+            // Statuses queued before this marker came from the session Pi is
+            // leaving. Its shutdown writes can still follow; see the header.
+            rollbackStatuses =
+              event["rollback"] === true
+                ? new Map((yield* statusSource.items).map((item) => [item.key, item]))
+                : null;
+            yield* statusSource.clearAll;
+            yield* statusSource.bindThread(statusGenerationTargets.shift() ?? null);
+            return;
+          }
+          case "t3.status_settle": {
+            // Queued once Pi answers a rollback's fork, behind every status it
+            // wrote before answering. A cancelled fork kept Pi on its session
+            // and the marker's target was the same thread, so put back what
+            // the marker kept; otherwise just drop it.
+            const kept = rollbackStatuses;
+            rollbackStatuses = null;
+            if (kept === null || event["restore"] !== true) return;
+            for (const item of kept.values()) yield* statusSource.set(item);
+            return;
+          }
           case "t3.flush_extension_errors": {
             // Startup extension failures are informational and do not block
             // Pi, so attach them to the next real turn instead of creating a
@@ -2150,7 +2243,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       // ── session runtime ───────────────────────────────────
 
-      const registerThread = Effect.fnUntraced(function* (
+      const registerThreadUnguarded = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
       ) {
@@ -2177,8 +2270,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
+        const switchesSession = resumeId != null || needsNewSession;
         registrationAttempted = true;
-        if (resumeId != null || needsNewSession) {
+        if (switchesSession) {
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
@@ -2193,6 +2287,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             resumeId != null
               ? { type: "switch_session", sessionPath: resumeId }
               : { type: "new_session" },
+            existing === undefined ? threadInput.threadId : existing.appThreadId,
           );
           if (recordField(result, "cancelled") === true) {
             return yield* protocolError("A Pi extension cancelled the session switch");
@@ -2266,6 +2361,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 updatedAt: createdAt,
               };
         threadState = { providerThread, activeTurn: null };
+        // A session switch moved the statuses in event order already.
+        if (!switchesSession) yield* statusSource.bindThread(providerThread.appThreadId);
         // Baseline the session-tree leaf so the first turn's user entry can
         // be located with a `since` cursor instead of a full entry scan.
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
@@ -2284,6 +2381,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         return providerThread;
       });
+
+      // A failed registration leaves no thread bound, so no thread shows this
+      // session's statuses until a later registration succeeds.
+      const registerThread = (
+        threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+        publish = true,
+      ) =>
+        registerThreadUnguarded(threadInput, publish).pipe(
+          Effect.onError(() => (threadState === null ? queueStatusGeneration(null) : Effect.void)),
+        );
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
@@ -2907,19 +3014,35 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ),
               (barrier) =>
                 Effect.gen(function* () {
-                  const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
-                  if (recordField(forkData, "cancelled") === true)
-                    return yield* protocolError("A Pi extension cancelled the session fork");
-                  const forkState = yield* request({ type: "get_state" }).pipe(
-                    Effect.onError(() =>
-                      Effect.sync(() => {
-                        threadState = null;
+                  const forkData = yield* lifecycleRequest(
+                    { type: "fork", entryId: forkEntryId },
+                    state.providerThread.appThreadId,
+                    true,
+                  ).pipe(
+                    Effect.onExit((exit) =>
+                      Queue.offer(connection.events, {
+                        type: "t3.status_settle",
+                        restore:
+                          Exit.isSuccess(exit) && recordField(exit.value, "cancelled") === true,
                       }),
                     ),
                   );
+                  if (recordField(forkData, "cancelled") === true)
+                    return yield* protocolError("A Pi extension cancelled the session fork");
+                  // Without the fork's identity the thread is unusable, so, like a
+                  // failed registration, no thread shows this session's statuses
+                  // until one registers. An interrupted read leaves the identity
+                  // just as unknown as a failed one.
+                  const invalidateThread = Effect.suspend(() => {
+                    threadState = null;
+                    return queueStatusGeneration(null);
+                  });
+                  const forkState = yield* request({ type: "get_state" }).pipe(
+                    Effect.onError(() => invalidateThread),
+                  );
                   const forkSessionFile = recordString(forkState, "sessionFile");
                   if (forkSessionFile === undefined) {
-                    threadState = null;
+                    yield* invalidateThread;
                     return yield* protocolError("Pi fork did not return a persisted session file");
                   }
                   const entriesData = yield* request({ type: "get_entries" }).pipe(
