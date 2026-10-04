@@ -15,6 +15,7 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  outputTokensDetails?: unknown;
   speed?: string;
 }): string {
   return JSON.stringify({
@@ -32,6 +33,7 @@ function claudeLine(overrides: {
         cache_creation_input_tokens: 66818,
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
+        output_tokens_details: overrides.outputTokensDetails,
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
       },
     },
@@ -54,6 +56,28 @@ describe("parseClaudeLine", () => {
     });
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
+  });
+
+  it.each([
+    { details: { thinking_tokens: 40 }, expected: 40 },
+    { details: { thinking_tokens: 500 }, expected: 286 },
+    { details: { thinking_tokens: 0 }, expected: 0 },
+    { details: { thinking_tokens: -1 }, expected: 0 },
+    { details: { thinking_tokens: "40" }, expected: 0 },
+    { details: { thinking_tokens: Number.NaN }, expected: 0 },
+    { details: { thinking_tokens: Number.POSITIVE_INFINITY }, expected: 0 },
+    { details: {}, expected: 0 },
+    { details: null, expected: 0 },
+    { details: undefined, expected: 0 },
+    { details: "invalid", expected: 0 },
+  ])("keeps nested thinking within output: $details", ({ details, expected }) => {
+    const record = parseClaudeLine(
+      claudeLine({ messageId: "msg_1", contentType: "text", outputTokensDetails: details }),
+    );
+
+    expect(record?.totals.reasoningTokens).toBe(expected);
+    expect(record?.totals.outputTokens).toBe(286);
+    expect(totalTokens(record!.totals)).toBe(2 + 1000 + 66818 + 286);
   });
 
   it("marks fast-mode requests", () => {

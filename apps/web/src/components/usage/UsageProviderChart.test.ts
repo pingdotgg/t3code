@@ -86,13 +86,40 @@ describe("buildPeriodColumns", () => {
     const [first] = buildPeriodColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
-      { provider: "codex", value: 10 },
-      { provider: "claude", value: 20 },
-      { provider: "grok", value: 0 },
-      { provider: "cursor", value: 0 },
-      { provider: "opencode", value: 0 },
-      { provider: "antigravity", value: 0 },
+      { provider: "codex", value: 10, thinking: 0 },
+      { provider: "claude", value: 20, thinking: 0 },
+      { provider: "grok", value: 0, thinking: 0 },
+      { provider: "cursor", value: 0, thinking: 0 },
+      { provider: "opencode", value: 0, thinking: 0 },
+      { provider: "antigravity", value: 0, thinking: 0 },
     ]);
+  });
+
+  it("separates thinking for every provider without changing totals or cost", () => {
+    const providers = ["codex", "claude", "grok", "cursor", "opencode", "antigravity"] as const;
+    const totals = {
+      day: days[0]!,
+      totalTokens: 600,
+      costUsd: 60,
+      byProvider: new Map(
+        providers.map((provider) => [
+          provider,
+          { totalTokens: 100, costUsd: 10, reasoningTokens: 25 },
+        ]),
+      ),
+    };
+    const periods = new Map([[days[0]!, totals]]);
+    const [tokens] = buildPeriodColumns(days, periods, "tokens");
+    const [cost] = buildPeriodColumns(days, periods, "cost");
+    expect(tokens?.total).toBe(600);
+    expect(tokens?.bands.map(({ value, thinking }) => [value - thinking, thinking])).toEqual(
+      providers.map(() => [75, 25]),
+    );
+    expect(cost?.total).toBe(60);
+    expect(cost?.bands.every(({ thinking }) => thinking === 0)).toBe(true);
+    expect(
+      buildPeriodColumns(days, byDay, "tokens")[0]?.bands.every(({ thinking }) => thinking === 0),
+    ).toBe(true);
   });
 
   it("reports the total as the sum of its bands", () => {

@@ -26,17 +26,23 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Claude records capture thinking tokens. Retain old records for deleted
+// transcripts, but re-parse available Claude files to recover the breakdown.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * A new server combines retained legacy entries when its own file is missing,
+ * using each transcript's latest cached modification time to resolve overlap.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -320,10 +326,11 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    // v4 Codex records predate service tiers, so they all priced as standard.
-    // Keep them, because the rollout may be gone, but make a live rollout
-    // re-parse whole: no file has size -1, and a zero position cannot resume.
-    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
+    // Older Codex records lack service tiers; older Claude records lack thinking.
+    // Keep them for deleted transcripts, but re-parse available files whole:
+    // no file has size -1, and a zero position cannot resume.
+    const legacyCodex = entry.p === "codex" && version < 5;
+    const needsReparse = legacyCodex || (entry.p === "claude" && version < 6);
     const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
@@ -333,12 +340,12 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacyCodex ? -1 : entry.s,
+      size: needsReparse ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: legacyCodex
+      position: needsReparse
         ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
         : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     });

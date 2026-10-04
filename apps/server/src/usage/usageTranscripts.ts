@@ -138,6 +138,12 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const outputTokens = int(usageRecord["output_tokens"]);
+  const outputDetails = usageRecord["output_tokens_details"];
+  const thinkingTokens =
+    typeof outputDetails === "object" && outputDetails !== null
+      ? int((outputDetails as Record<string, unknown>)["thinking_tokens"])
+      : 0;
 
   return {
     provider: "claude",
@@ -148,9 +154,9 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
       uncachedInputTokens: int(usageRecord["input_tokens"]),
       cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
       cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: int(usageRecord["output_tokens"]),
-      // Anthropic folds thinking tokens into output and does not break them out.
-      reasoningTokens: 0,
+      outputTokens,
+      // Thinking is already included in output, as in live turn usage.
+      reasoningTokens: Math.min(outputTokens, thinkingTokens),
     },
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",

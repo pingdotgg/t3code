@@ -104,6 +104,18 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+
+    // The v6 migration must not reset providers whose parsing did not change.
+    const previous = decodeScanCache({ ...encodeScanCache(original), version: 5 });
+    expect(previous.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+    expect(previous.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
+    for (const path of ["/a.jsonl", "/b.jsonl"]) {
+      expect(previous.get(path)).toEqual({
+        ...original.get(path),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null },
+      });
+    }
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {

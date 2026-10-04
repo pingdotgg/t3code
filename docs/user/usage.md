@@ -13,6 +13,13 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
+**Tokens** separates recorded **Thinking** from other tokens, using a softer shade of each
+provider's color. Thinking is part of output, so separating it does not increase totals or cost.
+Claude Code, Codex, Grok Build, OpenCode, and Antigravity can recover this split from existing
+history when it contains a separate count. Unreported thinking stays in **Output**; Cursor's
+account history does not provide a separate count. Pi and generic ACP history are not currently
+included on Usage.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 

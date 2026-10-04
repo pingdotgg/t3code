@@ -63,7 +63,7 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
@@ -203,7 +203,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((fileName) =>
+    path.join(config.stateDir, fileName),
+  );
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
@@ -402,18 +404,29 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
-      let document = yield* readDocument(scanCachePath);
-      if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
-        // Write the migrated cache to its own file on the next scan.
-        cacheDirty = document !== null;
+      const current = yield* readDocument(scanCachePath);
+      const documents = current === null ? [] : [current];
+      if (current === null) {
+        for (const legacyScanCachePath of legacyScanCachePaths) {
+          const document = yield* readDocument(legacyScanCachePath);
+          if (document !== null) documents.push(document);
+        }
+        // Both older servers can retain history after an upgrade. Import each
+        // file's latest snapshot, preferring the newer format on equal mtimes.
+        cacheDirty = documents.length > 0;
       }
-      if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
-      const sources = decodeCachedSources(document);
-      if (Option.isSome(sources)) {
-        for (const [key, source] of Object.entries(sources.value.sources))
-          sourceCache.set(key, source);
+      for (const document of documents) {
+        for (const [path, entry] of decodeScanCache(document)) {
+          const previous = fileCache.get(path);
+          if (previous === undefined || entry.mtimeMs > previous.mtimeMs)
+            fileCache.set(path, entry);
+        }
+        const sources = decodeCachedSources(document);
+        if (Option.isSome(sources)) {
+          for (const [key, source] of Object.entries(sources.value.sources)) {
+            if (!sourceCache.has(key)) sourceCache.set(key, source);
+          }
+        }
       }
     }),
   );

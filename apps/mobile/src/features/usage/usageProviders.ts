@@ -1,4 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 /**
@@ -37,6 +39,17 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
     opencode: "#5b9bbd",
     antigravity: "#8c7bd1",
   };
+}
+
+/** Flatten the lighter thinking bands against the chart card for native charts. */
+export function useProviderThinkingColors(): Record<UsageProviderKind, string> {
+  const colors = useProviderColors();
+  const surface = useUniwindTheme()["--color-grouped-card"];
+  const thinking = { ...colors };
+  for (const provider of PROVIDER_ORDER) {
+    thinking[provider] = flattenThemeColor(themeColorWithAlpha(colors[provider], 0.45), surface);
+  }
+  return thinking;
 }
 
 /**

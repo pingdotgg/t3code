@@ -325,6 +325,8 @@ export default defineConfig({
           "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-items.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          // Swift Charts needs opaque provider colors blended against the chart's theme surface.
+          "apps/mobile/src/features/usage/usageProviders.ts",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",

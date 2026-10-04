@@ -93,7 +93,12 @@ import {
   type UsageMetric,
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providerThinkingColor,
+  providersWithUsage,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -602,6 +607,38 @@ export function UsagePage() {
                               ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
                               : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
                           </span>
+                          {metric === "tokens" && (totals?.reasoningTokens ?? 0) > 0 ? (
+                            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="flex items-center gap-2">
+                                  <span
+                                    aria-hidden
+                                    className="w-3 border-t-2"
+                                    style={{ borderColor: PROVIDER_PRESENTATION[provider].color }}
+                                  />
+                                  Other tokens
+                                </span>
+                                <span className="tabular-nums">
+                                  {formatTokens(
+                                    (totals?.totalTokens ?? 0) - (totals?.reasoningTokens ?? 0),
+                                  )}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="flex items-center gap-2">
+                                  <span
+                                    aria-hidden
+                                    className="w-3 border-t-2 border-dashed"
+                                    style={{ borderColor: providerThinkingColor(provider) }}
+                                  />
+                                  Thinking
+                                </span>
+                                <span className="tabular-nums">
+                                  {formatTokens(totals?.reasoningTokens ?? 0)}
+                                </span>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -628,14 +665,25 @@ export function UsagePage() {
 
                 <section className="flex flex-col gap-2">
                   <h2 className="text-sm font-medium text-foreground">Totals</h2>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                  <div
+                    className={cn(
+                      "grid grid-cols-2 gap-x-6 gap-y-4 py-1",
+                      merged.reasoningTokens > 0 ? "md:grid-cols-6" : "md:grid-cols-5",
+                    )}
+                  >
                     <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
                     <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
                     <Metric
                       label="Uncached input"
                       value={formatTokens(merged.uncachedInputTokens)}
                     />
-                    <Metric label="Output" value={formatTokens(merged.outputTokens)} />
+                    <Metric
+                      label="Output"
+                      value={formatTokens(merged.outputTokens - merged.reasoningTokens)}
+                    />
+                    {merged.reasoningTokens > 0 ? (
+                      <Metric label="Thinking" value={formatTokens(merged.reasoningTokens)} />
+                    ) : null}
                     <Metric
                       label="Cache savings"
                       value={formatUsd(merged.costQuality.cacheSavingsUsd)}
@@ -650,6 +698,21 @@ export function UsagePage() {
                         label="Tokens by type"
                         segments={tokenTypeSegments(merged)}
                         format={formatTokens}
+                        aside={
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={<InlineButton tone="muted" />}
+                              aria-label="Thinking token coverage"
+                            >
+                              <InfoIcon className="size-3.5" aria-hidden />
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              Thinking is separated only when recorded by the provider, including in
+                              older history. Unreported thinking stays in Output. Total tokens and
+                              cost are unchanged.
+                            </TooltipPopup>
+                          </Tooltip>
+                        }
                       />
                     ) : (
                       <>

@@ -32,12 +32,18 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  thinkingTokens?: number,
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
@@ -46,7 +52,12 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
     message: {
       id: `msg_${id}`,
       model,
-      usage: { input_tokens: 10, output_tokens: outputTokens },
+      usage: {
+        input_tokens: 10,
+        output_tokens: outputTokens,
+        output_tokens_details:
+          thinkingTokens === undefined ? undefined : { thinking_tokens: thinkingTokens },
+      },
     },
   })}\n`;
 }
@@ -825,6 +836,109 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live.each([
+    { version: 4, fileName: "usage-scan-cache.json" },
+    { version: 5, fileName: "usage-scan-cache-v5.json" },
+  ])(
+    "upgrades v$version Claude thinking without losing deleted history or changing cost",
+    ({ version, fileName }) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const deleted = NodePath.join(NodePath.dirname(transcript), "deleted.jsonl");
+        const legacyOnly = NodePath.join(NodePath.dirname(transcript), "legacy-only.jsonl");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 10, "claude-fable-5", 4));
+          await NodeFSP.writeFile(deleted, claudeLine(2, 30, "claude-fable-5", 12));
+          await NodeFSP.writeFile(legacyOnly, claudeLine(4, 20, "claude-fable-5", 8));
+        });
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const legacyPath = NodePath.join(stateDir, fileName);
+          const original = yield* (yield* UsageService.make).readSummary(WINDOW);
+          const thinking = (summary: typeof original) =>
+            summary.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0);
+          assert.strictEqual(thinking(original), 24);
+
+          const legacy = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, { m: number; r: unknown[][]; t: unknown[][] }>;
+            };
+            // Old parsers saved zero thinking but valid sizes and append positions.
+            for (const file of Object.values(document.files)) {
+              for (const row of [...file.r, ...file.t]) row[7] = 0;
+            }
+            const text = encodeUnknownJsonString({ ...document, version });
+            await NodeFSP.writeFile(legacyPath, text);
+            if (version === 5) {
+              await NodeFSP.writeFile(
+                NodePath.join(stateDir, "usage-scan-cache.json"),
+                encodeUnknownJsonString({ ...document, version: 4, files: {} }),
+              );
+            } else {
+              // A v4 server kept scanning after v5 first ran. Its retained
+              // snapshot is newer, and includes a file absent from v5.
+              const older = document.files[deleted]!;
+              await NodeFSP.writeFile(
+                NodePath.join(stateDir, "usage-scan-cache-v5.json"),
+                encodeUnknownJsonString({
+                  ...document,
+                  version: 5,
+                  files: {
+                    [deleted]: {
+                      ...older,
+                      m: older.m - 1000,
+                      r: older.r.map((row) => row.map((value, index) => (index === 6 ? 1 : value))),
+                    },
+                  },
+                }),
+              );
+            }
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(deleted);
+            await NodeFSP.rm(legacyOnly);
+            return text;
+          });
+
+          const service = yield* UsageService.make;
+          const upgraded = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(upgraded), 60);
+          // The unchanged live file must re-parse from byte zero. The deleted
+          // file retains its tokens and cost, but its thinking is unrecoverable.
+          assert.strictEqual(thinking(upgraded), 4);
+          assert.strictEqual(
+            upgraded.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            original.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+          );
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(transcript, claudeLine(3, 7, "claude-fable-5", 3)),
+          );
+          const appended = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(appended), 67);
+          assert.strictEqual(thinking(appended), 7);
+
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+          assert.deepStrictEqual(restored.buckets, appended.buckets);
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+            legacy,
+          );
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: `usage-service-v${version}-claude-upgrade-test`,
+              home,
+              settings,
+              ratesDocument: {
+                "claude-fable-5": { input_cost_per_token: 0.25, output_cost_per_token: 0.5 },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live(
     "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
     () =>
@@ -863,7 +977,7 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           yield* (yield* UsageService.make).readSummary(WINDOW);
 

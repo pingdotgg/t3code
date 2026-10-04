@@ -10,7 +10,7 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providerThinkingColor } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -36,6 +36,7 @@ export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
     readonly value: number;
+    readonly thinking: number;
   }[];
   readonly total: number;
 }
@@ -65,6 +66,7 @@ export function buildPeriodColumns(
     const bands = PROVIDER_ORDER.map((provider) => ({
       provider,
       value: valueFor(entry, provider, metric),
+      thinking: metric === "tokens" ? (entry?.byProvider.get(provider)?.reasoningTokens ?? 0) : 0,
     }));
     return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
@@ -206,11 +208,14 @@ export function UsageProviderChart({
     }
 
     const columns = buildPeriodColumns(periods, byPeriod, metric);
-    // The scale tops out at the largest single provider-period, not the sum:
-    // layered series each measure from zero, so a combined peak would leave
-    // the plot permanently half empty.
+    // Each series measures from zero, including thinking, so scale to the
+    // largest displayed value rather than a provider's combined total.
     const peak = columns.reduce(
-      (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
+      (max, column) =>
+        column.bands.reduce(
+          (inner, band) => Math.max(inner, band.value - band.thinking, band.thinking),
+          max,
+        ),
       0,
     );
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
@@ -220,22 +225,37 @@ export function UsageProviderChart({
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = providers.map((provider) => {
+    const built = providers.flatMap((provider) => {
       const providerIndex = PROVIDER_ORDER.indexOf(provider);
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
-      return {
-        provider,
-        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
-        line,
-      };
+      const kinds = metric === "tokens" ? (["other", "thinking"] as const) : (["other"] as const);
+      return kinds.flatMap((kind) => {
+        const values = columns.map((column) => {
+          const band = column.bands[providerIndex];
+          return kind === "thinking"
+            ? (band?.thinking ?? 0)
+            : (band?.value ?? 0) - (band?.thinking ?? 0);
+        });
+        const total = values.reduce((sum, value) => sum + value, 0);
+        if (kind === "thinking" && total === 0) return [];
+        const line = curvePath(
+          smoothCurve(
+            values.map((value, periodIndex) => ({ x: periodIndex * step, y: toY(value) })),
+          ),
+        );
+        return [
+          {
+            key: `${provider}:${kind}`,
+            color:
+              kind === "thinking"
+                ? providerThinkingColor(provider)
+                : PROVIDER_PRESENTATION[provider].color,
+            thinking: kind === "thinking",
+            total,
+            area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
+            line,
+          },
+        ];
+      });
     });
 
     // Paint the heavier series first so the lighter one is not buried.
@@ -345,7 +365,7 @@ export function UsageProviderChart({
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "tokens by provider, with thinking shown separately" : "cost by provider"}`}
           >
             {ticks.map((tick) => {
               const y = toY(tick);
@@ -365,20 +385,16 @@ export function UsageProviderChart({
             })}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, area }) => (
-              <path
-                key={provider}
-                d={area}
-                fill={PROVIDER_PRESENTATION[provider].color}
-                fillOpacity={0.12}
-              />
+            {paths.map(({ key, color, area }) => (
+              <path key={key} d={area} fill={color} fillOpacity={0.12} />
             ))}
-            {paths.map(({ provider, line }) => (
+            {paths.map(({ key, color, thinking, line }) => (
               <path
-                key={provider}
+                key={key}
                 d={line}
                 fill="none"
-                stroke={PROVIDER_PRESENTATION[provider].color}
+                stroke={color}
+                strokeDasharray={thinking ? "4 3" : undefined}
                 strokeWidth={2}
                 vectorEffect="non-scaling-stroke"
               />
@@ -410,21 +426,43 @@ export function UsageProviderChart({
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {providers.map((provider) => {
                 const { label, driverKind } = PROVIDER_PRESENTATION[provider];
+                const band = hoveredColumn?.bands.find((band) => band.provider === provider);
                 return (
-                  <div key={provider} className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <ProviderInstanceIcon
-                        driverKind={driverKind}
-                        displayName={label}
-                        iconClassName="size-3"
-                      />
-                      {label}
-                    </span>
-                    <span className="text-foreground tabular-nums">
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
-                      )}
-                    </span>
+                  <div key={provider} className="mb-1 last:mb-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        <ProviderInstanceIcon
+                          driverKind={driverKind}
+                          displayName={label}
+                          iconClassName="size-3"
+                        />
+                        {label}
+                      </span>
+                      <span className="text-foreground tabular-nums">
+                        {format(band?.value ?? 0)}
+                      </span>
+                    </div>
+                    {metric === "tokens" && (band?.thinking ?? 0) > 0 ? (
+                      <div className="ml-4.5 mt-0.5 flex flex-col gap-0.5 text-muted-foreground">
+                        <div className="flex justify-between gap-4">
+                          <span>Other tokens</span>
+                          <span className="tabular-nums">
+                            {formatTokens((band?.value ?? 0) - (band?.thinking ?? 0))}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              aria-hidden
+                              className="w-3 border-t-2 border-dashed"
+                              style={{ borderColor: providerThinkingColor(provider) }}
+                            />
+                            Thinking
+                          </span>
+                          <span className="tabular-nums">{formatTokens(band?.thinking ?? 0)}</span>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

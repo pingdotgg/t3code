@@ -41,6 +41,7 @@ const TYPE_COLORS = {
   cacheRead: ink(30),
   cacheWrite: ink(72),
   output: ink(100),
+  thinking: ink(82),
   other: ink(44),
 };
 
@@ -56,14 +57,17 @@ export function costTypeSegments(cost: CategoryCost): readonly ShareSegment[] {
   ];
 }
 
-export function tokenTypeSegments(
-  tokens: Omit<UsageTokenTotals, "reasoningTokens">,
-): readonly ShareSegment[] {
+export function tokenTypeSegments(tokens: UsageTokenTotals): readonly ShareSegment[] {
   return [
     { label: "Input", value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
     { label: "Cache read", value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
     { label: "Cache write", value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: tokens.outputTokens, color: TYPE_COLORS.output },
+    {
+      label: "Output",
+      value: tokens.outputTokens - tokens.reasoningTokens,
+      color: TYPE_COLORS.output,
+    },
+    { label: "Thinking", value: tokens.reasoningTokens, color: TYPE_COLORS.thinking },
   ];
 }
 
