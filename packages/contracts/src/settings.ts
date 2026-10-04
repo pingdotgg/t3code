@@ -996,6 +996,19 @@ export const BitbucketSettings = Schema.Struct({
 });
 export type BitbucketSettings = typeof BitbucketSettings.Type;
 
+/**
+ * A BUSY Bar (busy.app) that shows when an agent finishes, fails, or needs
+ * attention. `address` is the device's IP or host, or `api.busy.app` for the
+ * cloud proxy. `token` is the device's HTTP access password or a cloud API
+ * token; it lives in the server's secret store like the Bitbucket tokens.
+ */
+export const BusyBarSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  address: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("10.0.4.20"))),
+  token: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BusyBarSettings = typeof BusyBarSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1391,6 +1404,7 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  busyBar: BusyBarSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1678,6 +1692,14 @@ export const ServerSettingsPatch = Schema.Struct({
       email: Schema.optionalKey(TrimmedString),
       accessToken: Schema.optionalKey(TrimmedString),
       apiToken: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  /** An empty token clears it; an omitted one keeps what the server has. */
+  busyBar: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      address: Schema.optionalKey(TrimmedString),
+      token: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(

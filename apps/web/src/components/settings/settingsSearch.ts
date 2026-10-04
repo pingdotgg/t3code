@@ -635,6 +635,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["xcode android studio sdk avd runtime"],
   },
   {
+    id: "busy-bar-alerts",
+    title: "BUSY Bar alerts",
+    to: "/settings/integrations",
+    targetId: "busy-bar",
+    searchTerms: ["busy bar busy.app device led display notify notifications done approval"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",
