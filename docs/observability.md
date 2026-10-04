@@ -106,6 +106,12 @@ Key server and provider lifecycle transitions are emitted as structured log entr
 - `provider.connect`: emitted when a provider session starts, with `provider`, `threadId`, `providerInstanceId`, and `runtimeMode`
 - `provider.disconnect`: emitted when a provider session stops, with `provider`, `threadId`, `providerInstanceId`, and `reason`
 
+Provider event consumers belong to the provider session scope, not the request
+that starts it. Copilot, Cursor, and Codex continue forwarding reply and tool
+events after that request completes, until the session is stopped or replaced.
+A completed turn alone does not prove reply delivery: check the saved assistant
+message and compare native provider updates with canonical events when it is missing.
+
 ### Startup timing
 
 `startup phase started` and `startup phase finished` log records identify each phase

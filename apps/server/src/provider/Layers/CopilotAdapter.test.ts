@@ -151,7 +151,7 @@ it("defaults delegated threads to gpt-6-luna on low reasoning", () => {
 });
 
 copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
-  it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
+  it.effect("streams replies after the session-start request finishes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const settings = yield* ServerSettingsService;
@@ -167,13 +167,15 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
         Effect.forkChild,
       );
 
-      const session = yield* adapter.startSession({
-        threadId,
-        provider: COPILOT_DRIVER,
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
-      });
+      const session = yield* adapter
+        .startSession({
+          threadId,
+          provider: COPILOT_DRIVER,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+        })
+        .pipe(Effect.forkChild, Effect.flatMap(Fiber.join));
 
       assert.equal(session.provider, "copilot");
       assert.deepStrictEqual(session.resumeCursor, {
