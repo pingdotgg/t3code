@@ -16,6 +16,8 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useCallback: reactHookHarness.useCallback,
+    // The atom registry, used only to settle an npm step; these renders never run one.
+    useContext: () => null,
     useEffect: () => undefined,
     useId: () => "plugin-directory",
     // Runs on each render, as React's commit would before any later event.
@@ -142,6 +144,7 @@ describe("PluginReviewDialog", () => {
       canManage,
       status: canManage ? null : CHECKING,
       notice: null,
+      npm: null,
       onRetry: () => undefined,
       onClose: () => undefined,
     }) as ReactElement;

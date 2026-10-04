@@ -21,6 +21,26 @@ trust it, then **Approve and enable**. The plugin starts the first time it is us
 Add a plugin's build directory, not a git checkout. Every file in the directory counts, hidden files
 included, and symbolic links are refused.
 
+## Installing from npm
+
+On servers that support it, **Install from npm** sits next to **Add plugin**. Enter the package name
+and an exact version or a tag such as `latest`; ranges are not accepted. The registry is optional and
+defaults to npm's. Another registry must use `https`, except one on this machine (`localhost`,
+`127.0.0.1` or `[::1]`), because over plain `http` the checksum and the package could both be
+replaced in transit. Registries that need a login are not supported. The server downloads the package,
+checks it against the registry's sha512 checksum, and keeps its own copy. The checksum shows the
+bytes are what the registry published, not who published them.
+
+Installing never runs package scripts and never installs dependencies. Nothing runs until you review
+and approve the downloaded files, exactly as for a directory; the review also shows the package and
+its checksum. **Discard** removes a download you have not approved.
+
+To update, open the plugin's details and download a version or tag under **Updates**. The download
+sits next to the installed version, which keeps running. Review the new files and their
+capabilities, confirm you trust them, then **Apply update**: applying approves the new files in
+their place. If anything fails before then, the installed version stays. A server restart discards
+a download you have not applied, and you can drop it yourself with **Discard update**.
+
 ## When a plugin changes
 
 Your approval covers the exact files you reviewed, declarations included. When a file check finds
@@ -38,21 +58,22 @@ code a plugin loads from outside its directory is not covered.
 ## Managing plugins
 
 Disable stops a plugin without forgetting your approval. Remove stops it and forgets it, including
-its saved settings and storage. A directory you added is never deleted; a plugin installed from npm
-has its downloaded files deleted once it has stopped. Both are always available, even when the
-directory is gone.
+its saved settings and storage. An added directory is never deleted; the server's copy of an npm
+package is. Both are always available, even when the directory is gone.
 
 A plugin that crashes waits briefly before its next start, and is stopped after repeated failures.
 A plugin that cannot run on this version of T3 Code is marked **Incompatible**. A plugin that
 receives events shows how delivery is going beside its state; when delivery keeps failing it stops
 until you resume it, and no events are skipped. Fix the problem, then choose **Resume**.
 
-Managing plugins needs administrative access to the environment. A browser paired with a standard
-link can see the plugins but not change them; pair it with an administrative link to manage them.
+Managing plugins, including installing and updating from npm, needs administrative access to the
+environment. A browser paired with a standard link can see the plugins but not change them; pair it
+with an administrative link to manage them.
 
 The mobile app shows plugins read-only, under **Settings** > **Server settings** > **Plugins**: their
-state, event delivery, and details. Add, approve, enable, or remove them from an administrative web
-or desktop connection.
+state, event delivery, and details, including the npm package and integrity of a plugin installed
+from npm. Add, install, approve, enable, update, or remove them from an administrative web or
+desktop connection.
 
 ## Writing a plugin
 
@@ -159,26 +180,10 @@ most 64 KiB, and a call fails after 30 seconds. A view that floods messages or s
 stopped; **Reload** in its tab starts it again. Disabling or removing the plugin, or a file check
 finding it changed, closes its views on every client, and they come back when it is enabled again.
 
-## Installing from npm
+### Publishing to npm
 
-T3 Code can install a plugin from an npm registry instead of a directory. Installing runs nothing:
-the plugin waits for your approval like any added directory. Until the clients offer this, use an
-administrative connection and the `plugins.npm.*` requests. A standard pairing can list npm packages
-but not install or update them.
-
-`plugins.npm.add` takes a package `name` and an exact `version` or a dist-tag such as `latest`;
-ranges are refused, and the resolved version is recorded. `registry` is optional and defaults to the
-public npm registry. Another registry must use `https`, except one on this machine (`localhost`,
-`127.0.0.1` or `[::1]`), because over plain `http` the published integrity and the tarball could both
-be replaced in transit. Registries that need a login are not supported, and `.npmrc` is not read. Before
-anything is written, T3 Code checks the registry's `sha512` integrity, the tarball's size and paths,
-and that `package.json` has the requested name and version, no install scripts, no native build, and
-every runtime dependency bundled. Publish `t3-plugin.json` and the code at the package root, and list
-runtime dependencies in `bundleDependencies` or bundle your code into one file.
-
-Updating takes two steps, so a new version never runs without your approval.
-`plugins.npm.stageUpdate` downloads and checks a version next to the installed one, which keeps
-running, and replies with its manifest and digest. `plugins.npm.applyUpdate` with that digest
-approves those exact files and swaps them in; if anything fails first, the old version is put back.
-`plugins.npm.discardUpdate` drops a staged update. Removing an npm plugin deletes its downloaded
-files once it has stopped.
+Publish `t3-plugin.json` and the code at the package root. Because T3 Code never installs
+dependencies, list runtime dependencies in `bundleDependencies` or bundle your code into one file.
+Before anything is written, T3 Code refuses a package whose `package.json` does not have the
+requested name and version, that has install scripts or a native build, or that leaves a runtime
+dependency unbundled. The resolved version is recorded, so `latest` installs one exact version.

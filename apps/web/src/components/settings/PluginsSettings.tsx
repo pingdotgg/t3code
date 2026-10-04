@@ -1,6 +1,7 @@
 import {
   FileSearchIcon,
   MoreHorizontalIcon,
+  PackageIcon,
   PlugIcon,
   PlusIcon,
   PowerOffIcon,
@@ -8,13 +9,43 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
-import { type ReactNode, useId, useLayoutEffect, useState } from "react";
+import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
+import {
+  type ReactNode,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type PluginInstallation,
   type PluginInstallationId,
+  type PluginNpmInstallationResult,
+  type PluginNpmPackage,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import {
+  describePluginNpmSource,
+  PLUGIN_NPM_INTEGRITY_STATEMENT,
+  PLUGIN_NPM_PROVENANCE_PENDING,
+  PLUGIN_NPM_SCRIPTS_STATEMENT,
+  pluginNpmInstallRequest,
+  pluginNpmListKey,
+  pluginNpmProvenanceKnown,
+  pluginNpmRowLabel,
+  pluginNpmUpdateRequest,
+  presentPluginNpmUpdate,
+  resolvePluginNpmPackagesState,
+  pluginRemoveDescription,
+  resolvePluginNpmProvenance,
+  supportsPluginNpm,
+  type PluginNpmPackagesState,
+  type PluginNpmProvenance,
+  type PluginNpmStepMarker,
+} from "@t3tools/client-runtime/state/pluginNpmPresentation";
+import { settlePluginNpmStep } from "@t3tools/client-runtime/state/pluginNpm";
 import {
   canManagePlugins,
   createPluginActionGate,
@@ -30,7 +61,6 @@ import {
   pluginCommandErrorMessage,
   pluginDirectoryLocation,
   pluginManagementNotice,
-  pluginRemovalStatement,
   pluginTrustStatement,
   presentPluginInstallation,
   resolvePluginCatalogState,
@@ -53,7 +83,7 @@ import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import type { EnvironmentPresentation } from "../../state/environments";
-import { pluginEnvironment } from "../../state/plugins";
+import { pluginEnvironment, pluginNpmEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession, useEnvironmentSessionState } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -145,6 +175,16 @@ function AccessStatusSlot({ status }: { readonly status: string | null }) {
       </span>
     </span>
   );
+}
+
+/** Calls `refresh` when `key` changes from one known value to another; never on a timer. */
+function useRefreshOnChange(key: string | null, refresh: () => void) {
+  const last = useRef(key);
+  useEffect(() => {
+    const previous = last.current;
+    last.current = key;
+    if (previous !== null && key !== null && previous !== key) refresh();
+  }, [key, refresh]);
 }
 
 export function PluginsSettings() {
@@ -281,19 +321,42 @@ export function PluginEnvironmentCatalog({
       ? pluginEnvironment.catalog({ environmentId: environment.environmentId, input: {} })
       : null,
   );
+  // An older server has no npm installs: no entry, no list call.
+  const npmSupported = supportsPluginNpm(environment.serverConfig?.environment.capabilities);
+  const npmAtom =
+    connected && npmSupported
+      ? pluginNpmEnvironment.packages({ environmentId: environment.environmentId, input: {} })
+      : null;
+  const npmQuery = useEnvironmentQuery(npmAtom);
+  const registry = useContext(RegistryContext);
+  // Called after an await, so it reads the list from the registry, not from this render.
+  const settleNpmStep = (reply: PluginNpmPackage | null) =>
+    npmAtom === null ? null : settlePluginNpmStep(registry, npmAtom, reply);
+  const npmState = resolvePluginNpmPackagesState({
+    supported: npmSupported,
+    data: npmQuery.data,
+    error: npmQuery.error,
+  });
   const explainedAccess = useExplainedPluginAccess(access);
   const [adding, setAdding] = useState(false);
+  const [installingNpm, setInstallingNpm] = useState(false);
   const [reviewing, setReviewing] = useState<{
     readonly installationId: PluginInstallationId;
     readonly added: PluginAddedMarker | null;
+    readonly npmInstalled: PluginNpmStepMarker | null;
   } | null>(null);
   const catalogState = resolvePluginCatalogState({
     connected,
     data: catalog.data,
     error: catalog.error,
   });
-  if (catalogState._tag === "unsupported") return null;
   const installations = catalogState._tag === "available" ? catalogState.view.installations : null;
+  // Provenance is a query: read it again when installations or their files change.
+  useRefreshOnChange(
+    npmSupported && installations !== null ? pluginNpmListKey(installations) : null,
+    npmQuery.refresh,
+  );
+  if (catalogState._tag === "unsupported") return null;
   const canManage = canManagePlugins(access, catalogState);
   const notice = pluginManagementNotice(explainedAccess, catalogState, environment.label);
   const accessStatus = pluginAccessStatus(access, catalogState);
@@ -321,6 +384,17 @@ export function PluginEnvironmentCatalog({
               <PlusIcon className="size-3" />
               Add plugin
             </Button>
+            {npmSupported ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                disabled={!canManage}
+                onClick={() => setInstallingNpm(true)}
+              >
+                <PackageIcon className="size-3" />
+                Install from npm
+              </Button>
+            ) : null}
           </span>
         }
       >
@@ -364,17 +438,29 @@ export function PluginEnvironmentCatalog({
                 description={`Plugins are trusted local code that runs on ${environment.label}'s machine. Add one from a directory there.`}
               />
             ) : (
-              installations.map((installation) => (
-                <PluginRow
-                  key={installation.installationId}
-                  environment={environment}
-                  installation={installation}
-                  canManage={canManage}
-                  onReview={() =>
-                    setReviewing({ installationId: installation.installationId, added: null })
-                  }
-                />
-              ))
+              installations.map((installation) => {
+                const provenance = resolvePluginNpmProvenance({
+                  state: npmState,
+                  installationId: installation.installationId,
+                  step: null,
+                });
+                return (
+                  <PluginRow
+                    key={installation.installationId}
+                    environment={environment}
+                    installation={installation}
+                    provenance={provenance}
+                    canManage={canManage}
+                    onReview={() =>
+                      setReviewing({
+                        installationId: installation.installationId,
+                        added: null,
+                        npmInstalled: null,
+                      })
+                    }
+                  />
+                );
+              })
             )}
           </>
         )}
@@ -391,6 +477,27 @@ export function PluginEnvironmentCatalog({
             setReviewing({
               installationId: installation.installationId,
               added: startPluginAddHandoff({ installation, restartCatalog: catalog.refresh }),
+              npmInstalled: null,
+            });
+          }}
+        />
+      ) : null}
+      {installingNpm ? (
+        <InstallFromNpmDialog
+          environment={environment}
+          canManage={canManage}
+          status={accessStatus}
+          notice={notice}
+          onClose={() => setInstallingNpm(false)}
+          onInstalled={(result) => {
+            setInstallingNpm(false);
+            setReviewing({
+              installationId: result.installation.installationId,
+              added: startPluginAddHandoff({
+                installation: result.installation,
+                restartCatalog: catalog.refresh,
+              }),
+              npmInstalled: settleNpmStep(result.package),
             });
           }}
         />
@@ -406,6 +513,16 @@ export function PluginEnvironmentCatalog({
           canManage={canManage}
           status={accessStatus}
           notice={notice}
+          npm={
+            npmSupported
+              ? {
+                  state: npmState,
+                  installed: reviewing.npmInstalled,
+                  refresh: npmQuery.refresh,
+                  settle: settleNpmStep,
+                }
+              : null
+          }
           onRetry={catalog.refresh}
           onClose={() => setReviewing(null)}
         />
@@ -417,15 +534,18 @@ export function PluginEnvironmentCatalog({
 function PluginRow({
   environment,
   installation,
+  provenance,
   canManage,
   onReview,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly installation: PluginInstallation;
+  readonly provenance: PluginNpmProvenance;
   readonly canManage: boolean;
   readonly onReview: () => void;
 }) {
   const view = presentPluginInstallation(installation);
+  const npmPackage = provenance._tag === "found" ? provenance.package : null;
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const enable = useAtomCommand(pluginEnvironment.enable, "plugin enable");
@@ -474,6 +594,9 @@ function PluginRow({
           <span className="block space-y-0.5">
             {installation.manifest?.description ? (
               <span className="line-clamp-2 block">{installation.manifest.description}</span>
+            ) : null}
+            {npmPackage ? (
+              <span className="block text-xs">{pluginNpmRowLabel(npmPackage)}</span>
             ) : null}
             <span className="block font-mono text-xs break-all">{installation.directory}</span>
           </span>
@@ -577,7 +700,7 @@ function PluginRow({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {view.title}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {pluginRemovalStatement(environment.label)}
+              {pluginRemoveDescription(provenance, environment.label)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -703,6 +826,137 @@ export function AddPluginDialog({
   );
 }
 
+function InstallFromNpmDialog({
+  environment,
+  canManage,
+  status,
+  notice,
+  onClose,
+  onInstalled,
+}: {
+  readonly environment: EnvironmentPresentation;
+  /** Read at submit time, so a dialog that lost authority while open sends nothing. */
+  readonly canManage: boolean;
+  readonly status: string | null;
+  readonly notice: string | null;
+  readonly onClose: () => void;
+  readonly onInstalled: (result: PluginNpmInstallationResult) => void;
+}) {
+  const inputId = useId();
+  const [name, setName] = useState("");
+  const [version, setVersion] = useState("");
+  const [registry, setRegistry] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const install = useAtomCommand(pluginNpmEnvironment.add, "plugin install from npm");
+  const request = pluginNpmInstallRequest({ canManage, busy, name, version, registry });
+  const submit = async () => {
+    if (request._tag !== "ready") return;
+    setBusy(true);
+    setError(null);
+    const outcome = await settle(
+      install({ environmentId: environment.environmentId, input: request.input }),
+    );
+    setBusy(false);
+    if ("value" in outcome) onInstalled(outcome.value);
+    else setError(outcome.error);
+  };
+  const locked = busy || !canManage;
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+    >
+      <DialogPopup className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Install from npm</DialogTitle>
+          <DialogDescription>
+            {environment.label} downloads the package, checks it against the registry's checksum,
+            and unpacks it. Review its files before approving it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor={`${inputId}-name`}>Package</Label>
+              <Input
+                id={`${inputId}-name`}
+                nativeInput
+                autoFocus
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="t3-notifier or @acme/t3-notifier"
+                maxLength={214}
+                value={name}
+                disabled={locked}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`${inputId}-version`}>Version or tag</Label>
+              <Input
+                id={`${inputId}-version`}
+                nativeInput
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="latest"
+                maxLength={256}
+                value={version}
+                disabled={locked}
+                onChange={(event) => setVersion(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`${inputId}-registry`}>Registry (optional)</Label>
+              <Input
+                id={`${inputId}-registry`}
+                nativeInput
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="https://registry.npmjs.org"
+                maxLength={2048}
+                value={registry}
+                disabled={locked}
+                onChange={(event) => setRegistry(event.target.value)}
+              />
+            </div>
+            {/* An invalid request is shown as typed; nothing is sent until it is valid. */}
+            {request._tag === "invalid" ? (
+              <p className="text-sm text-destructive">{request.message}</p>
+            ) : null}
+            <p className="text-sm text-muted-foreground">{PLUGIN_NPM_SCRIPTS_STATEMENT}</p>
+            {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+            <p className="text-sm text-muted-foreground">
+              <AccessStatusSlot status={status} />
+            </p>
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+          </form>
+        </DialogPanel>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" size="sm" disabled={busy} />}>
+            Cancel
+          </DialogClose>
+          <Button size="sm" disabled={request._tag !== "ready"} onClick={() => void submit()}>
+            Download and review
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 function ReviewField({
   label,
   children,
@@ -718,6 +972,36 @@ function ReviewField({
   );
 }
 
+/** One environment's npm list as a plugin's details read it. */
+interface PluginNpmDetails {
+  readonly state: PluginNpmPackagesState;
+  /** Set when the dialog was opened by installing from npm: that install's reply. */
+  readonly installed: PluginNpmStepMarker | null;
+  readonly refresh: () => void;
+  /** Records a settled step's reply, or null after a failure, and reads the list again. */
+  readonly settle: (reply: PluginNpmPackage | null) => PluginNpmStepMarker | null;
+}
+
+/** Each declared capability; `added` ones are highlighted. */
+function CapabilityList({
+  capabilities,
+  added,
+}: {
+  readonly capabilities: ReadonlyArray<string>;
+  readonly added: ReadonlyArray<string>;
+}) {
+  if (capabilities.length === 0) return "None declared";
+  return (
+    <span className="flex flex-wrap gap-1">
+      {capabilities.map((capability) => (
+        <Badge key={capability} variant={added.includes(capability) ? "warning" : "outline"}>
+          {capability}
+        </Badge>
+      ))}
+    </span>
+  );
+}
+
 /** Details of one installation; for one that needs consent, the consent screen. */
 export function PluginReviewDialog({
   environment,
@@ -725,6 +1009,7 @@ export function PluginReviewDialog({
   canManage,
   status,
   notice,
+  npm,
   onRetry,
   onClose,
 }: {
@@ -733,6 +1018,8 @@ export function PluginReviewDialog({
   readonly canManage: boolean;
   readonly status: string | null;
   readonly notice: string | null;
+  /** Null for a server without npm installs. */
+  readonly npm: PluginNpmDetails | null;
   readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
@@ -744,9 +1031,26 @@ export function PluginReviewDialog({
   const [error, setError] = useState<string | null>(null);
   const consent = useAtomCommand(pluginEnvironment.consent, "plugin consent");
   const enable = useAtomCommand(pluginEnvironment.enable, "plugin enable");
+  const remove = useAtomCommand(pluginEnvironment.remove, "plugin remove");
   const view = installation ? presentPluginInstallation(installation) : null;
   const digest = installation?.source?.digest ?? null;
   const acknowledged = digest !== null && trustedDigest === digest;
+  // The latest npm step's outcome, until a list read after it arrives.
+  const [npmStep, setNpmStep] = useState<PluginNpmStepMarker | null>(npm?.installed ?? null);
+  const provenance =
+    npm !== null && installation !== null
+      ? resolvePluginNpmProvenance({
+          state: npm.state,
+          installationId: installation.installationId,
+          step: npmStep,
+        })
+      : ({ _tag: "none" } as const);
+  const npmPackage = provenance._tag === "found" ? provenance.package : null;
+  // An npm download's package, checksum, and scripts policy must be on screen before approval.
+  const provenanceKnown = pluginNpmProvenanceKnown(provenance);
+  const settleNpmStep = (reply: PluginNpmPackage | null) => {
+    if (npm !== null) setNpmStep(npm.settle(reply));
+  };
 
   const gate = usePluginActionGate(
     canManage && installation !== null
@@ -754,12 +1058,13 @@ export function PluginReviewDialog({
           environmentId: environment.environmentId,
           installation,
           acknowledgedDigest: acknowledged ? digest : null,
+          provenanceKnown,
         }
       : null,
   );
 
   const approve = async () => {
-    if (!installation || digest === null || !acknowledged) return;
+    if (!installation || digest === null || !acknowledged || !provenanceKnown) return;
     const target = {
       environmentId: environment.environmentId,
       input: { installationId: installation.installationId },
@@ -786,6 +1091,34 @@ export function PluginReviewDialog({
     if (outcome._tag === "failed") setError(outcome.error);
     else if (outcome._tag === "done") onClose();
   };
+
+  // A download nobody approved yet: removing it deletes the server's copy.
+  const discard = async () => {
+    if (!installation) return;
+    let started = false;
+    const outcome = await gate.run(
+      { environmentId: environment.environmentId, installationId: installation.installationId },
+      [
+        () =>
+          settle(
+            remove({
+              environmentId: environment.environmentId,
+              input: { installationId: installation.installationId },
+            }),
+          ),
+      ],
+      () => {
+        started = true;
+        setBusy(true);
+        setError(null);
+      },
+    );
+    if (started) setBusy(false);
+    if (outcome._tag === "failed") setError(outcome.error);
+    else if (outcome._tag === "done") onClose();
+  };
+  const canDiscard =
+    view?.canReview === true && npmPackage !== null && installation?.consent === null;
 
   const manifest = installation?.manifest ?? null;
   return (
@@ -834,6 +1167,27 @@ export function PluginReviewDialog({
                     <ReviewField label="Version">{manifest.version}</ReviewField>
                   </>
                 ) : null}
+                {npmPackage ? (
+                  <>
+                    <ReviewField label="Package">{describePluginNpmSource(npmPackage)}</ReviewField>
+                    <ReviewField label="Integrity">
+                      <span className="font-mono text-xs break-all">
+                        {npmPackage.source.integrity}
+                      </span>
+                      <span className="mt-1 block text-muted-foreground">
+                        {PLUGIN_NPM_INTEGRITY_STATEMENT}
+                      </span>
+                    </ReviewField>
+                  </>
+                ) : provenance._tag === "checking" ? (
+                  <ReviewField label="Package">Checking what is installed…</ReviewField>
+                ) : provenance._tag === "unknown" ? (
+                  <ReviewField label="Package">
+                    {npm?.state._tag === "failed"
+                      ? "Not known: where it came from did not load"
+                      : "Checking where it came from…"}
+                  </ReviewField>
+                ) : null}
                 <ReviewField label="Directory">
                   <span className="font-mono text-xs break-all">{installation.directory}</span>
                 </ReviewField>
@@ -847,17 +1201,7 @@ export function PluginReviewDialog({
                 ) : null}
                 {manifest ? (
                   <ReviewField label="Capabilities">
-                    {manifest.capabilities.length === 0 ? (
-                      "None declared"
-                    ) : (
-                      <span className="flex flex-wrap gap-1">
-                        {manifest.capabilities.map((capability) => (
-                          <Badge key={capability} variant="outline">
-                            {capability}
-                          </Badge>
-                        ))}
-                      </span>
-                    )}
+                    <CapabilityList capabilities={manifest.capabilities} added={[]} />
                     {manifest.proposedApi ? (
                       <span className="mt-1 block text-muted-foreground">
                         Uses proposed APIs that may change between T3 Code versions.
@@ -895,6 +1239,8 @@ export function PluginReviewDialog({
                     <AlertDescription>
                       <p>{pluginTrustStatement(environment.label)}</p>
                       <p>{PLUGIN_DIGEST_STATEMENT}</p>
+                      {npmPackage ? <p>{PLUGIN_NPM_SCRIPTS_STATEMENT}</p> : null}
+                      {provenanceKnown ? null : <p>{PLUGIN_NPM_PROVENANCE_PENDING}</p>}
                     </AlertDescription>
                   </Alert>
                   {/* Always laid out, so an access check while reviewing moves nothing. */}
@@ -918,6 +1264,26 @@ export function PluginReviewDialog({
                   {pluginTrustStatement(environment.label)}
                 </p>
               )}
+              {npm?.state._tag === "failed" ? (
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-muted-foreground">
+                    Could not load where this plugin came from: {npm.state.message}
+                  </span>
+                  <Button size="sm" variant="outline" onClick={npm.refresh}>
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
+              {!view.canReview &&
+              (provenance._tag === "found" || provenance._tag === "checking") ? (
+                <PluginNpmUpdateSection
+                  environment={environment}
+                  installation={installation}
+                  pkg={npmPackage}
+                  canManage={canManage}
+                  onSettled={settleNpmStep}
+                />
+              ) : null}
               {error ? (
                 <p role="alert" className="text-sm text-destructive">
                   {error}
@@ -937,9 +1303,19 @@ export function PluginReviewDialog({
               <DialogClose render={<Button variant="outline" size="sm" disabled={busy} />}>
                 Cancel
               </DialogClose>
+              {canDiscard ? (
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  disabled={!canManage || busy}
+                  onClick={() => void discard()}
+                >
+                  Discard
+                </Button>
+              ) : null}
               <Button
                 size="sm"
-                disabled={!canManage || !acknowledged || busy}
+                disabled={!canManage || !acknowledged || !provenanceKnown || busy}
                 onClick={() => void approve()}
               >
                 Approve and enable
@@ -953,5 +1329,227 @@ export function PluginReviewDialog({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/**
+ * Updating an npm installation: download a version next to the installed one,
+ * review it, then apply it, which approves its files. `pkg` is null while the
+ * screen checks what is installed after a step whose outcome it does not know.
+ */
+function PluginNpmUpdateSection({
+  environment,
+  installation,
+  pkg,
+  canManage,
+  onSettled,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly installation: PluginInstallation;
+  readonly pkg: PluginNpmPackage | null;
+  readonly canManage: boolean;
+  /** Called after every step that ran, with its reply or null when it failed. */
+  readonly onSettled: (reply: PluginNpmPackage | null) => void;
+}) {
+  const inputId = useId();
+  const checkboxId = useId();
+  const [version, setVersion] = useState("");
+  // The downloaded update's digest the user acknowledged; another download needs a new one.
+  const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [applied, setApplied] = useState<string | null>(null);
+  const stageUpdate = useAtomCommand(pluginNpmEnvironment.stageUpdate, "plugin update download");
+  const applyUpdate = useAtomCommand(pluginNpmEnvironment.applyUpdate, "plugin update");
+  const discardUpdate = useAtomCommand(pluginNpmEnvironment.discardUpdate, "plugin update discard");
+  const environmentId = environment.environmentId;
+  const installationId = installation.installationId;
+  const update = pkg ? presentPluginNpmUpdate(installation, pkg) : null;
+  const stagedDigest = update?.update.source.digest ?? null;
+  const acknowledged = stagedDigest !== null && trustedDigest === stagedDigest;
+  const gate = usePluginActionGate(
+    canManage && pkg !== null
+      ? {
+          environmentId,
+          installation,
+          acknowledgedDigest: null,
+          stagedUpdateDigest: stagedDigest,
+          acknowledgedUpdateDigest: acknowledged ? stagedDigest : null,
+        }
+      : null,
+  );
+  const request = pluginNpmUpdateRequest({ canManage, busy, version });
+
+  const run = async (
+    step: () => Promise<Settled<{ readonly package: PluginNpmPackage }>>,
+    approvedUpdateDigest?: string,
+  ) => {
+    let started = false;
+    const reply: { current: PluginNpmPackage | null } = { current: null };
+    const outcome = await gate.run(
+      {
+        environmentId,
+        installationId,
+        ...(approvedUpdateDigest === undefined ? {} : { approvedUpdateDigest }),
+      },
+      [
+        async () => {
+          const settled = await step();
+          if ("value" in settled) reply.current = settled.value.package;
+          return settled;
+        },
+      ],
+      () => {
+        started = true;
+        setBusy(true);
+        setError(null);
+        setApplied(null);
+      },
+    );
+    if (!started) return false;
+    setBusy(false);
+    onSettled(reply.current);
+    if (outcome._tag === "failed") setError(outcome.error);
+    return outcome._tag === "done";
+  };
+
+  const download = async () => {
+    if (request._tag !== "ready") return;
+    if (
+      await run(() =>
+        settle(stageUpdate({ environmentId, input: { installationId, version: request.input } })),
+      )
+    )
+      setVersion("");
+  };
+  const discard = () =>
+    void run(() => settle(discardUpdate({ environmentId, input: { installationId } })));
+  const apply = async () => {
+    if (update === null || stagedDigest === null || !acknowledged) return;
+    // Bound to the files the user reviewed: another download stops it before it is sent.
+    if (
+      await run(
+        () =>
+          settle(applyUpdate({ environmentId, input: { installationId, digest: stagedDigest } })),
+        stagedDigest,
+      )
+    )
+      setApplied(update.update.version);
+  };
+
+  return (
+    <div className="space-y-3 border-t pt-4">
+      <h3 className="text-sm font-medium">Updates</h3>
+      {pkg === null ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          Checking what is installed…
+        </p>
+      ) : update === null ? (
+        <form
+          className="space-y-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void download();
+          }}
+        >
+          <Label htmlFor={inputId}>Version or tag</Label>
+          <div className="flex gap-2">
+            <Input
+              id={inputId}
+              nativeInput
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="latest"
+              maxLength={256}
+              value={version}
+              disabled={busy || !canManage}
+              onChange={(event) => setVersion(event.target.value)}
+            />
+            <Button type="submit" size="sm" variant="outline" disabled={request._tag !== "ready"}>
+              Download update
+            </Button>
+          </div>
+          {request._tag === "invalid" ? (
+            <p className="text-sm text-destructive">{request.message}</p>
+          ) : null}
+          <p className="text-sm text-muted-foreground">
+            Downloads that version next to the installed one and checks it. The installed version
+            keeps running until you apply the update.
+          </p>
+        </form>
+      ) : (
+        <>
+          <dl className="space-y-2">
+            <ReviewField label="New version">
+              {update.update.version}
+              {update.sameAsInstalled ? " (the files already installed)" : ""}
+            </ReviewField>
+            <ReviewField label="Integrity">
+              <span className="font-mono text-xs break-all">{update.update.integrity}</span>
+            </ReviewField>
+            <ReviewField label="Files">{describePluginSource(update.update.source)}</ReviewField>
+            <ReviewField label="Digest">
+              <span className="font-mono text-xs break-all">{update.update.source.digest}</span>
+            </ReviewField>
+            <ReviewField label="Capabilities">
+              <CapabilityList
+                capabilities={update.update.manifest.capabilities}
+                added={update.addedCapabilities}
+              />
+              {update.addedCapabilities.length > 0 ? (
+                <span className="mt-1 block text-muted-foreground">
+                  New: {update.addedCapabilities.join(", ")}
+                </span>
+              ) : null}
+              {update.removedCapabilities.length > 0 ? (
+                <span className="mt-1 block text-muted-foreground">
+                  No longer declared: {update.removedCapabilities.join(", ")}
+                </span>
+              ) : null}
+            </ReviewField>
+            <ReviewField label="Downloaded">
+              {formatRelativeTimeLabel(update.update.stagedAt)}
+            </ReviewField>
+          </dl>
+          {update.disclosure.map((statement) => (
+            <p key={statement} className="text-sm text-muted-foreground">
+              {statement}
+            </p>
+          ))}
+          <label htmlFor={checkboxId} className="flex items-start gap-2 text-sm">
+            <Checkbox
+              id={checkboxId}
+              className="mt-0.5"
+              checked={acknowledged}
+              disabled={busy || !canManage}
+              onCheckedChange={(checked) => setTrustedDigest(checked ? stagedDigest : null)}
+            />
+            I trust version {update.update.version} to run as my user on {environment.label}
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" disabled={busy || !canManage} onClick={discard}>
+              Discard update
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || !canManage || !acknowledged}
+              onClick={() => void apply()}
+            >
+              Apply update
+            </Button>
+          </div>
+        </>
+      )}
+      {applied ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Updated to {applied}.
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }

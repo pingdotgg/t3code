@@ -195,11 +195,6 @@ export function pluginTrustStatement(environmentLabel: string): string {
 export const PLUGIN_DIGEST_STATEMENT =
   "Approval covers these exact files. T3 Code checks them when you add, approve, or enable the plugin, when the server starts, and before a call starts the plugin; if a check finds a changed file, it stops the plugin and asks again. A running plugin is not watched, so use Check files again after you change its directory. The digest records what you approved; it does not stop the directory's owner from changing it, and code the plugin loads from outside its directory is not covered.";
 
-/** Shown before removal: an added directory stays, files downloaded from npm do not. */
-export function pluginRemovalStatement(environmentLabel: string): string {
-  return `T3 Code stops the plugin and forgets your approval, its settings, and its storage. A directory you added stays on ${environmentLabel}'s machine; files T3 Code downloaded from npm are deleted once the plugin has stopped.`;
-}
-
 export const PLUGIN_DIRECTORY_GUIDANCE =
   "Add a plugin's build directory, not a git checkout: every file counts, hidden ones included. A plugin must keep its own data outside its directory, or it will need approval again.";
 
@@ -414,6 +409,12 @@ export interface PluginActionSubject {
   readonly installation: PluginInstallation;
   /** The digest the user acknowledged on this screen, or null. */
   readonly acknowledgedDigest: string | null;
+  /** For an npm installation: the downloaded update's digest the screen shows, or null. */
+  readonly stagedUpdateDigest?: string | null;
+  /** The downloaded update's digest the user acknowledged on this screen, or null. */
+  readonly acknowledgedUpdateDigest?: string | null;
+  /** False while a server with npm installs has not said where the files came from; approval waits. */
+  readonly provenanceKnown?: boolean;
 }
 
 /** What an action was started on. An approval also binds the exact files the user reviewed. */
@@ -421,6 +422,8 @@ export interface PluginActionTarget {
   readonly environmentId: string;
   readonly installationId: PluginInstallationId;
   readonly approvedDigest?: string;
+  /** Applying a downloaded npm update binds the update's files the user reviewed. */
+  readonly approvedUpdateDigest?: string;
 }
 
 /** Whether an action started on `target` may still dispatch against what the screen shows now. */
@@ -435,9 +438,13 @@ function pluginActionStillApplies(
   )
     return false;
   return (
-    target.approvedDigest === undefined ||
-    (current.installation.source?.digest === target.approvedDigest &&
-      current.acknowledgedDigest === target.approvedDigest)
+    (target.approvedDigest === undefined ||
+      (current.installation.source?.digest === target.approvedDigest &&
+        current.acknowledgedDigest === target.approvedDigest &&
+        current.provenanceKnown !== false)) &&
+    (target.approvedUpdateDigest === undefined ||
+      (current.stagedUpdateDigest === target.approvedUpdateDigest &&
+        current.acknowledgedUpdateDigest === target.approvedUpdateDigest))
   );
 }
 

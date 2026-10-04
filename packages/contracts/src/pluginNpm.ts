@@ -29,7 +29,7 @@ import {
 } from "./pluginCatalog.ts";
 
 /** An npm package name, scoped or not, as the registry accepts it. */
-const PluginNpmPackageName = TrimmedNonEmptyString.check(
+export const PluginNpmPackageName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(214),
   Schema.isPattern(/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/),
 );
@@ -47,12 +47,13 @@ export type PluginNpmVersion = typeof PluginNpmVersion.Type;
  * What to install: an exact version, or a dist-tag such as `latest` that the
  * server resolves to one. Ranges are refused.
  */
-const PluginNpmVersionRequest = TrimmedNonEmptyString.check(
+export const PluginNpmVersionRequest = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
   Schema.isPattern(
     /^(?:(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?|(?![xX]$)[A-Za-z][A-Za-z0-9._-]*)$/,
   ),
 );
+export type PluginNpmVersionRequest = typeof PluginNpmVersionRequest.Type;
 
 /** A Subresource Integrity sha512 value, as npm records it. */
 export const PluginNpmIntegrity = Schema.String.check(

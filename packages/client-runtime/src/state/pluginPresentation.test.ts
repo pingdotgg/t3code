@@ -1,5 +1,7 @@
 import {
+  AuthAdministrativeScopes,
   type AuthSessionState,
+  AuthStandardClientScopes,
   type PluginInstallation,
   PluginInstallationId,
   PluginInstallationManifest,
@@ -24,6 +26,7 @@ import {
   pluginAccessStatus,
   pluginAddDirectory,
   pluginManagementNotice,
+  pluginSettingsReadOnly,
   presentPluginInstallation,
   resolvePluginCatalogState,
   resolvePluginDetail,
@@ -329,6 +332,36 @@ const available = (
 ): PluginCatalogView => ({ _tag: "available", installations, revision });
 const availableState = (view: PluginCatalogView) =>
   resolvePluginCatalogState({ connected: true, data: view, error: null });
+
+describe("pluginSettingsReadOnly", () => {
+  const settled = (scopes: ReadonlyArray<string>) =>
+    resolvePluginManageAccess({
+      session: { authenticated: true, scopes: scopes as never },
+      isPending: false,
+      hasError: false,
+    });
+
+  it("lets only a session with access:write save plugin settings", () => {
+    expect(pluginSettingsReadOnly(settled(AuthAdministrativeScopes))).toBe(false);
+    // A standard pairing has no access:write and cannot request it.
+    expect(pluginSettingsReadOnly(settled(AuthStandardClientScopes))).toBe(true);
+  });
+
+  it("stays read-only while the session is checked again or cannot be read", () => {
+    for (const read of [
+      { isPending: true, hasError: false },
+      { isPending: false, hasError: true },
+    ])
+      expect(
+        pluginSettingsReadOnly(
+          resolvePluginManageAccess({
+            session: { authenticated: true, scopes: [...AuthAdministrativeScopes] },
+            ...read,
+          }),
+        ),
+      ).toBe(true);
+  });
+});
 
 describe("plugin management readiness", () => {
   it("manages only with access:write and a live catalogue", () => {
@@ -680,6 +713,26 @@ describe("createPluginActionGate", () => {
     releaseConsent({ value: null });
     expect(await outcome).toEqual({ _tag: "refused" });
     expect(calls).toEqual(["consent"]);
+  });
+
+  it("applies a downloaded update only while it is the one the user acknowledged", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    const apply = { ...target, approvedUpdateDigest: OLD_DIGEST };
+    gate.set(subject({ stagedUpdateDigest: OLD_DIGEST, acknowledgedUpdateDigest: null }));
+    expect(await gate.run(apply, [step("apply")])).toEqual({ _tag: "refused" });
+    // Another client downloaded a different update meanwhile.
+    gate.set(subject({ stagedUpdateDigest: DIGEST, acknowledgedUpdateDigest: OLD_DIGEST }));
+    expect(await gate.run(apply, [step("apply")])).toEqual({ _tag: "refused" });
+    gate.set(subject({ stagedUpdateDigest: null, acknowledgedUpdateDigest: OLD_DIGEST }));
+    expect(await gate.run(apply, [step("apply")])).toEqual({ _tag: "refused" });
+    expect(calls).toEqual([]);
+    gate.set(subject({ stagedUpdateDigest: OLD_DIGEST, acknowledgedUpdateDigest: OLD_DIGEST }));
+    expect(await gate.run(apply, [step("apply")])).toEqual({ _tag: "done" });
+    // Downloading and discarding stay bound to the installation.
+    gate.set(subject());
+    expect(await gate.run(target, [step("discard")])).toEqual({ _tag: "done" });
+    expect(calls).toEqual(["apply", "discard"]);
   });
 
   it("keeps disable and remove bound to the installation, not its files", async () => {
