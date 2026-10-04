@@ -89,7 +89,7 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
@@ -367,8 +367,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       connectedEnvironments.filter(
         (environment) =>
-          canCreateProjectInEnvironment(environment.connectionState) &&
-          serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot !== undefined,
+          availableScratchWorkspaceRoot(
+            environment.connectionState,
+            serverConfigs.get(environment.environmentId),
+          ) !== null,
       ),
     [connectedEnvironments, serverConfigs],
   );

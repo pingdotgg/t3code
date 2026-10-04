@@ -4396,7 +4396,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       // Keep send disabled until the destination Scratch project is ready.
       setIsEnvironmentChanging(true);
-      void openScratchProject(target.environmentId)
+      void openScratchProject(target.environmentId, "Could not switch machine")
         .then((project) => {
           if (project) retarget(project);
         })
