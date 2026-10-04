@@ -2,6 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import {
   type DesktopPendingSnapShot,
   EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -10,10 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
+  questionAttachmentDraftId,
+  trackOpenQuestionAttachmentDraft,
+} from "../../questionAttachments";
+import {
   beginSnapShotAnimationWhenReady,
   deliverSnapShot,
   dismissFailedSnapShot,
   resolveExistingSnapShotTarget,
+  resolveSnapShotAttachmentTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
 } from "./SnapShotCoordinator";
@@ -224,7 +230,7 @@ describe("window capture delivery", () => {
         item.source,
       );
 
-      const delivery = deliverSnapShot(bridge, item, target);
+      const delivery = deliverSnapShot(bridge, item, () => target);
       await vi.advanceTimersByTimeAsync(0);
 
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
@@ -291,6 +297,113 @@ describe("window capture target resolution", () => {
   });
 });
 
+describe("open question delivery", () => {
+  const threadRef = scopeThreadRef(environmentId, ThreadId.make("question-thread"));
+  const first = questionAttachmentDraftId(environmentId, threadRef.threadId, "request-1", "q1");
+  const second = questionAttachmentDraftId(environmentId, threadRef.threadId, "request-1", "q2");
+  const request = { draftId: first, requestKeys: [first, second] };
+  const capture = {
+    id: "12345678-1234-1234-1234-123456789abc",
+    name: "window.png",
+    mimeType: "image/png" as const,
+    sizeBytes: 3,
+    dataUrl: "data:image/png;base64,AQID",
+    source: {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-09-01T00:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+    },
+  };
+  const makeBridge = (readSnapShot: () => Promise<typeof capture> = async () => capture) => {
+    const acknowledgeSnapShot = vi.fn(async () => undefined);
+    const bridge = { readSnapShot, acknowledgeSnapShot } as unknown as DesktopSnapShotBridge;
+    return { bridge, acknowledgeSnapShot };
+  };
+
+  it("attaches a capture to the open question draft and leaves the thread draft alone", async () => {
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
+    const pins = new Map();
+    const untrack = trackOpenQuestionAttachmentDraft(threadRef, request);
+    try {
+      const { bridge, acknowledgeSnapShot } = makeBridge();
+      await deliverSnapShot(bridge, capture, () =>
+        resolveSnapShotAttachmentTarget(pins, capture.id, threadRef),
+      );
+      const store = useComposerDraftStore.getState();
+      expect(store.getComposerDraft(first)?.images.map(({ id }) => id)).toEqual([capture.id]);
+      expect(store.getComposerDraft(threadRef)?.images ?? []).toHaveLength(0);
+      expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    } finally {
+      untrack();
+    }
+  });
+
+  it("keeps a capture on the question it was pinned to, never a newer one", () => {
+    const pins = new Map();
+    expect(resolveSnapShotAttachmentTarget(pins, "before", threadRef)).toEqual(threadRef);
+    const untrackFirst = trackOpenQuestionAttachmentDraft(threadRef, request);
+    expect(resolveSnapShotAttachmentTarget(pins, "before", threadRef)).toEqual(threadRef);
+    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toBe(first);
+    const untrackSecond = trackOpenQuestionAttachmentDraft(threadRef, {
+      ...request,
+      draftId: second,
+    });
+    // A stale cleanup from the previous question must not drop the newer registration.
+    untrackFirst();
+    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toEqual(threadRef);
+    expect(resolveSnapShotAttachmentTarget(pins, "during-second", threadRef)).toBe(second);
+    untrackSecond();
+    expect(resolveSnapShotAttachmentTarget(pins, "during-second", threadRef)).toEqual(threadRef);
+  });
+
+  it("falls back to the thread draft when the question closes while the capture is read", async () => {
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
+    const pins = new Map();
+    const untrack = trackOpenQuestionAttachmentDraft(threadRef, request);
+    const { bridge, acknowledgeSnapShot } = makeBridge(async () => {
+      untrack();
+      return capture;
+    });
+    const resolveTarget = () => resolveSnapShotAttachmentTarget(pins, capture.id, threadRef);
+    expect(resolveTarget()).toBe(first);
+    await deliverSnapShot(bridge, capture, resolveTarget);
+    const store = useComposerDraftStore.getState();
+    expect(store.getComposerDraft(first)?.images ?? []).toHaveLength(0);
+    expect(store.getComposerDraft(threadRef)?.images.map(({ id }) => id)).toEqual([capture.id]);
+    expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+  });
+
+  it("refuses a capture once the request's other questions hold the shared limit", async () => {
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
+    useComposerDraftStore.getState().addImages(
+      first,
+      Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
+        type: "image" as const,
+        id: `staged-${index}`,
+        name: `staged-${index}.png`,
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUrl: `data:image/png;base64,AQID${index}`,
+        file: new File([new Uint8Array([1, 2, 3])], `staged-${index}.png`, { type: "image/png" }),
+      })),
+    );
+    const untrack = trackOpenQuestionAttachmentDraft(threadRef, { ...request, draftId: second });
+    try {
+      const { bridge, acknowledgeSnapShot } = makeBridge();
+      await expect(deliverSnapShot(bridge, capture, () => second)).rejects.toThrow(
+        "Remove an attachment",
+      );
+      expect(useComposerDraftStore.getState().getComposerDraft(second)?.images ?? []).toHaveLength(
+        0,
+      );
+      expect(acknowledgeSnapShot).not.toHaveBeenCalled();
+    } finally {
+      untrack();
+    }
+  });
+});
+
 describe("durable snapshot delivery", () => {
   it.each([false, true])(
     "retains a capture on quota failure and retries without duplicates (staged: %s)",
@@ -330,7 +443,7 @@ describe("durable snapshot delivery", () => {
           });
           void store.syncPersistedAttachments(target, [capture]);
         }
-        await expect(deliverSnapShot(bridge, capture, target)).rejects.toThrow(
+        await expect(deliverSnapShot(bridge, capture, () => target)).rejects.toThrow(
           "could not be saved",
         );
         expect(acknowledgeSnapShot).not.toHaveBeenCalled();
@@ -338,7 +451,7 @@ describe("durable snapshot delivery", () => {
           useComposerDraftStore.getState().getComposerDraft(target)?.nonPersistedImageIds,
         ).toContain(capture.id);
         storage.setItem.mockImplementation(write);
-        await deliverSnapShot(bridge, capture, target);
+        await deliverSnapShot(bridge, capture, () => target);
         expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
         expect(useComposerDraftStore.getState().getComposerDraft(target)?.images).toHaveLength(1);
         expect(

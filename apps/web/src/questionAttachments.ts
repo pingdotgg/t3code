@@ -1,4 +1,5 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
@@ -19,6 +20,40 @@ export function questionAttachmentDraftId(
   return DraftId.make(
     `${questionAttachmentDraftPrefix(environmentId, threadId)}${encodeURIComponent(JSON.stringify([requestId, questionId]))}`,
   );
+}
+
+export type OpenQuestionAttachmentDraft = {
+  readonly draftId: DraftId;
+  /** Every question draft of the request, since they share one attachment limit. */
+  readonly requestKeys: ReadonlyArray<DraftId>;
+};
+
+const openQuestionDrafts = new Map<string, OpenQuestionAttachmentDraft>();
+
+/** The question draft taking attachments on a thread, so SnapShots land where dropped files do. */
+export function openQuestionAttachmentDraft(
+  threadRef: ScopedThreadRef,
+): OpenQuestionAttachmentDraft | null {
+  return openQuestionDrafts.get(scopedThreadKey(threadRef)) ?? null;
+}
+
+/** Attachments staged or preparing across the request a question draft answers; 0 for other drafts. */
+export function countQuestionRequestAttachments(draftId: DraftId): number {
+  for (const draft of openQuestionDrafts.values()) {
+    if (draft.draftId === draftId) return countQuestionAttachments(draft.requestKeys);
+  }
+  return 0;
+}
+
+export function trackOpenQuestionAttachmentDraft(
+  threadRef: ScopedThreadRef,
+  draft: OpenQuestionAttachmentDraft,
+): () => void {
+  const key = scopedThreadKey(threadRef);
+  openQuestionDrafts.set(key, draft);
+  return () => {
+    if (openQuestionDrafts.get(key) === draft) openQuestionDrafts.delete(key);
+  };
 }
 
 export const useQuestionAttachmentPreparation = create<{ counts: Record<string, number> }>(() => ({
