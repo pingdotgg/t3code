@@ -28,9 +28,11 @@
  * 4. Replay the captured Exit so typed body failures still surface and
  *    successes still return their value.
  *
- * The helper deliberately logs teardown causes at `Warning` level —
- * silently swallowing them is dangerous because they usually indicate a
- * real bug in a downstream Layer's finalizer.
+ * The helper logs teardown causes at `Debug` level — auditable via a
+ * debug log, but silent on normal boots. The sole caller is the Codex
+ * provider probe, whose short-lived `codex app-server` child routinely
+ * exits before the kill finalizer runs; a `Warning` for that fires on
+ * every healthy boot and buries real warnings.
  *
  * @module provider/Layers/scopedSafeTeardown
  */
@@ -54,7 +56,7 @@ export const scopedSafeTeardown =
       const bodyExit = yield* effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.exit);
       yield* Scope.close(scope, Exit.void).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning(`${label} teardown errored; preserving body result`, cause),
+          Effect.logDebug(`${label} teardown errored; preserving body result`, cause),
         ),
       );
       return yield* bodyExit;

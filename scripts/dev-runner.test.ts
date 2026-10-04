@@ -23,6 +23,7 @@ import {
   resolveOffset,
   stopAllDevEnvironments,
   stopDevEnvironment,
+  warmupDevWebServer,
   writeDevRunnerPidFile,
 } from "./dev-runner.ts";
 
@@ -1153,4 +1154,57 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       assert.throws(() => buildDevRunnerArgs("stop", []), /stop/);
     });
   });
+});
+
+describe("warmupDevWebServer", () => {
+  it.effect("returns after the first successful response", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      yield* warmupDevWebServer({
+        url: "http://127.0.0.1:9/",
+        fetchImpl: async () => {
+          calls += 1;
+          return { arrayBuffer: async () => new ArrayBuffer(0) };
+        },
+        pollIntervalMs: 1,
+        timeoutMs: 1000,
+      });
+      assert.strictEqual(calls, 1);
+    }),
+  );
+
+  // Real timers: the warmup polls with `Effect.sleep`, which the default
+  // `TestClock` in `it.effect` never advances on its own.
+  it.live("keeps polling through connection refusals until the server answers", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      yield* warmupDevWebServer({
+        url: "http://127.0.0.1:9/",
+        fetchImpl: async () => {
+          calls += 1;
+          if (calls < 3) throw new Error("ECONNREFUSED");
+          return { arrayBuffer: async () => new ArrayBuffer(0) };
+        },
+        pollIntervalMs: 1,
+        timeoutMs: 1000,
+      });
+      assert.strictEqual(calls, 3);
+    }),
+  );
+
+  it.live("gives up quietly when the server never answers", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      yield* warmupDevWebServer({
+        url: "http://127.0.0.1:9/",
+        fetchImpl: async () => {
+          calls += 1;
+          throw new Error("ECONNREFUSED");
+        },
+        pollIntervalMs: 5,
+        timeoutMs: 30,
+      });
+      assert.isTrue(calls >= 1);
+    }),
+  );
 });
