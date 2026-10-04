@@ -36,6 +36,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
@@ -119,6 +120,7 @@ import {
 } from "~/components/files/projectFilesQueryState";
 
 import { usePanelHost } from "../panelHost";
+import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
 
 interface FilesSidePanelProps {
   cwd: string;
@@ -1042,6 +1044,16 @@ export default function FilesSidePanel({
     (path: string) => useRightPanelStore.getState().openFile(threadRef, path),
     [threadRef],
   );
+  // Menu and browser actions settle late; they are dropped once the host moves
+  // to another thread or draft, never applied to the newer one.
+  const isScopeCurrent = useScopeLifetime(
+    `${scopedThreadKey(threadRef)}|${
+      typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget)
+    }`,
+  );
+  const addToChat = useScopedComposerInsert(isScopeCurrent);
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   // A draft's composer target is its draft id; a thread the server knows is a ref.
@@ -1203,13 +1215,15 @@ export default function FilesSidePanel({
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
+        isScopeCurrent,
         filePath: absolutePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
         openPreview,
       });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+      // Errors are reported only to the visit that started the open.
+      if (result._tag === "Success" || isAtomCommandInterrupted(result) || !isScopeCurrent()) {
         return;
       }
       const error = squashAtomCommandFailure(result);
@@ -1228,6 +1242,7 @@ export default function FilesSidePanel({
     createAssetUrl,
     cwd,
     environmentHttpBaseUrl,
+    isScopeCurrent,
     openPreview,
     threadRef,
   ]);
@@ -1495,6 +1510,7 @@ export default function FilesSidePanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
+              addToChat={addToChat}
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
