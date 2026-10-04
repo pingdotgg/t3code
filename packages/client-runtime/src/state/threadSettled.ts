@@ -95,7 +95,7 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
  * the user's snooze: the agent is blocked on them (approval / user input),
- * the session failed, or a run completed after the snooze was set — the
+ * or a run failed or completed after the snooze was set — the
  * v1 taste of event-based snooze ("something happened" wakes early).
  * Raising a hand never clears the server-side snooze fields; it only stops
  * the thread from classifying as snoozed.
@@ -103,27 +103,41 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   const runtime = shell.runtime ?? shell.session ?? null;
-  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
   // Only a FRESH failure raises the hand: a thread snoozed while already
   // failed stays snoozed — that snooze was the user saying "I saw it, not
-  // now". session.updatedAt stamps the status edge, so an error newer than
-  // the snooze is new information.
-  if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
-    (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
-  ) {
+  // now".
+  if ((runtime?.status === "error" || runtime?.status === "failed") && shell.snoozedAt == null) {
     return true;
   }
-  if (
+  if (snoozeWakingRunEndedAt(shell) !== null) return true;
+  // Legacy session-shaped shells stamp the status edge on session.updatedAt,
+  // so an error newer than the snooze is new information. Runtime shells
+  // carry projection activity time there instead, which any later event
+  // (a rename, title regeneration) advances without a new failure.
+  return (
+    shell.runtime == null &&
+    shell.session?.status === "error" &&
+    shell.session.updatedAt != null &&
     shell.snoozedAt != null &&
-    (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-    latestRun.completedAt != null &&
-    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return true;
-  }
-  return false;
+    Date.parse(shell.session.updatedAt) > Date.parse(shell.snoozedAt)
+  );
+}
+
+/**
+ * The latest run's end time when that run completed, or failed while the
+ * runtime is failed, strictly after the snooze was set. Mirrors the server's
+ * auto-settlement wake rule, so equal timestamps stay parked.
+ */
+function snoozeWakingRunEndedAt(shell: ThreadSnoozeShell): string | null {
+  if (shell.snoozedAt == null) return null;
+  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  if (latestRun?.completedAt == null) return null;
+  const runCompleted = latestRun.state === "completed" || latestRun.status === "completed";
+  const runFailed = shell.runtime?.status === "failed" && latestRun.status === "failed";
+  if (!runCompleted && !runFailed) return null;
+  return Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
+    ? latestRun.completedAt
+    : null;
 }
 
 /**
@@ -194,17 +208,8 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
     const runtime = shell.runtime ?? shell.session ?? null;
-    if (
-      shell.snoozedAt != null &&
-      (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-      latestRun.completedAt != null &&
-      Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-    ) {
-      return latestRun.completedAt;
-    }
-    return runtime?.updatedAt ?? shell.snoozedAt ?? null;
+    return snoozeWakingRunEndedAt(shell) ?? runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
