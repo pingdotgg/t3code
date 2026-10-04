@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   type EnvironmentApi,
   type ClientOrchestrationCommand,
+  type OrchestrationEvent,
   type MessageId,
   type OrchestrationReadModel,
   type PreviewSessionSnapshot,
@@ -36,6 +37,7 @@ import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
+  readEnvironmentApi,
 } from "../environmentApi";
 import {
   resetSavedEnvironmentRegistryStoreForTests,
@@ -60,6 +62,7 @@ import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
   selectBootstrapCompleteForActiveEnvironment,
+  selectThreadByRef,
   type EnvironmentState,
   useStore,
 } from "../store";
@@ -74,6 +77,7 @@ import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers"
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { applyEnvironmentThreadDetailEvent } from "../environments/runtime/service";
 
 vi.mock("../env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../env")>()),
@@ -2834,6 +2838,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
     { outcome: "accepted", editDraft: false },
     { outcome: "rejected", editDraft: true },
     { outcome: "rejected", editDraft: false },
+    { outcome: "lost-receipt-queued", editDraft: true },
+    { outcome: "lost-receipt-queued", editDraft: false },
+    { outcome: "lost-receipt-dispatched", editDraft: true },
+    { outcome: "lost-receipt-dispatched", editDraft: false },
   ] as const)(
     "shows a queued message immediately before a delayed $outcome receipt (editDraft=$editDraft)",
     async ({ outcome, editDraft }) => {
@@ -2868,8 +2876,28 @@ describe("ChatView timeline estimator parity (full app)", () => {
         viewport: DEFAULT_VIEWPORT,
         snapshot,
         resolveRpc: (body) =>
-          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand ? dispatchPromise : undefined,
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand
+            ? outcome.startsWith("lost-receipt")
+              ? { sequence: snapshot.snapshotSequence + 1 }
+              : dispatchPromise
+            : undefined,
       });
+      let dispatchOperation: Promise<{ sequence: number }> | undefined;
+      if (outcome.startsWith("lost-receipt")) {
+        const api = readEnvironmentApi(LOCAL_ENVIRONMENT_ID)!;
+        __setEnvironmentApiOverrideForTests(LOCAL_ENVIRONMENT_ID, {
+          ...api,
+          orchestration: {
+            ...api.orchestration,
+            dispatchCommand: (command) => {
+              dispatchOperation = api.orchestration
+                .dispatchCommand(command)
+                .then(() => dispatchPromise);
+              return dispatchOperation;
+            },
+          },
+        });
+      }
       try {
         const editor = page.getByTestId("composer-editor");
         await editor.fill("Immediate follow-up");
@@ -2898,6 +2926,102 @@ describe("ChatView timeline estimator parity (full app)", () => {
           await expect
             .element(editor)
             .toHaveTextContent(editDraft ? "Newer draft must survive" : "Immediate follow-up");
+          return;
+        }
+        if (outcome === "lost-receipt-queued" || outcome === "lost-receipt-dispatched") {
+          await vi.waitFor(() => {
+            expect(wsRequests.some((request) => request.type === "thread.queued-turn.create")).toBe(
+              true,
+            );
+          });
+          const request = wsRequests.find(
+            (request) => request.type === "thread.queued-turn.create",
+          ) as unknown as Extract<
+            ClientOrchestrationCommand,
+            { type: "thread.queued-turn.create" }
+          >;
+          const eventBase = {
+            sequence: snapshot.snapshotSequence + 1,
+            eventId: EventId.make(`queue-${outcome}`),
+            aggregateKind: "thread" as const,
+            aggregateId: THREAD_ID,
+            occurredAt: NOW_ISO,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+          };
+          const committedEvent: OrchestrationEvent =
+            outcome === "lost-receipt-dispatched"
+              ? {
+                  ...eventBase,
+                  type: "thread.message-sent",
+                  payload: {
+                    threadId: THREAD_ID,
+                    messageId: request.message.messageId,
+                    role: "user",
+                    text: "Immediate follow-up",
+                    turnId: null,
+                    streaming: false,
+                    createdAt: NOW_ISO,
+                    updatedAt: NOW_ISO,
+                  },
+                }
+              : {
+                  ...eventBase,
+                  type: "thread.queued-turn-created",
+                  payload: {
+                    threadId: THREAD_ID,
+                    queuedTurn: {
+                      id: request.queuedTurnId,
+                      threadId: THREAD_ID,
+                      message: {
+                        messageId: request.message.messageId,
+                        role: "user",
+                        text: "Immediate follow-up",
+                        attachments: [],
+                      },
+                      runtimeMode: "full-access",
+                      interactionMode: "default",
+                      createdAt: NOW_ISO,
+                      updatedAt: NOW_ISO,
+                      queuePosition: 0,
+                      failedAt: null,
+                      failureMessage: null,
+                    },
+                  },
+                };
+          // Model independent committed-event delivery at the production event
+          // application boundary while the unary receipt remains unresolved.
+          applyEnvironmentThreadDetailEvent(committedEvent, LOCAL_ENVIRONMENT_ID);
+          await vi.waitFor(() => {
+            const thread = selectThreadByRef(useStore.getState(), THREAD_REF);
+            expect(
+              outcome === "lost-receipt-dispatched"
+                ? thread?.messages.some((message) => message.id === request.message.messageId)
+                : thread?.queuedTurns?.some((turn) => turn.id === request.queuedTurnId),
+            ).toBe(true);
+          });
+          // The server event is authoritative before the RPC receipt is lost.
+          rejectDispatch(new Error("Queue receipt lost after commit"));
+          await dispatchOperation!.catch(() => undefined);
+          await vi.waitFor(
+            () => {
+              expect(composerDraftFor(THREAD_ID)?.prompt ?? "").toBe(
+                editDraft ? "Newer draft must survive" : "",
+              );
+            },
+            { timeout: 2_000 },
+          );
+          await expect
+            .element(editor)
+            .toHaveTextContent(editDraft ? "Newer draft must survive" : "");
+          expect(selectThreadByRef(useStore.getState(), THREAD_REF)?.error).toBeFalsy();
+          expect(
+            [...document.querySelectorAll("li")].filter((li) =>
+              li.textContent?.includes("Immediate follow-up"),
+            ),
+          ).toHaveLength(outcome === "lost-receipt-dispatched" ? 0 : 1);
           return;
         }
         resolveDispatch({ sequence: snapshot.snapshotSequence + 1 });

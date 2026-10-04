@@ -3572,6 +3572,21 @@ function ChatViewBody(
       const messageId = newMessageId();
       const createdAt = new Date().toISOString();
       const originalDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const finishQueuedSubmission = () => {
+        usePendingTurnStore.getState().acceptOptimisticQueuedTurn(routeThreadRef, queuedTurnId);
+        const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        if (
+          currentDraft?.prompt === originalDraft?.prompt &&
+          currentDraft?.images === originalDraft?.images &&
+          currentDraft?.terminalContexts === originalDraft?.terminalContexts &&
+          currentDraft?.threadContexts === originalDraft?.threadContexts &&
+          currentDraft?.previewAnnotations === originalDraft?.previewAnnotations
+        ) {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        }
+      };
       try {
         const composerImagesSnapshot = [...composerImages];
         const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -3651,7 +3666,7 @@ function ChatViewBody(
           interactionMode,
           createdAt,
         });
-        usePendingTurnStore.getState().acceptOptimisticQueuedTurn(routeThreadRef, queuedTurnId);
+        finishQueuedSubmission();
         if (expiredTerminalContextCount > 0) {
           const toastCopy = buildExpiredTerminalContextToastCopy(
             expiredTerminalContextCount,
@@ -3665,18 +3680,6 @@ function ChatViewBody(
             }),
           );
         }
-        const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-        if (
-          currentDraft?.prompt === originalDraft?.prompt &&
-          currentDraft?.images === originalDraft?.images &&
-          currentDraft?.terminalContexts === originalDraft?.terminalContexts &&
-          currentDraft?.threadContexts === originalDraft?.threadContexts &&
-          currentDraft?.previewAnnotations === originalDraft?.previewAnnotations
-        ) {
-          promptRef.current = "";
-          clearComposerDraftContent(composerDraftTarget);
-          composerRef.current?.resetCursorState();
-        }
       } catch (err) {
         const authoritative = selectThreadByRef(useStore.getState(), routeThreadRef);
         // A lost receipt after the event arrived is not a rejected queue.
@@ -3684,7 +3687,7 @@ function ChatViewBody(
           authoritative?.queuedTurns?.some((turn) => turn.id === queuedTurnId) ||
           authoritative?.messages.some((message) => message.id === messageId)
         ) {
-          usePendingTurnStore.getState().acceptOptimisticQueuedTurn(routeThreadRef, queuedTurnId);
+          finishQueuedSubmission();
           return;
         }
         usePendingTurnStore
