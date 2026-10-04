@@ -167,8 +167,7 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    !sharedDisplayNames.includes(sharedTitle)
   ) {
     return sharedTitle;
   }

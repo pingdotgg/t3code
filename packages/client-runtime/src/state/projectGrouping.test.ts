@@ -147,14 +147,57 @@ describe("buildProjectGroups", () => {
     );
   });
 
-  it("keeps the repository label when shared titles match its repository name", () => {
+  it("keeps a shared rename to the plain repository name instead of the display path", () => {
+    const gitlabIdentity = {
+      ...repositoryIdentity,
+      canonicalKey: "gitlab.com/group/subgroup/repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://gitlab.com/group/subgroup/repo.git",
+      },
+      provider: "gitlab",
+      owner: "group/subgroup",
+      name: "repo",
+      displayName: "group/subgroup/repo",
+    };
     const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
+      makeProject("first", "/work/repo", { title: "repo", repositoryIdentity: gitlabIdentity }),
+      makeProject("second", "/work/repo-2", { title: "repo", repositoryIdentity: gitlabIdentity }),
     ];
 
     expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
+      "repo",
+    );
+  });
+
+  it("falls back to the display path when grouped member titles diverge", () => {
+    const gitlabIdentity = {
+      ...repositoryIdentity,
+      canonicalKey: "gitlab.com/group/subgroup/repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://gitlab.com/group/subgroup/repo.git",
+      },
+      provider: "gitlab",
+      owner: "group/subgroup",
+      name: "repo",
+      displayName: "group/subgroup/repo",
+    };
+    const projects = [
+      makeProject("first", "/work/repo", {
+        title: "local-checkout",
+        repositoryIdentity: gitlabIdentity,
+      }),
+      makeProject("second", "/work/repo-2", {
+        title: "remote-checkout",
+        repositoryIdentity: gitlabIdentity,
+      }),
+    ];
+
+    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+      "group/subgroup/repo",
     );
   });
 

@@ -1,7 +1,11 @@
 export function projectGroupTitleNeedsUpdate(
-  memberTitles: ReadonlyArray<string>,
-  nextTitle: string,
+  _memberTitles: ReadonlyArray<string>,
+  _nextTitle: string,
   wasEdited: boolean,
 ): boolean {
-  return wasEdited && memberTitles.some((title) => title !== nextTitle);
+  // The settings field shows the derived group label, so an explicit edit is
+  // always a rename the user expects to stick — even when every member title
+  // already equals the next title (e.g. stripping "group/subgroup/" down to
+  // "repo"). Untouched blurs still skip the fan-out via wasEdited.
+  return wasEdited;
 }
