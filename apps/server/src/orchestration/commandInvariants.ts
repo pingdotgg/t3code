@@ -201,6 +201,27 @@ export function threadHasQueuedTurnStart(
 }
 
 /**
+ * What `thread.settle` refuses: active work, a prompt the provider has not
+ * adopted yet, an unanswered approval or input request, or a session that
+ * needs attention. Shared with the merge reactor so its pre-dispatch check
+ * cannot drift from the decider and turn every sweep into a failed dispatch.
+ */
+export function threadBlocksSettlement(
+  thread: OrchestrationThread,
+  options: { readonly now: string },
+): boolean {
+  const hasActiveTurn =
+    thread.latestTurn?.state === "running" ||
+    (thread.session?.status === "running" && thread.session.activeTurnId !== null);
+  return (
+    hasActiveTurn ||
+    threadHasQueuedTurnStart(thread, options) ||
+    threadHasPendingInteraction(thread) ||
+    thread.session?.status === "error"
+  );
+}
+
+/**
  * `settledAt` is written exactly when `settledOverride` becomes "settled", so
  * the override alone decides whether real activity must reset the lifecycle:
  * a settled thread wakes, and a user-pinned "active" thread unpins.
