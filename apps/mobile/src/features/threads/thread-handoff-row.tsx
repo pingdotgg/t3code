@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveHandoffEndpoints } from "@t3tools/client-runtime/handoff";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -13,7 +17,7 @@ import { Fragment, useMemo } from "react";
 import { Alert, Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
@@ -38,6 +42,7 @@ export function ThreadHandoffRow(props: {
   environmentId: EnvironmentId;
   projectedItem: OrchestrationV2ProjectedTurnItem;
   iconColor: ColorValue;
+  surfaceColor: string;
 }) {
   const { item } = props.projectedItem;
   const endpointsAtom = useMemo(
@@ -48,6 +53,7 @@ export function ThreadHandoffRow(props: {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;
+  const endpointProps = { providers: config?.providers ?? [], surfaceColor: props.surfaceColor };
   return (
     <ThreadContextDivider
       label="Context handoff"
@@ -63,13 +69,13 @@ export function ThreadHandoffRow(props: {
                 ,
               </Text>
             ) : null}
-            <HandoffEndpoint {...endpoint} providers={config?.providers ?? []} />
+            <HandoffEndpoint {...endpoint} {...endpointProps} />
           </Fragment>
         ))}
         {endpoints.from.length > 0 ? (
           <SymbolView name="arrow.right" size={12} tintColor={color} />
         ) : null}
-        <HandoffEndpoint {...endpoints.to} providers={config?.providers ?? []} />
+        <HandoffEndpoint {...endpoints.to} {...endpointProps} />
       </View>
     </ThreadContextDivider>
   );
@@ -79,6 +85,7 @@ function HandoffEndpoint(props: {
   instanceId: ProviderInstanceId;
   model?: string | undefined;
   providers: ReadonlyArray<ServerProvider>;
+  surfaceColor: string;
 }) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === props.model);
@@ -87,12 +94,21 @@ function HandoffEndpoint(props: {
     model?.name ??
     props.model ??
     (provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId);
+  const accentColor = normalizeProviderAccentColor(provider?.accentColor);
+  // Same account badge as the thread rows: a handoff between two accounts of
+  // one provider would otherwise show the same glyph on both sides.
+  const showBadge =
+    provider !== undefined &&
+    shouldShowInstanceBadge(
+      { driverKind: provider.driver, accentColor },
+      props.providers.map((candidate) => ({ driverKind: candidate.driver })),
+    );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint="Show provider account"
-      className="min-h-6 max-w-full flex-row items-center justify-center gap-1"
+      className="min-h-6 max-w-full flex-row items-center justify-center gap-1.5"
       hitSlop={{ top: 8, bottom: 8 }}
       onPress={() =>
         Alert.alert(
@@ -101,11 +117,23 @@ function HandoffEndpoint(props: {
         )
       }
     >
-      <ProviderIcon
-        provider={provider?.driver ?? props.instanceId}
-        iconUrl={provider?.iconUrl}
-        size={12}
-      />
+      {showBadge && provider !== undefined ? (
+        <ProviderInstanceIcon
+          provider={provider.driver}
+          iconUrl={provider.iconUrl}
+          size={14}
+          displayName={resolveProviderInstanceDisplayName(provider)}
+          accentColor={accentColor}
+          showBadge
+          surfaceColor={props.surfaceColor}
+        />
+      ) : (
+        <ProviderIcon
+          provider={provider?.driver ?? props.instanceId}
+          iconUrl={provider?.iconUrl}
+          size={12}
+        />
+      )}
       <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
         {label}
       </Text>
