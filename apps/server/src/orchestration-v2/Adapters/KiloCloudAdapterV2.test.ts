@@ -2352,6 +2352,8 @@ it.effect.each(["start", "stop"] as const)(
               providerTurnId: (yield* harness.journal.read)[0]!.providerTurn.id,
             })
       ).pipe(Effect.forkScoped);
+      // Release before the fork's interrupt finalizer if an assertion fails.
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
       yield* Deferred.await(committed);
       assert.equal((yield* harness.journal.read)[0]!.state, "failed");
       yield* TestClock.adjust("8 seconds");
