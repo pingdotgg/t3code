@@ -105,6 +105,7 @@ import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
 import { observeIntersection } from "~/lib/observeIntersection";
+import { reviewDiffViewerKey } from "./diffs/reviewFileDiffRetention";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
@@ -598,6 +599,8 @@ export default function DiffPanel({
     ...matchingBaseRefChoices.map(valueForBaseRefChoice),
   ];
   const {
+    scope: filePatchScope,
+    family: filePatchFamily,
     isPending: areFilePatchesPending,
     fileStates,
     retry,
@@ -1450,7 +1453,7 @@ export default function DiffPanel({
                     projectId={activeThread?.projectId}
                     viewerRef={attachCodeView}
                     onScroll={codeViewScroll.onScroll}
-                    codeViewKey={codeViewMountKey}
+                    codeViewKey={reviewDiffViewerKey(codeViewMountKey, lazySource ? filePatchFamily : null)}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}

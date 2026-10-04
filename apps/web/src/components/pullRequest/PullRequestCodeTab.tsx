@@ -126,6 +126,7 @@ import {
   isFileDiffCollapsed,
   isLineInFileDiff,
   withFileDiffFold,
+  retainReviewDiffSlices,
   type DiffFoldOverride,
   type FileDiffFoldChoices,
 } from "./pullRequestDiff.logic";
@@ -539,14 +540,16 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  // Reread the first page and the viewed ticks. The pages already on screen stay until that
+  // page arrives: blanking them remounts the viewer and sends the reader back to the top,
+  // including on every agent turn.
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    // An equal refetch keeps the answer's identity, so the emptied slices refill only if the
-    // applied page is forgotten too.
+    setSliceState((previous) => retainReviewDiffSlices(previous, scopeKey));
+    // An equal refetch keeps the answer's identity, so forget the applied page to reapply it.
     setAppliedPage(null);
     refreshFirstDiffPage();
     refreshFilesViewed();
