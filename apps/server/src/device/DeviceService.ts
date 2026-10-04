@@ -299,14 +299,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     lifecycleLock.withPermit,
   );
 
+  // The local host only starts its hub when at least one platform can run there.
+  const cannotRunLocally = (summary: DeviceHostSummary) =>
+    summary.kind === "local" && !summary.platforms.some((platform) => platform.available);
+
   const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
     "DeviceService.readinessIfSupported",
   )(function* (hostId) {
     if (!(yield* readDeviceSettings).enabled) return null;
     const host = yield* resolveHost(hostId);
     const summary = yield* host.summary;
-    if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
-      return null;
+    if (cannotRunLocally(summary)) return null;
     return yield* readiness(host.id);
   });
 
@@ -316,8 +319,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       if (!deviceSettings.enabled || !deviceSettings.agentAccessEnabled) return null;
       const host = yield* resolveHost(hostId);
       const summary = yield* host.summary;
-      if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
-        return null;
+      if (cannotRunLocally(summary)) return null;
       const ready = yield* host
         .ensureAgentReady((phase, detail) =>
           setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
@@ -455,8 +457,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       hosts.values(),
       (host) =>
         Effect.gen(function* () {
-          const ready = yield* readinessIfSupported(host.id);
-          if (ready) yield* refresh(ready);
+          const summary = yield* host.summary;
+          // The probe can be slow; device support may have been turned off meanwhile.
+          if (!(yield* readDeviceSettings).enabled) return;
+          if (!cannotRunLocally(summary)) {
+            yield* refresh(yield* readiness(host.id));
+            return;
+          }
+          // A host with nothing it can run never starts, so republish its platform
+          // reasons here; otherwise a refresh keeps showing the reasons from before.
+          yield* publish((state) => ({
+            ...state,
+            hosts: state.hosts.map((candidate) =>
+              candidate.id === summary.id ? summary : candidate,
+            ),
+          }));
         }).pipe(
           Effect.catch((error) =>
             setHostStatus(host.id, {

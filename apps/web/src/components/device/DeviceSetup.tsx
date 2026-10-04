@@ -21,6 +21,20 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+/**
+ * Whether platform checks have results to show: the hub is ready, or no platform can run
+ * here, so the hub never starts and each platform's reason is all there is to show.
+ */
+export function platformStatusesKnown(state: DeviceServiceState) {
+  const platforms = state.hosts.flatMap((host) => host.platforms);
+  return (
+    state.hostStatus === "ready" ||
+    (state.hostStatus === "idle" &&
+      platforms.length > 0 &&
+      platforms.every((platform) => !platform.available))
+  );
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
   const availability = state.hosts
     .flatMap((host) => host.platforms)
@@ -175,7 +189,11 @@ export function DeviceSetup(props: {
         )}
         {step < 2 ? (
           <Button
-            disabled={props.state.hostStatus !== "ready" || pending !== null}
+            disabled={
+              (step === 0
+                ? !platformStatusesKnown(props.state)
+                : props.state.hostStatus !== "ready") || pending !== null
+            }
             onClick={() => setStep(step + 1)}
           >
             Continue

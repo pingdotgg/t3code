@@ -25,7 +25,6 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -33,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -99,14 +99,51 @@ interface RunningHost {
   readonly helpers: DeviceHost.DeviceHostReady["helpers"];
 }
 
+/**
+ * Explains why a platform cannot run here, or returns null when it can.
+ *
+ * iOS runs `xcrun simctl help` instead of checking that `xcrun` exists: when
+ * `xcode-select` points at Command Line Tools, `xcrun` exists but cannot find
+ * `simctl`. The SSH host script runs the same probe on remote Macs.
+ */
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
-): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  string | null,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const hostPlatform = yield* HostProcessPlatform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
-    if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
-    return null;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const simctl = yield* runner
+      .run({ command: "xcrun", args: ["simctl", "help"], timeout: Duration.seconds(15) })
+      .pipe(Effect.result);
+    if (simctl._tag === "Failure") {
+      const failure = simctl.failure;
+      return failure._tag === "ProcessSpawnError" &&
+        failure.cause instanceof PlatformError.PlatformError &&
+        failure.cause.reason._tag === "NotFound"
+        ? "Xcode command line tools were not found."
+        : `Could not run xcrun simctl: ${failure.message}`;
+    }
+    const { code, stderr } = simctl.success;
+    if (code === 0) return null;
+    if (stderr.includes('unable to find utility "simctl"')) {
+      // Name the Xcode bundle in /Applications when there is one, such as Xcode-beta.app.
+      // Otherwise Xcode may be missing or live elsewhere, so cover both without a path.
+      const applications = yield* (yield* FileSystem.FileSystem)
+        .readDirectory("/Applications")
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const xcodes = applications.filter((name) => /^Xcode.*\.app$/.test(name));
+      const xcode = xcodes.includes("Xcode.app") ? "Xcode.app" : xcodes.toSorted()[0];
+      const developerDir = `/Applications/${xcode}/Contents/Developer`;
+      return xcode
+        ? `xcrun cannot find simctl because xcode-select points at Command Line Tools, not ${xcode}. Run sudo xcode-select -s ${/\s/.test(developerDir) ? `"${developerDir}"` : developerDir}, adjusting the path if Xcode lives elsewhere, then check again.`
+        : "xcrun cannot find simctl because xcode-select points at Command Line Tools. Install Xcode, or if it is installed outside /Applications, run sudo xcode-select -s with its Contents/Developer path, then check again.";
+    }
+    return `xcrun simctl failed: ${stderr.trim() || `exit code ${code}`}`;
   }
   const sdk = yield* androidSdk;
   if (!sdk.root)
@@ -222,6 +259,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });

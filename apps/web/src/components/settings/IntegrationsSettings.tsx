@@ -55,6 +55,7 @@ import {
   DeviceHubSetupStatus,
   PlatformStatus,
   platformSetupStatus,
+  platformStatusesKnown,
   deviceHubDescription,
   agentDeviceDescription,
 } from "~/components/device/DeviceSetup";
@@ -649,7 +650,7 @@ function DeviceIntegrationControls({
   const [platformsRevealed, setPlatformsRevealed] = useState(false);
   // Keep diagnostics visible through subsequent agent setup and refresh phases.
   if (platformsRevealed && !enabled) setPlatformsRevealed(false);
-  if (enabled && !platformsRevealed && state.hostStatus === "ready" && pending !== "hub") {
+  if (enabled && !platformsRevealed && platformStatusesKnown(state) && pending !== "hub") {
     setPlatformsRevealed(true);
   }
 
