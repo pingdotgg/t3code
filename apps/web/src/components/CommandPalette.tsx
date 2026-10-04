@@ -1,5 +1,7 @@
 "use client";
 
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -2408,7 +2410,7 @@ function OpenCommandPaletteDialog(props: {
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
-        if (latestThread && latestThread.settledOverride !== "settled") {
+        if (latestThread && !isFiledAsSettled(latestThread)) {
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(

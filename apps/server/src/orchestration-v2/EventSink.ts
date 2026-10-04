@@ -1,5 +1,7 @@
 import {
   CommandId,
+  EventId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -305,6 +307,47 @@ const baseLayer: Layer.Layer<
         });
       });
 
+    // Persist cancellation beside the attention event, before publishing either.
+    // Replay therefore cannot resurrect an intent that hid failed or blocked work.
+    const cancelAttentionIntents = Effect.fn("EventSink.cancelAttentionIntents")(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
+      const threads = new Map<ThreadId, OrchestrationV2AppThread>();
+      const result: Array<OrchestrationV2DomainEvent> = [];
+      const cancelled = new Set<ThreadId>();
+      for (let event of events) {
+        if ("settledOverride" in event.payload && cancelled.has(event.threadId)) {
+          event = {
+            ...event,
+            payload: { ...event.payload, settleWhenIdleAt: null },
+          } as OrchestrationV2DomainEvent;
+        }
+        result.push(event);
+        if ("settledOverride" in event.payload) threads.set(event.threadId, event.payload);
+        const needsAttention =
+          (event.type === "runtime-request.updated" && event.payload.status === "pending") ||
+          (event.type === "run.updated" &&
+            ["failed", "interrupted", "cancelled", "rolled_back"].includes(event.payload.status)) ||
+          (event.type === "provider-session.updated" && event.payload.status === "error");
+        if (!needsAttention) continue;
+        const thread =
+          threads.get(event.threadId) ?? (yield* projectionStore.getThread(event.threadId));
+        if (thread.settleWhenIdleAt == null) continue;
+        const payload = { ...thread, settleWhenIdleAt: null, updatedAt: event.occurredAt };
+        threads.set(event.threadId, payload);
+        cancelled.add(event.threadId);
+        result.push({
+          id: EventId.make(`${event.id}:cancel-settle-when-idle`),
+          type: "thread.settle-when-idle-set",
+          threadId: event.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: event.occurredAt,
+          payload,
+        });
+      }
+      return result;
+    });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -325,7 +368,7 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
         { concurrency: 1 },
-      );
+      ).pipe(Effect.flatMap(cancelAttentionIntents));
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>

@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   animateSidebarLayoutChanges,
+  applySidebarThreadDrop,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -73,6 +74,28 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+it("a settled drag keeps background work filed until completion, and dragging back cancels it", () => {
+  const now = "2026-10-04T12:00:00.000Z";
+  const thread = {
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    snoozedAt: null,
+    snoozedUntil: null,
+    settledAt: null,
+    settledOverride: null,
+    unsettledAt: null,
+    settleWhenIdleAt: null,
+    pendingBackgroundTasks: [{ taskId: "background", kind: "command" as const }],
+  };
+  const filed = applySidebarThreadDrop(thread, "settled", now);
+  expect(filed).toMatchObject({ settleWhenIdleAt: now, settledOverride: null, settledAt: null });
+  expect(applySidebarThreadDrop(filed, "active", now)).toMatchObject({
+    settleWhenIdleAt: null,
+    settledOverride: "active",
+  });
+});
 
 describe("resolveSidebarRowAccessibility", () => {
   it.each([

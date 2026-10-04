@@ -1,3 +1,4 @@
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -32,13 +33,15 @@ export function shouldNavigateAfterThreadPark(input: {
   readonly currentThreadKey: string | null;
   readonly action: "settle" | "snooze";
   readonly now: string;
-  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
+  readonly thread:
+    | (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride" | "settleWhenIdleAt">)
+    | null;
 }): boolean {
   return (
     input.threadKey === input.currentThreadKey &&
     input.thread !== null &&
     (input.action === "settle"
-      ? input.thread.settledOverride === "settled"
+      ? isFiledAsSettled(input.thread)
       : effectiveSnoozed(input.thread, { now: input.now }))
   );
 }
@@ -426,19 +429,31 @@ export function applySidebarThreadDrop<
     | "snoozedUntil"
     | "settledAt"
     | "settledOverride"
+    | "settleWhenIdleAt"
     | "unsettledAt"
-  >,
+  > &
+    Partial<Pick<SidebarThreadSummary, "runtime" | "pendingBackgroundTasks" | "pullRequests">>,
 >(thread: T, section: "pinned" | "active" | "settled", now: string, orderKey?: string): T {
-  const wasSettled = thread.settledOverride === "settled";
-  const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
+  const wasSettled = isFiledAsSettled(thread);
+  const awake = { ...thread, settleWhenIdleAt: null, snoozedAt: null, snoozedUntil: null };
   if (section === "settled") {
+    const working =
+      ["preparing", "queued", "starting", "running", "waiting"].includes(
+        thread.runtime?.status ?? "idle",
+      ) ||
+      (thread.pendingBackgroundTasks ?? []).length > 0 ||
+      (thread.pullRequests ?? []).some((link) => link.watch != null);
     return {
       ...awake,
       pinnedAt: null,
       pinOrderKey: null,
       activeOrderKey: null,
-      settledOverride: "settled",
-      settledAt: wasSettled ? (thread.settledAt ?? now) : now,
+      ...(working
+        ? { settleWhenIdleAt: thread.settleWhenIdleAt ?? now }
+        : {
+            settledOverride: "settled" as const,
+            settledAt: wasSettled ? (thread.settledAt ?? now) : now,
+          }),
       unsettledAt: null,
     };
   }

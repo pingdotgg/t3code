@@ -48,10 +48,11 @@ export interface ProjectThreadAwarenessV2Input {
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settleWhenIdleAt"
     | "status"
     | "title"
     | "updatedAt"
-  >;
+  > & { readonly settledOverride?: OrchestrationV2ThreadShell["settledOverride"] };
 }
 
 /** Build relay activity directly from the V2 shell projection. */
@@ -104,6 +105,7 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
+      if (thread.settleWhenIdleAt != null || thread.settledOverride === "settled") return null;
       // Work that will wake the agent keeps the run going; a dev server does not.
       return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
         ? "running"

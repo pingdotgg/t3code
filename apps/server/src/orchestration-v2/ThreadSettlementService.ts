@@ -1,4 +1,7 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  turnItemUpdateCanEndBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -139,7 +142,12 @@ export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
 ): boolean {
-  if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+  if (
+    thread.archivedAt !== null ||
+    thread.settledOverride !== null ||
+    thread.settleWhenIdleAt != null
+  )
+    return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
@@ -271,12 +279,38 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
-      return;
+    const automatic = autoSettlementConfigured(settings);
+    // Explicit user intent remains actionable with every automatic rule disabled.
+    const threads = yield* projections.getSettlementCandidates(threadId, !automatic);
+    for (const thread of threads) {
+      if (
+        thread.settleWhenIdleAt == null ||
+        thread.pendingRuntimeRequest !== null ||
+        thread.activityRunStatus != null ||
+        (thread.pendingBackgroundTasks ?? []).length > 0 ||
+        (thread.pullRequests ?? []).some((link) => link.watch != null)
+      )
+        continue;
+      const uuid = yield* crypto.randomUUIDv4;
+      yield* orchestrator
+        .dispatch({
+          type: "thread.settle-when-idle",
+          commandId: CommandId.make(`server:settle-when-idle:${thread.id}:${uuid}`),
+          threadId: thread.id,
+          requestedAt: thread.settleWhenIdleAt,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning("deferred thread settlement skipped", {
+                  threadId: thread.id,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
     }
-    // A sweep for one thread reads only that thread's candidate row.
-    const threads = yield* projections.getSettlementCandidates(threadId);
-    if (threads.length === 0) return;
+    if (!automatic || threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
@@ -539,6 +573,16 @@ export const make = Effect.gen(function* () {
     switch (event.type) {
       case "thread.settled":
         return closeIdleTerminals(event.threadId);
+      case "thread.settle-when-idle-set":
+        return event.payload.settleWhenIdleAt != null
+          ? worker.enqueue(event.threadId)
+          : Effect.void;
+      case "provider-thread.updated":
+        return worker.enqueue(event.threadId);
+      case "turn-item.updated":
+        return turnItemUpdateCanEndBackgroundWork(event.payload)
+          ? worker.enqueue(event.threadId)
+          : Effect.void;
       case "thread.pull-request-synced":
       case "provider-session.detached":
         return worker.enqueue(event.threadId);

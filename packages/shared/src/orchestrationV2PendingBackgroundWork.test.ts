@@ -279,33 +279,40 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("excludes Grok persistent monitors", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [{ id: "pt-1" as never }],
-      turnItems: [
-        {
-          id: "item-1" as never,
-          type: "dynamic_tool",
-          status: "running",
-          title: "monitor logs",
-          nativeItemRef: { nativeId: "mon-1" },
-          input: { persistent: true, command: "tail -f" },
-        },
-        {
-          id: "item-2" as never,
-          type: "dynamic_tool",
-          status: "running",
-          title: "finite monitor",
-          nativeItemRef: { nativeId: "mon-2" },
-          input: { persistent: false, command: "sleep 5" },
-        },
-      ],
-    });
-    expect(tasks).toEqual([
-      { taskId: "mon-2", description: "finite monitor", kind: "background_task" },
-    ]);
-  });
+  it.each([false, true])(
+    "includes persistent monitors only when requested: %s",
+    (includePersistent) => {
+      const tasks = derivePendingBackgroundWork({
+        includePersistent,
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [{ id: "pt-1" as never }],
+        turnItems: [
+          {
+            id: "item-1" as never,
+            type: "dynamic_tool",
+            status: "running",
+            title: "monitor logs",
+            nativeItemRef: { nativeId: "mon-1" },
+            input: { persistent: true, command: "tail -f" },
+          },
+          {
+            id: "item-2" as never,
+            type: "dynamic_tool",
+            status: "running",
+            title: "finite monitor",
+            nativeItemRef: { nativeId: "mon-2" },
+            input: { persistent: false, command: "sleep 5" },
+          },
+        ],
+      });
+      expect(tasks).toEqual([
+        ...(includePersistent
+          ? [{ taskId: "mon-1", description: "monitor logs", kind: "background_task" }]
+          : []),
+        { taskId: "mon-2", description: "finite monitor", kind: "background_task" },
+      ]);
+    },
+  );
 
   it("returns multiple tasks with stable ordering from insertion", () => {
     const tasks = derivePendingBackgroundWork({

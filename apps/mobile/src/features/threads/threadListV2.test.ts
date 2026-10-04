@@ -368,6 +368,18 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("getThreadListV2OrderedSection", () => {
+  it("files deferred background work outside Active while keeping its Working status", () => {
+    const thread = makeThread({
+      id: ThreadId.make("deferred"),
+      title: "Deferred",
+      settleWhenIdleAt: NOW,
+    });
+    expect(
+      getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
+    ).toEqual([]);
+    expect(resolveThreadListV2Status(thread)).toBe("working");
+    expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+  });
   it("uses each saved order and excludes settled, snoozed, and archived rows", () => {
     const threads = [
       makeThread({ id: ThreadId.make("active-later"), title: "Later", activeOrderKey: "t" }),

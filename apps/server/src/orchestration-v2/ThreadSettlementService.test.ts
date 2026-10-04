@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
+  TurnItemId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -486,6 +487,7 @@ interface HarnessOptions {
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
+  readonly onDeferredDispatch?: Effect.Effect<void>;
   /** Threads `getThread` returns when a `thread.settled` event is handled. */
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
@@ -500,6 +502,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
+  const deferredCommands = yield* Ref.make<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly requestedAt: DateTime.Utc }>
+  >([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -549,6 +554,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     });
 
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
+    if (command.type === "thread.settle-when-idle") {
+      return Ref.update(deferredCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.andThen(options.onDeferredDispatch ?? Effect.void),
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -626,6 +637,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     candidateReads,
     commands,
+    deferredCommands,
     branchCalls,
     summaryCalls,
     summaryRecovery,
@@ -1117,6 +1129,105 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* service.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.candidateReads), [finished.id]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+});
+
+describe("explicit deferred settlement recovery", () => {
+  it.effect("recovers and retries explicit intent with all automatic rules disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const requestedAt = DateTime.makeUnsafe(NOW);
+        const attempts = yield* Ref.make(0);
+        const thread = makeThread("recover-explicit", {
+          settleWhenIdleAt: requestedAt,
+          settledOverride: "active",
+          autoSettleDisabledAt: requestedAt,
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+          onDeferredDispatch: Ref.updateAndGet(attempts, (n) => n + 1).pipe(
+            Effect.flatMap((n) =>
+              n === 1 ? Effect.die("transient dispatch failure") : Effect.void,
+            ),
+          ),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(1);
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(2);
+          expect((yield* Ref.get(fixture.deferredCommands))[1]?.requestedAt).toEqual(requestedAt);
+          expect(yield* Ref.get(fixture.branchCalls)).toHaveLength(0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("waits for background work and fulfills immediately on its final event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("background-explicit", {
+          settleWhenIdleAt: DateTime.makeUnsafe(NOW),
+          pendingBackgroundTasks: [{ taskId: "command", kind: "command" }],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(0);
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
+          );
+          yield* fixture.publishEvent({
+            id: EventId.make("background-finished"),
+            type: "turn-item.updated",
+            threadId: thread.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              id: TurnItemId.make("command"),
+              type: "command_execution",
+              threadId: thread.id,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: DateTime.makeUnsafe(NOW),
+              completedAt: DateTime.makeUnsafe(NOW),
+              updatedAt: DateTime.makeUnsafe(NOW),
+              input: "sleep 40",
+              output: "",
+            },
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(1);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

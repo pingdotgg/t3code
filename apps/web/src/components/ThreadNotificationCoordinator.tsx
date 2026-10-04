@@ -141,6 +141,11 @@ function EnvironmentNotifications({
             ? "completion"
             : null;
       if (!kind) continue;
+      if (
+        kind === "completion" &&
+        (thread.settleWhenIdleAt != null || thread.settledOverride === "settled")
+      )
+        continue;
       const title =
         kind === "completion"
           ? "Thread completed"

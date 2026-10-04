@@ -1,3 +1,4 @@
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
   canSnooze,
@@ -183,7 +184,10 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "settleWhenIdleAt"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -191,6 +195,7 @@ export function resolveThreadListV2Status(
   if (thread.hasPendingUserInput) {
     return "input";
   }
+  if (thread.settleWhenIdleAt != null) return "working";
   if (
     thread.runtime !== null &&
     ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
@@ -242,8 +247,9 @@ export function getThreadListV2OrderedSection(input: {
       return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
-      thread.settledOverride === "settled" &&
-      input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true
+      isFiledAsSettled(thread) &&
+      (thread.settleWhenIdleAt != null ||
+        input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true)
     ) {
       return false;
     }
@@ -460,7 +466,7 @@ function resolveThreadListV2ItemTimeLabel(
   showSnoozeWakeLabel: boolean,
 ): string {
   const { thread, variant, snoozed } = item;
-  if (showSnoozeWakeLabel) return "";
+  if (showSnoozeWakeLabel || thread.settleWhenIdleAt != null) return "";
   if (
     variant === "card" &&
     (resolveThreadListV2Status(thread) !== "ready" || threadHasUnseenCompletion(thread))
@@ -713,7 +719,11 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
+    if (
+      supportsSettlement &&
+      isFiledAsSettled(thread) &&
+      (!hasQueuedMessages || thread.settleWhenIdleAt != null)
+    ) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);

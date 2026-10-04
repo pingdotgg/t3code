@@ -22,12 +22,13 @@ export function toSortableTimestamp(iso: string | undefined): number | null {
 
 export type SettledThreadTimestampInput = Pick<
   EnvironmentThreadShell,
-  "settledAt" | "latestUserMessageAt" | "latestRun" | "updatedAt"
+  "settleWhenIdleAt" | "settledAt" | "latestUserMessageAt" | "latestRun" | "updatedAt"
 >;
 
 /** The timestamp a settled row sorts and labels by on every client: settledAt
     when stamped, otherwise the latest message or turn stamp, then updatedAt. */
 export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInput): string | null {
+  if (thread.settleWhenIdleAt != null) return thread.settleWhenIdleAt;
   if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
     return thread.settledAt;
   }

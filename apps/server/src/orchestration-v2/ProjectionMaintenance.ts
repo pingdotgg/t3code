@@ -210,6 +210,7 @@ export const layer: Layer.Layer<
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      "thread.settle-when-idle-set",
       "thread.settled",
       "thread.unsettled",
       "thread.snoozed",

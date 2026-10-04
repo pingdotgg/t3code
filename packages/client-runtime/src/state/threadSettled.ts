@@ -352,3 +352,18 @@ export function localSnoozeDate(date: Date): string {
 export function localSnoozeTime(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
+
+/** Placement is independent of whether the provider has finished its work. */
+export function isFiledAsSettled(
+  thread:
+    | {
+        readonly settledOverride?: "settled" | "active" | null;
+        readonly settleWhenIdleAt?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  return (
+    thread != null && (thread.settledOverride === "settled" || thread.settleWhenIdleAt != null)
+  );
+}

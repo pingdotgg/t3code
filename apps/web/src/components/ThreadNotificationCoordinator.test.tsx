@@ -14,6 +14,8 @@ const state = vi.hoisted(() => ({
   live: true,
   completedAt: null as string | null,
   archivedAt: null as string | null,
+  settleWhenIdle: false,
+  settled: false,
   input: false,
   approval: false,
   sessionError: false,
@@ -80,7 +82,8 @@ function mockThreadShell() {
     latestRunStartedAt: SHELL_NOW,
     latestRunCompletedAt: state.completedAt ? DateTime.makeUnsafe(state.completedAt) : undefined,
     archivedAt: state.archivedAt ? DateTime.makeUnsafe(state.archivedAt) : null,
-    settledOverride: null,
+    settleWhenIdleAt: state.settleWhenIdle ? SHELL_NOW : null,
+    settledOverride: state.settled ? "settled" : null,
     settledAt: null,
     lastVisitedAt: null,
     deletedAt: null,
@@ -147,6 +150,8 @@ beforeEach(() => {
     live: true,
     completedAt: null,
     archivedAt: null,
+    settleWhenIdle: false,
+    settled: false,
     input: false,
     approval: false,
     sessionError: false,
@@ -249,6 +254,32 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+
+  it("suppresses deferred completion sound and notifications before and after settlement", async () => {
+    state.mode = "notifications-and-sound";
+    state.settleWhenIdle = true;
+    await render();
+    await complete();
+    state.settleWhenIdle = false;
+    state.settled = true;
+    await render();
+    state.settled = false;
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+  });
+
+  it("retains attention alerts while deferred settlement is cancelled", async () => {
+    state.mode = "notifications-and-sound";
+    state.settleWhenIdle = true;
+    await render();
+    state.approval = true;
+    state.settleWhenIdle = false;
+    await render();
+    expect(state.add).toHaveBeenCalledWith(expect.objectContaining({ title: "Approval needed" }));
+    expect(state.sound).toHaveBeenCalledWith("input", expect.any(Function));
   });
 
   it("alerts when only a dev server is left running, not while a monitor can wake the agent", async () => {

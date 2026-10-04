@@ -178,6 +178,8 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
 export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTurnItem>(input: {
   readonly turnItems: ReadonlyArray<Item>;
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
+  /** Deferred settlement must also leave persistent monitors running. */
+  readonly includePersistent?: boolean;
 }): ReadonlyArray<Item> {
   const rolledBackRunIds = new Set(
     (input.runs ?? []).filter((run) => run.status === "rolled_back").map((run) => String(run.id)),
@@ -186,7 +188,8 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
     (item) =>
       BACKGROUND_TURN_ITEM_TYPES.has(item.type) &&
       isOrchestrationV2WorkActive(item.status) &&
-      !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input)) &&
+      (input.includePersistent === true ||
+        !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input))) &&
       // Null/absent run id stays eligible; only known rolled_back runs drop.
       (item.runId === undefined ||
         item.runId === null ||
@@ -203,7 +206,8 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
  *
  * Gated on latest root run settlement. Dedupes by native task ID. Excludes
  * the roster while any interruptible foreground run remains active. Excludes
- * Grok persistent monitors (`dynamic_tool` input with `persistent: true`).
+ * Grok persistent monitors (`dynamic_tool` input with `persistent: true`),
+ * unless includePersistent is requested for deferred settlement.
  * Excludes turn items whose run resolves to `rolled_back` (abandoned work);
  * items with a null or absent run id stay eligible (matches SQL shell path).
  * Does not consult subagent entities (those double-count turn items).
@@ -214,6 +218,7 @@ export function derivePendingBackgroundWork(input: {
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
+  readonly includePersistent?: boolean;
   /**
    * Run rows used to exclude items owned by rolled_back runs. Optional for
    * callers that already filtered (SQL shell path); in-memory callers should

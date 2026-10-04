@@ -1,3 +1,4 @@
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
@@ -639,8 +640,7 @@ export function useThreadListActions(): {
         crossSection &&
         (((section === "pinned" || thread.pinnedAt != null) &&
           !environmentSupportsPinning(thread.environmentId)) ||
-          (thread.settledOverride === "settled" &&
-            !environmentSupportsSettlement(thread.environmentId)) ||
+          (isFiledAsSettled(thread) && !environmentSupportsSettlement(thread.environmentId)) ||
           (effectiveSnoozed(thread, { now: new Date().toISOString() }) &&
             !environmentSupportsSnooze(thread.environmentId)))
       )
