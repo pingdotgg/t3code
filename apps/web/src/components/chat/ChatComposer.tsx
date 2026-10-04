@@ -1855,7 +1855,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const snapshot = readComposerSnapshot();
       return {
         text: snapshot.value,
-        selection: { start: snapshot.expandedCursor, end: snapshot.expandedCursor },
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: snapshot.expandedCursor,
+          end: snapshot.expandedCursor,
+        },
       };
     },
     commitDraft: (text, selection) => {

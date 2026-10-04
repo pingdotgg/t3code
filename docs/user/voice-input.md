@@ -34,8 +34,8 @@ English text when the model supports translation.
 
 Start voice input with the microphone control, then finish to insert the transcript.
 Cancel to discard the recording and preserve your draft. Recordings can be up to
-five minutes long. On web and desktop, text is inserted at the cursor captured
-when recording starts; it does not replace selected text. Editing is disabled while voice input
+five minutes long. On web and desktop, text is inserted at the cursor or replaces
+the selection captured when recording starts. Editing is disabled while voice input
 is running. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
 any existing text, after transcription and optional post-processing. You can also
 press Send while those steps are finishing. In other supported editors, the

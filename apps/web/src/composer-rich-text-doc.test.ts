@@ -5,7 +5,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { replaceTextRange, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import {
   collapseExpandedComposerCursor,
@@ -786,6 +786,26 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(rich, markdownToFlat(rich, 3))).toBe(4);
   });
 });
+
+  it.each(["@README.md", "[Checkout](t3-context://v1/preview-annotation/pa-1)"])(
+    "replaces a dictated selection across %s using stored text offsets",
+    (reference) => {
+      const map = roundTrip(`before ${reference} after`);
+      const token = map.runs.find((run) => run.kind === "token");
+      expect(token).toBeDefined();
+      if (!token) throw new Error("Expected an inline mention");
+      const selection = {
+        start: flatToMarkdown(map, pmToFlat(map, token.pmPos)),
+        end: flatToMarkdown(map, pmToFlat(map, token.pmPos + 1)),
+      };
+      expect(
+        replaceTextRange(map.value, selection.start, selection.end, "replacement"),
+      ).toMatchObject({
+        text: "before replacement after",
+      });
+    },
+  );
+
 
 describe("serializeSelection", () => {
   function copy(value: string, first: string, last: string) {

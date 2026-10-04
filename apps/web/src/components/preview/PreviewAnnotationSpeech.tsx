@@ -24,7 +24,7 @@ export function PreviewAnnotationSpeech({
   config: DesktopPreviewAnnotationVoiceConfig;
 }) {
   const navigate = useNavigate();
-  const draft = useRef({ text: "", cursor: 0 });
+  const draft = useRef({ text: "", cursor: 0, selectionEnd: 0 });
   const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
   const speech = useEnvironmentSpeechInput({
@@ -33,10 +33,10 @@ export function PreviewAnnotationSpeech({
     draftText: text,
     readDraft: () => ({
       text: draft.current.text,
-      selection: { start: draft.current.cursor, end: draft.current.cursor },
+      selection: { start: draft.current.cursor, end: draft.current.selectionEnd },
     }),
     commitDraft: (next, selection) => {
-      draft.current = { text: next, cursor: selection.start };
+      draft.current = { text: next, cursor: selection.start, selectionEnd: selection.end };
       setText(next);
       void publish({ text: next, cursor: selection.start });
     },
@@ -111,7 +111,11 @@ export function PreviewAnnotationSpeech({
       previewBridge?.annotationVoice.onEvent(
         (eventTabId, event: DesktopPreviewAnnotationVoiceEvent) => {
           if (eventTabId !== tabId || event.sessionId !== config.sessionId) return;
-          draft.current = { text: event.text, cursor: event.cursor };
+          draft.current = {
+            text: event.text,
+            cursor: event.cursor,
+            selectionEnd: event.selectionEnd ?? event.cursor,
+          };
           setText(event.text);
           const value = current.current;
           switch (event.action) {

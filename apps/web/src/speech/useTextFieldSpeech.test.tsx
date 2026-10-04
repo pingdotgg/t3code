@@ -98,49 +98,55 @@ async function mount() {
   );
   return container.querySelector("textarea")!;
 }
-it("inserts dictation at the comment cursor and submits the completed draft", async () => {
-  const field = await mount();
-  await act(() => mocks.input!.commitDraft("one two", { start: 7, end: 7 }));
-  field.setSelectionRange(4, 7);
-  const controller = new VoiceInputController({
-    recorder: {
-      uri: "recording",
-      prepareToRecordAsync: async () => {},
-      record: () => {},
-      stop: async () => {},
-    },
-    getTranscriber: () => ({
-      prepare: async () => ({ locale: "en-US", transcribe: async () => "new" }),
-    }),
-    requestPermission: async () => ({ granted: true, canAskAgain: true }),
-    configureRecording: async () => {},
-    releaseRecording: async () => {},
-    deleteRecording: () => {},
-    readDraft: () => ({
-      ...mocks.input!.readDraft(),
-      ownerKey: mocks.input!.ownerKey,
-      revision: 0,
-    }),
-    commitDraft: (text, selection) => mocks.input!.commitDraft(text, selection),
-    onStateChange: () => {},
-  });
-  try {
-    await act(() => controller.start());
-    await act(() => controller.stop());
-  } finally {
-    controller.dispose();
-  }
-  await act(() => {
-    frames.splice(0).forEach((frame) => frame(0));
-  });
-  expect(field.value).toBe("one new two");
-  expect(field.selectionStart).toBe(8);
-  const submit = [...container.querySelectorAll("button")].find(
-    (button) => button.textContent === "Comment",
-  )!;
-  await act(() => submit.click());
-  expect(comments).toEqual(["one new two"]);
-});
+it.each([
+  { end: 4, text: "one new two" },
+  { end: 7, text: "one new" },
+])(
+  "dictates into a comment selection ending at $end and submits the completed draft",
+  async ({ end, text }) => {
+    const field = await mount();
+    await act(() => mocks.input!.commitDraft("one two", { start: 7, end: 7 }));
+    field.setSelectionRange(4, end);
+    const controller = new VoiceInputController({
+      recorder: {
+        uri: "recording",
+        prepareToRecordAsync: async () => {},
+        record: () => {},
+        stop: async () => {},
+      },
+      getTranscriber: () => ({
+        prepare: async () => ({ locale: "en-US", transcribe: async () => "new" }),
+      }),
+      requestPermission: async () => ({ granted: true, canAskAgain: true }),
+      configureRecording: async () => {},
+      releaseRecording: async () => {},
+      deleteRecording: () => {},
+      readDraft: () => ({
+        ...mocks.input!.readDraft(),
+        ownerKey: mocks.input!.ownerKey,
+        revision: 0,
+      }),
+      commitDraft: (text, selection) => mocks.input!.commitDraft(text, selection),
+      onStateChange: () => {},
+    });
+    try {
+      await act(() => controller.start());
+      await act(() => controller.stop());
+    } finally {
+      controller.dispose();
+    }
+    await act(() => {
+      frames.splice(0).forEach((frame) => frame(0));
+    });
+    expect(field.value).toBe(text);
+    expect(field.selectionStart).toBe(text === "one new" ? 7 : 8);
+    const submit = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Comment",
+    )!;
+    await act(() => submit.click());
+    expect(comments).toEqual([text]);
+  },
+);
 it("defers click and keyboard submission while dictation is running", async () => {
   mocks.busy = true;
   const field = await mount();

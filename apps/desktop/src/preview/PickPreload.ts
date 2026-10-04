@@ -679,6 +679,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
       sessionId: voice.sessionId,
       text: comment.value,
       cursor: comment.selectionStart,
+      selectionEnd: comment.selectionEnd,
       action,
       ...(keyboard
         ? {

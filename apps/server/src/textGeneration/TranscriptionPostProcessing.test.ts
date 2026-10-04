@@ -14,14 +14,15 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
     );
   });
 
-  it("shows where the transcript is inserted without removing selected text", () => {
+  it("omits replaced text from the retained draft context", () => {
     const result = buildTranscriptionPostProcessingPrompt("Clean this transcript.", "raw", {
       text: "Before old after",
       selection: { start: 7, end: 10 },
     });
     expect(result.prompt).toContain("<composer_before>\nBefore \n</composer_before>");
-    expect(result.prompt).toContain("<composer_after>\nold after\n</composer_after>");
-    expect(result.prompt).not.toContain("composer_selection");
+    expect(result.prompt).toContain("<composer_after>\n after\n</composer_after>");
+    expect(result.prompt).not.toContain("old");
+    expect(result.prompt).toContain("The transcript will replace the selected text");
     expect(result.prompt).toContain("Return only the cleaned transcript");
   });
 

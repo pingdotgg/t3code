@@ -37,7 +37,7 @@ export function useTextFieldSpeech(input: {
       const cursor = field?.selectionStart ?? latest.current.text.length;
       return {
         text: field?.value ?? latest.current.text,
-        selection: { start: cursor, end: cursor },
+        selection: { start: cursor, end: field?.selectionEnd ?? cursor },
       };
     },
     commitDraft: (text, selection) => {
