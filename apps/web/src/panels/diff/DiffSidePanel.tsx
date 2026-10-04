@@ -70,7 +70,7 @@ import { DiffFileLoadingBoundary } from "~/components/diffs/DiffFileLoadingBound
 import { DiffFileStatus } from "~/components/diffs/DiffFileStatus";
 import { DiffPanelLoadingState } from "~/components/diffs/DiffLoadingState";
 
-import type { SidePanelProps } from "../bundledPanels";
+import { usePanelHost } from "../panelHost";
 
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { useFileContextMenuHandler } from "~/fileContextMenu";
@@ -216,10 +216,8 @@ function DiffSidePanelFrame({ header, children }: { header: ReactNode; children:
   );
 }
 
-export default function DiffSidePanel({
-  composerDraftTarget,
-  workspaceMutationId,
-}: SidePanelProps) {
+export default function DiffSidePanel() {
+  const { composerDraftTarget, workspaceMutationId } = usePanelHost();
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const diffLayout = settings.diffLayout;
