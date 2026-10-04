@@ -10,6 +10,11 @@ import * as NodeUtil from "node:util";
 import { chromium } from "playwright-core";
 
 if (!process.env.KILO_BIN) throw new Error("KILO_BIN must point to the pinned local CLI");
+if (process.env.KILO_CLOUD_TEST_PROFILE && !process.env.KILO_CLOUD_TEST_REPOSITORY) {
+  throw new Error(
+    "KILO_CLOUD_TEST_REPOSITORY is required for an explicitly authorized live capture",
+  );
+}
 const root = NodePath.resolve(import.meta.dirname, "../../..");
 const temporary = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kilo-ui-"));
 const evidence = process.env.KILO_EVIDENCE_DIR ?? NodePath.join(temporary, "evidence");
@@ -122,7 +127,7 @@ await NodeFSP.writeFile(
         config: {
           enabled: !!process.env.KILO_CLOUD_TEST_PROFILE,
           profileDirectory: process.env.KILO_CLOUD_TEST_PROFILE ?? "",
-          repository: "thomasbrugman/t3-kilo-cloud-test",
+          repository: process.env.KILO_CLOUD_TEST_REPOSITORY ?? "synthetic/cloud-demo",
           branch: "main",
           model: "deepseek/deepseek-v4.1-flash",
           cloudConsent: !!process.env.KILO_CLOUD_TEST_PROFILE,
