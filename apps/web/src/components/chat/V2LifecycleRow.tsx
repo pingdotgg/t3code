@@ -37,7 +37,11 @@ import {
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  getProviderInstanceEntry,
+  shouldShowInstanceBadge,
+} from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
@@ -560,11 +564,12 @@ function HandoffEndpoint(props: {
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;
 }) {
-  const entries = deriveProviderInstanceEntries(props.providers);
-  const entry = entries.find((candidate) => candidate.instanceId === props.instanceId);
+  const entry = getProviderInstanceEntry(props.providers, props.instanceId);
   // Same account badge as the sidebar: a handoff between two accounts of one
   // provider would otherwise show the same glyph on both sides.
-  const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
+  const showBadge =
+    entry !== undefined &&
+    shouldShowInstanceBadge(entry, deriveProviderInstanceEntries(props.providers));
   const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0
