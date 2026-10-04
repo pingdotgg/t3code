@@ -39,8 +39,9 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
 // Codex turns leave commands running, then the thread moves to another
-// provider thread (a provider switch). Stop on the newer, settled run must
-// reach both provider threads and end all of the Codex work.
+// provider thread (a provider switch), and its newest run fails before its
+// provider starts. Stop on that run must reach both provider threads and end
+// all of the Codex work.
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -387,6 +388,17 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         });
         const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
         const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
+        // The newest run failed before its provider started, so it has no
+        // provider turn of its own.
+        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        const failedRunEvents = failedRun.events.flatMap(
+          (event): Array<OrchestrationV2DomainEvent> =>
+            event.type === "provider-turn.updated"
+              ? []
+              : event.type === "run.created"
+                ? [{ ...event, payload: { ...event.payload, status: "failed" } }]
+                : [event],
+        );
         yield* sink.write({
           events: [
             ...watcherRun.events,
@@ -404,6 +416,7 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               },
             },
             ...latestRun.events,
+            ...failedRunEvents,
           ],
         });
 
@@ -411,11 +424,12 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
           type: "run.interrupt",
           commandId: CommandId.make("stop-background-work"),
           threadId,
-          runId: latestRun.runId,
+          runId: failedRun.runId,
         });
         yield* worker.drain();
 
-        // Stop reaches both provider threads. The Codex one is interrupted at
+        // Stop reaches both provider threads. The other one is interrupted at
+        // its latest turn, since the failed run has none. The Codex one is at
         // its latest pending work, the subagent's parent turn, so its settle
         // covers all three Codex runs.
         assert.sameDeepMembers(
