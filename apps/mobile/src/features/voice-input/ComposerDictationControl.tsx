@@ -157,8 +157,10 @@ export function ComposerDictationToolbar(props: {
 const WaveformBar = memo(function WaveformBar(props: {
   readonly audioLevels: SharedValue<number[]>;
   readonly sampleIndex: number;
+  readonly height?: number;
 }) {
   const { audioLevels, sampleIndex } = props;
+  const height = props.height ?? WAVEFORM_BAR_HEIGHT;
   const animatedStyle = useAnimatedStyle(() => {
     const level = audioLevels.value[sampleIndex] ?? 0;
     return {
@@ -166,8 +168,7 @@ const WaveformBar = memo(function WaveformBar(props: {
       transform: [
         {
           scaleY: withTiming(
-            (WAVEFORM_MIN_BAR_HEIGHT + level * (WAVEFORM_BAR_HEIGHT - WAVEFORM_MIN_BAR_HEIGHT)) /
-              WAVEFORM_BAR_HEIGHT,
+            (WAVEFORM_MIN_BAR_HEIGHT + level * (height - WAVEFORM_MIN_BAR_HEIGHT)) / height,
             WAVEFORM_TIMING,
           ),
         },
@@ -178,8 +179,34 @@ const WaveformBar = memo(function WaveformBar(props: {
   return (
     <Animated.View
       className="w-0.5 rounded-full bg-foreground"
-      style={[{ height: WAVEFORM_BAR_HEIGHT }, animatedStyle]}
+      style={[{ height }, animatedStyle]}
     />
+  );
+});
+
+const COMPACT_WAVEFORM_BAR_COUNT = 8;
+const COMPACT_WAVEFORM_BAR_HEIGHT = 14;
+
+/** A fixed-size waveform of the latest samples, for tight spaces like the global dictation pill. */
+export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
+  readonly audioLevels: SharedValue<number[]>;
+}) {
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="flex-row items-center gap-0.5"
+      style={{ height: COMPACT_WAVEFORM_BAR_HEIGHT }}
+    >
+      {Array.from({ length: COMPACT_WAVEFORM_BAR_COUNT }, (_, index) => (
+        <WaveformBar
+          key={index}
+          audioLevels={props.audioLevels}
+          height={COMPACT_WAVEFORM_BAR_HEIGHT}
+          sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - COMPACT_WAVEFORM_BAR_COUNT + index}
+        />
+      ))}
+    </View>
   );
 });
 
