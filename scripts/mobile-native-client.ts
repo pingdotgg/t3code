@@ -10,6 +10,7 @@ import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -288,6 +289,87 @@ export const installedBinary = Effect.fn("installedBinary")(function* (
   return yield* digest(hashes.sort().join("\n"));
 });
 
+/** Regenerate native inputs while keeping only outputs with Gradle/Ninja input invalidation. */
+export const prebuildAndroid = Effect.fn("nativeClient.prebuildAndroid")(function* <E, R>(
+  mobile: string,
+  prebuild: Effect.Effect<void, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const android = path.join(mobile, "android");
+  const caches = [".gradle", path.join("app", ".cxx")];
+  const readLink = (file: string) =>
+    fs.readLink(file).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound" || isNotLink(error.reason.cause),
+        () => Effect.succeed(null),
+      ),
+    );
+  yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      // Keep moves on the same filesystem, and retain the directory if recovery fails.
+      const saved = yield* fs.makeTempDirectory({
+        directory: mobile,
+        prefix: ".android-prebuild-",
+      });
+      const result = yield* Effect.exit(
+        Effect.gen(function* () {
+          for (const cache of caches) {
+            const source = path.join(android, cache);
+            if (
+              (yield* readLink(android)) !== null ||
+              (yield* readLink(path.dirname(source))) !== null ||
+              !(yield* fs.exists(source)) ||
+              (yield* readLink(source)) !== null
+            )
+              continue;
+            if ((yield* fs.stat(source)).type !== "Directory") continue;
+            const target = path.join(saved, cache);
+            yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+            yield* fs.rename(source, target);
+          }
+          // Autolinking and JS bundle outputs are regenerated: their tasks omit some
+          // workspace, dependency and environment inputs, so they cannot be retained.
+          yield* restore(prebuild);
+        }),
+      );
+      const recovered = yield* Effect.gen(function* () {
+        for (const cache of caches) {
+          const source = path.join(saved, cache);
+          if (!(yield* fs.exists(source))) continue;
+          const target = path.join(android, cache);
+          if (
+            (yield* readLink(android)) !== null ||
+            (yield* readLink(path.dirname(target))) !== null ||
+            (yield* fs.exists(target)) ||
+            (yield* readLink(target)) !== null
+          ) {
+            return yield* new NativeClientError({
+              message: `Cannot restore native cache over ${target}.`,
+            });
+          }
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fs.rename(source, target);
+        }
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new NativeClientError({
+              message: `Native cache recovery failed. Saved outputs remain at ${saved}: ${error.message}`,
+            }),
+        ),
+        // Pending interruption can suppress the returned error when the mask ends.
+        // Print the recovery path before leaving uninterruptible cleanup.
+        Effect.tapError((error) => Console.error(error.message)),
+        Effect.exit,
+      );
+      if (Exit.isSuccess(recovered)) yield* fs.remove(saved, { recursive: true });
+      if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+      if (Exit.isFailure(recovered)) return yield* Effect.failCause(recovered.cause);
+    }),
+  );
+});
+
 const main = Command.make(
   "mobile-native-client",
   {
@@ -337,11 +419,12 @@ const main = Command.make(
             message:
               "Native directory contains tracked files; clean prebuild would overwrite them.",
           });
-        yield* command(
+        const prebuild = command(
           "vp",
           ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
           true,
-        );
+        ).pipe(Effect.asVoid);
+        yield* platform === "android" ? prebuildAndroid((yield* roots).mobile, prebuild) : prebuild;
         if (platform === "ios") {
           const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
           const { mobile } = yield* roots;
