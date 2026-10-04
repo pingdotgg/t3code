@@ -2624,6 +2624,93 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("does not reopen a thread settled before its restart wake is delivered", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-restart-settled-source");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("restart-settled-create"),
+        threadId,
+        projectId: ProjectId.make("restart-project"),
+        title: "Restart",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-restart-settled",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("restart-settled-user-message"),
+        threadId,
+        messageId: MessageId.make("restart-settled-user-message"),
+        text: "Original work",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      // The turn settled, then a restart cancelled its background command.
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make("restart-settled-reconcile"),
+        threadId,
+        commandType: "provider-runtime.reconcile",
+        acceptedAt: now,
+        events: [
+          {
+            id: EventId.make("restart-settled-run"),
+            type: "run.updated",
+            threadId,
+            runId: original.id,
+            occurredAt: now,
+            payload: { ...original, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make("restart-settled-work"),
+            type: "run.background-work-cancelled",
+            threadId,
+            runId: original.id,
+            occurredAt: now,
+            payload: {
+              runId: original.id,
+              restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+            },
+          },
+        ],
+        effects: [],
+      });
+      // The user settles the thread after the wake was read but before it lands.
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("restart-settled-settle"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make("restart-settled-continuation"),
+        threadId,
+        messageId: MessageId.make("restart-settled-continuation"),
+        text: "Note: the T3 server restarted.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        restartContinuationOfRunId: original.id,
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(projection.runs, 1);
+      assert.equal(projection.thread.settledOverride, "settled");
+    }),
+  );
+
   it.effect("rejects settling a thread while a run is active", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

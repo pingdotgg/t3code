@@ -153,6 +153,8 @@ it("recovers an admitted continuation after another crash before provider start"
     providerTurns: [],
   };
   assert.equal(restartContinuationRun(starting)?.id, runId);
+  // Offered without the opt-in too; delivery decides whether it was a wake.
+  assert.equal(restartContinuationRun(starting, new Set(), false)?.id, runId);
 });
 
 it("continues a settled root run only when the restart cancelled its background work", () => {
@@ -167,6 +169,9 @@ it("continues a settled root run only when the restart cancelled its background 
   const lostWork = new Set([providerThreadId]);
   assert.isUndefined(restartContinuationRun(settled));
   assert.equal(restartContinuationRun(settled, lostWork)?.id, runId);
+  // Waking it needs no opt-in; resuming an interrupted turn does.
+  assert.equal(restartContinuationRun(settled, lostWork, false)?.id, runId);
+  assert.isUndefined(restartContinuationRun(projection, lostWork, false));
   // Work an older provider thread launched (before a provider switch) is not
   // this run's: its provider was never told about it and cannot continue it.
   assert.isUndefined(
@@ -175,6 +180,7 @@ it("continues a settled root run only when the restart cancelled its background 
   for (const invalid of [
     { ...settled, thread: { ...settled.thread, archivedAt: {} } },
     { ...settled, thread: { ...settled.thread, deletedAt: {} } },
+    { ...settled, thread: { ...settled.thread, settledOverride: "settled" } },
     { ...settled, runs: [{ ...settled.runs[0]!, status: "failed" as const }] },
     {
       ...settled,
@@ -186,45 +192,47 @@ it("continues a settled root run only when the restart cancelled its background 
     );
 });
 
-it.effect("prompts a settled thread's continuation with the note of its lost work", () =>
-  Effect.gen(function* () {
-    const base = makeProjection();
-    const work = [{ kind: "shell" as const, label: "sleep 25 && echo DONE" }];
-    const projection = {
-      ...base,
-      runs: [{ ...base.runs[0]!, status: "completed", restartCancelledBackgroundWork: work }],
-      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
-    } as unknown as OrchestrationV2ThreadProjection;
-    const commands: Parameters<
-      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
-    >[0][] = [];
-    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
-      Effect.provide(
-        Layer.merge(
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: () => Effect.succeed(projection),
-            recoverDelegatedTask: () => Effect.void,
-            dispatch: (command) => {
-              commands.push(command);
-              return Effect.succeed({} as never);
-            },
-          }),
-          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+it.effect.each([true, false])(
+  "prompts a settled thread's continuation with the note of its lost work (opt-in %s)",
+  (continueThreadsAfterServerUpdate) =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const work = [{ kind: "shell" as const, label: "sleep 25 && echo DONE" }];
+      const projection = {
+        ...base,
+        runs: [{ ...base.runs[0]!, status: "completed", restartCancelledBackgroundWork: work }],
+        providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const commands: Parameters<
+        ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+      >[0][] = [];
+      yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(projection),
+              recoverDelegatedTask: () => Effect.void,
+              dispatch: (command) => {
+                commands.push(command);
+                return Effect.succeed({} as never);
+              },
+            }),
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate }),
+          ),
         ),
-      ),
-    );
-    assert.lengthOf(commands, 1);
-    const command = commands[0]!;
-    assert.equal(
-      command.type === "message.dispatch" ? command.restartContinuationOfRunId : null,
-      runId,
-    );
-    assert.include(
-      command.type === "message.dispatch" ? command.text : "",
-      "sleep 25 && echo DONE",
-    );
-    assert.notInclude(command.type === "message.dispatch" ? command.text : "", "Continue where");
-  }),
+      );
+      assert.lengthOf(commands, 1);
+      const command = commands[0]!;
+      assert.equal(
+        command.type === "message.dispatch" ? command.restartContinuationOfRunId : null,
+        runId,
+      );
+      assert.include(
+        command.type === "message.dispatch" ? command.text : "",
+        "sleep 25 && echo DONE",
+      );
+      assert.notInclude(command.type === "message.dispatch" ? command.text : "", "Continue where");
+    }),
 );
 
 it.effect("does not continue a failed run that lost background work", () =>
@@ -453,6 +461,141 @@ it.effect("prepares no continuation for background work another provider thread 
   }),
 );
 
+it.effect("wakes a thread waiting on background work after any restart without the opt-in", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    // The turn settled while its background command kept running.
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed" }],
+      providerThreads: [
+        {
+          ...base.providerThreads[0]!,
+          status: "idle",
+          pendingBackgroundTasks: [
+            { taskId: "task:wait", kind: "command", description: "Wait for release" },
+          ],
+        },
+      ],
+      providerSessions: [{ ...base.providerSessions[0]!, status: "ready" }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
+    const writes: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                writes.push(input);
+                return [];
+              }),
+            commitCommand: (input) =>
+              Effect.sync(() => {
+                commits.push(input);
+                return { committed: true, cancelledEffectCount: 0 } as never;
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    const wake = { type: "provider-runtime.continue" as const, sourceRunId: runId };
+    const recorded = (commit: (typeof commits)[number]) =>
+      commit.events.flatMap((event) =>
+        event.type === "run.background-work-cancelled"
+          ? [[event.runId, event.payload.restartCancelledBackgroundWork.map((work) => work.id)]]
+          : [],
+      );
+    // A crash: startup recovery records the lost work and the wake together.
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(recorded(commits[0]!), [[runId, ["task:wait"]]]);
+    assert.deepEqual(
+      commits[0]!.effects.map((effect) => effect.request),
+      [wake],
+    );
+    // A graceful restart captures the wake while the work is still open, then
+    // shutdown records the note without queueing the wake a second time.
+    yield* recovery.prepareForShutdown;
+    yield* recovery.reconcile("shutdown");
+    assert.deepEqual(
+      writes.flatMap((write) => write.effects.map((effect) => effect.request)),
+      [wake],
+    );
+    assert.deepEqual(recorded(commits[1]!), [[runId, ["task:wait"]]]);
+    assert.lengthOf(commits[1]!.effects, 0);
+  }),
+);
+
+const stopOf = (providerTurnId: string) => ({
+  id: `turn-item:stop:${providerTurnId}`,
+  runId,
+  providerTurnId,
+  type: "run_interrupt_request",
+});
+
+it.effect.each([
+  ["a settled thread", { thread: { settledOverride: "settled" } }, false],
+  ["a run the user stopped before the restart", { turnItems: [stopOf("turn:restart")] }, false],
+  // A steer after the Stop replaced the stopped attempt with the one that settled.
+  [
+    "a run whose Stop a later steer superseded",
+    {
+      turnItems: [stopOf("turn:steered-away")],
+      providerTurns: [
+        {
+          id: "turn:steered-away",
+          providerThreadId,
+          runAttemptId: "attempt:steered-away",
+          status: "completed",
+        },
+        { id: "turn:restart", providerThreadId, runAttemptId: attemptId, status: "completed" },
+      ],
+    },
+    true,
+  ],
+] as const)("decides whether to wake %s", ([, overrides, wakes]) =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const work = [{ kind: "shell" as const, label: "sleep 25 && echo DONE" }];
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed", restartCancelledBackgroundWork: work }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      ...overrides,
+      thread: { ...base.thread, ...("thread" in overrides ? overrides.thread : {}) },
+    } as unknown as OrchestrationV2ThreadProjection;
+    let dispatched = false;
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched = true;
+                return {} as never;
+              }),
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.equal(dispatched, wakes);
+  }),
+);
+
 it.effect("does not cancel or resume a run that completes while shutdown intent commits", () =>
   Effect.gen(function* () {
     let projection = makeProjection();
@@ -518,7 +661,10 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
   }),
 );
 
-const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
+const continuationTexts = (
+  projection: OrchestrationV2ThreadProjection,
+  continueThreadsAfterServerUpdate = true,
+) =>
   Effect.gen(function* () {
     const texts: Array<string> = [];
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
@@ -532,7 +678,7 @@ const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
               return Effect.succeed({} as never);
             },
           }),
-          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate }),
         ),
       ),
     );
@@ -616,7 +762,7 @@ it.effect("does not continue a run the user asked to stop before the restart", (
   Effect.gen(function* () {
     const texts = yield* continuationTexts({
       ...cutMidTurn(),
-      turnItems: [{ id: "turn-item:interrupt", runId, type: "run_interrupt_request" }],
+      turnItems: [stopOf("turn:restart")],
     } as unknown as OrchestrationV2ThreadProjection);
     assert.deepEqual(texts, []);
   }),
@@ -652,9 +798,9 @@ it.effect("tells a turn cut mid-way about the background work it lost", () =>
   }),
 );
 
-it.effect(
-  "carries the note forward when its continuation was cut before reaching the provider",
-  () =>
+it.effect.each([true, false])(
+  "carries the note forward when its continuation was cut before reaching the provider (opt-in %s)",
+  (continueThreadsAfterServerUpdate) =>
     Effect.gen(function* () {
       const base = makeProjection();
       const original = {
@@ -684,7 +830,20 @@ it.effect(
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection;
-      const texts = yield* continuationTexts(projection);
+      // Before reconciliation the second restart finds the wake still starting.
+      // Its recovery read holds no settled run but the latest, so not the original.
+      const [, continuation] = projection.runs;
+      const starting = {
+        ...projection,
+        runs: [{ ...continuation!, status: "starting" }],
+        providerThreads: [{ ...base.providerThreads[0]!, status: "idle" }],
+        providerSessions: [{ ...base.providerSessions[0]!, status: "stopped" }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      assert.equal(
+        restartContinuationRun(starting, new Set(), continueThreadsAfterServerUpdate)?.id,
+        continuation!.id,
+      );
+      const texts = yield* continuationTexts(projection, continueThreadsAfterServerUpdate);
       assert.lengthOf(texts, 1);
       assert.include(texts[0]!, "sleep 25 && echo DONE");
       assert.notInclude(texts[0]!, "Continue where");

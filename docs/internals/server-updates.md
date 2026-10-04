@@ -58,12 +58,15 @@ stopped backends and replays the failure for the same token.
 
 ## Recovering interrupted threads
 
-Restart continuation is an environment-owned preference, off by default. The
+Resuming interrupted turns is an environment-owned preference, off by default. The
 [v2 recovery service](../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts)
 requires matching durable run, provider thread, session, and native resume identity.
 Queued runs never started, so recovery holds them and continues the run they wait
 behind. A finished run qualifies only when the restart cancelled its background work;
-its continuation tells the provider what will not report back.
+its continuation tells the provider what will not report back. That case needs no
+preference: the agent ended its turn waiting on that work, and the provider would have
+woken it when the work ended. Without the wake the thread sits idle until someone
+sends a message.
 
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.
@@ -73,11 +76,12 @@ closing providers, then reconciles after ingestion has stopped so a late complet
 cannot be overwritten by a stale cancellation.
 
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
-rechecks the preference, archive state, provider selection, newer user work, a stop
-the user requested, and maintenance turns such as `/compact` before dispatching. Stable
-command and message IDs prevent duplicate submissions after an outbox retry. Codex
-resumes without adding provider prompt text unless the turn lost background work;
-other adapters receive the continuation message through their normal turn path.
+rechecks the preference (for a resumed turn), archive and settled state, newer user
+work, a stop the user requested of the current attempt, and maintenance turns such as
+`/compact` before dispatching. Stable command and message IDs prevent duplicate
+submissions after an outbox retry. Codex resumes without adding provider prompt text
+unless the turn lost background work; other adapters receive the continuation message
+through their normal turn path.
 
 Delegated tasks (`delegate_task` child threads) are reconciled as their own threads,
 never as the parent's background work. The orchestrator settles child results and

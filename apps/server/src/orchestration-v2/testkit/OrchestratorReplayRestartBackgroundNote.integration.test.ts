@@ -26,7 +26,6 @@ import { readProviderReplayTranscript } from "./ReplayTranscriptNdjson.ts";
 const SCENARIO = "claude_background_subagent_after_root";
 const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
-const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
   "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
   "- subagent: Background subagent test",
@@ -158,16 +157,12 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const threadId = materialized.projectionThreadIds[0]!;
   const phase2Steps = [
     // Let recovery's continuation (run 2) finish before the next user message.
-    ...(input.continueThreadsAfterServerUpdate
-      ? [
-          {
-            type: "await_run_status" as const,
-            threadId,
-            runId: (yield* IdAllocator.IdAllocatorV2).derive.run({ threadId, ordinal: 2 }),
-            status: "completed" as const,
-          },
-        ]
-      : []),
+    {
+      type: "await_run_status" as const,
+      threadId,
+      runId: (yield* IdAllocator.IdAllocatorV2).derive.run({ threadId, ordinal: 2 }),
+      status: "completed" as const,
+    },
     ...materialized.steps.slice(firstIdle + 1),
   ];
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
@@ -210,61 +205,35 @@ const userTexts = (projection: ReturnType<typeof projectionFor>) =>
   projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : []));
 
 describe("restart-cancelled background work", () => {
-  it.effect("tells the next provider turn once that its background subagent died", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const projection = yield* runRestart({
-          // The first turn after the restart carries the note; the second does not.
-          resumedPrompts: [
-            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
-            SECOND_AFTER_RESTART,
-          ],
-          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
-          continueThreadsAfterServerUpdate: false,
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed", "completed", "completed"],
-        );
-        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
-        // The note reaches the provider only; the timeline keeps what the user sent.
-        assert.deepEqual(userTexts(projection), [
-          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-          FIRST_AFTER_RESTART,
-          SECOND_AFTER_RESTART,
-        ]);
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+  // The agent ended its turn waiting on the subagent, so it is woken with the
+  // note whether or not interrupted turns are resumed after restarts.
+  it.effect.each([false, true])(
+    "wakes a settled thread with the note of its dead subagent (restart continuation %s)",
+    (continueThreadsAfterServerUpdate) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const projection = yield* runRestart({
+            // Recovery's continuation prompts with the note; the user turn after it does not.
+            resumedPrompts: [NOTE, FIRST_AFTER_RESTART],
+            userMessagesAfterRestart: [FIRST_AFTER_RESTART],
+            continueThreadsAfterServerUpdate,
+          });
+          const [root, continuation, user] = projection.runs;
+          assert.deepEqual(
+            projection.runs.map((run) => run.status),
+            ["completed", "completed", "completed"],
+          );
+          assert.equal(continuation?.restartContinuationOfRunId, root?.id);
+          assert.isUndefined(user?.restartContinuationOfRunId);
+          assert.deepEqual(userTexts(projection), [
+            CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+            NOTE,
+            FIRST_AFTER_RESTART,
+          ]);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        ),
       ),
-    ),
-  );
-
-  it.effect("continues a settled thread with the note when restart continuation is on", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const projection = yield* runRestart({
-          // Recovery's continuation prompts with the note; the user turn after it does not.
-          resumedPrompts: [NOTE, FIRST_AFTER_RESTART],
-          userMessagesAfterRestart: [FIRST_AFTER_RESTART],
-          continueThreadsAfterServerUpdate: true,
-        });
-        const [root, continuation, user] = projection.runs;
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed", "completed", "completed"],
-        );
-        assert.equal(continuation?.restartContinuationOfRunId, root?.id);
-        assert.isUndefined(user?.restartContinuationOfRunId);
-        assert.deepEqual(userTexts(projection), [
-          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-          NOTE,
-          FIRST_AFTER_RESTART,
-        ]);
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
-      ),
-    ),
   );
 });

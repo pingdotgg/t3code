@@ -667,8 +667,12 @@ export const make = Effect.gen(function* () {
         });
       }
       const continuationRun =
-        continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, new Set(cancelledBackgroundWork.keys()))
+        trigger === "startup"
+          ? restartContinuationRun(
+              projection,
+              new Set(cancelledBackgroundWork.keys()),
+              continueAfterRestart,
+            )
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -794,21 +798,18 @@ export const make = Effect.gen(function* () {
   // rejects any source run that actually completed.
   const prepareForShutdown = Effect.gen(function* () {
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        if (
-          !resolveProjectSettings(enabled, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate
-        )
-          return;
         // Shutdown reconciliation cancels the background work below, so a
         // settled thread's continuation must be captured while it is still open.
         const run = restartContinuationRun(
           projection,
           providerThreadsWithOpenBackgroundWork(projection),
+          enabled !== null &&
+            resolveProjectSettings(enabled, projection.thread.projectId).settings
+              .continueThreadsAfterServerUpdate,
         );
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);

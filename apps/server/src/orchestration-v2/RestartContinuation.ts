@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Run,
   type ProviderThreadId,
   type RunId,
@@ -22,10 +23,23 @@ import {
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
+/** Archived, deleted, and settled threads are done; a restart does not reopen them. */
+function isPutAway(
+  thread: Pick<OrchestrationV2AppThread, "archivedAt" | "deletedAt" | "settledOverride">,
+): boolean {
+  return (
+    thread.archivedAt !== null || thread.deletedAt !== null || thread.settledOverride === "settled"
+  );
+}
+
 /**
  * The run a restart continuation resumes, if any: an unfinished root run, or a
  * settled one whose own provider thread lost background work in the restart
  * (`cancelledWorkProviderThreadIds`, which recovery records on that thread).
+ *
+ * Resuming an unfinished run needs the "Continue threads after restarts" opt-in
+ * (`resumeInterrupted`). Waking a settled run does not: its agent ended the turn
+ * waiting on that work, and the provider would have woken it when the work ended.
  */
 export function restartContinuationRun(
   projection: Pick<
@@ -33,8 +47,9 @@ export function restartContinuationRun(
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
   cancelledWorkProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
+  resumeInterrupted = true,
 ): OrchestrationV2Run | undefined {
-  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+  if (isPutAway(projection.thread)) return;
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
@@ -51,7 +66,15 @@ export function restartContinuationRun(
     (run.status === "completed" || run.status === "waiting") &&
     run.providerThreadId !== null &&
     cancelledWorkProviderThreadIds.has(run.providerThreadId);
-  if (run.status !== "running" && !preparedContinuation && !settledWithCancelledWork) return;
+  // A continuation another restart cut before it reached the provider is
+  // offered again whatever the opt-in: this read lacks the run it continues,
+  // and delivery reads the full history to tell a wake from a resume.
+  if (
+    !settledWithCancelledWork &&
+    !preparedContinuation &&
+    !(resumeInterrupted && run.status === "running")
+  )
+    return;
   const liveTurnRequired = !preparedContinuation && !settledWithCancelledWork;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
@@ -102,7 +125,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -110,12 +132,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       ["messages", "runs", "providerTurns", "attempts"],
       { messageIds: [messageId] },
     );
-    if (
-      !resolveProjectSettings(enabled, projection.thread.projectId).settings
-        .continueThreadsAfterServerUpdate
-    )
-      return;
-    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+    if (isPutAway(projection.thread)) return;
 
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
@@ -123,6 +140,20 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const noteSource =
       source !== undefined && isRestartNoteSource(source, projection.providerTurns);
     if (!source || (source.status !== "cancelled" && !noteSource)) return;
+    const note = restartContinuationNote(
+      source,
+      projection.runs,
+      projection.providerTurns,
+      projection.attempts,
+    );
+    // Only resuming an interrupted turn is opt-in; see `restartContinuationRun`.
+    if (
+      !note.settled &&
+      (enabled === null ||
+        !resolveProjectSettings(enabled, projection.thread.projectId).settings
+          .continueThreadsAfterServerUpdate)
+    )
+      return;
     // A user submission after reconciliation takes precedence over an automatic
     // prompt. Queued runs never started and stay held behind this one.
     if (
@@ -141,10 +172,17 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         turnItemTypes: ["run_interrupt_request"],
       },
     );
-    // The user asked this run to stop before the restart cut it.
+    // The user asked this run's current attempt to stop before the restart cut
+    // it. A steer after the Stop starts a new attempt and supersedes it.
     if (
       sourceRecords.turnItems.some(
-        (item) => item.runId === source.id && item.type === "run_interrupt_request",
+        (item) =>
+          item.runId === source.id &&
+          item.type === "run_interrupt_request" &&
+          projection.providerTurns.some(
+            (turn) =>
+              turn.id === item.providerTurnId && turn.runAttemptId === source.activeAttemptId,
+          ),
       )
     )
       return;
@@ -152,12 +190,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       (message) => message.id === source.userMessageId,
     );
     if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
-    const note = restartContinuationNote(
-      source,
-      projection.runs,
-      projection.providerTurns,
-      projection.attempts,
-    );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
     yield* threads.dispatch({
