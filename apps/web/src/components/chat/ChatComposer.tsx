@@ -2324,11 +2324,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const {
     trigger: composerTrigger,
+    detectTrigger: detectActiveComposerTrigger,
     setTrigger: setComposerTrigger,
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
     resetTrigger: resetComposerTrigger,
-  } = useComposerTriggerState(() => detectComposerTrigger(prompt, prompt.length));
+  } = useComposerTriggerState(prompt);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
@@ -3397,7 +3398,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         promptRef.current = prompt;
         const { cursor, trigger } = composerStateAtPromptEnd(prompt);
         setComposerCursor(cursor);
-        resetComposerTrigger(trigger);
+        resetComposerTrigger(trigger, prompt);
       }
       lastSyncedPendingInputRef.current = null;
       return;
@@ -3422,7 +3423,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef.current = nextCustomAnswer;
     const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer);
     setComposerCursor(cursor);
-    resetComposerTrigger(trigger);
+    resetComposerTrigger(trigger, nextCustomAnswer);
     setComposerHighlightedItemId(null);
   }, [
     activePendingProgress?.customAnswer,
@@ -3442,7 +3443,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    resetComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    resetComposerTrigger(
+      detectComposerTrigger(promptRef.current, promptRef.current.length),
+      promptRef.current,
+    );
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
   }, [draftId, activeThreadId, promptRef, resetComposerTrigger, setIsComposerScrollCollapsed]);
@@ -3608,7 +3612,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
         setComposerCursor(nextCursor);
         setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+          cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
         );
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
@@ -3719,7 +3723,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
       );
     },
     [
@@ -3730,6 +3734,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setPrompt,
       setComposerTrigger,
+      detectActiveComposerTrigger,
       composerDraftTarget,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
@@ -3857,10 +3862,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return {
       snapshot,
       trigger: resolveComposerTrigger(
-        detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+        detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
       ),
     };
-  }, [readComposerSnapshot, resolveComposerTrigger]);
+  }, [readComposerSnapshot, resolveComposerTrigger, detectActiveComposerTrigger]);
 
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
@@ -6353,6 +6358,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 expandCollapsedComposerCursor(promptForState, cursor),
               )
             : null,
+          promptForState,
         );
       },
       addTerminalContext: (selection: TerminalContextSelection) => {

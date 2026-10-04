@@ -21,6 +21,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  continueComposerPathTrigger,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -301,12 +302,40 @@ export function useComposerCommandMenu({
     selectedProviderInstanceId,
   ]);
 
-  const trigger = useMemo(() => {
-    if (!enabled || selection.start !== selection.end) {
-      return null;
-    }
-    return detectComposerTrigger(draftMessage, selection.end);
-  }, [draftMessage, enabled, selection]);
+  const [previousSearch, setPreviousSearch] = useState(() => ({
+    ownerKey,
+    draftMessage,
+    selection,
+    enabled,
+    trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
+  }));
+  let trigger = previousSearch.trigger;
+  if (
+    previousSearch.ownerKey !== ownerKey ||
+    previousSearch.draftMessage !== draftMessage ||
+    previousSearch.selection !== selection ||
+    previousSearch.enabled !== enabled
+  ) {
+    // Native text and selection events can arrive separately. Apply the edit's
+    // length change while waiting for the caret event, then validate that event
+    // against the updated query range.
+    const cursor =
+      selection.end +
+      (previousSearch.selection === selection && previousSearch.ownerKey === ownerKey
+        ? draftMessage.length - previousSearch.draftMessage.length
+        : 0);
+    trigger =
+      enabled && selection.start === selection.end
+        ? (detectComposerTrigger(draftMessage, cursor) ??
+          continueComposerPathTrigger(
+            draftMessage,
+            cursor,
+            previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
+            previousSearch.draftMessage,
+          ))
+        : null;
+    setPreviousSearch({ ownerKey, draftMessage, selection, enabled, trigger });
+  }
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
