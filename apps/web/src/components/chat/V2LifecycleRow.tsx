@@ -38,10 +38,11 @@ import {
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  getProviderInstanceEntry,
   shouldShowInstanceBadge,
 } from "../../providerInstances";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
@@ -141,6 +142,7 @@ export function V2LifecycleRow(props: {
                   </span>
                 ) : null}
                 <HandoffEndpoint
+                  environmentId={props.environmentId}
                   providers={props.providerStatuses}
                   instanceId={endpoint.instanceId}
                   model={endpoint.model}
@@ -151,6 +153,7 @@ export function V2LifecycleRow(props: {
               <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
             ) : null}
             <HandoffEndpoint
+              environmentId={props.environmentId}
               providers={props.providerStatuses}
               instanceId={item.toProviderInstanceId}
               model={to.model}
@@ -560,16 +563,20 @@ function SubagentTimelineTooltip(
 }
 
 function HandoffEndpoint(props: {
+  readonly environmentId: EnvironmentId;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;
 }) {
-  const entry = getProviderInstanceEntry(props.providers, props.instanceId);
+  // Settings carry each ACP instance's agent, which tells its glyph apart.
+  const entries = applyProviderInstanceSettings(
+    deriveProviderInstanceEntries(props.providers),
+    useEnvironmentSettings(props.environmentId),
+  );
+  const entry = entries.find((candidate) => candidate.instanceId === props.instanceId);
   // Same account badge as the sidebar: a handoff between two accounts of one
   // provider would otherwise show the same glyph on both sides.
-  const showBadge =
-    entry !== undefined &&
-    shouldShowInstanceBadge(entry, deriveProviderInstanceEntries(props.providers));
+  const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
   const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0

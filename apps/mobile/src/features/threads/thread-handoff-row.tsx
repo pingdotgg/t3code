@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import type {
   EnvironmentId,
+  ProviderInstanceConfig,
   OrchestrationV2ProjectedTurnItem,
   ProviderInstanceId,
   ServerProvider,
@@ -53,7 +54,11 @@ export function ThreadHandoffRow(props: {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;
-  const endpointProps = { providers: config?.providers ?? [], surfaceColor: props.surfaceColor };
+  const endpointProps = {
+    providers: config?.providers ?? [],
+    providerInstances: config?.settings.providerInstances,
+    surfaceColor: props.surfaceColor,
+  };
   return (
     <ThreadContextDivider
       label="Context handoff"
@@ -85,6 +90,7 @@ function HandoffEndpoint(props: {
   instanceId: ProviderInstanceId;
   model?: string | undefined;
   providers: ReadonlyArray<ServerProvider>;
+  providerInstances: Readonly<Record<string, ProviderInstanceConfig>> | undefined;
   surfaceColor: string;
 }) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
@@ -96,12 +102,21 @@ function HandoffEndpoint(props: {
     (provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId);
   const accentColor = normalizeProviderAccentColor(provider?.accentColor);
   // Same account badge as the thread rows: a handoff between two accounts of
-  // one provider would otherwise show the same glyph on both sides.
+  // one provider would otherwise show the same glyph on both sides. Settings
+  // carry each ACP instance's agent, which tells its glyph apart.
+  const badgeEntry = (candidate: ServerProvider) => {
+    const config = props.providerInstances?.[candidate.instanceId]?.config;
+    const agentId = typeof config === "object" && config ? Reflect.get(config, "agentId") : null;
+    return {
+      driverKind: candidate.driver,
+      ...(typeof agentId === "string" ? { acpRegistryAgentId: agentId.trim() } : {}),
+    };
+  };
   const showBadge =
     provider !== undefined &&
     shouldShowInstanceBadge(
-      { driverKind: provider.driver, accentColor },
-      props.providers.map((candidate) => ({ driverKind: candidate.driver })),
+      { ...badgeEntry(provider), accentColor },
+      props.providers.map(badgeEntry),
     );
   return (
     <Pressable
