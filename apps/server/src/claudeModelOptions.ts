@@ -36,8 +36,10 @@ export function compileClaudeModelSelection(
   const rawEffort = getModelSelectionStringOptionValue(selection, "effort");
   const resolvedEffort = resolveClaudeCatalogEffort(catalog, selection.model, rawEffort);
   const effort = normalizeClaudeCatalogEffort(catalog, resolvedEffort, selection.model);
+  // Unset means Normal, as the web composer sends it. Keeping the two apart
+  // would make a live process look reconfigured when only the client changed.
   const fastMode = supportsBoolean("fastMode")
-    ? getModelSelectionBooleanOptionValue(selection, "fastMode")
+    ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")

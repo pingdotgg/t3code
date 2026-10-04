@@ -40,6 +40,15 @@ describe("compileClaudeModelSelection", () => {
     ).toEqual({ fastMode: false });
   });
 
+  it("treats unset fast mode as Normal so clients that omit it reuse the same query", () => {
+    const unset = compileClaudeModelSelection(selection("claude-opus-4-6", []));
+    const normal = compileClaudeModelSelection(
+      selection("claude-opus-4-6", [{ id: "fastMode", value: false }]),
+    );
+    expect(unset.settings).toEqual({ fastMode: false });
+    expect(unset.queryIdentity).toBe(normal.queryIdentity);
+  });
+
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
     expect(
       compileClaudeModelSelection(
