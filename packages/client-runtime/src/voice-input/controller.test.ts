@@ -1,3 +1,4 @@
+import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -314,6 +315,18 @@ describe("resolveTranscriptCommit", () => {
     expect(resolveTranscriptCommit(captured, captured, transcript, locale)).toMatchObject({
       kind: "commit",
       text: expected,
+    });
+  });
+
+  it("adds English spacing when a Japanese request falls back to an English-only model", () => {
+    const captured = draft({ text: "Hello", selection: { start: 5, end: 5 } });
+    const locale = effectiveSpeechLanguage(
+      { languages: ["en"], supportsLanguageDetection: false },
+      "ja",
+    );
+    expect(resolveTranscriptCommit(captured, captured, "world", locale)).toMatchObject({
+      kind: "commit",
+      text: "Hello world",
     });
   });
 

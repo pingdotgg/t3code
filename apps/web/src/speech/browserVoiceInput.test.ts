@@ -6,6 +6,8 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 const mocks = vi.hoisted(() => ({
   supportsStreaming: true,
   supportsTranslation: true,
+  languages: ["en", "fr", "ja"] as string[] | undefined,
+  supportsLanguageDetection: true,
   stream: (() => {
     type Stream = {
       feed: (pcm: Float32Array) => void;
@@ -27,6 +29,8 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       state: "ready",
       supportsStreaming: mocks.supportsStreaming,
       supportsTranslation: mocks.supportsTranslation,
+      languages: mocks.languages,
+      supportsLanguageDetection: mocks.supportsLanguageDetection,
     }),
   prepareEnvironmentSpeechModel: () => Effect.succeed({ supported: true, state: "ready" }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
@@ -47,6 +51,8 @@ let worklet: {
 afterEach(() => {
   mocks.supportsStreaming = true;
   mocks.supportsTranslation = true;
+  mocks.languages = ["en", "fr", "ja"];
+  mocks.supportsLanguageDetection = true;
   vi.unstubAllGlobals();
 });
 
@@ -166,3 +172,30 @@ it("keeps the selected output language when the model cannot translate", async (
   });
   expect(transcription.locale).toBe("ja");
 });
+
+it.each([true, false])(
+  "uses the effective language after switching to an English-only model (streaming=%s)",
+  async (streaming) => {
+    mocks.supportsStreaming = streaming;
+    const platform = createBrowserVoiceInputPlatform({
+      prepared: {} as PreparedConnection,
+      getTranscriptionOptions: () => ({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "ja",
+        speechTranslateToEnglish: false,
+      }),
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onText() {},
+      onError: vi.fn(),
+    });
+    const japanese = await platform.transcriber.prepare({ signal: new AbortController().signal });
+    expect(japanese.locale).toBe("ja");
+    mocks.languages = ["en"];
+    mocks.supportsLanguageDetection = false;
+    mocks.supportsTranslation = false;
+    const parakeet = await platform.transcriber.prepare({ signal: new AbortController().signal });
+    expect(parakeet.locale).toBe("en");
+  },
+);

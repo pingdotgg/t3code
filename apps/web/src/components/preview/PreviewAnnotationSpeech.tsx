@@ -36,6 +36,18 @@ export function PreviewAnnotationSpeech({
   const draft = useRef({ text: "", cursor: 0, selectionEnd: 0 });
   const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
+  const focused = useRef(false);
+  useEffect(() => {
+    const onFocus = () => {
+      focused.current = false;
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("focusin", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focusin", onFocus);
+    };
+  }, []);
   const speech = useEnvironmentSpeechInput({
     environmentId: threadRef.environmentId,
     projectId,
@@ -69,7 +81,7 @@ export function PreviewAnnotationSpeech({
     terminalOpen: false,
     modelPickerOpen: false,
     previewFocus: true,
-    ownsFocus: () => true,
+    ownsFocus: () => focused.current,
     subscribeKeys,
   });
   const { available, state, preview, freezesEditor, blocksSubmission, cancel, level, progress } =
@@ -128,8 +140,12 @@ export function PreviewAnnotationSpeech({
             selectionEnd: event.selectionEnd ?? event.cursor,
           };
           setText(event.text);
+          if (event.action === "focus" || event.action === "key" || event.action === "start")
+            focused.current = true;
+          if (event.action === "blur") focused.current = false;
           const value = current.current;
           switch (event.action) {
+            case "focus":
             case "sync":
               void publish();
               break;

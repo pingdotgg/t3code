@@ -107,6 +107,21 @@ const layer = SpeechService.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
+it.effect("updates language capabilities when the selected model changes", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.status).toMatchObject({
+      languages: ["en", "fr"],
+      supportsLanguageDetection: false,
+    });
+    yield* speech.selectModel("fallback-model");
+    expect(yield* speech.status).toMatchObject({
+      languages: ["en"],
+      supportsLanguageDetection: false,
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
 beforeEach(() => {
   vi.clearAllMocks();
   native.backend = "Vulkan0";

@@ -256,12 +256,8 @@ export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-
 export const getSpeechModel = (modelId: string): SpeechModel | undefined =>
   SPEECH_MODELS.find((model) => model.id === modelId);
 
-export const effectiveSpeechLanguage = (model: SpeechModel, intent: string): string => {
-  if (model.languages.length === 1) return model.languages[0]!;
-  if (intent !== "auto" && model.languages.includes(intent)) return intent;
-  if (model.supportsLanguageDetection) return "auto";
-  return model.languages.find((language) => language === "en") ?? model.languages[0]!;
-};
+export { effectiveSpeechLanguage } from "@t3tools/shared/speech";
+
 const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 

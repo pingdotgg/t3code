@@ -556,6 +556,8 @@ export const make = Effect.gen(function* () {
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
       supportsTranslation: definition.supportsTranslation,
+      languages: definition.languages,
+      supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
       gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),

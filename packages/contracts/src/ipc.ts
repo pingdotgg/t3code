@@ -1162,7 +1162,17 @@ export const DesktopPreviewAnnotationVoiceEventSchema = Schema.Struct({
   text: Schema.String,
   cursor: Schema.Number,
   selectionEnd: Schema.optional(Schema.Number),
-  action: Schema.Literals(["sync", "start", "stop", "cancel", "skip", "settings", "key", "blur"]),
+  action: Schema.Literals([
+    "sync",
+    "start",
+    "stop",
+    "cancel",
+    "skip",
+    "settings",
+    "key",
+    "focus",
+    "blur",
+  ]),
   keyboard: Schema.optional(
     Schema.Struct({
       type: Schema.Literals(["keydown", "keyup"]),

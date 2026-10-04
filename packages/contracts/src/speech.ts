@@ -91,6 +91,8 @@ export const EnvironmentSpeechStatus = Schema.Union([
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
     supportsTranslation: Schema.Boolean,
+    languages: Schema.optionalKey(Schema.Array(Schema.String)),
+    supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
     acceleration: SpeechAcceleration,
     modelUnloadTimeout: SpeechModelUnloadTimeout,
     gpuDevices: Schema.Array(SpeechGpuDevice),

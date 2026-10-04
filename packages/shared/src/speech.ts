@@ -8,6 +8,17 @@ import * as Schema from "effect/Schema";
 const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 
+/** Resolve the language the model can produce from the requested language. */
+export function effectiveSpeechLanguage(
+  model: { readonly languages: readonly string[]; readonly supportsLanguageDetection: boolean },
+  intent: string,
+): string {
+  if (model.languages.length === 1) return model.languages[0]!;
+  if (intent !== "auto" && model.languages.includes(intent)) return intent;
+  if (model.supportsLanguageDetection) return "auto";
+  return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
+}
+
 /** Project spellings take precedence. Request validation enforces the combined size limit. */
 export function mergeSpeechCustomWords(
   personal: SpeechCustomWords,

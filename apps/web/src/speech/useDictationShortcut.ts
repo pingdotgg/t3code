@@ -51,10 +51,9 @@ function ownsShortcut(id: symbol) {
     return phase !== "idle" && phase !== "error";
   });
   if (busy) return busy[0] === id;
-  const focused = entries.find(
-    ([, read]) =>
-      read().ownsFocus?.() || read().targetRef?.current?.contains(document.activeElement),
-  );
+  const focused =
+    entries.find(([, read]) => read().ownsFocus?.()) ??
+    entries.find(([, read]) => read().targetRef?.current?.contains(document.activeElement));
   if (focused) return focused[0] === id;
   return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
@@ -135,12 +134,18 @@ export function useDictationShortcut(input: ShortcutInput) {
     };
     const onBlur = () => finish(null);
 
-    const unsubscribe = subscribeKeys?.({ keydown: onKeyDown, keyup: finish, blur: onBlur });
-    if (!subscribeKeys) {
-      window.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("keyup", finish, true);
-      window.addEventListener("blur", onBlur);
-    }
+    const unsubscribe = subscribeKeys?.({
+      keydown: (event) => {
+        window.dispatchEvent(event);
+      },
+      keyup: (event) => {
+        window.dispatchEvent(event);
+      },
+      blur: onBlur,
+    });
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", finish, true);
+    window.addEventListener("blur", onBlur);
     return () => {
       disposed = true;
       pressed.current = null;

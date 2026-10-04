@@ -1,3 +1,4 @@
+import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import {
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
@@ -196,12 +197,21 @@ export function createBrowserVoiceInputPlatform(input: {
         );
         throwIfVoiceTranscriptionAborted(options.signal);
         if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
+        const language = status.languages
+          ? effectiveSpeechLanguage(
+              {
+                languages: status.languages,
+                supportsLanguageDetection: status.supportsLanguageDetection ?? false,
+              },
+              recordingOptions.speechLanguage,
+            )
+          : "auto";
         const locale =
           !status.supportsStreaming &&
           status.supportsTranslation &&
           recordingOptions.speechTranslateToEnglish
             ? "en"
-            : recordingOptions.speechLanguage;
+            : language;
         if (status.supportsStreaming) {
           const url = await runtime.runPromise(
             getEnvironmentSpeechStreamUrl(input.prepared),
