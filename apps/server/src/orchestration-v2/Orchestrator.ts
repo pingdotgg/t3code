@@ -2364,6 +2364,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (command.type === "thread.metadata.update" && command.worktreeContinuation !== undefined) {
+      if (isProviderNativeSubagentThread(thread)) {
+        return yield* new OrchestratorSubagentThreadReadOnlyError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+        });
+      }
+      if (
+        command.worktreePath == null ||
+        command.worktreePath === thread.worktreePath ||
+        thread.archivedAt !== null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "A worktree continuation requires an active thread and a changed worktree binding.",
+        });
+      }
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -3261,6 +3281,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 // Terminal detaches revoke the thread's MCP credentials; other
                 // detach reasons keep them so a re-attaching provider process
                 // stays authorized.
+                ...(command.type === "thread.metadata.update"
+                  ? { reason: "workspace_changed" as const }
+                  : {}),
                 ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
@@ -9399,7 +9422,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.mark-unread":
-      case "thread.metadata.update":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
@@ -9411,6 +9433,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.metadata.update":
+        yield* dispatchThreadMutation(command, events, effects);
+        if (command.worktreeContinuation !== undefined) {
+          yield* dispatchMessage(
+            {
+              type: "message.dispatch",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              ...command.worktreeContinuation,
+              attachments: [],
+              createdBy: "agent",
+              creationSource: "mcp",
+              dispatchMode: { type: "queue_after_active" },
+            },
+            events,
+            effects,
+          );
+        }
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);

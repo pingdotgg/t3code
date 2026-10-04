@@ -41,6 +41,10 @@ are saved on the server and can be edited, reordered, or removed above the compo
 `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses the opposite action:
 it steers when your default is Queue and queues when your default is Steer.
 
+When an agent moves its thread into a worktree with a continuation message, work resumes
+automatically in that worktree. An explicit Stop or a provider failure pauses queued messages
+until you resume the queue; the messages stay saved.
+
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. Change
