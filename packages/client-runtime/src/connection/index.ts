@@ -1,6 +1,7 @@
 export * from "./catalog.ts";
 export * as Connectivity from "./connectivity.ts";
 export * as CredentialStore from "./credentialStore.ts";
+export * as ConnectionDriver from "./driver.ts";
 export { type ConnectionDriverProgress, type EnvironmentConnectionLease } from "./driver.ts";
 export * from "./errors.ts";
 export * from "./githubRoutingPermissions.ts";
@@ -9,6 +10,7 @@ export * from "./model.ts";
 export * as ConnectionOnboarding from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
+export * as ConnectionResolver from "./resolver.ts";
 export * from "./routes.ts";
 export { type RouteCheck } from "./driver.ts";
 export * as EnvironmentRegistry from "./registry.ts";
