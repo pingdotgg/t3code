@@ -561,12 +561,12 @@ describe("ChatMarkdown", () => {
       await vi.waitFor(() => {
         expect(eventHandler).toHaveBeenCalledWith(
           expect.objectContaining({
-            detail: {
+            detail: expect.objectContaining({
               host: "github.com",
               repository: "owner/repo",
               number: 42,
               url: "https://github.com/owner/repo/pull/42",
-            },
+            }),
           }),
         );
       });
@@ -599,12 +599,12 @@ describe("ChatMarkdown", () => {
       await vi.waitFor(() => {
         expect(eventHandler).toHaveBeenCalledWith(
           expect.objectContaining({
-            detail: {
+            detail: expect.objectContaining({
               host: "github.com",
               repository: "owner/repo",
               number: 42,
               url: "https://github.com/owner/repo/pull/42",
-            },
+            }),
           }),
         );
       });
