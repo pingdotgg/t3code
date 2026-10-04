@@ -1,7 +1,7 @@
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { StatusBar, View } from "react-native";
+import { StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -85,17 +85,16 @@ function AppContent() {
                 this, React Navigation defaults to its light theme and every native
                 header (glass buttons, title, materials) is forced light even when
                 the system is in dark mode. */}
-              <View style={{ flex: 1 }}>
+              <GlobalVoiceInputControl>
                 <IncomingShareProvider>
                   <Navigation linking={appLinking} theme={navigationTheme} />
                 </IncomingShareProvider>
                 <ConfirmDialogHost />
                 <ThreadArrangementHost />
-              </View>
+              </GlobalVoiceInputControl>
               {/* Anchored-menu overlays render here — in-window, so the
                 keyboard stays up while a dropdown is open. */}
               <OverlayPortalHost />
-              <GlobalVoiceInputControl />
             </VoiceInputProvider>
           </SafeAreaProvider>
         </KeyboardProvider>

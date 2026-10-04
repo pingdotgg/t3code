@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -40,19 +40,37 @@ const MORPH_TIMING = {
 } as const;
 const ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 
-/** Keeps an off-screen dictation reachable as a pill on the screen's trailing edge. */
-export function GlobalVoiceInputControl() {
+/**
+ * Keeps an off-screen dictation reachable as a pill on the screen's trailing
+ * edge. Wraps the app content so any touch that starts outside the pill,
+ * including a scroll, collapses it without claiming the touch.
+ */
+export function GlobalVoiceInputControl(props: { readonly children: ReactNode }) {
   const voice = useGlobalVoiceInput();
+  const collapseRef = useRef<(() => void) | null>(null);
   const presentation = resolveVoiceComposerPresentation(voice.state, voice.elapsedSeconds);
-  if (!presentation.statusLabel || (voice.ownerKey && voice.focusedOwners.has(voice.ownerKey))) {
-    return null;
-  }
+  const visible =
+    presentation.statusLabel !== null &&
+    !(voice.ownerKey && voice.focusedOwners.has(voice.ownerKey));
   // Mounted only while visible, so each dictation starts collapsed.
-  const content = <EdgeDictationPill />;
-  return Platform.OS === "ios" ? <FullWindowOverlay>{content}</FullWindowOverlay> : content;
+  const pill = visible ? <EdgeDictationPill collapseRef={collapseRef} /> : null;
+  return (
+    <>
+      <View
+        className="flex-1"
+        onStartShouldSetResponderCapture={() => {
+          collapseRef.current?.();
+          return false;
+        }}
+      >
+        {props.children}
+      </View>
+      {pill && Platform.OS === "ios" ? <FullWindowOverlay>{pill}</FullWindowOverlay> : pill}
+    </>
+  );
 }
 
-function EdgeDictationPill() {
+function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void) | null> }) {
   const voice = useGlobalVoiceInput();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -62,6 +80,14 @@ function EdgeDictationPill() {
   useEffect(() => {
     progress.value = withTiming(expanded ? 1 : 0, MORPH_TIMING);
   }, [expanded, progress]);
+  const { collapseRef } = props;
+  useEffect(() => {
+    if (!expanded) return;
+    collapseRef.current = () => setExpanded(false);
+    return () => {
+      collapseRef.current = null;
+    };
+  }, [collapseRef, expanded]);
 
   const expandedWidth = Math.min(width - insets.left - insets.right - 32, EXPANDED_MAX_WIDTH);
   // Each face keeps its final width and stays pinned to the edge, so the
