@@ -463,30 +463,28 @@ function PoolBar({
     <div className="@container/pool min-w-0">
       <div
         className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${pool.members.length}, minmax(0, 1fr))` }}
       >
-        {pool.columns.map((member, position) =>
-          member.window ? (
-            <PoolSegment
-              key={member.account.key}
-              account={member.account}
-              window={member.window}
-              reset={restores.get(member.account.key)}
-              color={color}
-              now={now}
-              index={position + 1}
-              showAccountName={pool.columns.length > 1}
-            />
-          ) : null,
-        )}
+        {pool.members.map((member, position) => (
+          <PoolSegment
+            key={member.account.key}
+            account={member.account}
+            window={member.window}
+            reset={restores.get(member.account.key)}
+            color={color}
+            now={now}
+            index={position + 1}
+            showAccountName={pool.columns.length > 1}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
 /**
- * Big pooled number and the segment bar. Accounts keep the same column across
- * windows; each segment's popover shows its own reset time and share restored.
+ * Big pooled number and the segment bar. Only accounts that report this window
+ * share its width; each popover shows the account's reset time and share restored.
  */
 function PoolWindowCard({
   pool,

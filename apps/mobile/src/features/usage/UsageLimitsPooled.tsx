@@ -123,8 +123,7 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.columns.map(({ account, window }, index) => {
-          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+        {pool.members.map(({ account, window }, index) => {
           return (
             <Pressable
               key={account.key}
@@ -149,8 +148,7 @@ function PoolWindowCard({
         })}
       </View>
       <View>
-        {pool.columns.map(({ account, window }, index) => {
-          if (!window) return null;
+        {pool.members.map(({ account, window }, index) => {
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
