@@ -343,6 +343,14 @@ it.effect.each([
       DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
+    // The shell carries the same stamp, which orders the Working section.
+    const shellThread = (yield* store.getShellSnapshot()).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.equal(
+      DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
+      DateTime.formatIso(written),
+    );
   }).pipe(Effect.provide(testLayer)),
 );
 
