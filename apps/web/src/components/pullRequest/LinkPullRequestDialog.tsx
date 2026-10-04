@@ -208,7 +208,7 @@ function LinkPullRequestDialog({
   );
   const preview = lookup === null ? null : previewQuery.data;
   const previewError = lookup === null ? null : previewQuery.error;
-  const alreadyLinked = lookup !== null && linking.isLinked(thread ?? null, lookup.url);
+  const alreadyLinked = target !== null && linking.isLinked(thread ?? null, target.url);
   const lookingUp = target !== null && preview === null && previewError === null;
 
   const submit = useCallback(async () => {
