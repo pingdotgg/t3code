@@ -1,3 +1,8 @@
+import type { Nodes } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 export interface TimelineMinimapItem {
@@ -48,23 +53,31 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
-/** Drops markdown syntax so table, list, and link sources read as plain preview text. */
-function stripMarkdownForPreview(text: string) {
-  return (
-    text
-      // Code fence lines, then table delimiter rows and thematic breaks.
-      .replace(/^[ \t]*(?:```|~~~).*$/gm, "")
-      .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
-      // Table rows keep their cell text.
-      .replace(/^[ \t]*\|(.*?)\|?[ \t]*$/gm, (_, cells: string) => cells.replace(/\s*\|\s*/g, " "))
-      // Blockquote, heading, list, and task markers at the start of a line.
-      .replace(/^[ \t]*(?:>[ \t]*)*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]\][ \t]+)?/gm, "")
-      // Links and images keep their label.
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/`+([^`]+)`+/g, "$1")
-      // Paired bold and strikethrough only; single `*` and `_` are common in identifiers.
-      .replace(/(\*\*|__|~~)(\S(?:.*?\S)?)\1/g, "$2")
-  );
+const markdownPreviewParser = unified().use(remarkParse).use(remarkGfm).freeze();
+
+const INLINE_PARENT_TYPES = new Set<Nodes["type"]>([
+  "paragraph",
+  "heading",
+  "tableCell",
+  "emphasis",
+  "strong",
+  "delete",
+  "link",
+  "linkReference",
+]);
+
+function markdownNodeText(node: Nodes): string {
+  if (node.type === "html") return "";
+  if ("value" in node) return node.value;
+  if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
+  if (!("children" in node)) return "";
+  const separator = INLINE_PARENT_TYPES.has(node.type) ? "" : " ";
+  return node.children.map((child: Nodes) => markdownNodeText(child)).join(separator);
+}
+
+/** Reads assistant markdown as rendered text so previews never show table pipes or link syntax. */
+function markdownPreviewText(markdown: string) {
+  return markdownNodeText(markdownPreviewParser.parse(markdown));
 }
 
 function compactMinimapPreview(text: string | null | undefined) {
@@ -81,7 +94,7 @@ export function resolveTimelineMinimapPreview(
         ...item,
         userText: compactMinimapPreview(item.userText),
         assistantText: compactMinimapPreview(
-          item.assistantText === null ? null : stripMarkdownForPreview(item.assistantText),
+          item.assistantText === null ? null : markdownPreviewText(item.assistantText),
         ),
       };
 }

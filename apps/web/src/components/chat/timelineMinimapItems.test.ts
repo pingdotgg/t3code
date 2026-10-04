@@ -94,6 +94,26 @@ describe("timeline minimap previews", () => {
     });
   });
 
+  it("keeps code, escaped table pipes, and literal checkboxes as written", () => {
+    const preview = (markdown: string) =>
+      resolveTimelineMinimapPreview(
+        deriveTimelineMinimapItems(
+          rows([
+            ["user", "Q"],
+            ["assistant", markdown],
+          ]),
+        )[0]!,
+      )?.assistantText;
+
+    expect(preview("Match `**/*.ts` files\n\n```sh\n# install deps\n- **not bold**\n```")).toBe(
+      "Match **/*.ts files # install deps - **not bold**",
+    );
+    expect(preview("| Operator | Meaning |\n| --- | --- |\n| `a \\| b` | either |")).toBe(
+      "Operator Meaning a | b either",
+    );
+    expect(preview("[x] deployment complete")).toBe("[x] deployment complete");
+  });
+
   it("shows fresh streaming text without changing the jump target", () => {
     const first = deriveTimelineMinimapItems(
       rows([
