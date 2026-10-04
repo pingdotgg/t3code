@@ -13,6 +13,7 @@ await Effect.runPromise(
         instanceId: "crash-fixture",
         binaryPath: process.argv[2],
         profileDirectory: process.argv[3],
+        ...(process.argv[4] ? { processStateDirectory: process.argv[4] } : {}),
         environment: {
           PATH: process.env.PATH,
           HOME: process.argv[3],

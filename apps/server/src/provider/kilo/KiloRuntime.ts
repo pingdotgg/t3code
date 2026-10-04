@@ -92,6 +92,8 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   readonly profileDirectory: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly authContent?: string;
+  /** Stable T3 state directory; process ownership must survive profile removal. */
+  readonly processStateDirectory?: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
@@ -102,8 +104,16 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   const fail = (operation: string, detail: string) => (cause: unknown) =>
     new KiloRuntimeError({ operation, detail, cause });
   const profile = path.resolve(input.profileDirectory);
-  const ledger = yield* ServerLedger.make({ stateDir: path.join(profile, "t3-processes") });
-  yield* ledger.reapOrphans;
+  const ledger = yield* ServerLedger.make({
+    stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
+  });
+  if (input.processStateDirectory) {
+    // The server-global ledger also reaps at startup, even when no Kilo profile
+    // remains configured. Do not block model discovery on orphan shutdown.
+    yield* ledger.reapOrphans.pipe(Effect.forkIn(owner));
+    const legacy = yield* ServerLedger.make({ stateDir: path.join(profile, "t3-processes") });
+    yield* legacy.reapOrphans.pipe(Effect.forkIn(owner));
+  } else yield* ledger.reapOrphans;
   const authContent = input.authContent ?? (yield* readAuth(profile, input.environment));
   const environment: NodeJS.ProcessEnv = {
     ...input.environment,

@@ -15,6 +15,7 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
 
+import * as ServerLedger from "../OpenCodeServerLedger.ts";
 import * as KiloRuntime from "./KiloRuntime.ts";
 import { KiloDriver } from "../Drivers/KiloDriver.ts";
 import * as ServerConfig from "../../config.ts";
@@ -254,96 +255,113 @@ describe.skipIf(!binary)("KiloRuntime native lifecycle", () => {
     { timeout: 30000 },
   );
 
-  it.live.skipIf(platform !== "linux")(
-    "reaps a real Kilo process after its T3 owner is killed and resumes its session",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-kilo-crash-" });
-        let group: number | undefined;
-        const owner = yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            NodeChildProcess.spawn(
-              process.execPath,
-              [
-                NodeURL.fileURLToPath(new URL("./KiloRuntime.crash.fixture.mjs", import.meta.url)),
-                binary!,
-                profile,
-              ],
-              { stdio: ["ignore", "ignore", "ignore", "ipc"] },
-            ),
-          ),
-          (child) =>
-            Effect.sync(() => {
-              child.kill("SIGKILL");
-              if (group !== undefined) {
-                try {
-                  process.kill(-group, "SIGKILL");
-                } catch {
-                  /* already stopped */
-                }
-              }
-            }),
-        );
-        const message = yield* Effect.promise(
-          () =>
-            new Promise<{
-              pid: number;
-              session: { instanceId: string; sessionId: string; directory: string };
-            }>((resolve, reject) => {
-              owner.on("message", (value) => {
-                const message = value as {
-                  type: string;
-                  pid: number;
-                  session: { instanceId: string; sessionId: string; directory: string };
-                };
-                group = message.pid;
-                if (message.type === "ready") resolve(message);
-              });
-              owner.once("exit", () =>
-                reject(new Error("Kilo crash fixture exited before readiness")),
-              );
-              owner.once("error", reject);
-            }),
-        );
-        const entries = yield* fs.readDirectory(
-          path.join(profile, "t3-processes", "opencode-servers"),
-        );
-        assert.equal(entries.length, 1);
-        const recorded = yield* decodeOwner(
-          yield* fs.readFileString(
-            path.join(profile, "t3-processes", "opencode-servers", entries[0]!),
-          ),
-        );
-        assert.equal(recorded.owner.pid, owner.pid);
-        assert.equal(recorded.pgid, group);
-        const exited = NodeEvents.EventEmitter.once(owner, "exit");
-        owner.kill("SIGKILL");
-        yield* Effect.promise(() => exited);
-        const running = (pid: number) =>
-          fs.readFileString(`/proc/${pid}/stat`).pipe(
-            Effect.map((stat) => !stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")),
-            Effect.orElseSucceed(() => false),
+  for (const globalLedger of [false, true])
+    it.live.skipIf(platform !== "linux")(
+      `reaps a real Kilo owner crash, including moved profiles: globalLedger=${globalLedger}`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-kilo-crash-" });
+          const profile = path.join(root, "profile");
+          yield* fs.makeDirectory(profile);
+          const processStateDirectory = path.join(root, "server-state");
+          const ledgerDir = path.join(
+            globalLedger ? processStateDirectory : path.join(profile, "t3-processes"),
+            "opencode-servers",
           );
-        assert.isTrue(yield* running(message.pid));
-        const restarted = yield* KiloRuntime.make({
-          instanceId: "crash-fixture",
-          binaryPath: binary!,
-          profileDirectory: profile,
-          environment: { ...environment, HOME: profile },
-        });
-        assert.isFalse(yield* running(message.pid));
-        assert.deepEqual(
-          yield* fs.readDirectory(path.join(profile, "t3-processes", "opencode-servers")),
-          [],
-        );
-        const fresh = yield* restarted.open(profile);
-        assert.equal((yield* fresh.client.read(message.session)).id, message.session.sessionId);
-        assert.isTrue(yield* fresh.isRunning);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    { timeout: 30000 },
-  );
+          let group: number | undefined;
+          const owner = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeChildProcess.spawn(
+                process.execPath,
+                [
+                  NodeURL.fileURLToPath(
+                    new URL("./KiloRuntime.crash.fixture.mjs", import.meta.url),
+                  ),
+                  binary!,
+                  profile,
+                  ...(globalLedger ? [processStateDirectory] : []),
+                ],
+                { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+              ),
+            ),
+            (child) =>
+              Effect.sync(() => {
+                child.kill("SIGKILL");
+                if (group !== undefined) {
+                  try {
+                    process.kill(-group, "SIGKILL");
+                  } catch {
+                    /* already stopped */
+                  }
+                }
+              }),
+          );
+          const message = yield* Effect.promise(
+            () =>
+              new Promise<{
+                pid: number;
+                session: { instanceId: string; sessionId: string; directory: string };
+              }>((resolve, reject) => {
+                owner.on("message", (value) => {
+                  const message = value as {
+                    type: string;
+                    pid: number;
+                    session: { instanceId: string; sessionId: string; directory: string };
+                  };
+                  group = message.pid;
+                  if (message.type === "ready") resolve(message);
+                });
+                owner.once("exit", () =>
+                  reject(new Error("Kilo crash fixture exited before readiness")),
+                );
+                owner.once("error", reject);
+              }),
+          );
+          const entries = yield* fs.readDirectory(ledgerDir);
+          assert.equal(entries.length, 1);
+          const recorded = yield* decodeOwner(
+            yield* fs.readFileString(path.join(ledgerDir, entries[0]!)),
+          );
+          assert.equal(recorded.owner.pid, owner.pid);
+          assert.equal(recorded.pgid, group);
+          const exited = NodeEvents.EventEmitter.once(owner, "exit");
+          owner.kill("SIGKILL");
+          yield* Effect.promise(() => exited);
+          const running = (pid: number) =>
+            fs.readFileString(`/proc/${pid}/stat`).pipe(
+              Effect.map((stat) => !stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")),
+              Effect.orElseSucceed(() => false),
+            );
+          assert.isTrue(yield* running(message.pid));
+          const replacementProfile = globalLedger ? path.join(root, "moved-profile") : profile;
+          if (globalLedger) {
+            yield* fs.rename(profile, replacementProfile);
+            // This is the same server-global startup reaper. No account/profile
+            // lookup is needed, so removal from settings cannot hide the process.
+            const ledger = yield* ServerLedger.make({ stateDir: processStateDirectory });
+            yield* ledger.reapOrphans;
+            yield* fs.makeDirectory(profile);
+          }
+          const restarted = yield* KiloRuntime.make({
+            instanceId: "crash-fixture",
+            binaryPath: binary!,
+            profileDirectory: replacementProfile,
+            environment: { ...environment, HOME: profile },
+          });
+          assert.isFalse(yield* running(message.pid));
+          assert.deepEqual(yield* fs.readDirectory(ledgerDir), []);
+          const fresh = yield* restarted.open(profile);
+          if (globalLedger) {
+            const newSession = yield* fresh.client.create([]);
+            assert.notEqual(newSession.sessionId, message.session.sessionId);
+          } else
+            assert.equal((yield* fresh.client.read(message.session)).id, message.session.sessionId);
+          assert.isTrue(yield* fresh.isRunning);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      { timeout: 30000 },
+    );
 
   it.live(
     "cleans failed startup and can open a fresh process afterward",

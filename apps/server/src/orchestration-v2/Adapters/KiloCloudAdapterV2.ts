@@ -281,18 +281,25 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         yield* emit({ type: "node.updated", driver, node: entry.node });
         yield* emit({ type: "turn_item.updated", driver, turnItem: entry.item });
       });
+      yield* Effect.addFinalizer(() =>
+        active ? options.client.forgetAdmission(options.repository, active.messageId) : Effect.void,
+      );
+      const hasBackgroundWork = () =>
+        (!!active && !active.admissionRecoveryPaused) || needsHistoryRestore || monitorSandbox;
       const finish = Effect.fn("KiloCloudAdapterV2.finish")(function* (
         terminal: "completed" | "failed" | "interrupted",
         resultFailure?: string,
       ) {
         if (!active) return;
         const at = yield* DateTime.now;
+        const notSubmitted = active.submissionPhase === "preflight";
         const saved = {
           ...active,
           state: terminal,
           providerTurn: { ...active.providerTurn, status: terminal, completedAt: at },
         };
         yield* save(saved);
+        yield* options.client.forgetAdmission(options.repository, saved.messageId);
         if (thread?.nativeMetadata?.cloudExecution) {
           thread = {
             ...thread,
@@ -301,7 +308,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
               ...thread.nativeMetadata,
               cloudExecution: {
                 ...thread.nativeMetadata.cloudExecution,
-                task: saved.remoteState ?? terminal,
+                task: notSubmitted ? "not_started" : (saved.remoteState ?? terminal),
                 ...(saved.resultStatus ? { result: saved.resultStatus } : {}),
               },
             },
@@ -355,9 +362,15 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 status: "failed",
                 failure: makeProviderFailure({
                   class: "provider_error",
-                  code: resultFailure ? "kilo_cloud_result_unavailable" : "provider_error",
+                  code: notSubmitted
+                    ? "kilo_cloud_not_submitted"
+                    : resultFailure
+                      ? "kilo_cloud_result_unavailable"
+                      : "provider_error",
                   ...(resultFailure ? { retryable: false } : {}),
-                  message: resultFailure ?? "Kilo Cloud reported a failed task.",
+                  message: notSubmitted
+                    ? "Kilo Cloud preflight failed before submission. No paid request was sent; you can try a new turn."
+                    : (resultFailure ?? "Kilo Cloud reported a failed task."),
                 }),
                 threadDisposition: "reusable",
               }
@@ -382,7 +395,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         // the thread can retry history independently of the ended turn.
         needsHistoryRestore = false;
         if (!binding) monitorSandbox = false;
-        taskState = saved.remoteState ?? terminal;
+        taskState = notSubmitted ? "not_started" : (saved.remoteState ?? terminal);
         resultStatus = saved.resultStatus;
         yield* Deferred.succeed(terminalSignal, undefined);
       });
@@ -623,6 +636,11 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         yield* emit({ type: "turn_item.updated", driver: driver, turnItem });
       });
       const reconcile = Effect.fn("KiloCloudAdapterV2.reconcile")(function* () {
+        if (active?.submissionPhase === "preflight") {
+          yield* finish("failed");
+          return;
+        }
+        if (active?.admissionRecoveryPaused) return;
         const expectedMessageId = active?.messageId;
         if (!binding) {
           if (active && !active.prepared) {
@@ -630,9 +648,32 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
             if (now < admissionProbeAt) return;
             admissionProbeAt = now + admissionProbeDelay;
             admissionProbeDelay = Math.min(admissionProbeDelay * 2, 60_000);
-            const found = yield* wire(
-              options.client.findAdmission(options.repository, active.messageId),
-            );
+            const found = yield* options.client
+              .findAdmission(options.repository, active.messageId)
+              .pipe(
+                Effect.timeout("8 seconds"),
+                Effect.catch((cause) =>
+                  Effect.gen(function* () {
+                    const failures = (active!.admissionRecoveryFailures ?? 0) + 1;
+                    const paused =
+                      failures >= 3 ||
+                      (isCloudError(cause) &&
+                        (cause.reason === "recovery_incomplete" || cause.reason === "wrong_owner"));
+                    yield* save({
+                      ...active!,
+                      admissionRecoveryFailures: failures,
+                      admissionRecoveryPaused: paused,
+                    });
+                    if (paused) {
+                      monitorSandbox = false;
+                      yield* status(
+                        "Cloud admission recovery is incomplete and automatic scanning is paused. Reopen history to retry reads. Submission and billing remain unknown; do not submit again.",
+                      );
+                    }
+                    return null;
+                  }),
+                ),
+              );
             if (found && active?.messageId === expectedMessageId)
               yield* save({ ...active, prepared: found });
           }
@@ -646,6 +687,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
               ),
             );
             yield* save({ ...active, binding, state: "active" });
+            yield* options.client.forgetAdmission(options.repository, active!.messageId);
           } else return;
         }
         const intents = yield* wire(options.journal.readThread(thread!.id));
@@ -899,8 +941,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         const ownedBinding = binding;
         streamFiber = yield* Effect.gen(function* () {
           // State is changed by the reconciler while this reader observes notifications.
-          // oxlint-disable-next-line no-unmodified-loop-condition
-          while (active || needsHistoryRestore || monitorSandbox) {
+          while (hasBackgroundWork()) {
             yield* options.client.events(ownedBinding, streamCursor).pipe(
               Stream.runForEach((event) =>
                 Effect.gen(function* () {
@@ -924,7 +965,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 ),
               ),
             );
-            if (active || needsHistoryRestore || monitorSandbox) yield* Effect.sleep("5 seconds");
+            if (hasBackgroundWork()) yield* Effect.sleep("5 seconds");
           }
         }).pipe(
           Effect.ensuring(
@@ -944,8 +985,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         yield* Effect.gen(function* () {
           let polls = 0;
           // Reconcile and lifecycle update this session state.
-          // oxlint-disable-next-line no-unmodified-loop-condition
-          while (active || needsHistoryRestore || monitorSandbox) {
+          while (hasBackgroundWork()) {
             const pollStartedAt = yield* Clock.currentTimeMillis;
             yield* watchEvents;
             if (active || needsHistoryRestore)
@@ -962,7 +1002,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 );
             if (binding && (polls++ % 15 === 0 || !active))
               yield* gate.withPermit(lifecycle.pipe(Effect.timeout("10 seconds"), Effect.ignore));
-            if (active || needsHistoryRestore || monitorSandbox)
+            if (hasBackgroundWork())
               yield* Effect.raceFirst(
                 Effect.sleep(active ? "2 seconds" : "15 seconds"),
                 Queue.take(wake),
@@ -986,8 +1026,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 watching = false;
                 // A turn may arrive while the previous socket is closing. Starting
                 // and retiring the watcher share the turn gate, so its wake is not lost.
-                if (Exit.isSuccess(exit) && (active || needsHistoryRestore || monitorSandbox))
-                  yield* watch;
+                if (Exit.isSuccess(exit) && hasBackgroundWork()) yield* watch;
               }),
             ),
           ),
@@ -1046,12 +1085,14 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           return yield* error("Cloud journal belongs to another account or repository.");
         binding = last?.binding ?? undefined;
         taskState =
-          last?.remoteState ??
-          (last?.state === "awaiting_result"
-            ? "completed"
-            : last?.state === "active"
-              ? "unknown"
-              : (last?.state ?? "not_started"));
+          last?.submissionPhase === "preflight"
+            ? "not_started"
+            : (last?.remoteState ??
+              (last?.state === "awaiting_result"
+                ? "completed"
+                : last?.state === "active"
+                  ? "unknown"
+                  : (last?.state ?? "not_started")));
         resultStatus = last?.resultStatus;
         monitorSandbox = !!last?.binding;
         active =
@@ -1062,6 +1103,11 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
             ? last
             : undefined;
         if (binding) thread = { ...thread, nativeThreadRef: nativeRef(binding.kiloSessionId) };
+        if (active?.submissionPhase === "preflight") yield* finish("failed");
+        if (active?.admissionRecoveryPaused)
+          yield* status(
+            "Cloud admission recovery is paused. Reopen history to retry reads; submission and billing remain unknown.",
+          );
         return thread;
       });
       const unsupported = () =>
@@ -1072,15 +1118,9 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         providerSessionId: input.providerSessionId,
         providerSession: session,
         events: Stream.fromEffectRepeat(Queue.take(queue)),
-        hasPendingBackgroundWork: Effect.sync(
-          () => active !== undefined || needsHistoryRestore || monitorSandbox,
-        ),
+        hasPendingBackgroundWork: Effect.sync(hasBackgroundWork),
         hasPendingBackgroundWorkForThread: (candidate) =>
-          Effect.sync(
-            () =>
-              candidate.id === thread?.id &&
-              (active !== undefined || needsHistoryRestore || monitorSandbox),
-          ),
+          Effect.sync(() => candidate.id === thread?.id && hasBackgroundWork()),
         ensureThread: (request) =>
           gate.withPermit(
             Effect.gen(function* () {
@@ -1113,7 +1153,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                   providerTurn: saved.providerTurn,
                 });
                 binding = saved.binding ?? undefined;
-                monitorSandbox = true;
+                monitorSandbox = !!binding;
                 if (
                   saved.state === "completed" ||
                   saved.state === "failed" ||
@@ -1218,6 +1258,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 binding: binding ?? null,
                 prepared: null,
                 state: "admission_unknown",
+                submissionPhase: "preflight",
                 interruptRequested: false,
                 answeredRequestIds: [],
                 providerThread,
@@ -1267,19 +1308,34 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 driver,
                 providerTurn: intent.providerTurn,
               });
+              // This write is part of the client's dispatch boundary, after its
+              // credentials/preflight reads and before the paid HTTP execute.
+              const beforePaidPost = Effect.suspend(() =>
+                save({ ...active!, submissionPhase: "post_attempted" }).pipe(
+                  Effect.asVoid,
+                  Effect.mapError(
+                    () =>
+                      new KiloCloudError({ operation: "submission-journal", reason: "rejected" }),
+                  ),
+                ),
+              );
               let submissionConfirmed = false;
               yield* Effect.gen(function* () {
                 if (binding)
-                  yield* options.client.send(binding, {
-                    messageId,
-                    prompt: request.message.text,
-                    model,
-                    ...(variant ? { variant } : {}),
-                  });
+                  yield* options.client.send(
+                    binding,
+                    {
+                      messageId,
+                      prompt: request.message.text,
+                      model,
+                      ...(variant ? { variant } : {}),
+                    },
+                    beforePaidPost,
+                  );
                 else {
-                  const prepared = yield* options.client.prepare(payload);
+                  const prepared = yield* options.client.prepare(payload, beforePaidPost);
                   submissionConfirmed = true;
-                  yield* save({ ...intent, prepared });
+                  yield* save({ ...active!, prepared });
                   binding = yield* options.client.bind(
                     prepared,
                     options.repository,
@@ -1292,7 +1348,8 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
               }).pipe(
                 Effect.catch((cause) =>
-                  !submissionConfirmed && isCloudError(cause) && cause.reason === "rejected"
+                  active?.submissionPhase === "preflight" ||
+                  (!submissionConfirmed && isCloudError(cause) && cause.reason === "rejected")
                     ? finish("failed")
                     : status(
                         "Cloud admission is uncertain. Its operation ID is saved; no automatic retry will start another paid task.",
@@ -1308,6 +1365,10 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
               Effect.gen(function* () {
                 yield* owned(request.providerThread);
                 if (!active || active.providerTurn.id !== request.providerTurnId) return false;
+                if (active.submissionPhase === "preflight") {
+                  yield* finish("interrupted");
+                  return false;
+                }
                 if (active.state === "awaiting_result") {
                   yield* save({ ...active, resultStatus: "cancelled" });
                   yield* finish("interrupted");
@@ -1363,6 +1424,15 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           gate.withPermit(
             Effect.gen(function* () {
               yield* owned(request.providerThread);
+              const resumeAdmissionWatch = active?.admissionRecoveryPaused === true;
+              if (resumeAdmissionWatch) {
+                yield* save({
+                  ...active!,
+                  admissionRecoveryPaused: false,
+                  admissionRecoveryFailures: 0,
+                });
+                admissionProbeAt = 0;
+              }
               yield* reconcile().pipe(
                 Effect.timeout("10 seconds"),
                 Effect.mapError(() =>
@@ -1374,6 +1444,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 ),
               );
               yield* lifecycle;
+              if (resumeAdmissionWatch && hasBackgroundWork()) yield* watch;
               const intents = yield* wire(options.journal.readThread(thread!.id));
               return {
                 providerThread: thread!,

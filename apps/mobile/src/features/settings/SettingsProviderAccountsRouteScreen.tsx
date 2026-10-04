@@ -199,7 +199,7 @@ function ProviderAccount({
   }
   return (
     <View className="border-b border-border-subtle">
-      <View className="gap-2 border-b border-border-subtle p-4">
+      <View className="gap-2 p-4">
         <Text className="text-lg font-semibold text-foreground">
           {provider.displayName ?? provider.driver}
         </Text>

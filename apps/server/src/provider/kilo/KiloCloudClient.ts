@@ -17,6 +17,7 @@ export class KiloCloudError extends Schema.TaggedError<KiloCloudError>()("KiloCl
     "invalid_response",
     "wrong_owner",
     "unsupported",
+    "recovery_incomplete",
   ]),
   messageId: Schema.optional(Schema.String),
 }) {}

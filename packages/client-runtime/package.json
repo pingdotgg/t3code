@@ -366,6 +366,10 @@
     "./kilo-icon": {
       "types": "./src/kiloIcon.ts",
       "default": "./src/kiloIcon.ts"
+    },
+    "./cloudExecutionLabels": {
+      "types": "./src/cloudExecutionLabels.ts",
+      "default": "./src/cloudExecutionLabels.ts"
     }
   },
   "scripts": {

@@ -73,6 +73,64 @@ function json(response: NodeHttp.ServerResponse, data: unknown) {
   response.end(JSON.stringify({ result: { data } }));
 }
 describe("Kilo personal Cloud control-plane customer API", () => {
+  it("never binds a partial match after bounded candidate failures and drops failed scan state", async () => {
+    let unavailable = true;
+    let lists = 0;
+    let badReads = 0;
+    const missing = "workspace_00000000-0000-0000-0000-000000000000";
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("GET");
+      const url = new URL(req.url!, "http://localhost");
+      const input = JSON.parse(url.searchParams.get("input")!) as Record<string, string>;
+      if (url.pathname.endsWith("cliSessionsV2.list")) {
+        lists++;
+        return json(res, {
+          cliSessions: [
+            { session_id: "ses_unavailable", cloud_agent_session_id: missing },
+            { session_id: session.kiloSessionId, cloud_agent_session_id: session.sessionId },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (input.cloudAgentSessionId === missing) {
+        badReads++;
+        res.writeHead(unavailable ? 503 : 404);
+        res.end();
+        return;
+      }
+      return json(res, session);
+    });
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    expect(badReads).toBe(3);
+    expect(lists).toBe(1);
+    unavailable = false;
+    expect(await run(client.findAdmission(binding.repository, messageId))).toEqual({
+      cloudAgentSessionId: session.sessionId,
+      kiloSessionId: session.kiloSessionId,
+    });
+    expect(lists).toBe(2);
+  });
+  it("clears abandoned scans and repeated cursors without treating partial reads as absence", async () => {
+    let repeated = true;
+    const cursors: Array<string | undefined> = [];
+    const { client } = await server((req, res) => {
+      const url = new URL(req.url!, "http://localhost");
+      const input = JSON.parse(url.searchParams.get("input")!) as Record<string, string>;
+      cursors.push(input.cursor);
+      return json(res, { cliSessions: [], nextCursor: repeated ? "cycle" : null });
+    });
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    repeated = false;
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(cursors).toEqual([undefined, "cycle", undefined]);
+    await run(client.forgetAdmission(binding.repository, messageId));
+  });
   it("continues an uncertain-admission scan across read budgets and cursor pages without resubmitting", async () => {
     const reads: string[] = [];
     const cursors: Array<string | null> = [];
@@ -217,7 +275,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
     repeated = true;
     expect(
       (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
-    ).toBe("invalid_response");
+    ).toBe("recovery_incomplete");
   });
   it("authenticates a customer WebSocket, resumes its cursor and rejects a foreign session event", async () => {
     const expiresAt = await run(Clock.currentTimeMillis);

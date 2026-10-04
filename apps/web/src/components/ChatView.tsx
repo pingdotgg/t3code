@@ -1,3 +1,4 @@
+import { cloudExecutionLabel } from "@t3tools/client-runtime/cloudExecutionLabels";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -10723,9 +10724,12 @@ export default function ChatView(props: ChatViewProps) {
                   {cloudExecution ? (
                     <p>
                       Last observation: {cloudExecution.observedAt ?? "unavailable"}. Task:{" "}
-                      {cloudExecution.task}.{" "}
-                      {cloudExecution.result ? `Result: ${cloudExecution.result}. ` : ""}Sandbox:{" "}
-                      {cloudExecution.sandbox}. Compute: {cloudExecution.billing}
+                      {cloudExecutionLabel(cloudExecution.task)}.{" "}
+                      {cloudExecution.result
+                        ? `Result: ${cloudExecutionLabel(cloudExecution.result)}. `
+                        : ""}
+                      Sandbox: {cloudExecutionLabel(cloudExecution.sandbox)}. Compute:{" "}
+                      {cloudExecutionLabel(cloudExecution.billing)}
                       {cloudExecution.billingAttribution === "payer_shared"
                         ? " (shared account)"
                         : ""}

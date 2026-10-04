@@ -29,6 +29,9 @@ export const CloudIntent = Schema.Struct({
       kiloSessionId: Schema.NonEmptyString,
     }),
   ),
+  // Absent on older records: their admission remains uncertain. Only a durable
+  // preflight marker proves that the paid request has not reached execute.
+  submissionPhase: Schema.optional(Schema.Literals(["preflight", "post_attempted"])),
   state: Schema.Literals([
     "admission_unknown",
     "active",
@@ -54,6 +57,8 @@ export const CloudIntent = Schema.Struct({
       incompleteReplySeen: Schema.optional(Schema.Boolean),
     }),
   ),
+  admissionRecoveryPaused: Schema.optional(Schema.Boolean),
+  admissionRecoveryFailures: Schema.optional(Schema.Number),
   interruptRequested: Schema.Boolean,
   answeredRequestIds: Schema.Array(Schema.String),
   providerThread: OrchestrationV2ProviderThread,
@@ -133,6 +138,7 @@ export const make = Effect.fn("KiloCloudJournal.make")(function* (directory: str
           prior.messageId !== intent.messageId ||
           prior.payloadHash !== intent.payloadHash ||
           prior.policyHash !== intent.policyHash ||
+          (intent.submissionPhase === "preflight" && prior.submissionPhase !== "preflight") ||
           prior.providerThread.id !== intent.providerThread.id ||
           prior.providerTurn.id !== intent.providerTurn.id ||
           (["completed", "failed", "interrupted"].includes(prior.state) &&
