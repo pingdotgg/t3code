@@ -7,7 +7,6 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
-  TurnItemId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -502,9 +501,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
-  const deferredCommands = yield* Ref.make<
-    ReadonlyArray<{ readonly threadId: ThreadId; readonly requestedAt: DateTime.Utc }>
-  >([]);
+  const deferredCommands = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -555,7 +552,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
 
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
     if (command.type === "thread.settle-when-idle") {
-      return Ref.update(deferredCommands, (recorded) => [...recorded, command]).pipe(
+      return Ref.update(deferredCommands, (recorded) => [...recorded, command.threadId]).pipe(
         Effect.andThen(options.onDeferredDispatch ?? Effect.void),
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
@@ -1135,25 +1132,27 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
   );
 });
 
-describe("explicit deferred settlement recovery", () => {
-  it.effect("recovers and retries explicit intent with all automatic rules disabled", () =>
+describe("filed thread settlement", () => {
+  const noAutomaticRules = {
+    ...DEFAULT_SERVER_SETTINGS,
+    sidebarAutoSettleAfterDays: null,
+    sidebarAutoSettleOnMerge: false,
+  };
+
+  it.effect("recovers and retries a filed thread with every automatic rule disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const requestedAt = DateTime.makeUnsafe(NOW);
+        const filedAt = DateTime.makeUnsafe(NOW);
         const attempts = yield* Ref.make(0);
-        const thread = makeThread("recover-explicit", {
-          settleWhenIdleAt: requestedAt,
+        const thread = makeThread("recover-filed", {
+          settleWhenIdleAt: filedAt,
           settledOverride: "active",
-          autoSettleDisabledAt: requestedAt,
+          autoSettleDisabledAt: filedAt,
         });
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([thread]),
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
-            sidebarAutoSettleAfterDays: null,
-            sidebarAutoSettleOnMerge: false,
-          },
+          settings: noAutomaticRules,
           onDeferredDispatch: Ref.updateAndGet(attempts, (n) => n + 1).pipe(
             Effect.flatMap((n) =>
               n === 1 ? Effect.die("transient dispatch failure") : Effect.void,
@@ -1163,71 +1162,39 @@ describe("explicit deferred settlement recovery", () => {
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(1);
-          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+          expect(yield* Ref.get(fixture.deferredCommands)).toEqual([thread.id]);
           yield* TestClock.adjust("1 minute");
           yield* Queue.take(fixture.snapshotReads);
           yield* service.drain;
-          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(2);
-          expect((yield* Ref.get(fixture.deferredCommands))[1]?.requestedAt).toEqual(requestedAt);
+          expect(yield* Ref.get(fixture.deferredCommands)).toEqual([thread.id, thread.id]);
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
           expect(yield* Ref.get(fixture.branchCalls)).toHaveLength(0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
   );
 
-  it.effect("waits for background work and fulfills immediately on its final event", () =>
+  it.effect("waits for work that wakes the agent but not for a dev server", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const thread = makeThread("background-explicit", {
-          settleWhenIdleAt: DateTime.makeUnsafe(NOW),
-          pendingBackgroundTasks: [{ taskId: "command", kind: "command" }],
+        const filed = { settleWhenIdleAt: DateTime.makeUnsafe(NOW) };
+        const devServer = makeThread("dev-server", {
+          ...filed,
+          pendingBackgroundTasks: [{ taskId: "dev", kind: "command" }],
+        });
+        const subagent = makeThread("subagent", {
+          ...filed,
+          pendingBackgroundTasks: [{ taskId: "agent", kind: "subagent" }],
         });
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([thread]),
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
-            sidebarAutoSettleAfterDays: null,
-            sidebarAutoSettleOnMerge: false,
-          },
+          snapshot: makeSnapshot([devServer, subagent]),
+          settings: noAutomaticRules,
         });
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(0);
-          yield* Ref.set(
-            fixture.snapshots,
-            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
-          );
-          yield* fixture.publishEvent({
-            id: EventId.make("background-finished"),
-            type: "turn-item.updated",
-            threadId: thread.id,
-            occurredAt: DateTime.makeUnsafe(NOW),
-            payload: {
-              id: TurnItemId.make("command"),
-              type: "command_execution",
-              threadId: thread.id,
-              runId: null,
-              nodeId: null,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 1,
-              status: "completed",
-              title: null,
-              startedAt: DateTime.makeUnsafe(NOW),
-              completedAt: DateTime.makeUnsafe(NOW),
-              updatedAt: DateTime.makeUnsafe(NOW),
-              input: "sleep 40",
-              output: "",
-            },
-          });
-          yield* Queue.take(fixture.snapshotReads);
-          yield* service.drain;
-          expect(yield* Ref.get(fixture.deferredCommands)).toHaveLength(1);
+          expect(yield* Ref.get(fixture.deferredCommands)).toEqual([devServer.id]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

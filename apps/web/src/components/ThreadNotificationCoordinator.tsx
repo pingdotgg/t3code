@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -141,11 +142,8 @@ function EnvironmentNotifications({
             ? "completion"
             : null;
       if (!kind) continue;
-      if (
-        kind === "completion" &&
-        (thread.settleWhenIdleAt != null || thread.settledOverride === "settled")
-      )
-        continue;
+      // Filed and settled threads finish quietly; attention alerts still fire.
+      if (kind === "completion" && isFiledAsSettled(thread)) continue;
       const title =
         kind === "completion"
           ? "Thread completed"

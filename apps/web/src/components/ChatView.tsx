@@ -6917,6 +6917,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadWokeAt,
   ]);
   const activeThreadSettled = supportsSettlement && isFiledAsSettled(activeThreadShell);
+  const activeThreadFiled = activeThreadSettled && activeThreadShell?.settledOverride !== "settled";
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -7219,7 +7220,11 @@ export default function ChatView(props: ChatViewProps) {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      title: isSnoozed
+        ? "This thread is snoozed"
+        : activeThreadFiled
+          ? "This thread settles when its work finishes"
+          : "This thread is settled",
       description: `Send a message to ${isSnoozed ? "wake" : "unsettle"}`,
       actions: (
         <Button
@@ -7242,6 +7247,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [
     activeThread?.id,
+    activeThreadFiled,
     activeThreadSettled,
     activeThreadSnoozed,
     handleUnsnoozeActiveThread,

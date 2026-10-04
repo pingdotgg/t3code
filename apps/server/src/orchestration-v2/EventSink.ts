@@ -189,6 +189,26 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
+type ThreadRowEvent = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly payload: OrchestrationV2AppThread }
+>;
+
+/** Every thread.* event carries the whole thread row. */
+const carriesThread = (event: OrchestrationV2DomainEvent): event is ThreadRowEvent =>
+  event.type.startsWith("thread.");
+
+/** A question or approval, a provider error, a failed run, or a run stopped
+    after it started hands a filed thread back to the user. A queued run the
+    server drops before it starts was never the user's to see. */
+const returnsFiledThread = (event: OrchestrationV2DomainEvent): boolean =>
+  (event.type === "runtime-request.updated" && event.payload.status === "pending") ||
+  (event.type === "provider-session.updated" && event.payload.status === "error") ||
+  (event.type === "run.updated" &&
+    (event.payload.status === "failed" ||
+      ((event.payload.status === "interrupted" || event.payload.status === "cancelled") &&
+        event.payload.startedAt !== null)));
+
 /**
  * IMPLEMENTATIONS
  */
@@ -307,43 +327,48 @@ const baseLayer: Layer.Layer<
         });
       });
 
-    // Persist cancellation beside the attention event, before publishing either.
-    // Replay therefore cannot resurrect an intent that hid failed or blocked work.
-    const cancelAttentionIntents = Effect.fn("EventSink.cancelAttentionIntents")(function* (
+    // A batch that brings a filed thread back to the user leaves it unfiled.
+    // The cancellation commits with its cause, so replay cannot resurrect an
+    // intent that hid blocked or failed work.
+    const cancelReturnedIntents = Effect.fn("EventSink.cancelReturnedIntents")(function* (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) {
-      const threads = new Map<ThreadId, OrchestrationV2AppThread>();
-      const result: Array<OrchestrationV2DomainEvent> = [];
-      const cancelled = new Set<ThreadId>();
-      for (let event of events) {
-        if ("settledOverride" in event.payload && cancelled.has(event.threadId)) {
-          event = {
-            ...event,
-            payload: { ...event.payload, settleWhenIdleAt: null },
-          } as OrchestrationV2DomainEvent;
+      const causes = new Map<ThreadId, OrchestrationV2DomainEvent>();
+      for (const event of events) {
+        if (returnsFiledThread(event) && !causes.has(event.threadId)) {
+          causes.set(event.threadId, event);
         }
-        result.push(event);
-        if ("settledOverride" in event.payload) threads.set(event.threadId, event.payload);
-        const needsAttention =
-          (event.type === "runtime-request.updated" && event.payload.status === "pending") ||
-          (event.type === "run.updated" &&
-            ["failed", "interrupted", "cancelled", "rolled_back"].includes(event.payload.status)) ||
-          (event.type === "provider-session.updated" && event.payload.status === "error");
-        if (!needsAttention) continue;
-        const thread =
-          threads.get(event.threadId) ?? (yield* projectionStore.getThread(event.threadId));
-        if (thread.settleWhenIdleAt == null) continue;
-        const payload = { ...thread, settleWhenIdleAt: null, updatedAt: event.occurredAt };
-        threads.set(event.threadId, payload);
-        cancelled.add(event.threadId);
-        result.push({
-          id: EventId.make(`${event.id}:cancel-settle-when-idle`),
-          type: "thread.settle-when-idle-set",
-          threadId: event.threadId,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: event.occurredAt,
-          payload,
-        });
+      }
+      if (causes.size === 0) return events;
+      const result: Array<OrchestrationV2DomainEvent> = [];
+      const visited = new Set<ThreadId>();
+      for (const event of events) {
+        const cause = causes.get(event.threadId);
+        if (cause === undefined) {
+          result.push(event);
+          continue;
+        }
+        // Cancel ahead of the thread's first event, while the stored row is
+        // still current. A batch that rewrites the row needs no stored read.
+        if (!visited.has(event.threadId) && !carriesThread(event)) {
+          const thread = yield* projectionStore.getThread(event.threadId);
+          if (thread.settleWhenIdleAt != null) {
+            result.push({
+              id: EventId.make(`${cause.id}:cancel-settle-when-idle`),
+              type: "thread.settle-when-idle-set",
+              threadId: event.threadId,
+              providerInstanceId: thread.providerInstanceId,
+              occurredAt: event.occurredAt,
+              payload: { ...thread, settleWhenIdleAt: null, updatedAt: event.occurredAt },
+            });
+          }
+        }
+        visited.add(event.threadId);
+        result.push(
+          carriesThread(event) && event.payload.settleWhenIdleAt != null
+            ? { ...event, payload: { ...event.payload, settleWhenIdleAt: null } }
+            : event,
+        );
       }
       return result;
     });
@@ -368,7 +393,7 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
         { concurrency: 1 },
-      ).pipe(Effect.flatMap(cancelAttentionIntents));
+      ).pipe(Effect.flatMap(cancelReturnedIntents));
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>

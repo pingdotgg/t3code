@@ -1,7 +1,4 @@
-import {
-  backgroundWorkHoldsCompletion,
-  turnItemUpdateCanEndBackgroundWork,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -142,13 +139,10 @@ export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
 ): boolean {
-  if (
-    thread.archivedAt !== null ||
-    thread.settledOverride !== null ||
-    thread.settleWhenIdleAt != null
-  )
-    return false;
+  if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
+  // A filed thread settles through its own intent once its work finishes.
+  if (thread.settleWhenIdleAt != null) return false;
   // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
   // A live run, or background work that will wake the agent, is not
@@ -283,12 +277,10 @@ export const make = Effect.gen(function* () {
     // Explicit user intent remains actionable with every automatic rule disabled.
     const threads = yield* projections.getSettlementCandidates(threadId, !automatic);
     for (const thread of threads) {
+      // Candidates never have a live run or a pending request.
       if (
         thread.settleWhenIdleAt == null ||
-        thread.pendingRuntimeRequest !== null ||
-        thread.activityRunStatus != null ||
-        (thread.pendingBackgroundTasks ?? []).length > 0 ||
-        (thread.pullRequests ?? []).some((link) => link.watch != null)
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
       )
         continue;
       const uuid = yield* crypto.randomUUIDv4;
@@ -297,7 +289,6 @@ export const make = Effect.gen(function* () {
           type: "thread.settle-when-idle",
           commandId: CommandId.make(`server:settle-when-idle:${thread.id}:${uuid}`),
           threadId: thread.id,
-          requestedAt: thread.settleWhenIdleAt,
         })
         .pipe(
           Effect.catchCause((cause) =>
@@ -575,12 +566,6 @@ export const make = Effect.gen(function* () {
         return closeIdleTerminals(event.threadId);
       case "thread.settle-when-idle-set":
         return event.payload.settleWhenIdleAt != null
-          ? worker.enqueue(event.threadId)
-          : Effect.void;
-      case "provider-thread.updated":
-        return worker.enqueue(event.threadId);
-      case "turn-item.updated":
-        return turnItemUpdateCanEndBackgroundWork(event.payload)
           ? worker.enqueue(event.threadId)
           : Effect.void;
       case "thread.pull-request-synced":

@@ -368,17 +368,18 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("getThreadListV2OrderedSection", () => {
-  it("files deferred background work outside Active while keeping its Working status", () => {
+  it("files a working thread on the settled shelf, labelled Working", () => {
     const thread = makeThread({
-      id: ThreadId.make("deferred"),
-      title: "Deferred",
+      id: ThreadId.make("filed"),
+      title: "Filed",
       settleWhenIdleAt: NOW,
+      runtime: runningRuntime(),
     });
     expect(
       getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
     ).toEqual([]);
-    expect(resolveThreadListV2Status(thread)).toBe("working");
-    expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+    const row = buildTickList([thread], BASE_MS, []).find((item) => item.type === "v2-thread");
+    expect(row?.type === "v2-thread" && row.timeLabel).toBe("Working");
   });
   it("uses each saved order and excludes settled, snoozed, and archived rows", () => {
     const threads = [

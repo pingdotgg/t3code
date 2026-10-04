@@ -125,22 +125,28 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
 });
 
 describe("remote thread lifecycle commands", () => {
-  it.effect("files running work immediately and restores it when the server rejects", () =>
+  it.effect.each([
+    ["files a running thread", { status: "running" as const }, { settledOverride: null }],
+    [
+      "settles past a dev server",
+      {
+        status: "completed" as const,
+        pendingBackgroundTasks: [{ taskId: "dev", kind: "command" }],
+      },
+      { settledOverride: "settled", settleWhenIdleAt: null },
+    ],
+  ] as const)("%s at once and restores it when the server rejects", ([, thread, expected]) =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      const initial = {
-        ...SNAPSHOT,
-        threads: [{ ...SNAPSHOT.threads[0]!, status: "running" as const }],
-      };
+      const initial = { ...SNAPSHOT, threads: [{ ...SNAPSHOT.threads[0]!, ...thread }] };
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
       const result = h.commands.settle.run(h.registry, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID },
       });
       expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
-        status: "running",
         settleWhenIdleAt: expect.any(Object),
-        settledOverride: null,
+        ...expected,
       });
       const request = yield* Queue.take(h.requests);
       yield* Deferred.fail(request.reply, new Error("Attention required"));

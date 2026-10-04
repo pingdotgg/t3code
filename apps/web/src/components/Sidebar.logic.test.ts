@@ -75,7 +75,7 @@ import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
-it("a settled drag keeps background work filed until completion, and dragging back cancels it", () => {
+it("dragging working threads to Settled files them, and dragging back cancels it", () => {
   const now = "2026-10-04T12:00:00.000Z";
   const thread = {
     pinnedAt: null,
@@ -87,7 +87,7 @@ it("a settled drag keeps background work filed until completion, and dragging ba
     settledOverride: null,
     unsettledAt: null,
     settleWhenIdleAt: null,
-    pendingBackgroundTasks: [{ taskId: "background", kind: "command" as const }],
+    pendingBackgroundTasks: [{ taskId: "background", kind: "subagent" as const }],
   };
   const filed = applySidebarThreadDrop(thread, "settled", now);
   expect(filed).toMatchObject({ settleWhenIdleAt: now, settledOverride: null, settledAt: null });

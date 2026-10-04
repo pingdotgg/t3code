@@ -184,10 +184,7 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<
-    EnvironmentThreadShell,
-    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "settleWhenIdleAt"
-  >,
+  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -195,7 +192,6 @@ export function resolveThreadListV2Status(
   if (thread.hasPendingUserInput) {
     return "input";
   }
-  if (thread.settleWhenIdleAt != null) return "working";
   if (
     thread.runtime !== null &&
     ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
@@ -248,8 +244,7 @@ export function getThreadListV2OrderedSection(input: {
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       isFiledAsSettled(thread) &&
-      (thread.settleWhenIdleAt != null ||
-        input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true)
+      input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true
     ) {
       return false;
     }
@@ -458,15 +453,17 @@ export function threadListV2ListItemsAreEqual(
 }
 
 /** The timestamp a row renders when it shows no status label: the settle
-    stamp on settled slim rows, otherwise the latest activity. Blank for
-    status-labelled cards and snoozed rows with a wake countdown — those
-    never draw a time, so their minute tick must not invalidate the cell. */
+    stamp on settled slim rows, otherwise the latest activity. A filed row
+    reads Working until it settles. Blank for status-labelled cards and
+    snoozed rows with a wake countdown — those never draw a time, so their
+    minute tick must not invalidate the cell. */
 function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
 ): string {
   const { thread, variant, snoozed } = item;
-  if (showSnoozeWakeLabel || thread.settleWhenIdleAt != null) return "";
+  if (showSnoozeWakeLabel) return "";
+  if (thread.settleWhenIdleAt != null) return "Working";
   if (
     variant === "card" &&
     (resolveThreadListV2Status(thread) !== "ready" || threadHasUnseenCompletion(thread))
@@ -719,11 +716,7 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       input.queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (
-      supportsSettlement &&
-      isFiledAsSettled(thread) &&
-      (!hasQueuedMessages || thread.settleWhenIdleAt != null)
-    ) {
+    if (supportsSettlement && isFiledAsSettled(thread) && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);

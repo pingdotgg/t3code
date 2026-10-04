@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { settleWaitsForWork } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -412,16 +413,18 @@ export function createThreadEnvironmentAtoms<R, E>(
         : {
             ...thread,
             pendingRuntimeRequest: null,
-            ...(["preparing", "queued", "starting", "running", "waiting"].includes(
+            ...(settleWaitsForWork(
               thread.activityRunStatus ?? thread.status,
-            ) ||
-            (thread.pendingBackgroundTasks ?? []).length > 0 ||
-            (thread.pullRequests ?? []).some((link) => link.watch != null)
+              thread.pendingBackgroundTasks,
+            )
               ? { settleWhenIdleAt: thread.settleWhenIdleAt ?? now }
               : {
                   settleWhenIdleAt: null,
                   settledOverride: "settled" as const,
-                  settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+                  settledAt:
+                    thread.settledOverride === "settled"
+                      ? (thread.settledAt ?? now)
+                      : (thread.settleWhenIdleAt ?? now),
                 }),
             unsettledAt: null,
             activeOrderKey: null,

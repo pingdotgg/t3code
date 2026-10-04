@@ -352,10 +352,11 @@ export interface ProjectionStoreV2Shape {
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
-  /** Every candidate, or only `threadId` when a sweep checks one thread. */
+  /** Every candidate, or only `threadId` when a sweep checks one thread.
+      `filedOnly` keeps just threads filed to settle once idle. */
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
-    explicitOnly?: boolean,
+    filedOnly?: boolean,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
   /**
    * Active (not deleted, not archived) threads with at least one pull request
@@ -5109,7 +5110,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
-      explicitOnly = false,
+      filedOnly = false,
     ) =>
       sql
         .withTransaction(
@@ -5148,10 +5149,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-              AND (json_extract(t.payload_json, '$.settleWhenIdleAt') IS NOT NULL
-                OR (${explicitOnly ? 0 : 1} AND json_extract(t.payload_json, '$.settledOverride') IS NULL
+              AND (json_extract(t.payload_json, '$.settleWhenIdleAt') IS NOT NULL${
+                filedOnly
+                  ? sql``
+                  : sql`
+                OR (json_extract(t.payload_json, '$.settledOverride') IS NULL
                   AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
-                  AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL))
+                  AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL)`
+              })
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
@@ -5217,7 +5222,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
                     activeProviderThreadId: thread.activeProviderThreadId,
                     hasActiveRun: false,
-                    includePersistent: thread.settleWhenIdleAt != null,
                   }),
                 } satisfies ProjectionSettlementCandidate;
               }),
@@ -5661,7 +5665,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           return projection.thread;
         }),
-      getSettlementCandidates: (threadId, explicitOnly = false) =>
+      getSettlementCandidates: (threadId, filedOnly = false) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
           return [...projections.values()]
@@ -5671,7 +5675,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 thread.deletedAt === null &&
                 thread.archivedAt === null &&
                 (thread.settleWhenIdleAt != null ||
-                  (!explicitOnly &&
+                  (!filedOnly &&
                     thread.settledOverride === null &&
                     thread.pinnedAt == null &&
                     thread.autoSettleDisabledAt == null)) &&
@@ -5682,14 +5686,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const shell = threadShellFromProjection(projection);
               return {
                 ...shell,
-                pendingBackgroundTasks: derivePendingBackgroundWork({
-                  latestRun: projection.runs.at(-1),
-                  providerThreads: projection.providerThreads,
-                  turnItems: projection.turnItems,
-                  activeProviderThreadId: projection.thread.activeProviderThreadId,
-                  runs: projection.runs,
-                  includePersistent: projection.thread.settleWhenIdleAt != null,
-                }),
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
               };
             })

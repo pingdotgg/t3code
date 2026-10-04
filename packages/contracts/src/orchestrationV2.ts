@@ -2948,12 +2948,11 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
-  /** Fulfill only the still-current explicit intent, after checking live work. */
+  /** Settles a filed thread once the orchestrator confirms its work finished. */
   Schema.Struct({
     type: Schema.Literal("thread.settle-when-idle"),
     commandId: CommandId,
     threadId: ThreadId,
-    requestedAt: Schema.DateTimeUtc,
   }),
   /** Records that the provider rollback `requestId` failed for good. */
   Schema.Struct({

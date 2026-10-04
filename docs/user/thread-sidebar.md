@@ -130,13 +130,12 @@ Choose **Settle thread** from its menu to move finished work out of the active l
 without deleting the conversation. **Un-settle thread** restores it to active work
 and prevents automatic settlement until new activity resumes the usual rules.
 
-You can also settle a thread while the agent is working. It moves to Settled as
-**Working**, keeps running, and settles quietly when its work finishes. Background
-commands, subagents, and watched pull requests keep it working until they end.
-This works even when automatic settlement is disabled. Agents can request the
-same behavior with `t3_thread_organize` using the `settle` action on their own thread.
-Sending another message, un-settling, pinning, or dragging it back to Active cancels
-the request. A question, approval request, or failure brings it back and still alerts you.
+You can also settle a thread while the agent or its subagents are still working, or
+ask an agent to settle its own thread as its last step. The thread moves to Settled
+as **Working** and settles quietly when that work finishes. A dev server it left
+running does not hold it back. Sending a message, un-settling, pinning, snoozing, or
+dragging it back to Active cancels this. A question, approval request, failure, or
+stopped turn brings it back to Active.
 
 Manually settling an idle thread dismisses unanswered async questions without
 sending an answer or restarting the agent. Settling also closes the thread's

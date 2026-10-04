@@ -1,8 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
-  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -22,7 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Stream from "effect/Stream";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -32,9 +30,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import * as ThreadManagement from "./ThreadManagementService.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
-import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -117,14 +112,43 @@ const fixture = Effect.fn("settlementFixture")(function* () {
   yield* setRun("running");
   const settle = () =>
     orchestrator.dispatch({ type: "thread.settle", commandId: commandId(), threadId });
-  const fulfill = (requestedAt: DateTime.Utc) =>
-    orchestrator.dispatch({
-      type: "thread.settle-when-idle",
-      commandId: commandId(),
-      threadId,
-      requestedAt,
-    });
+  const fulfill = () =>
+    orchestrator.dispatch({ type: "thread.settle-when-idle", commandId: commandId(), threadId });
   const read = () => projections.getThread(threadId);
+  // A dev server is a command; anything else the agent left running wakes it.
+  const setBackground = (
+    type: "command_execution" | "dynamic_tool",
+    status: "running" | "completed",
+  ) =>
+    sink.write({
+      events: [
+        {
+          id: EventId.make(`event:background:${++sequence}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`background:${type}`),
+            threadId,
+            runId: run.id,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status,
+            title: null,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            ...(type === "command_execution"
+              ? { type, input: "pnpm dev", output: "" }
+              : { type, toolName: "Monitor", input: { command: "watch ci" } }),
+          },
+        },
+      ],
+    });
   return {
     orchestrator,
     projections,
@@ -136,6 +160,7 @@ const fixture = Effect.fn("settlementFixture")(function* () {
     settle,
     fulfill,
     read,
+    setBackground,
     run,
   };
 });
@@ -184,19 +209,22 @@ it.effect(
         (yield* f.projections.getThreadShell(f.threadId))?.settleWhenIdleAt?.toString(),
         armed.settleWhenIdleAt?.toString(),
       );
-      const request = armed.settleWhenIdleAt!;
+      yield* TestClock.adjust("1 minute");
       yield* f.setRun("waiting");
-      assert.equal((yield* Effect.exit(f.fulfill(request)))._tag, "Failure");
+      assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
       yield* f.setRun("completed");
-      const finished = yield* f.fulfill(request);
+      const finished = yield* f.fulfill();
       assert.include(
         finished.storedEvents.map(({ event }) => event.type),
         "provider-session.detached",
       );
       assert.isEmpty((yield* f.projections.getThreadProviderContext(f.threadId)).providerSessions);
-      assert.equal((yield* f.read()).settledOverride, "settled");
-      assert.isNull((yield* f.read()).settleWhenIdleAt);
-      assert.equal((yield* Effect.exit(f.fulfill(request)))._tag, "Failure");
+      const settled = yield* f.read();
+      assert.equal(settled.settledOverride, "settled");
+      assert.isNull(settled.settleWhenIdleAt);
+      // It keeps its place on the shelf instead of jumping to the top.
+      assert.deepEqual(settled.settledAt, armed.settleWhenIdleAt);
+      assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
     }).pipe(Effect.provide(testLayer)),
 );
 
@@ -224,7 +252,7 @@ it.effect(
       assert.equal(recovered.length, 1);
       assert.equal(recovered[0]?.settledOverride, "active");
       assert.deepEqual(recovered[0]?.settleWhenIdleAt, request);
-      yield* f.fulfill(request);
+      yield* f.fulfill();
       assert.equal((yield* f.read()).settledOverride, "settled");
     }).pipe(Effect.provide(testLayer)),
 );
@@ -240,7 +268,6 @@ it.effect.each([
     Effect.gen(function* () {
       const f = yield* fixture();
       yield* f.settle();
-      const request = (yield* f.read()).settleWhenIdleAt!;
       const common = { commandId: f.commandId(), threadId: f.threadId };
       yield* f.orchestrator.dispatch(
         action === "thread.unsettle"
@@ -254,19 +281,18 @@ it.effect.each([
       assert.isNull((yield* f.read()).settleWhenIdleAt);
       assert.equal((yield* f.projections.getThreadShell(f.threadId))?.status, "running");
       yield* f.setRun("completed");
-      assert.equal((yield* Effect.exit(f.fulfill(request)))._tag, "Failure");
+      assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
       assert.notEqual((yield* f.read()).settledOverride, "settled");
     }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect.each(["failed", "interrupted", "cancelled", "rolled_back"] as const)(
-  "%s cancels the durable intent in the same event transaction",
+it.effect.each(["failed", "interrupted", "cancelled"] as const)(
+  "a %s run brings the thread back, and replay keeps it back",
   (status) =>
     Effect.gen(function* () {
       const f = yield* fixture();
       yield* f.settle();
-      const events = yield* f.setRun(status);
-      assert.equal(events.at(-1)?.event.type, "thread.settle-when-idle-set");
+      yield* f.setRun(status);
       assert.isNull((yield* f.read()).settleWhenIdleAt);
       assert.notEqual((yield* f.read()).settledOverride, "settled");
       // Reapply the stored log into a cleared projection, as startup rebuild does.
@@ -278,6 +304,33 @@ it.effect.each(["failed", "interrupted", "cancelled", "rolled_back"] as const)(
       assert.isNull((yield* f.read()).settleWhenIdleAt);
       assert.notEqual((yield* f.read()).settledOverride, "settled");
     }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("dropping a queued delivery that never started keeps the thread filed", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* f.settle();
+    const filedAt = (yield* f.read()).settleWhenIdleAt;
+    yield* f.sink.write({
+      events: [
+        {
+          id: EventId.make("dropped-delivery"),
+          type: "run.updated",
+          threadId: f.threadId,
+          occurredAt: f.now,
+          payload: {
+            ...f.run,
+            id: RunId.make("run:delivery"),
+            ordinal: 2,
+            status: "cancelled",
+            startedAt: null,
+            completedAt: f.now,
+          },
+        },
+      ],
+    });
+    assert.deepEqual((yield* f.read()).settleWhenIdleAt, filedAt);
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("a new question cancels filing and a blocked thread cannot be filed again", () =>
@@ -310,56 +363,28 @@ it.effect("a new question cancels filing and a blocked thread cannot be filed ag
   }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("background commands continue after the root run and block actual settlement", () =>
+it.effect("a dev server left running does not keep an idle thread from settling", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* f.setRun("completed");
+    yield* f.setBackground("command_execution", "running");
+    yield* f.settle();
+    const thread = yield* f.read();
+    assert.equal(thread.settledOverride, "settled");
+    assert.isNull(thread.settleWhenIdleAt);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("background work that wakes the agent keeps a filed thread until it ends", () =>
   Effect.gen(function* () {
     const f = yield* fixture();
     yield* f.settle();
-    const request = (yield* f.read()).settleWhenIdleAt!;
     yield* f.setRun("completed");
-    const item = {
-      id: TurnItemId.make("background-command"),
-      type: "command_execution" as const,
-      threadId: f.threadId,
-      runId: f.run.id,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "running" as const,
-      title: "Background command",
-      startedAt: f.now,
-      completedAt: null,
-      updatedAt: f.now,
-      input: "sleep 40",
-      output: "",
-    };
-    yield* f.sink.write({
-      events: [
-        {
-          id: EventId.make("background-start"),
-          type: "turn-item.updated",
-          threadId: f.threadId,
-          occurredAt: f.now,
-          payload: item,
-        },
-      ],
-    });
-    assert.equal((yield* Effect.exit(f.fulfill(request)))._tag, "Failure");
-    assert.deepEqual((yield* f.read()).settleWhenIdleAt, request);
-    yield* f.sink.write({
-      events: [
-        {
-          id: EventId.make("background-end"),
-          type: "turn-item.updated",
-          threadId: f.threadId,
-          occurredAt: f.now,
-          payload: { ...item, status: "completed", completedAt: f.now },
-        },
-      ],
-    });
-    yield* f.fulfill(request);
+    yield* f.setBackground("dynamic_tool", "running");
+    assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
+    assert.isNotNull((yield* f.read()).settleWhenIdleAt);
+    yield* f.setBackground("dynamic_tool", "completed");
+    yield* f.fulfill();
     assert.equal((yield* f.read()).settledOverride, "settled");
   }).pipe(Effect.provide(testLayer)),
 );
@@ -421,64 +446,8 @@ it.effect.each(["user", "agent"] as const)(
       assert.deepEqual((yield* f.read()).settleWhenIdleAt, createdBy === "user" ? null : request);
       if (createdBy === "agent") {
         yield* f.setRun("completed");
-        assert.equal((yield* Effect.exit(f.fulfill(request!)))._tag, "Failure");
+        assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
         assert.deepEqual((yield* f.read()).settleWhenIdleAt, request);
       }
-    }).pipe(Effect.provide(testLayer)),
-);
-
-it.effect(
-  "MCP can settle its own running thread, finish the run, and fulfill the same intent",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const registration = McpHttpServer.ThreadToolkitRegistrationLive.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(
-          ThreadManagement.layer.pipe(
-            Layer.provide(Layer.succeed(Orchestrator.OrchestratorV2, f.orchestrator)),
-          ),
-        ),
-        Layer.provide(NodeCrypto.layer),
-      );
-      yield* Effect.gen(function* () {
-        const server = yield* McpServer.McpServer;
-        const result = yield* server
-          .callTool({ name: "t3_thread_organize", arguments: { action: "settle" } })
-          .pipe(
-            Effect.provideService(McpInvocationContext.McpInvocationContext, {
-              environmentId: EnvironmentId.make("environment:settlement"),
-              threadId: f.threadId,
-              providerSessionId: "session:settlement",
-              providerInstanceId: instanceId,
-              issuedAt: 0,
-              capabilities: new Set(["orchestration"] as const),
-            }),
-            Effect.provideService(
-              McpSchema.McpServerClient,
-              McpSchema.McpServerClient.of({
-                clientId: 1,
-                protocolVersion: "2025-06-18",
-                clientCapabilities: {},
-                clientInfo: { name: "settlement-test", version: "1" },
-                initializePayload: {
-                  protocolVersion: "2025-06-18",
-                  capabilities: {},
-                  clientInfo: { name: "settlement-test", version: "1" },
-                },
-                getClient: Effect.die("unused"),
-              }),
-            ),
-          );
-        assert.notEqual(result.isError, true);
-        assert.property(result.structuredContent, "sequence");
-        const request = (yield* f.read()).settleWhenIdleAt;
-        assert.isNotNull(request);
-        assert.isDefined(request);
-        assert.equal((yield* f.projections.getThreadShell(f.threadId))?.status, "running");
-        yield* f.setRun("completed");
-        yield* f.fulfill(request!);
-        assert.equal((yield* f.read()).settledOverride, "settled");
-      }).pipe(Effect.provide(registration));
     }).pipe(Effect.provide(testLayer)),
 );

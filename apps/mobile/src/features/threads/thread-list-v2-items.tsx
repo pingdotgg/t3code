@@ -1214,9 +1214,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {snoozedRow && props.snoozeWakeLabelText !== undefined
               ? props.snoozeWakeLabelText
-              : thread.settleWhenIdleAt != null
-                ? "Working"
-                : timeLabel}
+              : timeLabel}
           </Text>
         </View>
       </RowPressable>
