@@ -97,7 +97,6 @@ const makeCheckpointStore = Effect.gen(function* () {
           "--no-color",
           "--find-renames",
           "--find-copies",
-          "--find-copies-harder",
           ...(key.ignoreWhitespace ? ["--ignore-all-space"] : []),
           key.fromCommitOid,
           key.toCommitOid,
@@ -982,7 +981,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     key: CheckpointDiffFilesCacheKey,
   ) => {
     const pathArgs = key.paths.length > 0 ? ["--", ...key.paths] : [];
-    // Like the patch path, minus quadratic --find-copies-harder.
+    // Keep patch and summary copy detection aligned without scanning unchanged files.
     const similarityArgs = ["--find-renames", "--find-copies"];
     return Effect.all(
       [
