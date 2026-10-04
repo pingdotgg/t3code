@@ -8,7 +8,6 @@ import {
   useSensor,
   useSensors,
   type CollisionDetection,
-  DragOverlay,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -24,7 +23,15 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
 import { GripVerticalIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -32,6 +39,7 @@ import {
 } from "@t3tools/contracts";
 import { type CustomModelDefinition, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
+import { animateLayoutChangesWhileSorting, createListMotion } from "../../lib/listMotion";
 import { cn } from "../../lib/utils";
 import { sortModelsForProviderInstance } from "../../modelOrdering";
 import { MAX_CUSTOM_MODEL_LENGTH } from "../../modelSelection";
@@ -144,9 +152,16 @@ export function nextHiddenModelsForBulkToggle(
 export const ALL_LABEL_ID = "label:all";
 export const HIDDEN_LABEL_ID = "label:hidden";
 /** Drop slots shown in place of an empty segment; they take part in the flow like the labels. */
+export const FAVORITES_SLOT_ID = "label:favorites-slot";
 const ENABLED_SLOT_ID = "label:enabled-slot";
 export const HIDDEN_SLOT_ID = "label:hidden-slot";
-const MARKER_IDS = new Set([ALL_LABEL_ID, HIDDEN_LABEL_ID, ENABLED_SLOT_ID, HIDDEN_SLOT_ID]);
+const MARKER_IDS = new Set([
+  ALL_LABEL_ID,
+  HIDDEN_LABEL_ID,
+  FAVORITES_SLOT_ID,
+  ENABLED_SLOT_ID,
+  HIDDEN_SLOT_ID,
+]);
 const isMarkerId = (id: string) => MARKER_IDS.has(id);
 
 export type ModelListSegment = "favorites" | "enabled" | "hidden";
@@ -165,9 +180,8 @@ function moveModelListItem(
 
 function modelListSegment(items: ReadonlyArray<string>, id: string): ModelListSegment {
   const index = items.indexOf(id);
-  const allIndex = items.indexOf(ALL_LABEL_ID);
   if (index > items.indexOf(HIDDEN_LABEL_ID)) return "hidden";
-  return allIndex >= 0 && index < allIndex ? "favorites" : "enabled";
+  return index < items.indexOf(ALL_LABEL_ID) ? "favorites" : "enabled";
 }
 
 export interface ModelListDrop {
@@ -264,7 +278,7 @@ type ModelDragHandle = Pick<
 
 function SortableModelRow(props: {
   readonly slug: string;
-  readonly children: (handle: ModelDragHandle) => ReactNode;
+  readonly children: (handle: ModelDragHandle, isDragging: boolean) => ReactNode;
 }) {
   const {
     attributes,
@@ -274,16 +288,19 @@ function SortableModelRow(props: {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: props.slug });
-  // The DragOverlay carries the lifted copy and animates it into the new
-  // slot on drop; the source row only holds the space.
+  } = useSortable({ id: props.slug, animateLayoutChanges: animateLayoutChangesWhileSorting });
+  // The real row is lifted, so list motion can glide it from under the
+  // pointer into its committed slot on drop. A ring, not a border, keeps its
+  // measured height.
   return (
     <div
       ref={setNodeRef}
       style={{ transform: DndCSS.Translate.toString(transform), transition }}
-      className={cn(isDragging && "opacity-0")}
+      className={cn(
+        isDragging && "relative z-20 rounded-md bg-popover shadow-lg ring-1 ring-primary/30",
+      )}
     >
-      {props.children({ attributes, listeners, setActivatorNodeRef })}
+      {props.children({ attributes, listeners, setActivatorNodeRef }, isDragging)}
     </div>
   );
 }
@@ -298,6 +315,7 @@ function SortableMarker(props: {
   const { setNodeRef, transform, transition } = useSortable({
     id: props.id,
     disabled: { draggable: true },
+    animateLayoutChanges: animateLayoutChangesWhileSorting,
   });
   return (
     <div
@@ -314,6 +332,12 @@ function SortableMarker(props: {
 // half-pixel of content overflow makes dnd-kit auto-scroll flash a scrollbar.
 const groupLabelClassName = (isDropTarget: boolean) =>
   cn("px-2 pt-5 pb-1.5 text-2xs leading-4 text-muted-foreground", isDropTarget && "text-primary");
+
+const favoritesPreviewClassName = (isShown: boolean) =>
+  cn("pointer-events-none transition-opacity duration-250", !isShown && "opacity-0");
+
+const favoritesLabelClassName = (isDropTarget: boolean) =>
+  cn("px-2 pt-1 pb-1.5 text-2xs leading-4 text-muted-foreground", isDropTarget && "text-primary");
 
 const emptySlotClassName = (isDropTarget: boolean) =>
   cn(
@@ -350,7 +374,15 @@ export function ProviderModelsSection({
   const [error, setError] = useState<string | null>(null);
   // Slug of the custom model whose inline editor is open, if any.
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const listMotionRef = useRef<ReturnType<typeof createListMotion> | null>(null);
+  const attachListRef = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    listMotionRef.current?.dispose();
+    listMotionRef.current =
+      node === null ? null : createListMotion(node, { cloneStripAttributes: ["data-model-slug"] });
+    listMotionRef.current?.update(false);
+  }, []);
   // Slug of a just-added custom model, scrolled into view once its row exists.
   const scrollToSlugRef = useRef<string | null>(null);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
@@ -363,7 +395,7 @@ export function ProviderModelsSection({
     !model.isCustom && hiddenModelSet.has(model.slug);
   // Memoized as one unit: dnd-kit keys its layout animations on the identity
   // of the sortable ids array.
-  const { displayModels, favorites, enabled, hidden, sortableIds } = useMemo(() => {
+  const { displayModels, favorites, sortableIds } = useMemo(() => {
     const displayModels = groupModelsForDisplay(models, {
       favoriteModels: favoriteModelSet,
       hiddenModels: hiddenModelSet,
@@ -375,16 +407,18 @@ export function ProviderModelsSection({
     const rest = displayModels.filter((model) => !favoriteModelSet.has(model.slug));
     const enabled = rest.filter((model) => !isHidden(model));
     const hidden = rest.filter(isHidden);
+    // The favorites slot and the "All" label stay in the flow even without
+    // favorites, so a row can be dragged in to become the first favorite.
     const sortableIds = [
-      ...favorites.map((model) => model.slug),
-      ...(favorites.length > 0 ? [ALL_LABEL_ID] : []),
+      ...(favorites.length > 0 ? favorites.map((model) => model.slug) : [FAVORITES_SLOT_ID]),
+      ALL_LABEL_ID,
       ...enabled.map((model) => model.slug),
       ...(favorites.length === 0 && enabled.length === 0 ? [ENABLED_SLOT_ID] : []),
       HIDDEN_LABEL_ID,
       ...hidden.map((model) => model.slug),
       ...(hidden.length === 0 ? [HIDDEN_SLOT_ID] : []),
     ];
-    return { displayModels, favorites, enabled, hidden, sortableIds };
+    return { displayModels, favorites, sortableIds };
   }, [favoriteModelSet, hiddenModelSet, modelOrder, models]);
   const hiddenCount = displayModels.filter(isHiddenModel).length;
   const builtInModels = useMemo(() => models.filter((model) => !model.isCustom), [models]);
@@ -402,26 +436,51 @@ export function ProviderModelsSection({
   // The segment the lifted row would land in, so the target can highlight
   // and the overlay can preview the row's resulting state.
   const [drag, setDrag] = useState<{
-    readonly activeId: string;
     readonly target: ModelListSegment;
+    /** Heights of the lifted row and of the favorites preview labels. */
+    readonly rowHeight: number;
+    readonly favoritesLabelHeight: number;
+    readonly allLabelHeight: number;
   } | null>(null);
   const dropTarget = drag?.target ?? null;
+  const favoritesLabelRef = useRef<HTMLDivElement>(null);
+  const allLabelRef = useRef<HTMLDivElement>(null);
   const trackDrag = (event: DragStartEvent | DragOverEvent) => {
     const activeId = String(event.active.id);
     const overId = "over" in event && event.over ? String(event.over.id) : activeId;
     setDrag({
-      activeId,
       target: modelListSegment(moveModelListItem(sortableIds, activeId, overId), activeId),
+      rowHeight: event.active.rect.current.initial?.height ?? 0,
+      favoritesLabelHeight: favoritesLabelRef.current?.offsetHeight ?? 0,
+      allLabelHeight: allLabelRef.current?.offsetHeight ?? 0,
     });
   };
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  // Without favorites, the favorites slot and the "All" label are zero-height
+  // markers at the top of the list, so picking a row up shifts nothing. While
+  // the slot is the target, the rows slide down to make room for the
+  // "Favorites" label, a row-sized slot, and the "All" label, which are drawn
+  // into that space, and the lifted row's own gap closes.
+  const favoritesPreview: SortingStrategy = ({ index, activeIndex, rects }) => {
+    const id = sortableIds[index];
+    if (!drag || id === FAVORITES_SLOT_ID || index === activeIndex) return null;
+    const slotBottom = drag.favoritesLabelHeight + drag.rowHeight;
+    const y =
+      id === ALL_LABEL_ID
+        ? slotBottom
+        : slotBottom +
+          drag.allLabelHeight -
+          (index > activeIndex ? (rects[activeIndex]?.height ?? 0) : 0);
+    return { x: 0, y, scaleX: 1, scaleY: 1 };
+  };
   // An empty slot stays put while the rows around it shift, so it reads as
   // the place the row will land instead of opening a second gap.
   const dndSortingStrategy: SortingStrategy = (args) => {
     const overId = sortableIds[args.overIndex];
+    if (overId === FAVORITES_SLOT_ID) return favoritesPreview(args);
     if (
       args.index === args.overIndex &&
       (overId === ENABLED_SLOT_ID || overId === HIDDEN_SLOT_ID)
@@ -434,8 +493,30 @@ export function ProviderModelsSection({
   // the hidden segment while one is dragged. When the hidden segment is empty
   // its slot is the only target there, so the label above it does not steal
   // the hover and open a gap of its own.
+  //
+  // The favorites slot becomes the target once the pointer is above the
+  // middle of the topmost row, and stays it while the pointer is over the
+  // opened label and slot. Its live position is compared with the live
+  // pointer, like the sidebar's Pins boundary, since measured rects go stale
+  // when the list scrolls; the slot itself never moves. Keyboard drags have
+  // no pointer; they reach favorites through the star.
   const dndCollisionDetection: CollisionDetection = (args) => {
-    const excluded = new Set<string>(sortableIds.includes(HIDDEN_SLOT_ID) ? [HIDDEN_LABEL_ID] : []);
+    const favoritesSlot = args.droppableContainers.find(
+      (container) => container.id === FAVORITES_SLOT_ID,
+    );
+    const slotTop = favoritesSlot?.node.current?.getBoundingClientRect().top;
+    const pointerY = args.pointerCoordinates?.y;
+    if (slotTop !== undefined && pointerY !== undefined && drag) {
+      const zoneHeight =
+        dropTarget === "favorites"
+          ? drag.favoritesLabelHeight + drag.rowHeight
+          : args.collisionRect.height / 2;
+      if (pointerY < slotTop + zoneHeight) return [{ id: FAVORITES_SLOT_ID }];
+    }
+    const excluded = new Set<string>([
+      ...(sortableIds.includes(HIDDEN_SLOT_ID) ? [HIDDEN_LABEL_ID] : []),
+      ...(favoritesSlot ? [FAVORITES_SLOT_ID, ALL_LABEL_ID] : []),
+    ]);
     if (customSlugSet.has(String(args.active.id))) {
       for (const id of sortableIds.slice(sortableIds.indexOf(HIDDEN_LABEL_ID))) excluded.add(id);
     }
@@ -446,7 +527,19 @@ export function ProviderModelsSection({
       ),
     });
   };
+  const handleDragStart = (event: DragStartEvent) => {
+    // Stop running list motion before dnd-kit measures the picked-up row.
+    listMotionRef.current?.suspend();
+    trackDrag(event);
+  };
+  const handleDragCancel = () => {
+    listMotionRef.current?.release();
+    setDrag(null);
+  };
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    // dnd-kit's transforms are still on screen here; the commit below glides
+    // every row from them into its new slot.
+    listMotionRef.current?.release();
     setDrag(null);
     if (!over) return;
     const result = resolveModelListDrop({
@@ -461,6 +554,35 @@ export function ProviderModelsSection({
     onModelPreferencesChange({ hiddenModels: result.hiddenModels, modelOrder: result.modelOrder });
     onFavoriteModelsChange(result.favoriteModels);
   };
+
+  // Keyed on what moves rows, not on the identity of the arrays, so unrelated
+  // renders neither read layout nor animate. Rows glide when a toggle, a drop,
+  // or an opened editor moves them; a filter swap only refreshes the baseline,
+  // including the swap back to the full list.
+  const listOrderKey = [
+    isFiltering ? "filtered" : "sortable",
+    ...(isFiltering ? filteredModels.map((model) => model.slug) : sortableIds),
+    editingSlug ?? "",
+  ].join("\0");
+  const isDragging = drag !== null;
+  const wasFilteringRef = useRef(isFiltering);
+  useLayoutEffect(() => {
+    void listOrderKey;
+    const filterChanged = wasFilteringRef.current !== isFiltering;
+    wasFilteringRef.current = isFiltering;
+    listMotionRef.current?.update(!isDragging && !isFiltering && !filterChanged);
+  }, [isDragging, isFiltering, listOrderKey]);
+
+  // Escape cancels the drag; dnd-kit leaves the event unhandled, so without
+  // this the settings page would also take it as "go back".
+  useEffect(() => {
+    if (!isDragging) return;
+    const claimEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") event.preventDefault();
+    };
+    document.addEventListener("keydown", claimEscape, true);
+    return () => document.removeEventListener("keydown", claimEscape, true);
+  }, [isDragging]);
 
   // The parent commits the new custom model and hands back an updated
   // `models` list, so the row can only be scrolled to after that render.
@@ -545,12 +667,12 @@ export function ProviderModelsSection({
     );
   };
 
-  // `dragHandle` is the sortable activator, `"overlay"` for the lifted copy
-  // (an inert grip), and `null` for filtered rows, which cannot be dragged.
-  // `preview` shows the state the row will have when dropped in `target`.
+  // `dragHandle` is the sortable activator, or `null` for filtered rows,
+  // which cannot be dragged. `preview` shows the state the lifted row will
+  // have when dropped in that segment.
   const renderRow = (
     model: ServerProviderModel,
-    dragHandle: ModelDragHandle | "overlay" | null,
+    dragHandle: ModelDragHandle | null,
     preview?: ModelListSegment | null,
   ) => {
     const capLabels = describeModelCapabilities(model);
@@ -566,11 +688,7 @@ export function ProviderModelsSection({
           isHidden && "opacity-50",
         )}
       >
-        {dragHandle === "overlay" ? (
-          <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/50">
-            <GripVerticalIcon className="size-3" />
-          </span>
-        ) : dragHandle ? (
+        {dragHandle ? (
           <Button
             ref={dragHandle.setActivatorNodeRef}
             size="icon-micro"
@@ -712,20 +830,92 @@ export function ProviderModelsSection({
     );
   };
 
-  // The editor sits inside the sortable node so the gap it opens is measured.
-  const renderSortableRows = (group: ReadonlyArray<ServerProviderModel>) =>
-    group.map((model) => (
-      <SortableModelRow key={model.slug} slug={model.slug}>
-        {(handle) => (
+  // One flat keyed list, like the sidebar's: a row that changes segment keeps
+  // its DOM node, so list motion glides it instead of fading a new one in.
+  const modelBySlug = new Map(displayModels.map((model) => [model.slug, model]));
+  const renderSortableItem = (id: string) => {
+    switch (id) {
+      case FAVORITES_SLOT_ID:
+        // Without favorites, the slot and the "All" label below are the
+        // favorites preview. Both stay mounted, transparent, so their heights
+        // can be read when a drag starts, and fade at the pace of dnd-kit
+        // sliding the rows (`transform 250ms ease`).
+        return (
+          <SortableMarker key={id} id={id} className="relative h-0">
+            <div
+              className={cn(
+                "absolute inset-x-0 top-0",
+                favoritesPreviewClassName(dropTarget === "favorites"),
+              )}
+            >
+              <div ref={favoritesLabelRef} className={favoritesLabelClassName(true)}>
+                Favorites
+              </div>
+              <div className={emptySlotClassName(true)} style={{ height: drag?.rowHeight }}>
+                Drop here to add to favorites
+              </div>
+            </div>
+          </SortableMarker>
+        );
+      // The real label and its preview are separate nodes, so list motion
+      // fades the label in and out with the favorites section.
+      case ALL_LABEL_ID:
+        return favorites.length > 0 ? (
+          <SortableMarker
+            key={id}
+            id={id}
+            className={groupLabelClassName(dropTarget === "enabled")}
+          >
+            All
+          </SortableMarker>
+        ) : (
+          <SortableMarker key={`${id}:preview`} id={id} className="relative h-0">
+            <div
+              ref={allLabelRef}
+              className={cn(
+                groupLabelClassName(false),
+                "absolute inset-x-0 top-0",
+                favoritesPreviewClassName(dropTarget === "favorites"),
+              )}
+            >
+              All
+            </div>
+          </SortableMarker>
+        );
+      case ENABLED_SLOT_ID:
+        return (
+          <SortableMarker key={id} id={id} className={emptySlotClassName(dropTarget === "enabled")}>
+            Drop models here to show them in the picker
+          </SortableMarker>
+        );
+      case HIDDEN_LABEL_ID:
+        return (
+          <SortableMarker key={id} id={id} className={groupLabelClassName(dropTarget === "hidden")}>
+            Hidden from picker
+          </SortableMarker>
+        );
+      case HIDDEN_SLOT_ID:
+        return (
+          <SortableMarker key={id} id={id} className={emptySlotClassName(dropTarget === "hidden")}>
+            Drop models here to hide them from the picker
+          </SortableMarker>
+        );
+    }
+    const model = modelBySlug.get(id);
+    if (!model) return null;
+    // The editor sits inside the sortable node so the gap it opens is measured.
+    return (
+      <SortableModelRow key={id} slug={id}>
+        {(handle, isLifted) => (
           <>
-            {renderRow(model, handle)}
+            {renderRow(model, handle, isLifted ? dropTarget : null)}
             {renderEditor(model)}
           </>
         )}
       </SortableModelRow>
-    ));
+    );
+  };
 
-  const draggedModel = drag ? displayModels.find((model) => model.slug === drag.activeId) : null;
   const placeholder = (text: string) => (
     <p className="px-2 py-2 text-xs text-muted-foreground">{text}</p>
   );
@@ -782,8 +972,8 @@ export function ProviderModelsSection({
         ) : null}
       </div>
       <div
-        ref={listRef}
-        className="mt-2 -mx-2 max-h-64 overflow-y-auto lg:max-h-none lg:min-h-0 lg:flex-1"
+        ref={attachListRef}
+        className="relative mt-2 -mx-2 max-h-64 overflow-y-auto lg:max-h-none lg:min-h-0 lg:flex-1"
       >
         {models.length === 0 ? (
           placeholder("No models reported for this provider yet.")
@@ -805,63 +995,22 @@ export function ProviderModelsSection({
             sensors={dndSensors}
             collisionDetection={dndCollisionDetection}
             modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-            onDragStart={trackDrag}
+            onDragStart={handleDragStart}
             onDragOver={trackDrag}
             onDragEnd={handleDragEnd}
-            onDragCancel={() => setDrag(null)}
+            onDragCancel={handleDragCancel}
           >
             <SortableContext items={sortableIds} strategy={dndSortingStrategy}>
               {favorites.length > 0 ? (
-                <>
-                  <div
-                    className={cn(
-                      "px-2 pt-1 pb-1.5 text-2xs leading-4 text-muted-foreground",
-                      dropTarget === "favorites" && "text-primary",
-                    )}
-                  >
-                    Favorites
-                  </div>
-                  {renderSortableRows(favorites)}
-                  <SortableMarker
-                    id={ALL_LABEL_ID}
-                    className={groupLabelClassName(dropTarget === "enabled")}
-                  >
-                    All
-                  </SortableMarker>
-                </>
-              ) : null}
-              {renderSortableRows(enabled)}
-              {sortableIds.includes(ENABLED_SLOT_ID) ? (
-                <SortableMarker
-                  id={ENABLED_SLOT_ID}
-                  className={emptySlotClassName(dropTarget === "enabled")}
+                <div
+                  key="favorites-title"
+                  className={favoritesLabelClassName(dropTarget === "favorites")}
                 >
-                  Drop models here to show them in the picker
-                </SortableMarker>
-              ) : null}
-              <SortableMarker
-                id={HIDDEN_LABEL_ID}
-                className={groupLabelClassName(dropTarget === "hidden")}
-              >
-                Hidden from picker
-              </SortableMarker>
-              {renderSortableRows(hidden)}
-              {sortableIds.includes(HIDDEN_SLOT_ID) ? (
-                <SortableMarker
-                  id={HIDDEN_SLOT_ID}
-                  className={emptySlotClassName(dropTarget === "hidden")}
-                >
-                  Drop models here to hide them from the picker
-                </SortableMarker>
-              ) : null}
-            </SortableContext>
-            <DragOverlay>
-              {draggedModel ? (
-                <div className="rounded-md border border-primary/30 bg-popover shadow-lg">
-                  {renderRow(draggedModel, "overlay", dropTarget)}
+                  Favorites
                 </div>
               ) : null}
-            </DragOverlay>
+              {sortableIds.map(renderSortableItem)}
+            </SortableContext>
           </DndContext>
         )}
       </div>

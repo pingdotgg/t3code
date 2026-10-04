@@ -3,6 +3,7 @@ import type { ServerProviderModel } from "@t3tools/contracts";
 
 import {
   ALL_LABEL_ID,
+  FAVORITES_SLOT_ID,
   groupModelsForDisplay,
   HIDDEN_LABEL_ID,
   HIDDEN_SLOT_ID,
@@ -101,14 +102,19 @@ describe("resolveModelListDrop", () => {
   });
 
   it("drops onto an empty segment slot without persisting the slot", () => {
+    const items = [FAVORITES_SLOT_ID, ALL_LABEL_ID, "a", "b", HIDDEN_LABEL_ID, HIDDEN_SLOT_ID];
+    expect(
+      drop({ items, favoriteModels: [], hiddenModels: [], activeId: "a", overId: HIDDEN_SLOT_ID }),
+    ).toEqual({ modelOrder: ["b", "a"], favoriteModels: [], hiddenModels: ["a"] });
     expect(
       drop({
-        items: ["a", "b", HIDDEN_LABEL_ID, HIDDEN_SLOT_ID],
+        items,
+        favoriteModels: [],
         hiddenModels: [],
-        activeId: "a",
-        overId: HIDDEN_SLOT_ID,
+        activeId: "b",
+        overId: FAVORITES_SLOT_ID,
       }),
-    ).toEqual({ modelOrder: ["b", "a"], favoriteModels: ["fav"], hiddenModels: ["a"] });
+    ).toEqual({ modelOrder: ["b", "a"], favoriteModels: ["b"], hiddenModels: [] });
   });
 
   it("refuses to hide custom models", () => {
