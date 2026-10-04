@@ -4,12 +4,19 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  formatToolValue,
+  turnItemDetailRevision,
+  turnItemNeedsDetailFetch,
+  turnItemOutputText,
+} from "@t3tools/client-runtime/work-log/item-detail";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
-import { memo, Suspense, use, useMemo } from "react";
+import { memo, type ReactNode, Suspense, use, useMemo } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
+import { useTurnItemDetail } from "../../state/queries";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
@@ -81,8 +88,94 @@ function StructuredValue({
   );
 }
 
+function SectionLabel({ children }: { readonly children: ReactNode }) {
+  return (
+    <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
+      {children}
+    </p>
+  );
+}
+
+/**
+ * The item behind a projected row, with the output the timeline withheld
+ * fetched while the row is open.
+ */
+function useFetchedTurnItem(
+  projectedItem: OrchestrationV2ProjectedTurnItem,
+  environmentId: EnvironmentId,
+) {
+  const wireItem = projectedItem.item;
+  const fetches = turnItemNeedsDetailFetch(wireItem);
+  const detail = useTurnItemDetail(
+    fetches
+      ? {
+          environmentId,
+          threadId: projectedItem.sourceThreadId,
+          itemId: projectedItem.sourceItemId,
+          revision: turnItemDetailRevision(wireItem),
+        }
+      : null,
+  );
+  const fetchedItem = detail.data?.item;
+  const item = fetchedItem?.type === wireItem.type ? fetchedItem : wireItem;
+  return {
+    item,
+    output: {
+      text: turnItemOutputText(item),
+      pending: item === wireItem && detail.isPending,
+      error:
+        item !== wireItem
+          ? null
+          : detail.data?.item === null
+            ? "Output is no longer available."
+            : detail.error,
+      empty: fetches && item !== wireItem,
+    },
+  };
+}
+
+/** Output the timeline withheld, fetched while the row is open. */
+function ToolOutput(props: {
+  readonly text: string | null;
+  readonly pending: boolean;
+  readonly error: string | null;
+  readonly empty: boolean;
+}) {
+  const body = props.text ? (
+    <StructuredValue value={props.text} />
+  ) : props.pending ? (
+    <p className="text-muted-foreground">Loading output…</p>
+  ) : props.error ? (
+    <p className="text-destructive">Couldn&apos;t load output: {props.error}</p>
+  ) : props.empty ? (
+    <p className="text-muted-foreground">No output.</p>
+  ) : null;
+  if (body === null) return null;
+  return (
+    <div>
+      <SectionLabel>Output</SectionLabel>
+      {body}
+    </div>
+  );
+}
+
+/** Fetched output for rows that show their own plain text instead of the inspector. */
+export function FetchedToolOutput(props: {
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly environmentId: EnvironmentId;
+}) {
+  const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId);
+  return (
+    <div className="mt-2 text-xs">
+      <ToolOutput {...output} />
+    </div>
+  );
+}
+
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
-  const { item } = props.projectedItem;
+  const fetched = useFetchedTurnItem(props.projectedItem, props.environmentId);
+  const item = fetched.item;
+  const output = <ToolOutput {...fetched.output} />;
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -107,6 +200,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "command_execution" ? (
         <div className="space-y-2">
           <StructuredValue value={item.input} highlightJson />
+          {output}
           {item.exitCode !== undefined ? (
             <p className={item.exitCode === 0 ? "text-success" : "text-destructive"}>
               Process exited with code {item.exitCode}
@@ -153,7 +247,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </div>
       ) : null}
 
-      {item.type === "file_search" && item.results ? (
+      {item.type === "file_search" && item.pattern?.trim() && !item.results?.length ? (
+        <StructuredValue value={item.pattern} />
+      ) : null}
+
+      {item.type === "web_search" && item.patterns?.length && !item.results?.length ? (
+        <StructuredValue value={item.patterns.join("\n")} />
+      ) : null}
+
+      {item.type === "file_search" && item.results?.length ? (
         <ul className="space-y-1 rounded-md border border-border/45 p-2">
           {item.results.map((result) => (
             <li key={JSON.stringify(result)}>
@@ -170,7 +272,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "web_search" && item.results ? (
+      {item.type === "web_search" && item.results?.length ? (
         <ul className="space-y-1.5 rounded-md border border-border/45 p-2">
           {item.results.map((result) => {
             const safeHref = resolveExternalWebLinkHref(result.url);
@@ -199,11 +301,14 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" ? (
-        <div>
-          <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
-            Input
-          </p>
-          <StructuredValue value={item.input} highlightJson />
+        <div className="space-y-2">
+          {formatToolValue(item.input) ? (
+            <div>
+              <SectionLabel>Input</SectionLabel>
+              <StructuredValue value={formatToolValue(item.input)} highlightJson />
+            </div>
+          ) : null}
+          {output}
         </div>
       ) : null}
 
@@ -213,6 +318,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
       {item.type === "notification" ? <StructuredValue value={item.detail} /> : null}
       {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
+      {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
       {item.type === "proposed_plan" ? <StructuredValue value={item.markdown} /> : null}
       {item.type === "todo_list" ? (
         <StructuredValue

@@ -173,7 +173,7 @@ describe("orchestration V2 wire projection", () => {
 
   it("omits even small dynamic tool results while retaining input", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
-    expect(projectTurnItemForWire(item)).toEqual(base);
+    expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
   });
 
@@ -252,6 +252,10 @@ describe("orchestration V2 wire projection", () => {
       const projected = projectTurnItemForWire(item);
       expect(projected).not.toHaveProperty("output");
       expect(projected).toMatchObject({ input: "test", status: "completed" });
+      // Clients fetch withheld output on demand, so they need to know it exists.
+      expect(projected.type === "command_execution" ? projected.outputOmitted : null).toBe(
+        output ? true : undefined,
+      );
       expect(item.output).toBe(output);
     },
   );

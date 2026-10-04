@@ -877,9 +877,15 @@ describe("OpenCodeAdapterV2", () => {
       const grep = items.find((item) => item.type === "file_search");
       assert.equal(grep?.title, "Searched TODO in web");
       assert.equal(grep?.type === "file_search" ? grep.pattern : null, "TODO");
+      assert.deepEqual(grep?.type === "file_search" ? grep.results : null, [
+        { fileName: "apps/web", preview: "---\nfile body" },
+      ]);
       const webSearch = items.find((item) => item.type === "web_search");
       assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
         "OpenCode documentation",
+      ]);
+      assert.deepEqual(webSearch?.type === "web_search" ? webSearch.results : null, [
+        { snippet: "---\nfile body" },
       ]);
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );

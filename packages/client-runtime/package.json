@@ -311,6 +311,10 @@
       "types": "./src/work-log/userInput.ts",
       "default": "./src/work-log/userInput.ts"
     },
+    "./work-log/item-detail": {
+      "types": "./src/work-log/itemDetail.ts",
+      "default": "./src/work-log/itemDetail.ts"
+    },
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
