@@ -187,17 +187,19 @@ function LinkPullRequestDialog({
   const settledUrl = useDebouncedValue(target?.url ?? null, LOOKUP_DELAY_MS);
   const lookup = target !== null && settledUrl === target.url ? target : null;
   const previewTarget = useMemo(() => {
-    if (lookup === null) return null;
-    const project = findProjectOnChangeRequestHost(environmentProjects, lookup);
+    // Reparsed for the authority, which keeps a non-default port the host alone drops.
+    const link = lookup === null ? null : parseChangeRequestUrl(lookup.url);
+    if (link === null) return null;
+    const project = findProjectOnChangeRequestHost(environmentProjects, link);
     return project === undefined
       ? null
       : {
           environmentId: threadRef.environmentId,
           input: {
             projectId: project.id,
-            host: lookup.host,
-            repository: lookup.repository,
-            number: lookup.number,
+            host: link.authority ?? link.host,
+            repository: link.repository,
+            number: link.number,
           },
         };
   }, [environmentProjects, lookup, threadRef.environmentId]);
@@ -252,6 +254,7 @@ function LinkPullRequestDialog({
             value={reference}
             onChange={(event) => {
               setDirty(true);
+              setSubmitError(null);
               setReference(event.target.value);
             }}
             onKeyDown={(event) => {
@@ -265,8 +268,8 @@ function LinkPullRequestDialog({
           ) : lookingUp ? (
             <p className="text-muted-foreground text-xs">Looking up the pull request...</p>
           ) : null}
-          {(validation ?? submitError) ? (
-            <p className="text-destructive text-xs">{validation ?? submitError}</p>
+          {(submitError ?? validation) ? (
+            <p className="text-destructive text-xs">{submitError ?? validation}</p>
           ) : null}
         </DialogPanel>
         <DialogFooter>
