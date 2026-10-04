@@ -15,6 +15,7 @@ import * as Cause from "effect/Cause";
 
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
+import { isStorageFullError } from "./StorageFailure.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
@@ -23,6 +24,9 @@ const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
 /** Translate known categories without exposing arbitrary provider defect text. */
 function causeMessage(cause: unknown): string | undefined {
+  if (isStorageFullError(cause)) {
+    return "The server ran out of disk space. Free space on the server, then retry the turn.";
+  }
   const seen = new Set<unknown>();
   let message: string | undefined;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {

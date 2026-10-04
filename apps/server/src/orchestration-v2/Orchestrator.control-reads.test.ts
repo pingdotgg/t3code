@@ -49,6 +49,294 @@ const testLayer = Layer.mergeAll(
   ),
 );
 
+it.effect.each(["missing-session", "returned-interrupt", "superseded-attempt"] as const)(
+  "Stop recovers a stalled run safely after %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:stalled:${scenario}`);
+      const runId = RunId.make(`run:stalled:${scenario}`);
+      const nodeId = NodeId.make(`node:stalled:${scenario}`);
+      const attemptId = RunAttemptId.make(`attempt:stalled:${scenario}`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:stalled:${scenario}`);
+      const providerTurnId = ProviderTurnId.make(`provider-turn:stalled:${scenario}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${scenario}`),
+        threadId,
+        projectId: ProjectId.make(`project:stalled:${scenario}`),
+        title: "Stalled run",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:thread`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: ProviderSessionId.make("provider-session:gone"),
+          appThreadId: threadId,
+          ownerNodeId: nodeId,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "active",
+          pendingBackgroundTasks: [
+            { kind: "background_task", taskId: "stalled-task", description: "Background task" },
+          ],
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId: instanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make(`${scenario}:user`),
+        rootNodeId: nodeId,
+        activeAttemptId: attemptId,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:run`),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: run,
+      });
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:attempt`),
+        type: "run-attempt.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: attemptId,
+          runId,
+          attemptOrdinal: 1,
+          rootNodeId: nodeId,
+          providerInstanceId: instanceId,
+          providerThreadId,
+          providerTurnId,
+          reason: "initial",
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:turn`),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerTurnId,
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:node`),
+        type: "node.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: "root_turn",
+          status: "running",
+          countsForRun: true,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:item`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`${scenario}:tool`),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Tool",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "command_execution",
+          input: "test",
+        },
+      });
+      const assistantMessageId = MessageId.make(`${scenario}:assistant`);
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:message`),
+        type: "message.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: assistantMessageId,
+          threadId,
+          runId,
+          nodeId,
+          role: "assistant",
+          text: "Partial output",
+          attachments: [],
+          streaming: true,
+          createdBy: "agent",
+          creationSource: "provider",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      for (const type of ["assistant_message", "reasoning"] as const) {
+        yield* projections.apply({
+          id: EventId.make(`${scenario}:${type}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${scenario}:${type}`),
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: type === "assistant_message" ? 2 : 3,
+            status: "running",
+            title: "Partial output",
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type,
+            messageId: assistantMessageId,
+            text: "Partial output",
+            streaming: true,
+          },
+        });
+      }
+      yield* projections.apply({
+        id: EventId.make(`${scenario}:request`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(`${scenario}:request`),
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("provider-session:gone"),
+          },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      if (scenario === "superseded-attempt") {
+        yield* projections.apply({
+          id: EventId.make(`${scenario}:new-attempt`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...run, activeAttemptId: RunAttemptId.make("attempt:newer") },
+        });
+      }
+      const command =
+        scenario === "missing-session"
+          ? {
+              type: "run.interrupt" as const,
+              commandId: CommandId.make(`stop:${scenario}`),
+              threadId,
+              runId,
+            }
+          : {
+              type: "thread.background-work.settle" as const,
+              commandId: CommandId.make(`stop:${scenario}`),
+              threadId,
+              providerThreadId,
+              providerTurnId,
+            };
+      const first = yield* orchestrator.dispatch(command);
+      const after = yield* projections.getThreadProjection(threadId);
+      const interrupted = scenario !== "superseded-attempt";
+      assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");
+      assert.equal(after.attempts[0]?.status, interrupted ? "interrupted" : "running");
+      assert.equal(after.providerTurns[0]?.status, interrupted ? "interrupted" : "running");
+      assert.equal(after.nodes[0]?.status, interrupted ? "interrupted" : "running");
+      assert.equal(after.providerThreads[0]?.status, interrupted ? "idle" : "active");
+      assert.lengthOf(after.providerThreads[0]?.pendingBackgroundTasks ?? [], interrupted ? 0 : 1);
+      assert.equal(after.messages[0]?.streaming, !interrupted);
+      assert.equal(after.messages[0]?.text, "Partial output");
+      for (const item of after.turnItems) {
+        if (item.type !== "assistant_message" && item.type !== "reasoning") continue;
+        assert.equal(item.status, interrupted ? "interrupted" : "running");
+        assert.equal(item.streaming, !interrupted);
+        assert.equal(item.text, "Partial output");
+      }
+      assert.equal(
+        after.turnItems.find((item) => item.type === "command_execution")?.status,
+        interrupted ? "interrupted" : "running",
+      );
+      assert.equal(after.runtimeRequests[0]?.status, interrupted ? "cancelled" : "pending");
+      assert.equal(
+        after.turnItems.filter((item) => item.type === "run_interrupt_result").length,
+        interrupted ? 1 : 0,
+      );
+      const replay = yield* orchestrator.dispatch(command);
+      assert.equal(replay.sequence, first.sequence);
+      assert.deepEqual(replay.storedEvents, first.storedEvents);
+    }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>

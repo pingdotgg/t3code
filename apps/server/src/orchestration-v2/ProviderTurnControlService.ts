@@ -168,6 +168,34 @@ export const layer: Layer.Layer<
         return { context, providerThread: interruptProviderThread, providerTurn, session };
       });
 
+    const awaitTerminal = (input: {
+      readonly threadId: ThreadId;
+      readonly providerThreadId: ProviderThreadId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly attemptId: RunAttemptId;
+    }) =>
+      Effect.gen(function* () {
+        for (let remaining = 1_000; remaining > 0; remaining -= 1) {
+          const { providerTurn, attempt } = yield* projections.getProviderControlContext(
+            input.threadId,
+            input,
+          );
+          if (
+            providerTurn !== undefined &&
+            providerTurn.status !== "running" &&
+            attempt !== undefined &&
+            attempt.status !== "running"
+          ) {
+            return true;
+          }
+          // Terminal events run on a detached ingestion fiber. Let it finish
+          // before Stop synthesizes settlement or Restart replaces the turn.
+          // Yield through Node so deterministic clocks cannot pin ingestion.
+          yield* yieldToRuntime;
+        }
+        return false;
+      });
+
     return ProviderTurnControlServiceV2.of({
       interrupt: (input) =>
         Effect.gen(function* () {
@@ -185,6 +213,17 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
+          if (
+            loaded.providerTurn.status === "running" &&
+            loaded.providerTurn.runAttemptId !== null
+          ) {
+            // A dead native turn may acknowledge Stop without emitting a
+            // terminal. Bound the wait so the orchestrator can recover it.
+            yield* awaitTerminal({
+              ...input,
+              attemptId: loaded.providerTurn.runAttemptId,
+            });
+          }
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)
@@ -222,29 +261,13 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
           });
 
-          for (let remaining = 1_000; remaining > 0; remaining -= 1) {
-            const { providerTurn, attempt } = yield* projections.getProviderControlContext(
-              input.threadId,
-              {
-                providerThreadId: input.providerThreadId,
-                providerTurnId: input.providerTurnId,
-                attemptId: input.interruptedAttemptId,
-              },
-            );
-            if (
-              providerTurn !== undefined &&
-              providerTurn.status !== "running" &&
-              attempt !== undefined &&
-              attempt.status !== "running"
-            ) {
-              return;
-            }
-            // Provider terminal events are projected on a detached ingestion
-            // fiber. Yield through the Node event loop instead of sleeping on
-            // Effect's clock so deterministic runtimes cannot deadlock a
-            // command that is waiting for that projection.
-            yield* yieldToRuntime;
-          }
+          if (
+            yield* awaitTerminal({
+              ...input,
+              attemptId: input.interruptedAttemptId,
+            })
+          )
+            return;
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
             operation: "restart",

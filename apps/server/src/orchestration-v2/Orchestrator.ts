@@ -7937,8 +7937,237 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           driver: providerThread.driver,
           providerInstanceId: providerThread.providerInstanceId,
           occurredAt: input.now,
-          payload: { ...providerThread, pendingBackgroundTasks: [], updatedAt: input.now },
+          payload: {
+            ...providerThread,
+            status:
+              providerThread.status === "active" &&
+              providerThread.lastRunOrdinal !== null &&
+              providerThread.lastRunOrdinal <= input.throughRunOrdinal
+                ? "idle"
+                : providerThread.status,
+            pendingBackgroundTasks: [],
+            updatedAt: input.now,
+          },
         });
+      }
+    });
+
+  // A successful Stop may have no terminal event to ingest: the session or
+  // native turn already died, or its final write failed when storage filled.
+  const settleInterruptedRun = (input: {
+    readonly command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "thread.background-work.settle" }
+    >;
+    readonly projection: Pick<
+      OrchestrationV2ThreadProjection,
+      | "runs"
+      | "attempts"
+      | "nodes"
+      | "subagents"
+      | "runtimeRequests"
+      | "messages"
+      | "turnItems"
+      | "providerThreads"
+    >;
+    readonly providerTurn: OrchestrationV2ProviderTurn;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
+    readonly now: DateTime.Utc;
+  }) =>
+    Effect.gen(function* () {
+      const attempt = input.projection.attempts.find(
+        (candidate) => candidate.id === input.providerTurn.runAttemptId,
+      );
+      const run = input.projection.runs.find((candidate) => candidate.id === attempt?.runId);
+      const rootNode = input.projection.nodes.find((candidate) => candidate.id === run?.rootNodeId);
+      if (
+        attempt === undefined ||
+        run === undefined ||
+        rootNode === undefined ||
+        run.activeAttemptId !== attempt.id ||
+        run.status !== "running" ||
+        attempt.status !== "running" ||
+        input.providerTurn.status !== "running"
+      )
+        return;
+      const emitEvent = emit(input.events, input.command);
+      const base = {
+        threadId: input.command.threadId,
+        runId: run.id,
+        nodeId: rootNode.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: input.now,
+      };
+      yield* emitEvent({
+        ...base,
+        type: "provider-turn.updated",
+        payload: {
+          ...input.providerTurn,
+          status: "interrupted",
+          completedAt: input.now,
+        },
+      });
+      yield* emitEvent({
+        ...base,
+        type: "run-attempt.updated",
+        payload: {
+          ...attempt,
+          status: "interrupted",
+          completedAt: input.now,
+        },
+      });
+      const providerThread = input.projection.providerThreads.find(
+        (candidate) => candidate.id === input.providerTurn.providerThreadId,
+      );
+      if (providerThread?.status === "active" && providerThread.lastRunOrdinal === run.ordinal) {
+        yield* emitEvent({
+          ...base,
+          type: "provider-thread.updated",
+          payload: { ...providerThread, status: "idle", updatedAt: input.now },
+        });
+      }
+      for (const message of input.projection.messages) {
+        if (message.runId !== run.id || !message.streaming) continue;
+        yield* emitEvent({
+          ...base,
+          ...(message.nodeId === null ? {} : { nodeId: message.nodeId }),
+          type: "message.updated",
+          payload: { ...message, streaming: false, updatedAt: input.now },
+        });
+      }
+      for (const item of input.projection.turnItems) {
+        if (
+          item.runId !== run.id ||
+          (item.type !== "assistant_message" && item.type !== "reasoning") ||
+          !["pending", "running", "waiting"].includes(item.status)
+        )
+          continue;
+        yield* emitEvent({
+          ...base,
+          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+          type: "turn-item.updated",
+          payload: {
+            ...item,
+            status: "interrupted",
+            streaming: false,
+            completedAt: input.now,
+            updatedAt: input.now,
+          },
+        });
+      }
+      const delegatedNodeIds = new Set(
+        input.projection.subagents
+          .filter((subagent) => subagent.origin === "app_owned")
+          .map((subagent) => subagent.id),
+      );
+      for (const node of input.projection.nodes) {
+        if (
+          node.runId !== run.id ||
+          delegatedNodeIds.has(node.id) ||
+          !["pending", "running", "waiting"].includes(node.status)
+        )
+          continue;
+        yield* emitEvent({
+          ...base,
+          nodeId: node.id,
+          type: "node.updated",
+          payload: {
+            ...node,
+            status: "interrupted",
+            completedAt: input.now,
+          },
+        });
+      }
+      for (const subagent of input.projection.subagents) {
+        if (
+          subagent.runId !== run.id ||
+          subagent.origin === "app_owned" ||
+          !["pending", "running", "waiting"].includes(subagent.status)
+        )
+          continue;
+        yield* emitEvent({
+          ...base,
+          nodeId: subagent.id,
+          type: "subagent.updated",
+          payload: {
+            ...subagent,
+            status: "interrupted",
+            completedAt: input.now,
+            updatedAt: input.now,
+          },
+        });
+      }
+      for (const request of input.projection.runtimeRequests) {
+        if (
+          request.status !== "pending" ||
+          !input.projection.nodes.some(
+            (node) => node.id === request.nodeId && node.runId === run.id,
+          )
+        )
+          continue;
+        yield* emitEvent({
+          ...base,
+          nodeId: request.nodeId,
+          type: "runtime-request.updated",
+          payload: {
+            ...request,
+            status: "cancelled",
+            resolvedAt: input.now,
+            responseCapability: { type: "not_resumable", reason: "The run was interrupted." },
+          },
+        });
+      }
+      yield* emitEvent({
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+          threadId: input.command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerThreadId: input.providerTurn.providerThreadId,
+          providerTurnId: input.providerTurn.id,
+          nativeItemRef: null,
+          parentItemId: idAllocator.derive.runSignalTurnItem({
+            runId: run.id,
+            signal: "interrupt-request",
+          }),
+          ordinal: run.ordinal * 100 + 98,
+          status: "interrupted",
+          title: "Interrupted",
+          startedAt: input.now,
+          completedAt: input.now,
+          updatedAt: input.now,
+          type: "run_interrupt_result",
+          message: "Run interrupted by user",
+        },
+      });
+      const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
+      yield* emitEvent({
+        ...base,
+        type: "run.updated",
+        payload: {
+          ...runWithoutDelegatedCompletion,
+          status: "interrupted",
+          completedAt: input.now,
+        },
+      });
+      const scopeId = rootNode.checkpointScopeId;
+      if (scopeId !== null) {
+        yield* Ref.update(input.effects, (effects) => [
+          ...effects,
+          {
+            id: `effect:checkpoint.capture:${run.id}`,
+            commandId: CommandId.make(`command:effect:checkpoint.capture:${run.id}`),
+            threadId: input.command.threadId,
+            request: {
+              type: "checkpoint.capture",
+              runId: run.id,
+              scopeId,
+            },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
       }
     });
 
@@ -7948,14 +8177,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "thread.background-work.settle" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) =>
     Effect.gen(function* () {
       const [projection, stopped] = yield* Effect.all([
         projectionStore.getThreadRecords(
           command.threadId,
-          ["runs", "attempts", "turnItems", "providerThreads"],
+          [
+            "runs",
+            "attempts",
+            "nodes",
+            "subagents",
+            "runtimeRequests",
+            "turnItems",
+            "providerThreads",
+          ],
           {
-            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+            turnItemTypes: [
+              "command_execution",
+              "dynamic_tool",
+              "subagent",
+              "assistant_message",
+              "reasoning",
+            ],
             turnItemStatuses: ["pending", "running", "waiting"],
           },
         ),
@@ -7972,12 +8216,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (attempt) => attempt.id === stopped.providerTurn?.runAttemptId,
       )?.runId;
       const stoppedRun = projection.runs.find((run) => run.id === stoppedRunId);
+      if (
+        stoppedRun === undefined ||
+        (["preparing", "starting", "running"].includes(stoppedRun.status) &&
+          stoppedRun.activeAttemptId !== stopped.providerTurn?.runAttemptId)
+      )
+        return;
+      const now = yield* DateTime.now;
+      if (stopped.providerTurn?.status === "running" && stoppedRun.status === "running") {
+        const output = yield* projectionStore
+          .getThreadRecords(command.threadId, ["messages"], {
+            messageRunIds: [stoppedRun.id],
+            messageRoles: ["assistant"],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        yield* settleInterruptedRun({
+          command,
+          projection: { ...projection, messages: output.messages },
+          providerTurn: stopped.providerTurn,
+          events,
+          effects,
+          now,
+        });
+      }
       // A new turn may have started since Stop; its work is not this Stop's.
       if (
         stoppedRun === undefined ||
         projection.runs.some(
           (run) =>
-            run.status === "preparing" || run.status === "starting" || run.status === "running",
+            run.id !== stoppedRun.id &&
+            (run.status === "preparing" || run.status === "starting" || run.status === "running"),
         )
       ) {
         return;
@@ -7988,7 +8260,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection,
         stoppedProviderThreadId: command.providerThreadId,
         throughRunOrdinal: stoppedRun.ordinal,
-        now: yield* DateTime.now,
+        now,
       });
     });
 
@@ -8009,11 +8281,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "attempts",
           "turnItems",
           "subagents",
+          "runtimeRequests",
         ],
         // Thread-wide, like the Waiting strip: a settled thread's background
         // work can belong to an earlier run than the one Stop targets.
         {
-          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemTypes: [
+            "command_execution",
+            "dynamic_tool",
+            "subagent",
+            "assistant_message",
+            "reasoning",
+          ],
           turnItemStatuses: ["pending", "running", "waiting"],
         },
       );
@@ -8287,17 +8566,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
-      // Stop on a settled thread's background work. Its process may be gone
-      // (released, restarted) and only the projection still shows the work;
-      // the settle follow-up ends whatever no provider reports ending.
-      const settleOnly =
-        providerTurn.status !== "running" &&
-        (providerThread.providerSessionId === null ||
-          Option.isNone(
-            yield* providerSessions
-              .get(providerThread.providerSessionId)
-              .pipe(Effect.orElseSucceed(() => Option.none())),
-          ));
+      // A dead session cannot report a terminal event for either a running
+      // turn or a settled turn's background work. Stop ends both locally.
+      const sessionOption =
+        providerThread.providerSessionId === null
+          ? Option.none()
+          : yield* providerSessions.get(providerThread.providerSessionId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorProviderAdapterError({
+                    commandId: command.commandId,
+                    providerInstanceId: run.providerInstanceId,
+                    cause,
+                  }),
+              ),
+            );
+      const settleOnly = Option.isNone(sessionOption);
       if (settleOnly) {
         yield* emitEvent({
           type: "turn-item.updated",
@@ -8310,6 +8594,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         if (command.holdQueue === true) yield* holdQueuedRuns;
         yield* stopCompletionCohort();
+        yield* settleInterruptedRun({ command, projection, providerTurn, events, effects, now });
         yield* settleBackgroundWork({
           command,
           events,
@@ -8329,16 +8614,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const providerSessionId = providerThread.providerSessionId;
-      const sessionOption = yield* providerSessions.get(providerSessionId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProviderAdapterError({
-              commandId: command.commandId,
-              providerInstanceId: run.providerInstanceId,
-              cause,
-            }),
-        ),
-      );
       if (Option.isNone(sessionOption)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -9642,7 +9917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchCheckpointRollbackFail(command, events);
         break;
       case "thread.background-work.settle":
-        yield* dispatchBackgroundWorkSettle(command, events);
+        yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
       case "thread.fork":
         yield* dispatchThreadFork(command, events);

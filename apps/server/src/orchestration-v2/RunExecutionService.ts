@@ -33,6 +33,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -51,6 +52,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { isStorageFullError } from "./StorageFailure.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -790,7 +792,11 @@ export const layer: Layer.Layer<
           yield* eventSink.writeWithEffects(finalization);
         }
         yield* input.refreshAfterTurn;
-      });
+      }).pipe(
+        // Keep the terminal write retryable after disk exhaustion instead of
+        // losing the result. Provider work is never restarted by this retry.
+        Effect.retry({ while: isStorageFullError, schedule: Schedule.spaced("1 second") }),
+      );
 
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
@@ -1273,6 +1279,9 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     cause,
                   }).pipe(
+                    Effect.andThen(
+                      isStorageFullError(cause) ? eventSubscription.close : Effect.void,
+                    ),
                     Effect.andThen(
                       finalized
                         ? Effect.void
