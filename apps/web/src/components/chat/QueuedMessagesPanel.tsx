@@ -1,5 +1,5 @@
 import type { OrchestrationQueuedTurn, QueuedTurnId } from "@t3tools/contracts";
-import { ArrowDown, ArrowUp, Check, PauseCircle, Pencil, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Pause, Pencil, Play, Trash2, X } from "lucide-react";
 import { memo } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -84,10 +84,12 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
     return null;
   }
   const hiddenHeldCount = queuedTurns.length - visibleQueuedTurns.length;
-  const holdMessage =
+  const holdDetail =
     queueHeldAt !== null && visibleQueuedTurns.length === 0
-      ? `Queue held after restart. ${hiddenHeldCount === 1 ? "1 queued follow-up" : `${hiddenHeldCount} queued follow-ups`} will not run until you resume ${hiddenHeldCount === 1 ? "it" : "them"}.`
-      : "Queue held after restart. These messages will not run until you resume them.";
+      ? hiddenHeldCount === 1
+        ? "1 queued follow-up will not run until you resume it."
+        : `${hiddenHeldCount} queued follow-ups will not run until you resume them.`
+      : "These messages will not run until you resume them.";
 
   return (
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
@@ -228,13 +230,20 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
         })}
       </ul>
       {queueHeldAt !== null ? (
-        <div className="mt-1.5 flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
-          <PauseCircle className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="composer-input-font-secondary min-w-0 flex-1 text-muted-foreground">
-            {holdMessage}
+        <div className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <Pause className="size-3.5" aria-hidden="true" />
           </span>
-          <Button type="button" size="xs" onClick={onReleaseQueue}>
-            Resume queue
+          <span className="min-w-0 flex-1">
+            <span className="composer-input-font-secondary block font-semibold text-foreground">
+              Queue held after restart
+            </span>
+            <span className="composer-input-font-secondary block text-muted-foreground">
+              {holdDetail}
+            </span>
+          </span>
+          <Button type="button" size="xs" className="shrink-0" onClick={onReleaseQueue}>
+            <Play /> Resume queue
           </Button>
         </div>
       ) : null}
