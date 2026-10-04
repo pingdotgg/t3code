@@ -60,6 +60,20 @@ describe("handleComposerPaste", () => {
     expect(addImages).toHaveBeenCalledWith([image]);
   });
 
+  it("still attaches clipboard images when the editor already prevented the paste", () => {
+    const image = new File(["image"], "pasted.png", { type: "image/png" });
+    const event = {
+      defaultPrevented: true,
+      clipboardData: createClipboardData({ files: [image] }),
+      preventDefault: vi.fn(),
+    };
+    const addImages = vi.fn();
+
+    handleComposerPaste(event, { editingQueuedTurn: false, addImages });
+
+    expect(addImages).toHaveBeenCalledWith([image]);
+  });
+
   it("leaves text-only paste to the editor", () => {
     const event = {
       defaultPrevented: false,

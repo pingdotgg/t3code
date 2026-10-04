@@ -25,7 +25,6 @@ export function handleComposerPaste(
     addImages: (files: File[]) => void;
   },
 ): void {
-  if (event.defaultPrevented) return;
   const files = getClipboardFiles(event.clipboardData);
   if (files.length === 0) return;
 
@@ -37,6 +36,7 @@ export function handleComposerPaste(
 
   const imageFiles = files.filter((file) => file.type.startsWith("image/"));
   if (imageFiles.length === 0) return;
-  event.preventDefault();
+  // The editor may prevent native paste without importing the clipboard image.
+  if (!event.defaultPrevented) event.preventDefault();
   addImages(imageFiles);
 }
