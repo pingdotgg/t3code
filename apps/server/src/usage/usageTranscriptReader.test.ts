@@ -789,9 +789,17 @@ describe("SQLite usage readers", () => {
     const cache = makeAntigravityUsageCache();
     assert.deepStrictEqual((await readAntigravityUsage(dir, 0, cache)).errors, []);
 
-    const { size } = await NodeFSP.stat(path);
-    await NodeFSP.writeFile(path, Buffer.alloc(size));
-    await NodeFSP.utimes(path, 1780000000, 1780000000);
+    // ctime has the kernel's timestamp granularity, which can be a few
+    // milliseconds, so repeat the forged rewrite until it lands on a later tick
+    // than the cached read, as any real rewrite does.
+    const cached = await NodeFSP.stat(path);
+    do {
+      await NodeFSP.writeFile(path, Buffer.alloc(cached.size));
+      await NodeFSP.utimes(path, 1780000000, 1780000000);
+    } while ((await NodeFSP.stat(path)).ctimeMs === cached.ctimeMs);
+    const restored = await NodeFSP.stat(path);
+    assert.strictEqual(restored.size, cached.size);
+    assert.strictEqual(restored.mtimeMs, cached.mtimeMs);
     const next = await readAntigravityUsage(dir, 0, cache);
     assert.deepStrictEqual(next.errors, [path]);
     assert.deepStrictEqual(
