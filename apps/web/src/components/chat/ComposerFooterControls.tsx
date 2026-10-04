@@ -246,6 +246,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  children: React.ReactNode;
   showActions?: boolean;
   compact: boolean;
   canOperateThread: boolean;
@@ -300,6 +301,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.children}
       {props.showActions !== false ? (
       <ComposerPrimaryActions
         compact={props.compact}
