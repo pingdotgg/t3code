@@ -142,6 +142,40 @@ it("retries a terminated model connection", async () => {
   }
 });
 
+it.each(["data", "end"] as const)(
+  "cancels model verification on %s without installing the download",
+  async (event) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-cancel-"));
+    const bytes = Buffer.from("verified speech model");
+    const model = {
+      ...SPEECH_MODELS[0]!,
+      filename: "cancel.gguf",
+      size: bytes.length,
+      sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+    };
+    const controller = new AbortController();
+    const reason = new Error("cancel verification");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(bytes)),
+    );
+    const createReadStream = vi.mocked(NodeFS.createReadStream).getMockImplementation()!;
+    vi.mocked(NodeFS.createReadStream).mockImplementation((...args) => {
+      const stream = createReadStream(...args);
+      stream.once(event, () => controller.abort(reason));
+      return stream;
+    });
+    try {
+      await expect(downloadSpeechModel(directory, model, controller.signal)).rejects.toBe(reason);
+      expect(controller.signal.aborted).toBe(true);
+      expect(await isSpeechModelReady(directory, model)).toBe(false);
+      expect(await NodeFSP.readdir(directory)).toEqual([]);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 it("reuses verification only while the model file and expected digest are unchanged", async () => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-verified-"));
   const bytes = Buffer.from("verified model");
