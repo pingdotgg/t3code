@@ -186,6 +186,39 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("offers and resolves every saved custom model, past the first 32", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+      }),
+    ];
+    const customModels = Array.from({ length: 40 }, (_, index) => `proxy/model-${index + 1}`);
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels },
+        },
+      },
+    };
+    const openrouter = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settings, openrouter).map((option) => option.slug),
+    ).toEqual(customModels);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        settings,
+        providers,
+        "proxy/model-40",
+      ),
+    ).toBe("proxy/model-40");
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({
