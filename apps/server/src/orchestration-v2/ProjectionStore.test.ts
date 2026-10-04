@@ -1377,6 +1377,36 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           (row) => row.sourceItemId === interruptResultId,
         ),
       );
+
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = json_set(payload_json, '$.createdBy', 'agent')
+        WHERE thread_id = ${threadId} AND type = 'user_message'
+      `;
+      const agentPromptId = TurnItemId.make("turn-item:bounded-sql-history:interrupt-filler:1281");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'user_message',
+          payload_json = json_set(payload_json,
+            '$.type', 'user_message', '$.inputIntent', 'turn_start',
+            '$.createdBy', 'agent', '$.creationSource', 'provider',
+            '$.messageId', 'message:bounded-sql-history:agent-prompt',
+            '$.text', 'Continue the child task', '$.attachments', json('[]'))
+        WHERE turn_item_id = ${agentPromptId}
+      `;
+      const agentWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+      });
+      assert.lengthOf(
+        agentWindow.projection.visibleTurnItems.filter(
+          (row) => row.item.type !== "run_interrupt_request",
+        ),
+        sqlPageLimit,
+      );
+      assert.isTrue(
+        agentWindow.projection.visibleTurnItems.some((row) => row.sourceItemId === agentPromptId),
+      );
     }),
   );
 

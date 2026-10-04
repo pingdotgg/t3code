@@ -2676,7 +2676,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHEN (SELECT COUNT(*) FROM turn_anchors) >= ${THREAD_HISTORY_MAX_RAW_TURNS + 2}
                       THEN (SELECT MIN(ordinal) FROM turn_anchors)
                     ELSE 0
-                  END AS ordinal, (SELECT COUNT(*) FROM turn_anchors) AS anchors
+                  END AS ordinal
                   FROM user_anchors
                 ), selected AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type
@@ -2685,7 +2685,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
-                    WHEN (SELECT anchors FROM boundary) > 0 THEN -1
+                    WHEN (SELECT COUNT(*) FROM user_anchors) > 0 THEN -1
                     ELSE ${window.rowLimit}
                   END
                 ), retained AS (
@@ -3165,7 +3165,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           localWindow !== undefined &&
           localWindow.rowLimit > 0 &&
           projection.turnItems.length >= localWindow.rowLimit &&
-          !projection.turnItems.some(isThreadHistoryTurnStart)
+          !projection.turnItems.some(isThreadHistoryUserTurn)
         ) {
           return withLocalVisibleTurnItems(projection);
         }
@@ -6119,7 +6119,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             );
             const anchorLimit = (options.userTurnLimit ?? 0) + 2;
             const start =
-              turnAnchors.length > 0
+              anchors.length > 0
                 ? anchors.length < anchorLimit
                   ? rawStart
                   : anchors.at(-anchorLimit)!
