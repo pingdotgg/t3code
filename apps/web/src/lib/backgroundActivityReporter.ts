@@ -206,7 +206,9 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
                 createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
               ),
             )
-            .pipe(Effect.ignore),
+            // An environment torn down mid-request interrupts its report; that must not
+            // end the reporting loop, or provider-status leases lapse until reload.
+            .pipe(Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
