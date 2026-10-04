@@ -2,6 +2,10 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Notification,
+  type PullRequestActivity,
+  type PullRequestComment,
+  type PullRequestRef,
+  type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
@@ -81,6 +85,12 @@ export const make = Effect.gen(function* () {
 
   // Passes in a row that failed, per watch. Kept in memory: a restart only delays the stop.
   const readFailures = new Map<string, number>();
+  // Replies past each long thread's first page, per watch, so a pass pages a thread again only
+  // when the host's count of it moves. Kept in memory: a restart pages each thread once more.
+  const threadTails = new Map<
+    string,
+    Map<string, { readonly count: number; readonly comments: ReadonlyArray<PullRequestComment> }>
+  >();
 
   // Host-level identity, with the repository as linked, the way pull request sync reads it.
   const identityOf = (link: ThreadPullRequestLink) => ({
@@ -125,6 +135,60 @@ export const make = Effect.gen(function* () {
       },
     }).pipe(Effect.catch(() => record(target, null)));
 
+  const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
+    function* (target: WatchTarget, reference: PullRequestRef, activity: PullRequestActivity) {
+      // Comment cursors cannot account for missing threads. Only finish a truncated read
+      // when the host confirms that every thread was listed.
+      if (activity.commentsTruncated && activity.reviewThreadsTruncated !== false) return null;
+
+      const key = failureKey(target);
+      let tails = threadTails.get(key);
+      if (tails === undefined) {
+        tails = new Map();
+        threadTails.set(key, tails);
+      }
+      const remarks = [...activity.comments];
+      for (const thread of activity.reviewThreads) {
+        let cursor = thread.nextCommentsCursor ?? null;
+        if (cursor === null) continue;
+        const count = thread.commentCount ?? 0;
+        let tail = tails.get(thread.id);
+        if (tail?.count !== count) {
+          const comments = new Map<string, PullRequestComment>();
+          const cursors = new Set<string>();
+          while (cursor !== null) {
+            if (cursors.has(cursor)) return null;
+            cursors.add(cursor);
+            const page: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
+              ...reference,
+              threadId: thread.id,
+              cursor,
+            });
+            for (const comment of page.comments) {
+              comments.set(comment.id, {
+                ...comment,
+                kind: "review-comment",
+                path: thread.path,
+                reviewState: null,
+              });
+            }
+            cursor = page.nextCursor;
+          }
+          if (thread.comments.length + comments.size < count) return null;
+          tail = { count, comments: [...comments.values()] };
+          tails.set(thread.id, tail);
+        }
+        remarks.push(...tail.comments);
+      }
+      return remarks.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    },
+    Effect.catch((error) =>
+      Effect.logWarning("pull request watch comment pagination failed", { error }).pipe(
+        Effect.as(null),
+      ),
+    ),
+  );
+
   const check = Effect.fn("PullRequestWatchReactor.check")(function* (target: WatchTarget) {
     const { thread, link, watch } = target;
     const pullRequest = identityOf(link);
@@ -160,13 +224,9 @@ export const make = Effect.gen(function* () {
     const [detail, activity] = read.value;
     if (detail.state !== "open") return yield* record(target, null);
 
-    // A degraded read (GitHub's review thread query failed) is truncated with no long thread to
-    // explain it, and would skip review comments, so remarks wait for a later pass. Replies past
-    // the first ten of a long review thread are not read.
-    const degraded =
-      activity.commentsTruncated &&
-      !activity.reviewThreads.some((reviewThread) => reviewThread.nextCommentsCursor !== undefined);
-    const report = evaluatePullRequestWatch(watch, detail, degraded ? null : activity.comments);
+    // Never advance the remark watermark past comments an incomplete read could have missed.
+    const remarks = yield* readRemarks(target, reference, activity);
+    const report = evaluatePullRequestWatch(watch, detail, remarks);
     if (report.changes.length > 0) {
       return yield* record(
         target,
@@ -192,6 +252,7 @@ export const make = Effect.gen(function* () {
     );
     const keys = new Set(targets.map(failureKey));
     for (const key of readFailures.keys()) if (!keys.has(key)) readFailures.delete(key);
+    for (const key of threadTails.keys()) if (!keys.has(key)) threadTails.delete(key);
     yield* Effect.forEach(
       targets,
       (target) =>

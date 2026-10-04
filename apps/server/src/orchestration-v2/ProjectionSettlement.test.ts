@@ -247,7 +247,7 @@ it.effect.each([
           forkedFrom: null,
           createdAt: old,
           updatedAt: old,
-          pendingBackgroundTasks: [{ taskId: "running-task", kind: "command" }],
+          pendingBackgroundTasks: [{ taskId: "running-task", kind: "subagent" }],
         },
       });
       const candidates = yield* store.getSettlementCandidates();
@@ -278,7 +278,13 @@ it.effect.each([
         };
         assert.deepEqual(
           resolveAutoSettlementAt({ ...settings, thread: candidate }),
-          resolveAutoSettlementAt({ ...settings, thread: expected }),
+          resolveAutoSettlementAt({
+            ...settings,
+            thread: {
+              ...expected,
+              latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+            },
+          }),
         );
       }
       assert.equal(
@@ -290,6 +296,62 @@ it.effect.each([
         "ProjectionStoreThreadNotFoundError",
       );
     }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", SqlLayer],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: the user-authored message time ignores agent notifications", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("agent-woken");
+    yield* createRun(threadId);
+    const message = (
+      id: string,
+      createdBy: "user" | "agent",
+      creationSource: "web" | "provider",
+      at: DateTime.Utc,
+    ) =>
+      store.apply({
+        id: EventId.make(`event:settlement:${id}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy,
+          creationSource,
+          id: MessageId.make(`message:settlement:${id}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: id,
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+    const written = DateTime.subtract(now, { hours: 2 });
+    yield* message("written", "user", "web", written);
+    yield* message("notification", "agent", "provider", now);
+
+    const [candidate] = yield* store.getSettlementCandidates(threadId);
+    assert.isDefined(candidate);
+    assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
+    assert.equal(
+      DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
+      DateTime.formatIso(written),
+    );
+    // The shell carries the same stamp, which orders the Working section.
+    const shellThread = (yield* store.getShellSnapshot()).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.equal(
+      DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
+      DateTime.formatIso(written),
+    );
+  }).pipe(Effect.provide(testLayer)),
 );
 
 const pullRequestLink = (number: number) => ({
