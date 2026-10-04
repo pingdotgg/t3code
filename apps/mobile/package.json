@@ -126,7 +126,7 @@
     "react-native-worklets": "0.13.0",
     "shiki": "4.2.0",
     "tailwind-merge": "^3.5.0",
-    "uniwind": "1.11.0"
+    "uniwind": "1.12.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
