@@ -155,6 +155,27 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("reads resources from a distribution package instead of the shared Electron", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {
+          platform: "linux",
+          isPackaged: true,
+          appPath: "/usr/lib/t3code/app.asar",
+          resourcesPath: "/usr/lib/electron44/resources",
+        },
+        { T3CODE_DESKTOP_RESOURCES_PATH: " /usr/lib/t3code/resources " },
+      );
+
+      assert.equal(environment.resourcesPath, "/usr/lib/t3code/resources");
+      assert.equal(environment.appUpdateYmlPath, "/usr/lib/t3code/resources/app-update.yml");
+      assert.include(
+        environment.resolveResourcePathCandidates("icon.png"),
+        "/usr/lib/t3code/resources/icon.png",
+      );
+    }),
+  );
+
   it.effect("keeps implicit development state separate from production state", () =>
     Effect.gen(function* () {
       const development = yield* makeEnvironment(

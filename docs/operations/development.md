@@ -143,6 +143,12 @@ DMGs default to the host architecture. Use `--arch` to choose another target and
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
+### Distribution packages
+
+Packages that run the app on a shared Electron, such as `electron /usr/lib/t3code/app.asar`, set
+`T3CODE_DESKTOP_RESOURCES_PATH` to the directory holding the app's resources. Otherwise the app
+looks in Electron's own resources directory and finds none of its helpers.
+
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
