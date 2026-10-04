@@ -16,7 +16,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import * as ProviderProcessLedger from "./ProviderProcessLedger.ts";
 
 describe("resolveOpenCodeConfigContent", () => {
   it("prefers the caller environment over the inherited environment", () => {
@@ -228,7 +228,7 @@ server.listen(0, "127.0.0.1", () => {
         Effect.scoped,
         Effect.provide([
           OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-            Layer.provide(OpenCodeServerLedger.layerTest),
+            Layer.provide(ProviderProcessLedger.layerTest),
             Layer.provideMerge(NodeServices.layer),
           ),
           FetchHttpClient.layer,

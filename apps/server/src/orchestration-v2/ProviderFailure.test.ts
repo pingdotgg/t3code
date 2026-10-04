@@ -21,6 +21,24 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 
+it("redacts bare tokens from provider failures", () => {
+  const tokens = [
+    `ghp_${"a1".repeat(18)}`,
+    `github_pat_${"b2".repeat(20)}`,
+    `glpat-${"c3".repeat(10)}`,
+    `xoxb-${"1".repeat(12)}-${"d4".repeat(6)}`,
+    `xapp-1-A${"e5".repeat(8)}-${"2".repeat(12)}`,
+    "AKIAABCDEFGHIJKLMNOP",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXZhbHVl",
+  ];
+  const failure = makeProviderFailure({
+    message: `git push failed: ${tokens.join(" ")}`,
+    class: "provider_error",
+  });
+
+  assert.equal(failure.message, `git push failed: ${tokens.map(() => "[REDACTED]").join(" ")}`);
+});
+
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
     message:

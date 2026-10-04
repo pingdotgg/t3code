@@ -40,7 +40,7 @@
   "src/provider/Drivers/AntigravityDriver.test.ts": 2.3,
   "src/provider/Layers/GrokProvider.test.ts": 0.9,
   "src/provider/Layers/ProviderInstanceRegistryLive.test.ts": 0.5,
-  "src/provider/OpenCodeServerLedger.test.ts": 1.7,
+  "src/provider/ProviderProcessLedger.test.ts": 1.7,
   "src/provider/acp/AcpClientTerminals.test.ts": 1.3,
   "src/provider/acp/AcpJsonRpcConnection.test.ts": 10.2,
   "src/provider/acp/AcpRegistryProbe.test.ts": 1,

@@ -24,7 +24,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { describe } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
+import * as ProviderProcessLedger from "../ProviderProcessLedger.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 
@@ -229,7 +229,9 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Server live", () => {
         Effect.provide(
           Layer.mergeAll(
             OpenCode2Client.layer,
-            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+              Layer.provide(ProviderProcessLedger.layerTest),
+            ),
           ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
         ),
       ),

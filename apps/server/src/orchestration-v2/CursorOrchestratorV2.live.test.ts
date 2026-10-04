@@ -29,7 +29,7 @@ import * as ModelManifest from "../provider/ModelManifest.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as ProviderEventLoggers from "../provider/Layers/ProviderEventLoggers.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
+import * as ProviderProcessLedger from "../provider/ProviderProcessLedger.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -80,7 +80,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       NodeServices.layer,
       FetchHttpClient.layer,
       OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-        Layer.provide(OpenCodeServerLedger.layerTest),
+        Layer.provideMerge(ProviderProcessLedger.layerTest),
         Layer.provide(PlatformTestLayer),
       ),
       Layer.succeed(

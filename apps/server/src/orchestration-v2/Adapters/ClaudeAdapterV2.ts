@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 
+import { makeClaudeCodeProcessFactory } from "./ClaudeCodeProcess.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   dynamicToolTitle,
@@ -108,6 +109,7 @@ import {
   shouldPersistProviderEvent,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderProcessLedger from "../../provider/ProviderProcessLedger.ts";
 import {
   claudeRateLimitEventToUpdate,
   type ClaudeScopedLimitNames,
@@ -594,12 +596,15 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
 export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
+  | Crypto.Crypto
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ProviderProcessLedger.ProviderProcessLedger
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const makeClaudeCodeProcess = yield* makeClaudeCodeProcessFactory;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
@@ -622,11 +627,15 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
           ),
           Stream.toAsyncIterable,
         );
+        const claudeCodeProcess = makeClaudeCodeProcess?.();
         const queryRuntime = yield* Effect.try({
           try: () =>
             query({
               prompt,
-              options: input.options,
+              options:
+                claudeCodeProcess === undefined
+                  ? input.options
+                  : { ...input.options, spawnClaudeCodeProcess: claudeCodeProcess.spawn },
             }),
           catch: (cause) => queryRunnerError(cause, "query"),
         });
@@ -641,7 +650,7 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
 
         return {
           messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
-            queryRunnerError(cause, "fromAsyncIterable"),
+            queryRunnerError(claudeCodeProcess?.withStderr(cause) ?? cause, "fromAsyncIterable"),
           ).pipe(
             Stream.tap((message) =>
               logProtocolEvent({

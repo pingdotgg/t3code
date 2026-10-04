@@ -59,7 +59,7 @@ import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
+import * as ProviderProcessLedger from "../ProviderProcessLedger.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
@@ -274,6 +274,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     ),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
+    Layer.provideMerge(ProviderProcessLedger.layerTest),
   );
   const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
     Layer.provideMerge(baseLayer),
@@ -620,7 +621,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
   const infraLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-    Layer.provide(OpenCodeServerLedger.layerTest),
+    Layer.provide(ProviderProcessLedger.layerTest),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
@@ -655,6 +656,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     ),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
+    Layer.provideMerge(ProviderProcessLedger.layerTest),
   );
   const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
     Layer.provideMerge(baseLayer),
