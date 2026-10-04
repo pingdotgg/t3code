@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-02T19:45:00Z",
+  "updatedAt": "2026-10-03T13:29:10Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -100,6 +100,16 @@
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
+    "codex": {
+      "profiles": {},
+      "models": [
+        { "slug": "gpt-6-sol", "name": "GPT-6 Sol", "status": "legacy" },
+        { "slug": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "status": "legacy" },
+        { "slug": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "status": "legacy" },
+        { "slug": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "status": "legacy" },
+        { "slug": "gpt-5.5", "name": "GPT-5.5", "status": "legacy" }
+      ]
+    },
     "claudeAgent": {
       "defaults": {
         "chat": "claude-fable-5-1"
