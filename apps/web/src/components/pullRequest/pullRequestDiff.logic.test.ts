@@ -1,7 +1,13 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getFileViewedRange,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+  withFileDiffFold,
+  retainReviewDiffSlices,
+} from "./pullRequestDiff.logic";
 
 function fileWithHunks(
   hunks: ReadonlyArray<{
@@ -13,6 +19,30 @@ function fileWithHunks(
 ): FileDiffMetadata {
   return { name: "src/app.ts", hunks } as unknown as FileDiffMetadata;
 }
+
+describe("retainReviewDiffSlices", () => {
+  const slices = [{ cursor: null, patch: "page-1" }];
+
+  it("keeps the open pages when the same review refreshes", () => {
+    const previous = { key: "pr-1", cursor: "page-2", slices };
+    expect(retainReviewDiffSlices(previous, "pr-1")).toEqual({
+      key: "pr-1",
+      cursor: null,
+      slices,
+    });
+    expect(retainReviewDiffSlices({ key: "pr-1", cursor: null, slices }, "pr-1").slices).toBe(
+      slices,
+    );
+  });
+
+  it("starts over when the review itself changes", () => {
+    expect(retainReviewDiffSlices({ key: "pr-1", cursor: null, slices }, "pr-2")).toEqual({
+      key: "pr-2",
+      cursor: null,
+      slices: [],
+    });
+  });
+});
 
 describe("isLineInFileDiff", () => {
   const file = fileWithHunks([

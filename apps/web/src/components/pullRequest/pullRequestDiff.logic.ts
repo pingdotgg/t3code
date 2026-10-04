@@ -1,6 +1,27 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
 
+export interface ReviewDiffSliceState<Slice> {
+  readonly key: string;
+  readonly cursor: string | null;
+  readonly slices: ReadonlyArray<Slice>;
+}
+
+/**
+ * A refresh rereads the first page, and the pages already on screen stay until that page
+ * arrives. Clearing them remounts the viewer and sends the reader back to the top.
+ */
+export function retainReviewDiffSlices<Slice>(
+  previous: ReviewDiffSliceState<Slice>,
+  scopeKey: string,
+): ReviewDiffSliceState<Slice> {
+  if (previous.key !== scopeKey) {
+    return { key: scopeKey, cursor: null, slices: [] };
+  }
+  if (previous.cursor === null) return previous;
+  return { key: previous.key, cursor: null, slices: previous.slices };
+}
+
 /** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
   file: FileDiffMetadata,

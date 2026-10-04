@@ -139,7 +139,15 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getFileViewedRange,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+  withFileDiffFold,
+  retainReviewDiffSlices,
+  type DiffFoldOverride,
+  type FileDiffFoldChoices,
+} from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
@@ -587,28 +595,16 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
-  const [withheldLoads, setWithheldLoads] = useState<{
-    readonly scope: string;
-    readonly paths: ReadonlyArray<string>;
-    /** The render key each loaded file was last shown under; a changed patch gets a new one. */
-    readonly shownKeys: ReadonlyMap<string, string>;
-  }>({ scope: "", paths: NO_PATHS, shownKeys: new Map() });
-  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
-  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
-  const atomRegistry = useContext(RegistryContext);
-  const withheldFileDiff = (path: string) =>
-    pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } });
-  const refreshWithheldFiles = useEffectEvent(() => {
-    for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
-  });
+  // Reread the first page and the viewed ticks. The pages already on screen stay until that
+  // page arrives: blanking them remounts the viewer and sends the reader back to the top,
+  // including on every agent turn.
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    // An equal refetch keeps the answer's identity, so the emptied slices refill only if the
-    // applied page is forgotten too.
+    setSliceState((previous) => retainReviewDiffSlices(previous, scopeKey));
+    // An equal refetch keeps the answer's identity, so forget the applied page to reapply it.
     setAppliedPage(null);
     refreshFirstDiffPage();
     refreshWithheldFiles();
