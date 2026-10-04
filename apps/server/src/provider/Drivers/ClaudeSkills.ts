@@ -75,11 +75,28 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     return { kind: "missing" };
   }
 
+  const frontmatter = match[1] ?? "";
   let parsed: unknown;
   try {
-    parsed = parseYamlDocument(match[1] ?? "");
+    parsed = parseYamlDocument(frontmatter);
   } catch {
-    return { kind: "malformed" };
+    // Claude Code accepts plain scalars containing `: `. Repair only those,
+    // leaving comments and YAML structure for the full-document parser.
+    const repaired = frontmatter.replace(
+      /^([\w-]+:[ \t]*)([^\r\n]*)/gm,
+      (line, prefix: string, value: string) => {
+        const scalar = value.split(/[ \t]+#/)[0] ?? "";
+        if (!/:[ \t]/.test(scalar) || /^(?:["'[\]{}|>&*!#%@`]|[-?:](?:[ \t]|$))/.test(scalar)) {
+          return line;
+        }
+        return `${prefix}${JSON.stringify(scalar)}${value.slice(scalar.length)}`;
+      },
+    );
+    try {
+      parsed = parseYamlDocument(repaired);
+    } catch {
+      return { kind: "malformed" };
+    }
   }
   if (typeof parsed !== "object" || parsed === null) {
     return { kind: "malformed" };
