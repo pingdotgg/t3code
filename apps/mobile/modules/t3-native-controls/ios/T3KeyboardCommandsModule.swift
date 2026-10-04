@@ -52,6 +52,7 @@ public final class T3KeyboardCommandsView: ExpoView {
         title: "Copy PR Link or Thread ID"
       ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
+      enabledCommand("cycleHost", input: "h", modifiers: [.command, .shift], action: #selector(cycleHost), title: "Next Machine"),
     ].compactMap { $0 }
     if isPad {
       commands += (1...9).compactMap { index in
@@ -150,6 +151,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   @objc private func openReview() { emit("review") }
   @objc private func copyThreadReference() { emit("copyThreadReference") }
   @objc private func handleToggleSidebar() { emit("toggleSidebar") }
+  @objc private func cycleHost() { emit("cycleHost") }
 
   private func emit(_ command: String) {
     onCommand(["command": command])
