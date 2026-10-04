@@ -1348,7 +1348,6 @@ jobs:
               - --filter=@t3tools/scripts...
 
       - name: Read published release notes
-        id: discord_release_notes
         if: needs.preflight.outputs.is_prerelease == 'true'
         continue-on-error: true
         env:
@@ -1358,13 +1357,16 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.preflight.outputs.release_channel }}
         run: |
           if [ "$RELEASE_CHANNEL" = 'nightly' ]; then
-            gh release view "$RELEASE_TAG" --json body --jq '.body // ""' > "$RUNNER_TEMP/discord-release-notes.md"
+            if ! gh release view "$RELEASE_TAG" --json body --jq '.body // ""' > "$RUNNER_TEMP/discord-release-notes.md"; then
+              : > "$RUNNER_TEMP/discord-release-notes.md"
+              echo '::warning::Could not read published release notes; announcing without a changelog.'
+            fi
           else
             : > "$RUNNER_TEMP/discord-release-notes.md"
           fi
 
       - name: Announce prerelease on Discord
-        if: needs.preflight.outputs.is_prerelease == 'true' && steps.discord_release_notes.outcome == 'success'
+        if: needs.preflight.outputs.is_prerelease == 'true'
         continue-on-error: true
         env:
           DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_RELEASE_NIGHTLY_ROLE_ID }}

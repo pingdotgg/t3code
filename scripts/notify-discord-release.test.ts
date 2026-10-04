@@ -403,6 +403,46 @@ it.effect("waits for Retry-After before retrying a rate-limited message", () =>
   }),
 );
 
+it.effect("bounds total retry time while preserving delays within the deadline", () =>
+  Effect.gen(function* () {
+    const limited = yield* Deferred.make<void>();
+    let attempts = 0;
+    const client = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          attempts += 1;
+          yield* Deferred.succeed(limited, undefined);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(null, { status: 429, headers: { "retry-after": "40" } }),
+          );
+        }),
+      ),
+    );
+    const fiber = yield* postDiscordWebhook(
+      webhookUrl,
+      buildDiscordReleaseAnnouncement(latestAnnouncement)[0]!,
+      latestAnnouncement,
+    ).pipe(Effect.provide(client), Effect.result, Effect.forkChild);
+    yield* Deferred.await(limited);
+    yield* TestClock.adjust("39 seconds");
+    assert.equal(attempts, 1);
+    yield* TestClock.adjust("1 second");
+    assert.equal(attempts, 2);
+    yield* TestClock.adjust("20 seconds");
+    const result = yield* Fiber.join(fiber);
+    assert.equal(attempts, 2);
+    assert.equal(result._tag, "Failure");
+    if (result._tag !== "Failure") assert.fail("Expected the retry deadline to expire");
+    assert.equal(result.failure._tag, "DiscordReleaseWebhookRequestError");
+    if (result.failure._tag !== "DiscordReleaseWebhookRequestError")
+      assert.fail(`Unexpected error: ${result.failure._tag}`);
+    assert.equal(result.failure.reason, "TimeoutError");
+    assert.ok(!Cause.pretty(Cause.fail(result.failure)).includes("test-secret-token"));
+  }),
+);
+
 // Run the checked-in shell commands with gh/node stubs, then send their captured
 // arguments through the real CLI parser and an injected HTTP client.
 function workflowRun(workflow: string, stepName: string) {
@@ -494,20 +534,31 @@ it.layer(NodeServices.layer)("Discord release CLI and workflow", (it) => {
         0,
       );
       assert.equal(yield* fs.readFileString(`${temp}/discord-release-notes.md`), "");
-      // A failed fetch must skip the announcement, rather than send the empty
-      // file created by shell redirection before gh failed.
       assert.equal(
         yield* spawner.exitCode(
-          ChildProcess.make("bash", ["-e", "-c", `gh() { return 42; }\n${read}`], {
-            env: shellEnv,
-          }),
+          ChildProcess.make(
+            "bash",
+            ["-e", "-c", `gh() { printf '%s' 'partial changelog'; return 42; }\n${read}`],
+            { env: shellEnv },
+          ),
         ),
-        42,
+        0,
       );
+      assert.equal(yield* fs.readFileString(`${temp}/discord-release-notes.md`), "");
+      const fallbackRequests: string[] = [];
+      yield* runCli(args).pipe(Effect.provide([configLayer, captureClient(fallbackRequests)]));
+      assert.equal(fallbackRequests.length, 1);
+      const fallback = decodePayload(fallbackRequests[0]!);
+      assert.equal(fallback.embeds[0]?.description, intro);
+      assert.equal(fallback.content, `-# <@&${latestAnnouncement.roleId}>`);
+      assert.deepStrictEqual(fallback.allowed_mentions, {
+        parse: [],
+        roles: [latestAnnouncement.roleId],
+      });
       assert.ok(
-        workflow.includes(
-          "if: needs.preflight.outputs.is_prerelease == 'true' && steps.discord_release_notes.outcome == 'success'",
-        ),
+        workflow
+          .split("      - name: Announce prerelease on Discord\n")[1]
+          ?.startsWith("        if: needs.preflight.outputs.is_prerelease == 'true'\n"),
       );
       assert.ok(workflow.includes("GH_REPO: ${{ github.repository }}"));
       assert.ok(workflow.includes("RELEASE_TAG: ${{ needs.preflight.outputs.tag }}"));

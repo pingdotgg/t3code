@@ -285,6 +285,8 @@ export const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
   const response = yield* HttpClientRequest.post(requestUrl).pipe(
     HttpClientRequest.bodyJson(payload),
     Effect.flatMap(httpClient.execute),
+    // Bound requests and retry waits together without shortening Retry-After.
+    Effect.timeout("1 minute"),
     Effect.mapError(
       (error) =>
         new DiscordReleaseWebhookRequestError({
