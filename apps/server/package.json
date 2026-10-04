@@ -69,7 +69,7 @@
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
     "undici": "catalog:",
-    "transcribe-cpp": "0.2.3",
+    "transcribe-cpp": "0.2.4",
     "yaml": "catalog:",
     "yauzl": "^3.4.0",
     "zod": "^4.6.5"

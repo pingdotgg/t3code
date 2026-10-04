@@ -13,11 +13,6 @@ let stream;
 process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
-      const { createRequire } = await import("node:module");
-      const koffi = createRequire(message.koffiModuleUrl)("koffi");
-      // transcribe-cpp 0.2.3 still uses 512 KiB. Remove this after its 2 MiB release.
-      if ((koffi.config().async_stack_size ?? 0) < 2 * 1024 * 1024)
-        koffi.config({ async_stack_size: 2 * 1024 * 1024 });
       const { TranscribeModel, getAvailableBackends } = await import(message.moduleUrl);
       const device = message.acceleration.startsWith("gpu:")
         ? getAvailableBackends().find((item) =>
@@ -246,7 +241,6 @@ export async function loadNativeSpeechModel(
       kind: "load",
       path,
       moduleUrl,
-      koffiModuleUrl: import.meta.resolve("transcribe-cpp"),
       acceleration,
     });
     supportsStreaming = loaded.supportsStreaming === true;

@@ -78,11 +78,12 @@ it.each(["OutputTruncated", "InputTooLong"])(
   },
 );
 
-it("raises the speech worker's Koffi stack before loading the binding", async () => {
+it("uses the binding's Vulkan-safe Koffi stack in the speech worker", async () => {
   const koffiPath = NodeModule.createRequire(import.meta.resolve("transcribe-cpp")).resolve(
     "koffi",
   );
   const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    await import(${JSON.stringify(import.meta.resolve("transcribe-cpp"))});
     import { createRequire } from "node:module";
     const koffi = createRequire(${JSON.stringify(koffiPath)})(${JSON.stringify(koffiPath)});
     export const TranscribeModel = { load: async () => ({
