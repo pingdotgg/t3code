@@ -1864,6 +1864,21 @@ function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
   return typeof value === "string" ? value : value === undefined ? "" : jsonStringifyForTool(value);
 }
 
+/** Bash results arrive as `{ stdout, stderr, interrupted, ... }`; keep only the text. */
+function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
+  const value = claudeNativeToolOutputValue(output);
+  if (typeof value === "object" && value !== null) {
+    const stdout = Reflect.get(value, "stdout");
+    const stderr = Reflect.get(value, "stderr");
+    if (typeof stdout === "string" || typeof stderr === "string") {
+      return [stdout, stderr]
+        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+        .join("\n");
+    }
+  }
+  return claudeNativeToolOutputText(output);
+}
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -1903,6 +1918,8 @@ function isClaudeSubagentAsyncLaunchAck(output: ClaudeNativeToolOutput): boolean
   }
   return claudeSubagentResultText(output).startsWith("Async agent launched successfully.");
 }
+
+const WEB_FETCH_SNIPPET_MAX_CHARS = 8_000;
 
 function webSearchPatternsFromClaudeTool(input: {
   readonly toolInput: ClaudeNativeToolInput;
@@ -3807,8 +3824,12 @@ export function makeClaudeAdapterV2(
             output: input.output,
           });
           const webSearchResults = webSearchResultsFromClaudeOutput(input.output);
+          const webFetchUrl = firstStringInputField(input.toolInput, ["url"])?.trim();
           const outputValue = claudeNativeToolOutputValue(input.output);
-          const outputText = claudeNativeToolOutputText(input.output);
+          const outputText =
+            itemType === "command_execution"
+              ? claudeCommandOutputText(input.output)
+              : claudeNativeToolOutputText(input.output);
           const turnItem: OrchestrationV2TurnItem =
             itemType === "command_execution"
               ? {
@@ -3831,7 +3852,21 @@ export function makeClaudeAdapterV2(
                       ...(webSearchPatterns.length === 0
                         ? {}
                         : { patterns: [...webSearchPatterns] }),
-                      ...(webSearchResults.length === 0 ? {} : { results: [...webSearchResults] }),
+                      ...(webSearchResults.length > 0
+                        ? { results: [...webSearchResults] }
+                        : input.classification.normalizedName === "webfetch" &&
+                            outputText.trim().length > 0
+                          ? {
+                              // WebFetch returns page text, not search hits. Keep a
+                              // bounded preview so the row has something to show.
+                              results: [
+                                {
+                                  ...(webFetchUrl === undefined ? {} : { url: webFetchUrl }),
+                                  snippet: outputText.slice(0, WEB_FETCH_SNIPPET_MAX_CHARS),
+                                },
+                              ],
+                            }
+                          : {}),
                     }
                   : {
                       ...itemBase,
