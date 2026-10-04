@@ -234,7 +234,7 @@ import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { useDictationSubmissionShortcut } from "~/speech/useDictationSubmissionShortcut";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechRecordingPill, ComposerSpeechStatus, shouldShowComposerFooter, resolveSpeechPresentation } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechRecordingPill, shouldShowComposerFooter, resolveSpeechPresentation } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
@@ -3626,13 +3626,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         onStart={() => void speechInput.start()}
                         onCancel={() => void speechInput.cancel()}
                       />
-                      {speechInput.state.phase === "error" ? (
-                        <ComposerSpeechCancelButton
-                          state={speechInput.state}
-                          shortcutLabel="Esc"
-                          onCancel={() => void speechInput.cancel()}
-                        />
-                      ) : null}
                     </>
                   ) : null}
                   <VoiceInputSetup
@@ -3655,6 +3648,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       finishShortcutLabel={dictationShortcutLabel}
                       cancelShortcutLabel="Esc"
                       level={speechInput.level}
+                      onStart={() => void speechInput.start()}
+                      disabled={dictationDisabled}
                       onStop={() => void speechInput.stop()}
                       onCancel={() => void speechInput.cancel()}
                       onSkipPostProcessing={() => speechInput.skipPostProcessing()}

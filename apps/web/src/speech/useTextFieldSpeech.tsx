@@ -7,9 +7,7 @@ import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import {
   ComposerSpeechButton,
-  ComposerSpeechCancelButton,
   ComposerSpeechRecordingPill,
-  ComposerSpeechStatus,
 } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 
@@ -84,20 +82,12 @@ export function TextFieldSpeechControls({
           progress={speech.progress}
           level={speech.level}
           finishShortcutLabel={speech.shortcutLabel}
+          onStart={() => void speech.start()}
+          disabled={disabled}
           onStop={() => void speech.stop()}
           onCancel={speech.cancel}
           onSkipPostProcessing={speech.skipPostProcessing}
         />
-        {speech.state.phase === "error" ? (
-          <>
-            <ComposerSpeechStatus
-              state={speech.state}
-              progress={speech.progress}
-              level={speech.level}
-            />
-            <ComposerSpeechCancelButton state={speech.state} onCancel={speech.cancel} />
-          </>
-        ) : null}
         {speech.available ? (
           <ComposerSpeechButton
             state={speech.state}

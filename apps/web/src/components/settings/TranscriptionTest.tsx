@@ -114,6 +114,7 @@ export function TranscriptionTest({
               progress={null}
               level={level}
               recordingLimitSeconds={10}
+              onStart={() => void controller.current?.start()}
               onStop={() => void controller.current?.stop()}
               onCancel={() => controller.current?.cancel()}
               onSkipPostProcessing={() => {}}
