@@ -4,7 +4,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Run,
-  type ProviderThreadId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -23,16 +22,14 @@ import {
 const CONTINUE_PROMPT = "Continue where you left off.";
 
 /**
- * The run a restart continuation resumes, if any: an unfinished root run, or a
- * settled one whose own provider thread lost background work in the restart
- * (`cancelledWorkProviderThreadIds`, which recovery records on that thread).
+ * Resume only an unfinished root turn. Leftover background work is cleaned up
+ * separately and reported on the next user turn; it must not wake a settled run.
  */
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
-  cancelledWorkProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
   // Queued runs never started; recovery holds them behind the cut run.
@@ -46,13 +43,8 @@ export function restartContinuationRun(
   if (!run) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
-  // Background work outlived this settled turn; the provider has no live turn.
-  const settledWithCancelledWork =
-    (run.status === "completed" || run.status === "waiting") &&
-    run.providerThreadId !== null &&
-    cancelledWorkProviderThreadIds.has(run.providerThreadId);
-  if (run.status !== "running" && !preparedContinuation && !settledWithCancelledWork) return;
-  const liveTurnRequired = !preparedContinuation && !settledWithCancelledWork;
+  if (run.status !== "running" && !preparedContinuation) return;
+  const liveTurnRequired = !preparedContinuation;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === run.providerThreadId,
@@ -73,16 +65,13 @@ export function restartContinuationRun(
   const session = projection.providerSessions.find(
     (candidate) => candidate.id === providerThread.providerSessionId,
   );
-  // A settled thread's session may already be stopped and out of the recovery
-  // read; the continuation reopens it from the provider thread's native ref.
   // Most adapters keep a live session "ready" through its turns, so only a
   // stopped or failed session rules out a live turn.
   if (
-    session === undefined
-      ? !settledWithCancelledWork
-      : session.providerInstanceId !== run.providerInstanceId ||
-        session.driver !== providerThread.driver ||
-        (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
+    session === undefined ||
+    session.providerInstanceId !== run.providerInstanceId ||
+    session.driver !== providerThread.driver ||
+    (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
   )
     return;
   if (
@@ -119,10 +108,14 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
 
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
-    // A settled source prompts with the note of the background work it lost.
-    const noteSource =
-      source !== undefined && isRestartNoteSource(source, projection.providerTurns);
-    if (!source || (source.status !== "cancelled" && !noteSource)) return;
+    // Pending effects from older versions may target settled background work,
+    // including waiting runs that reconciliation subsequently cancelled.
+    if (
+      !source ||
+      source.status !== "cancelled" ||
+      isRestartNoteSource(source, projection.providerTurns)
+    )
+      return;
     // A user submission after reconciliation takes precedence over an automatic
     // prompt. Queued runs never started and stay held behind this one.
     if (

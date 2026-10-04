@@ -1796,11 +1796,16 @@ const makeWsRpcLayer = (
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
               .enqueueCommand(
-                ThreadMessageIntake.dispatchCommand(
-                  ThreadManagementService.withCreationProvenance(command, {
-                    createdBy: "user",
-                    creationSource: "creationSource" in command ? command.creationSource : "web",
-                  }),
+                // A retry also restarts the preparation work the launch owns.
+                (command.type === "prepared-run.retry"
+                  ? threadLaunch.retryPreparation(command)
+                  : ThreadMessageIntake.dispatchCommand(
+                      ThreadManagementService.withCreationProvenance(command, {
+                        createdBy: "user",
+                        creationSource:
+                          "creationSource" in command ? command.creationSource : "web",
+                      }),
+                    )
                 ).pipe(Effect.provide(intakeContext)),
               )
               .pipe(
@@ -1840,6 +1845,21 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
             readWorkflowScript({ scriptPath: input.scriptPath }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+            threadManagement.getTurnItem(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: "Failed to load turn item",
+                    cause,
+                  }),
+              ),
+            ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>

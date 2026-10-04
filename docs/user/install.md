@@ -142,11 +142,12 @@ you can install the recommendation there. Otherwise use the provider's installer
 on the environment's machine. An unlisted version is unverified.
 
 When a provider CLI is behind its latest release, its provider card shows the
-available version. **Update now** appears only when T3 Code can tell which
-installer owns the CLI (its own update command, Homebrew, or a global npm, pnpm,
-bun, or Vite+ install) and runs that installer. Otherwise update the CLI the same
-way you installed it. Homebrew installs compare against the version Homebrew
-offers, which can trail the npm release by a few hours.
+available version. **Update now** runs the installer that owns the CLI
+(Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
+CLI's own update command when T3 Code cannot tell. Update a CLI installed with
+mise through mise. Cursor and Antigravity update with T3 Code. Homebrew installs
+compare against the version Homebrew offers, which can trail the npm release by
+a few hours.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
