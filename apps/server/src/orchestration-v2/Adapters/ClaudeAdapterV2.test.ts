@@ -2049,6 +2049,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2117,7 +2118,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setPermissionMode: (mode) =>
                   Effect.sync(() => {
                     permissionModeChanges.push(mode);
-                  }),
+                  }).pipe(Effect.andThen(options?.setPermissionMode?.(mode) ?? Effect.void)),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
@@ -2181,6 +2182,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each([
+    { initialSubtype: "init", initialMode: "default", laterMode: "plan" },
+    { initialSubtype: "status", initialMode: "default", laterMode: "plan" },
+    { initialSubtype: "init", initialMode: "auto", laterMode: "plan" },
+    { initialSubtype: "init", initialMode: "auto", laterMode: "default" },
+  ] as const)(
+    "preserves initial $initialSubtype mode $initialMode for Auto after $laterMode",
+    ({ initialSubtype, initialMode, laterMode }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            setPermissionMode: (mode) =>
+              mode === "auto" && initialMode === "default"
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "setPermissionMode",
+                      cause: new Error("Auto permission mode is unsupported."),
+                    }),
+                  )
+                : Effect.void,
+          });
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "auto",
+            interactionMode: "default",
+            cwd: "/workspace",
+          });
+          const modelSelection = {
+            ...CLAUDE_TEST_MODEL_SELECTION,
+            model: initialMode === "default" ? "claude-haiku-4-5" : "claude-sonnet-4-6",
+          };
+          const start = (ordinal: number) =>
+            harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`attempt-claude-auto-${ordinal}`),
+                providerTurnOrdinal: ordinal,
+                text: "Continue the work.",
+                attachments: [],
+                runtimePolicy,
+                modelSelection,
+              }),
+            );
+          const finish = (ordinal: number) =>
+            Queue.offer(
+              harness.sdkMessages,
+              makeResultFrame({
+                uuid: `00000000-0000-4000-8000-00000000070${ordinal}`,
+                result: "Done.",
+              }),
+            ).pipe(Effect.andThen(Queue.take(harness.terminalReceipts)));
+          const now = yield* DateTime.now;
+
+          yield* start(1);
+          const openedOptions = harness.getOpenedOptions();
+          assert.equal(openedOptions?.permissionMode, "auto");
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: initialSubtype,
+              status: null,
+              permissionMode: initialMode,
+              uuid: "00000000-0000-4000-8000-000000000704",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          assert.equal((yield* finish(1)).status, "completed");
+
+          yield* start(2);
+          assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+          assert.deepEqual(harness.permissionModeChanges, []);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              permissionMode: laterMode,
+              uuid: "00000000-0000-4000-8000-000000000705",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          // Later init frames must not replace the process's initial fallback.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "init",
+              permissionMode: laterMode,
+              uuid: "00000000-0000-4000-8000-000000000706",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          assert.equal((yield* finish(2)).status, "completed");
+
+          yield* start(3);
+          assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+          assert.deepEqual(harness.permissionModeChanges, [initialMode]);
+          assert.equal((yield* finish(3)).status, "completed");
+          assert.lengthOf(harness.offeredMessages, 3);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
 
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",

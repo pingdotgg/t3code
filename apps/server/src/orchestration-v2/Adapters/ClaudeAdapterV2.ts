@@ -2739,10 +2739,11 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
-  // The mode this process was opened in, and the mode the CLI last reported
-  // (init and status frames). Claude changes the latter itself through
-  // EnterPlanMode.
+  // The mode requested when this process opened.
   readonly openedPermissionMode: PermissionMode;
+  // The first mode the CLI reports can be Manual when Auto is unsupported.
+  initialPermissionMode: PermissionMode | null;
+  // The latest init/status mode, including changes through EnterPlanMode.
   permissionMode: PermissionMode;
   // Stop, rollback or fork is closing this process; its work is ending.
   stopping: boolean;
@@ -6928,11 +6929,16 @@ export function makeClaudeAdapterV2(
             existing.selectionKey === compiledSelection.queryIdentity
           ) {
             // Claude can switch its own mode mid-session (EnterPlanMode), and
-            // a denied ExitPlanMode leaves it there. Put the live process back
-            // in the thread's mode before the next prompt.
-            if (existing.permissionMode !== existing.openedPermissionMode) {
-              yield* existing.query.setPermissionMode(existing.openedPermissionMode);
-              existing.permissionMode = existing.openedPermissionMode;
+            // a denied ExitPlanMode leaves it there. Restore the thread's mode,
+            // or Manual if the CLI initially fell back from unsupported Auto.
+            const permissionMode =
+              existing.openedPermissionMode === "auto" &&
+              existing.initialPermissionMode === "default"
+                ? "default"
+                : existing.openedPermissionMode;
+            if (existing.permissionMode !== permissionMode) {
+              yield* existing.query.setPermissionMode(permissionMode);
+              existing.permissionMode = permissionMode;
             }
             return existing;
           }
@@ -7049,6 +7055,7 @@ export function makeClaudeAdapterV2(
             closed,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
+            initialPermissionMode: null,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             subagentsFromEarlierProcesses: new Set(
@@ -7065,6 +7072,7 @@ export function makeClaudeAdapterV2(
                 (message.subtype === "init" || message.subtype === "status") &&
                 message.permissionMode !== undefined
               ) {
+                context.initialPermissionMode ??= message.permissionMode;
                 context.permissionMode = message.permissionMode;
               }
               return handleSdkMessage({ query: querySession, message });
