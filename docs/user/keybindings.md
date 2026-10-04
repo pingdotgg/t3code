@@ -54,6 +54,8 @@ Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
 choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
 to show only actions.
 
+In a new thread, `Cmd+Option+H` moves the draft to the next machine.
+
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
 also sends. To make Return insert a new line instead, change the Return key
 behavior in Settings → Keyboard.
