@@ -48,6 +48,15 @@
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-chat-background: var(--chat-background);
+  --color-diff-addition: var(--diff-addition);
+  --color-diff-deletion: var(--diff-deletion);
+  --color-sunken: var(--sunken);
+  /* Sub-12px steps. Diff stats and tree folder names have to sit below the UI
+     type scale without resorting to arbitrary rem values at each call site. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: calc(0.875 / 0.625);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -212,6 +221,10 @@
   --secondary: --alpha(var(--color-black) / 4%);
   --secondary-foreground: var(--color-neutral-800);
   --muted: --alpha(var(--color-black) / 4%);
+  /* Recessed well: darker than the page in both modes, so a contained region
+     reads as sunk rather than raised. Never paired with a border or shadow —
+     the fill alone declares the elevation. */
+  --sunken: --alpha(var(--color-black) / 4%);
   --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
   --accent: --alpha(var(--color-black) / 4%);
   --accent-foreground: var(--color-neutral-800);
@@ -250,6 +263,7 @@
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
+    --sunken: --alpha(var(--color-black) / 32%);
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
