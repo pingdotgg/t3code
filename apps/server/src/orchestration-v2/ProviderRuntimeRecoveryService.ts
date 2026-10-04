@@ -150,33 +150,6 @@ function resolveStaleBackgroundItemProviderInstanceId(
 }
 
 /**
- * Provider threads with background work reconciliation would cancel and
- * record for their next turn.
- */
-function providerThreadsWithOpenBackgroundWork(
-  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-): ReadonlySet<ProviderThreadId> {
-  const ids = new Set<ProviderThreadId>();
-  for (const item of projection.turnItems ?? []) {
-    if (
-      !isBackgroundCapableTurnItemType(item.type) ||
-      !isNonterminalTurnItemStatus(item.status) ||
-      isAppOwnedDelegationItem(item)
-    )
-      continue;
-    const providerThreadId =
-      item.providerThreadId ??
-      projection.runs.find((run) => run.id === item.runId)?.providerThreadId;
-    if (providerThreadId != null) ids.add(providerThreadId);
-  }
-  for (const thread of projection.providerThreads ?? []) {
-    if (thread.ownerNodeId === null && providerThreadHasPendingBackgroundTasks(thread))
-      ids.add(thread.id);
-  }
-  return ids;
-}
-
-/**
  * A provider thread's latest started run: the last turn that provider saw.
  * Restart recovery records the thread's cancelled background work on it, and
  * the next run on the same provider thread delivers it with its input.
@@ -668,7 +641,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, new Set(cancelledBackgroundWork.keys()))
+          ? restartContinuationRun(projection)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -804,12 +777,7 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        // Shutdown reconciliation cancels the background work below, so a
-        // settled thread's continuation must be captured while it is still open.
-        const run = restartContinuationRun(
-          projection,
-          providerThreadsWithOpenBackgroundWork(projection),
-        );
+        const run = restartContinuationRun(projection);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
