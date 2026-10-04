@@ -64,6 +64,36 @@ describe("timeline minimap previews", () => {
     expect(resolveTimelineMinimapPreview(null)).toBeNull();
   });
 
+  it("previews assistant markdown as plain text", () => {
+    const [item] = deriveTimelineMinimapItems(
+      rows([
+        ["user", "what **model** are we using?"],
+        [
+          "assistant",
+          [
+            "## Models",
+            "We use **two** models, see [the docs](https://example.com/docs):",
+            "",
+            "| Used for | Model |",
+            "| --- | :---: |",
+            "| Titles | `@cf/meta/llama` |",
+            "",
+            "- [x] Set in `config/ai.ts`",
+            "> Note: ~~old~~ new",
+            "```ts",
+            "const snake_case = a * b;",
+            "```",
+          ].join("\n"),
+        ],
+      ]),
+    );
+    expect(resolveTimelineMinimapPreview(item!)).toMatchObject({
+      userText: "what **model** are we using?",
+      assistantText:
+        "Models We use two models, see the docs: Used for Model Titles @cf/meta/llama Set in config/ai.ts Note: old new const snake_case = a * b;",
+    });
+  });
+
   it("shows fresh streaming text without changing the jump target", () => {
     const first = deriveTimelineMinimapItems(
       rows([

@@ -48,6 +48,25 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
+/** Drops markdown syntax so table, list, and link sources read as plain preview text. */
+function stripMarkdownForPreview(text: string) {
+  return (
+    text
+      // Code fence lines, then table delimiter rows and thematic breaks.
+      .replace(/^[ \t]*(?:```|~~~).*$/gm, "")
+      .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
+      // Table rows keep their cell text.
+      .replace(/^[ \t]*\|(.*?)\|?[ \t]*$/gm, (_, cells: string) => cells.replace(/\s*\|\s*/g, " "))
+      // Blockquote, heading, list, and task markers at the start of a line.
+      .replace(/^[ \t]*(?:>[ \t]*)*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]\][ \t]+)?/gm, "")
+      // Links and images keep their label.
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/`+([^`]+)`+/g, "$1")
+      // Paired bold and strikethrough only; single `*` and `_` are common in identifiers.
+      .replace(/(\*\*|__|~~)(\S(?:.*?\S)?)\1/g, "$2")
+  );
+}
+
 function compactMinimapPreview(text: string | null | undefined) {
   const compact = text?.replace(/\s+/g, " ").trim() ?? "";
   return compact.length > 0 ? compact : null;
@@ -61,6 +80,8 @@ export function resolveTimelineMinimapPreview(
     : {
         ...item,
         userText: compactMinimapPreview(item.userText),
-        assistantText: compactMinimapPreview(item.assistantText),
+        assistantText: compactMinimapPreview(
+          item.assistantText === null ? null : stripMarkdownForPreview(item.assistantText),
+        ),
       };
 }
