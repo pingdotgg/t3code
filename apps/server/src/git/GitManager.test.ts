@@ -80,6 +80,7 @@ interface FakeGhScenario {
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
   };
+  prCheckout?: (cwd: string) => void;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
@@ -452,6 +453,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     if (args[0] === "pr" && args[1] === "checkout") {
       return Effect.try({
         try: () => {
+          if (scenario.prCheckout) {
+            scenario.prCheckout(input.cwd);
+            return fakeGhOutput("");
+          }
           const headBranch = scenario.pullRequest?.headRefName;
           if (headBranch) {
             const existingBranch = NodeChildProcess.spawnSync(
@@ -4532,6 +4537,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       NodeFS.writeFileSync(NodePath.join(repoDir, "local.txt"), "local\n");
       yield* runGit(repoDir, ["add", "local.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Local PR branch"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
@@ -4556,7 +4562,583 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.worktreePath).toBeNull();
       const branch = (yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim();
       expect(branch).toBe("feature/pr-local");
-      expect(ghCalls).toContain("pr checkout 64 --force");
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect(ghCalls).toContain("pr checkout 64");
+      expect(ghCalls.some((call) => call.includes("--force"))).toBe(false);
+    }),
+  );
+
+  const makeLocalPullRequestFixture = (scenario: FakeGhScenario = {}) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      const headBranch = "feature/pr-local-keeps-work";
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      NodeFS.appendFileSync(NodePath.join(repoDir, "README.md"), "PR change\n");
+      yield* runGit(repoDir, ["commit", "-am", "C1"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", headBranch]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/67/head"]);
+      const c1 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 67,
+            title: "Local work preservation",
+            url: "https://github.com/acme/demo/pull/67",
+            baseRefName: "main",
+            headRefName: headBranch,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "acme/demo",
+            headRepositoryOwnerLogin: "acme",
+          },
+          repositoryCloneUrls: {
+            "acme/demo": { url: remoteDir, sshUrl: remoteDir },
+          },
+          ...scenario,
+        },
+      });
+      const checkout = () =>
+        preparePullRequestThread(manager, { cwd: repoDir, reference: "67", mode: "local" });
+      return { repoDir, remoteDir, headBranch, c1, checkout, ghCalls };
+    });
+
+  const advanceLocalPullRequestRemote = (repoDir: string) =>
+    Effect.gen(function* () {
+      NodeFS.appendFileSync(NodePath.join(repoDir, "README.md"), "Remote change\n");
+      yield* runGit(repoDir, ["commit", "-am", "C2"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD", "HEAD:refs/pull/67/head"]);
+      const c2 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["reset", "--hard", "HEAD~1"]);
+      return c2;
+    });
+
+  it.effect.each([
+    { advanceOrigin: true, target: "ahead of HEAD" },
+    { advanceOrigin: false, target: "equal to HEAD" },
+  ])("only compares a name-only PR ref $target", ({ advanceOrigin }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      const headBranch = "feature/pr-name-only";
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "C1"]);
+      const c1 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "upstream", headBranch]);
+      if (advanceOrigin) {
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unrelated origin change"]);
+      }
+      const originHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", headBranch]);
+      yield* runGit(repoDir, ["reset", "--hard", c1]);
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 67,
+            title: "PR in upstream without head metadata",
+            url: "https://github.com/acme/demo/pull/67",
+            baseRefName: "main",
+            headRefName: headBranch,
+            isCrossRepository: false,
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "67",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(!advanceOrigin);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe(`origin/${headBranch}`);
+      if (advanceOrigin) {
+        expect(
+          (yield* runGit(repoDir, ["merge-base", "--is-ancestor", originHead, "HEAD"], true))
+            .exitCode,
+        ).toBe(1);
+      }
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect("does not advance a renamed fork PR from a guessed head repository", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      const headBranch = "feature/renamed-fork";
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "C1"]);
+      const c1 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unrelated guessed fork change"]);
+      const unrelated = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", forkDir, headBranch]);
+      yield* runGit(repoDir, ["reset", "--hard", c1]);
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 83,
+            title: "PR from a renamed fork",
+            url: "https://github.com/acme/demo/pull/83",
+            baseRefName: "main",
+            headRefName: headBranch,
+            isCrossRepository: true,
+            headRepositoryOwnerLogin: "octocat",
+          },
+          repositoryCloneUrls: {
+            "octocat/demo": { url: forkDir, sshUrl: forkDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "83",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect(
+        (yield* runGit(repoDir, ["merge-base", "--is-ancestor", unrelated, "HEAD"], true)).exitCode,
+      ).toBe(1);
+      expect((yield* runGit(repoDir, ["remote", "get-url", "octocat"])).stdout.trim()).toBe(
+        forkDir,
+      );
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe(`octocat/${headBranch}`);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect.each([
+    { advanceHead: false, target: "unchanged head" },
+    { advanceHead: true, target: "advanced head" },
+  ])("uses the PR repository's $target when origin is a fork", ({ advanceHead }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      const headBranch = "feature/pr-fork-origin";
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "C1"]);
+      const c1 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "upstream", headBranch]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unrelated origin PR"]);
+      const unrelated = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/67/head"]);
+      yield* runGit(repoDir, ["reset", "--hard", c1]);
+      let target = c1;
+      if (advanceHead) {
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "C2"]);
+        target = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "upstream", headBranch]);
+        yield* runGit(repoDir, ["reset", "--hard", c1]);
+      }
+      const remotes = (yield* runGit(repoDir, ["remote", "-v"])).stdout;
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 67,
+            title: "PR in upstream",
+            url: "https://github.com/acme/demo/pull/67",
+            baseRefName: "main",
+            headRefName: headBranch,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "acme/demo",
+          },
+          repositoryCloneUrls: {
+            "acme/demo": { url: upstreamDir, sshUrl: upstreamDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "67",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(target);
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe(`upstream/${headBranch}`);
+      expect(
+        (yield* runGit(repoDir, ["merge-base", "--is-ancestor", unrelated, "HEAD"], true)).exitCode,
+      ).toBe(1);
+      expect((yield* runGit(repoDir, ["remote", "-v"])).stdout).toBe(remotes);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect("keeps the switched local PR branch when its head repository cannot be fetched", () =>
+    Effect.gen(function* () {
+      const missingRepository = NodePath.join(
+        yield* makeTempDir("t3code-git-manager-"),
+        "missing.git",
+      );
+      const { repoDir, headBranch, c1, checkout } = yield* makeLocalPullRequestFixture({
+        pullRequest: {
+          number: 67,
+          title: "Unavailable PR head repository",
+          url: "https://github.com/acme/demo/pull/67",
+          baseRefName: "main",
+          headRefName: "feature/pr-local-keeps-work",
+          isCrossRepository: false,
+          headRepositoryNameWithOwner: "acme/demo",
+        },
+        repositoryCloneUrls: {
+          "acme/demo": { url: missingRepository, sshUrl: missingRepository },
+        },
+      });
+      yield* advanceLocalPullRequestRemote(repoDir);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const result = yield* checkout();
+
+      expect(result.branch).toBe(headBranch);
+      expect(result.worktreePath).toBeNull();
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(headBranch);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect("keeps unpublished commits in local PR checkout", () =>
+    Effect.gen(function* () {
+      const { repoDir, headBranch, checkout } = yield* makeLocalPullRequestFixture();
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Local work"]);
+      const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+
+      const result = yield* checkout();
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+      expect((yield* runGit(repoDir, ["rev-parse", headBranch])).stdout.trim()).toBe(localCommit);
+    }),
+  );
+
+  it.effect("keeps an unstaged tracked edit when local PR checkout is already on head", () =>
+    Effect.gen(function* () {
+      const { repoDir, c1, checkout } = yield* makeLocalPullRequestFixture();
+      NodeFS.appendFileSync(NodePath.join(repoDir, "README.md"), "Local edit\n");
+      const diff = (yield* runGit(repoDir, ["diff"])).stdout;
+      expect(diff).toContain("+Local edit");
+
+      const result = yield* checkout();
+
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toBe(diff);
+    }),
+  );
+
+  it.effect.each([
+    { staged: false, edit: "unstaged" },
+    { staged: true, edit: "staged" },
+  ])("keeps a $edit tracked edit when local PR checkout is behind", ({ staged }) =>
+    Effect.gen(function* () {
+      const { repoDir, c1, checkout } = yield* makeLocalPullRequestFixture();
+      yield* advanceLocalPullRequestRemote(repoDir);
+      NodeFS.appendFileSync(NodePath.join(repoDir, "README.md"), "Local edit\n");
+      if (staged) {
+        yield* runGit(repoDir, ["add", "README.md"]);
+      }
+      const diffArgs = staged ? ["diff", "--cached"] : ["diff"];
+      const diff = (yield* runGit(repoDir, diffArgs)).stdout;
+      const status = (yield* runGit(repoDir, ["status", "--porcelain"])).stdout;
+      expect(diff).toContain("+Local edit");
+      expect(status).toBe(staged ? "M  README.md\n" : " M README.md\n");
+
+      const result = yield* checkout();
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect((yield* runGit(repoDir, diffArgs)).stdout).toBe(diff);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe(status);
+    }),
+  );
+
+  it.effect("fast-forwards a clean local PR checkout to the head", () =>
+    Effect.gen(function* () {
+      const { repoDir, checkout } = yield* makeLocalPullRequestFixture();
+      const c2 = yield* advanceLocalPullRequestRemote(repoDir);
+
+      const result = yield* checkout();
+
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c2);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect("advances a missing local PR branch created by the provider to the head", () =>
+    Effect.gen(function* () {
+      const { repoDir, headBranch, c1, checkout } = yield* makeLocalPullRequestFixture();
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", headBranch]);
+
+      const result = yield* checkout();
+
+      expect(result.branch).toBe(headBranch);
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(headBranch);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+    }),
+  );
+
+  it.effect("never resets a local PR checkout onto a rewritten head", () =>
+    Effect.gen(function* () {
+      const { repoDir, c1, checkout } = yield* makeLocalPullRequestFixture();
+      NodeFS.appendFileSync(NodePath.join(repoDir, "README.md"), "Rewritten PR\n");
+      yield* runGit(repoDir, ["commit", "-am", "Rewritten C1", "--amend"]);
+      const rewritten = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      expect(rewritten).not.toBe(c1);
+      yield* runGit(repoDir, ["push", "--force", "origin", "HEAD", "HEAD:refs/pull/67/head"]);
+      yield* runGit(repoDir, ["reset", "--hard", c1]);
+
+      const result = yield* checkout();
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect((yield* runGit(repoDir, ["for-each-ref", "refs/t3code/pre-refresh"])).stdout).toBe("");
+    }),
+  );
+
+  it.effect(
+    "hands back local PR checkout when the provider switches then refuses local commits",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, headBranch, checkout } = yield* makeLocalPullRequestFixture({
+          prCheckout: (cwd) => {
+            runGitSyncForFakeGh(cwd, ["checkout", "feature/pr-local-keeps-work"]);
+            throw new Error("provider refused checkout");
+          },
+        });
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Local work"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["branch", "--unset-upstream"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const result = yield* checkout();
+
+        expect(result.branch).toBe(headBranch);
+        expect(result.worktreePath).toBeNull();
+        expect(result.isOnPullRequestHead).toBe(false);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["rev-parse", headBranch])).stdout.trim()).toBe(localCommit);
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+        ).toBe(`origin/${headBranch}`);
+      }),
+  );
+
+  it.effect.each([
+    { isCrossRepository: false, scenario: "before switching to the local PR branch" },
+    { isCrossRepository: true, scenario: "for a fork PR sharing the local main name" },
+  ])("passes up provider refusal $scenario", ({ isCrossRepository }) =>
+    Effect.gen(function* () {
+      const { repoDir, checkout } = yield* makeLocalPullRequestFixture({
+        ...(isCrossRepository
+          ? {
+              pullRequest: {
+                number: 67,
+                title: "Fork PR from main",
+                url: "https://github.com/acme/demo/pull/67",
+                baseRefName: "main",
+                headRefName: "main",
+                isCrossRepository: true,
+              },
+            }
+          : {}),
+        prCheckout: () => {
+          throw new Error("provider refused checkout");
+        },
+      });
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const mainCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const upstream = (yield* runGit(repoDir, [
+        "rev-parse",
+        "--abbrev-ref",
+        "@{upstream}",
+      ])).stdout.trim();
+      expect(upstream).toBe("origin/main");
+
+      const error = yield* checkout().pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "SourceControlProviderError",
+        operation: "checkoutChangeRequest",
+        cause: {
+          _tag: "GitHubCliCommandError",
+          cause: new Error("provider refused checkout"),
+        },
+      });
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(mainCommit);
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe(upstream);
+    }),
+  );
+
+  it.effect("passes up provider refusal on the PR branch when fetching its head also fails", () =>
+    Effect.gen(function* () {
+      const providerFailure = new Error("provider checkout could not reach remote");
+      const { repoDir, headBranch, checkout } = yield* makeLocalPullRequestFixture({
+        prCheckout: () => {
+          throw providerFailure;
+        },
+        repositoryCloneUrls: {
+          "acme/demo": { url: "/nonexistent", sshUrl: "/nonexistent" },
+        },
+      });
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "L"]);
+      const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["remote", "set-url", "origin", "/nonexistent"]);
+
+      const error = yield* checkout().pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "SourceControlProviderError",
+        operation: "checkoutChangeRequest",
+        cause: { _tag: "GitHubCliCommandError", cause: providerFailure },
+      });
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(headBranch);
+    }),
+  );
+
+  it.effect(
+    "passes up provider refusal on the PR branch when its head is already checked out",
+    () =>
+      Effect.gen(function* () {
+        const providerFailure = new Error("provider refused checkout");
+        const { repoDir, headBranch, c1, checkout } = yield* makeLocalPullRequestFixture({
+          prCheckout: () => {
+            throw providerFailure;
+          },
+        });
+        yield* runGit(repoDir, ["branch", "--unset-upstream"]);
+
+        const error = yield* checkout().pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "SourceControlProviderError",
+          operation: "checkoutChangeRequest",
+          cause: { _tag: "GitHubCliCommandError", cause: providerFailure },
+        });
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+          headBranch,
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+        ).toBe(`origin/${headBranch}`);
+        expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+      }),
+  );
+
+  it.effect(
+    "hands back a clean PR branch behind its head after provider refusal without moving it",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, headBranch, c1, checkout } = yield* makeLocalPullRequestFixture({
+          prCheckout: (cwd) => {
+            runGitSyncForFakeGh(cwd, ["checkout", "feature/pr-local-keeps-work"]);
+            throw new Error("provider refused checkout");
+          },
+        });
+        const c2 = yield* advanceLocalPullRequestRemote(repoDir);
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const result = yield* checkout();
+
+        expect(result.branch).toBe(headBranch);
+        expect(result.worktreePath).toBeNull();
+        expect(result.isOnPullRequestHead).toBe(false);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+          headBranch,
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+        expect((yield* runGit(repoDir, ["rev-parse", "@{upstream}"])).stdout.trim()).toBe(c2);
+        expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+      }),
+  );
+
+  it.effect("preserves an ignored file that a local PR fast-forward would overwrite", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, ".gitignore"), ".env\n");
+      yield* runGit(repoDir, ["add", ".gitignore"]);
+      yield* runGit(repoDir, ["commit", "-m", "Ignore local environment"]);
+      const remoteDir = yield* createBareRemote();
+      const headBranch = "feature/pr-ignored-file";
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "C1"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", headBranch]);
+      const c1 = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const envPath = NodePath.join(repoDir, ".env");
+      NodeFS.writeFileSync(envPath, "tracked");
+      yield* runGit(repoDir, ["add", "--force", ".env"]);
+      yield* runGit(repoDir, ["commit", "-m", "C2"]);
+      yield* runGit(repoDir, ["push", "origin", headBranch]);
+      yield* runGit(repoDir, ["reset", "--hard", c1]);
+      NodeFS.writeFileSync(envPath, "SECRET");
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 67,
+            title: "PR starts tracking an ignored file",
+            url: "https://github.com/acme/demo/pull/67",
+            baseRefName: "main",
+            headRefName: headBranch,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "acme/demo",
+          },
+          repositoryCloneUrls: {
+            "acme/demo": { url: remoteDir, sshUrl: remoteDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "67",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(c1);
+      expect(NodeFS.readFileSync(envPath, "utf8")).toBe("SECRET");
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe("");
     }),
   );
 

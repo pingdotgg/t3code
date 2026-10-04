@@ -3416,8 +3416,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // thread may edit a tracked file between it and this move. Git itself refuses a `--merge`
         // reset that would overwrite such an edit — the same guarantee `--ff-only` gives the
         // other branch — so a race loses nothing; the refresh fails and is reported instead.
+        // `--no-overwrite-ignore`: the cleanliness check cannot see ignored files, and a merge
+        // otherwise replaces one (a local `.env`) that the head starts tracking.
         isAncestor
-          ? ["merge", "--ff-only", input.targetCommit]
+          ? ["merge", "--ff-only", "--no-overwrite-ignore", input.targetCommit]
           : ["reset", "--merge", input.targetCommit],
         {
           timeoutMs: 30_000,

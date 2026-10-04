@@ -863,11 +863,17 @@ export const make = Effect.gen(function* () {
           remoteName,
           remoteBranch: pullRequest.headBranch,
         });
-        return;
+        // Matched by branch name alone: the provider may have read the pull request from another
+        // repository than the primary remote (gh prefers an `upstream` remote, and a URL
+        // reference names its own), so this ref is not known to be the head.
+        return {
+          ref: `refs/remotes/${remoteName}/${pullRequest.headBranch}`,
+          fromPullRequestRepository: false,
+        };
       }
 
       if (repositoryNameWithOwner.length === 0) {
-        return;
+        return null;
       }
 
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
@@ -897,9 +903,20 @@ export const make = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
+      return {
+        ref: `refs/remotes/${remoteName}/${pullRequest.headBranch}`,
+        // Only a repository the provider named; one guessed from the owner and the pull
+        // request's repository name misses a renamed fork.
+        fromPullRequestRepository: Boolean(pullRequest.headRepositoryNameWithOwner?.trim()),
+      };
     },
   );
 
+  /**
+   * Best-effort. Returns the freshly fetched remote-tracking ref of the head branch, and whether
+   * it came from a remote matched to the head repository the provider named, rather than to a
+   * branch name or a guessed repository; null when none was configured.
+   */
   const configurePullRequestHeadUpstream = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
@@ -912,7 +929,7 @@ export const make = Effect.gen(function* () {
           localBranch,
           headBranch: pullRequest.headBranch,
           cause: error,
-        }).pipe(Effect.asVoid),
+        }).pipe(Effect.as(null)),
       ),
     );
 
@@ -2362,13 +2379,38 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
-          cwd: input.cwd,
-          reference: normalizedReference,
-          force: true,
-        });
+        // No `force`: for GitHub that is `gh pr checkout --force`, which hard-resets an existing
+        // branch onto the pull request head and takes unpublished commits and tracked edits with
+        // it. Without it the provider creates a missing branch or fast-forwards an existing one,
+        // like a checkout in a terminal, and refuses a diverged one. The refresh below catches up
+        // providers that only switch to an existing branch, and whatever it cannot move without
+        // losing work is reported as not on the pull request head.
+        const refusedCheckout = yield* (yield* sourceControlProvider(input.cwd))
+          .checkoutChangeRequest({
+            cwd: input.cwd,
+            reference: normalizedReference,
+          })
+          .pipe(
+            Effect.as(null),
+            // A refused fast-forward (local commits, or edits in the way) can fail the checkout
+            // after it already switched to the branch; it is classified below. Only for a
+            // same-repository head: a fork's head branch may share its name with the user's own
+            // branch (a fork PR from `main`), which must keep its tracking config untouched.
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                const details = yield* gitCore.statusDetails(input.cwd);
+                if (
+                  pullRequestSummary.isCrossRepository === true ||
+                  details.branch !== pullRequest.headBranch
+                ) {
+                  return yield* error;
+                }
+                return error;
+              }),
+            ),
+          );
         const details = yield* gitCore.statusDetails(input.cwd);
-        yield* configurePullRequestHeadUpstream(
+        const head = yield* configurePullRequestHeadUpstream(
           input.cwd,
           {
             ...pullRequest,
@@ -2376,11 +2418,69 @@ export const make = Effect.gen(function* () {
           },
           details.branch ?? pullRequest.headBranch,
         );
+        if (refusedCheckout !== null) {
+          // Classified by state, and nothing is moved: a refusal leaves the branch off the
+          // fetched head. On the head, or with no head fetched (network, authentication), the
+          // provider had no such reason to fail, so its error stands.
+          const offHead =
+            head !== null &&
+            (yield* Effect.all([
+              gitCore.resolveCommit({ cwd: input.cwd, revision: head.ref }),
+              gitCore.resolveCommit({ cwd: input.cwd, revision: "HEAD" }),
+            ]).pipe(
+              Effect.map(([target, current]) => target.commitSha !== current.commitSha),
+              Effect.orElseSucceed(() => false),
+            ));
+          if (!offHead) {
+            return yield* refusedCheckout;
+          }
+          yield* Effect.logWarning(
+            "GitManager.preparePullRequestThread checkout stopped on the pull request branch",
+            { cwd: input.cwd, headBranch: pullRequest.headBranch, cause: refusedCheckout },
+          );
+          return {
+            pullRequest,
+            branch: details.branch ?? pullRequest.headBranch,
+            worktreePath: null,
+            isOnPullRequestHead: false,
+          };
+        }
+        // The head comes only from the branch just fetched for the pull request, never from
+        // `refs/pull/<n>/head` on the primary remote: when `origin` is the user's fork, its pull
+        // request of that number is somebody else's. This repository is where the user works, so
+        // it is never reset, even onto a rewritten head: only a fast-forward of a clean tree
+        // moves it, and only onto a branch from the pull request's own repository. A branch
+        // matched by name alone is only compared with HEAD; it mislabels in the rare case that the
+        // primary remote holds an unrelated same-named branch at exactly HEAD.
+        const onTarget =
+          head === null
+            ? false
+            : yield* gitCore.resolveCommit({ cwd: input.cwd, revision: head.ref }).pipe(
+                Effect.flatMap((target) =>
+                  head.fromPullRequestRepository
+                    ? gitCore
+                        .refreshCheckedOutBranch({
+                          cwd: input.cwd,
+                          targetCommit: target.commitSha,
+                        })
+                        .pipe(Effect.map((refreshed) => refreshed.onTarget))
+                    : gitCore
+                        .resolveCommit({ cwd: input.cwd, revision: "HEAD" })
+                        .pipe(Effect.map((current) => current.commitSha === target.commitSha)),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("GitManager.preparePullRequestThread local refresh failed", {
+                    cwd: input.cwd,
+                    headRef: head.ref,
+                    cause: error,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
         return {
           pullRequest,
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead: onTarget,
         };
       }
 

@@ -931,6 +931,39 @@ it.effect.each([
 );
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+  it.effect("refuses a branch refresh that would overwrite an ignored file", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      yield* initRepoWithCommit(cwd);
+      yield* writeTextFile(cwd, ".gitignore", ".env\n");
+      yield* git(cwd, ["add", ".gitignore"]);
+      yield* git(cwd, ["commit", "-m", "C1"]);
+      const c1 = yield* git(cwd, ["rev-parse", "HEAD"]);
+      yield* writeTextFile(cwd, ".env", "tracked");
+      yield* git(cwd, ["add", "--force", ".env"]);
+      yield* git(cwd, ["commit", "-m", "C2"]);
+      const c2 = yield* git(cwd, ["rev-parse", "HEAD"]);
+      yield* git(cwd, ["reset", "--hard", c1]);
+      yield* writeTextFile(cwd, ".env", "SECRET");
+      assert.equal(yield* git(cwd, ["status", "--porcelain"]), "");
+
+      const error = yield* driver
+        .refreshCheckedOutBranch({ cwd, targetCommit: c2 })
+        .pipe(Effect.flip);
+
+      assert.deepInclude(error, {
+        _tag: "GitCommandError",
+        operation: "GitVcsDriver.refreshCheckedOutBranch.move",
+      });
+      assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), c1);
+      assert.equal(yield* fileSystem.readFileString(pathService.join(cwd, ".env")), "SECRET");
+      assert.equal(yield* git(cwd, ["status", "--porcelain"]), "");
+    }),
+  );
+
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
       Effect.gen(function* () {
