@@ -133,18 +133,20 @@ function ThemeLibraryCard({
   // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
-  const radialModeGroups = (["light", "dark"] as const).map((mode) => {
-    const options =
-      variantNavigation?.options.flatMap((option) => {
-        const preview = option.preview;
-        return preview.mode === mode ? [{ option, preview }] : [];
-      }) ?? [];
-    return {
-      mode,
-      options,
-      selected: options.find(({ option }) => option.activeModes.includes(mode)) ?? options[0],
-    };
-  });
+  const radialModeGroups = (["light", "dark"] as const)
+    .map((mode) => {
+      const options =
+        variantNavigation?.options.flatMap((option) => {
+          const preview = option.preview;
+          return preview.mode === mode ? [{ option, preview }] : [];
+        }) ?? [];
+      return {
+        mode,
+        options,
+        selected: options.find(({ option }) => option.activeModes.includes(mode)) ?? options[0],
+      };
+    })
+    .filter((group) => group.options.length > 0);
   return (
     // The card surface stays a plain div (buttons cannot nest inside a button
     // role); the title button and mode circles carry the accessible actions,
@@ -183,7 +185,8 @@ function ThemeLibraryCard({
                 >
                   {radialModeGroups.map(({ mode, options, selected }) => {
                     if (!selected) return null;
-                    const rootOffsetX = mode === "light" ? -52 : 52;
+                    const rootOffsetX =
+                      radialModeGroups.length === 1 ? 0 : mode === "light" ? -52 : 52;
                     const isOpen = radialModeOpen === mode;
                     const isActive = selected.option.activeModes.includes(mode);
                     const modeLabel = mode === "light" ? "Light" : "Dark";
