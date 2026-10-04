@@ -167,3 +167,23 @@ it("defers click and keyboard submission while dictation is running", async () =
   await act(() => mocks.queued!("unfinished completed"));
   expect(comments).toEqual(["unfinished completed"]);
 });
+
+it("queues the keyboard submission of an empty draft and submits the completed dictation", async () => {
+  mocks.busy = true;
+  const field = await mount();
+  expect(field.value).toBe("");
+  await act(() => {
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(comments).toEqual([]);
+  expect(mocks.queued).not.toBeNull();
+  await act(() => mocks.queued!("Completed dictation"));
+  expect(comments).toEqual(["Completed dictation"]);
+});

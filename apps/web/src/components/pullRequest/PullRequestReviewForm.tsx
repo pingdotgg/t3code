@@ -9,6 +9,7 @@ import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFie
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -160,6 +161,20 @@ export function PullRequestReviewForm({
         placeholder={placeholder}
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            event.nativeEvent.isComposing ||
+            event.keyCode === 229 ||
+            event.repeat ||
+            selectedVerdict === undefined
+          )
+            return;
+          if (isCommentSubmitShortcut(event, body, pending || speech.preparing, true)) {
+            event.preventDefault();
+            event.stopPropagation();
+            speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+          }
+        }}
       />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1">
