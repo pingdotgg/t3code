@@ -289,6 +289,24 @@ describe("resolveTranscriptCommit", () => {
 describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
+  it("recognizes microphone permission errors during capture and allows retry", async () => {
+    const harness = createHarness();
+    harness.recorder.prepareToRecordAsync.mockRejectedValueOnce(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+    await harness.controller.start();
+    expect(harness.controller.currentState).toMatchObject({
+      phase: "error",
+      error:
+        "Microphone access is required for voice input. Allow access in your browser or system settings and try again.",
+      errorAction: "retry",
+    });
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+    await harness.controller.start();
+    expect(harness.controller.currentState.phase).toBe("recording");
+    await harness.controller.cancel();
+  });
+
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });
     await unsupported.controller.start();

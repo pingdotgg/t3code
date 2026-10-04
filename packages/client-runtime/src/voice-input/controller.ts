@@ -5,6 +5,18 @@ import { VoiceTranscriptionError } from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
+export const MICROPHONE_PERMISSION_ERROR =
+  "Microphone access is required for voice input. Allow access in your browser or system settings and try again.";
+
+export function isMicrophonePermissionError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "NotAllowedError"
+  );
+}
+
 export type VoiceInputPhase<WithPostProcessing extends boolean = false> =
   | "idle"
   | "preparing"
@@ -323,9 +335,14 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       this.capturedDraft = capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
-    } catch {
+    } catch (error) {
       if (this.isCurrent(operationToken))
-        this.setError("Could not start voice recording.", "retry");
+        this.setError(
+          isMicrophonePermissionError(error)
+            ? MICROPHONE_PERMISSION_ERROR
+            : "Could not start voice recording.",
+          "retry",
+        );
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
         if (this.isCurrent(operationToken) && this.state.phase === "error") {

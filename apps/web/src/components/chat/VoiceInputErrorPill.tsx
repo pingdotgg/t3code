@@ -1,3 +1,4 @@
+import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
 import { RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { VoiceInputPill } from "./VoiceInputPill";
@@ -5,6 +6,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const VOICE_ERROR_LABELS: Record<string, string> = {
+  [MICROPHONE_PERMISSION_ERROR]: "Microphone access needed",
   "No audio was recorded. Try again.": "No audio recorded",
   "Could not record microphone audio. Try again.": "Recording failed",
   "Could not access the microphone.": "Microphone unavailable",

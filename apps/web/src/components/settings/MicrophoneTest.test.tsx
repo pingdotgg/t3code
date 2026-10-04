@@ -136,13 +136,13 @@ it("releases a microphone granted after leaving the page", async () => {
 });
 
 it("shows permission failures and lets the user try again", async () => {
-  getUserMedia.mockRejectedValueOnce(new Error("Microphone permission denied"));
+  getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied", "NotAllowedError"));
   await act(async () => {
     root = create(createElement(MicrophoneTest, { microphoneId: "" }));
   });
   await click("Test mic");
   expect(root.root.findByProps({ role: "status" }).props["aria-label"]).toBe(
-    "Microphone permission denied",
+    "Microphone access is required for voice input. Allow access in your browser or system settings and try again.",
   );
   await click("Record again");
   expect(recorder.state).toBe("recording");

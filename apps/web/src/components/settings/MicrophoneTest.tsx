@@ -1,3 +1,7 @@
+import {
+  isMicrophonePermissionError,
+  MICROPHONE_PERMISSION_ERROR,
+} from "@t3tools/client-runtime/voice-input";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MicIcon, CheckIcon, XIcon } from "lucide-react";
 
@@ -149,7 +153,13 @@ export function MicrophoneTest({
       if (session.current !== current) return;
       releaseCapture();
       setPhase("idle");
-      setError(cause instanceof Error ? cause.message : "Could not access the microphone.");
+      setError(
+        isMicrophonePermissionError(cause)
+          ? MICROPHONE_PERMISSION_ERROR
+          : cause instanceof Error
+            ? cause.message
+            : "Could not access the microphone.",
+      );
     }
   }
 
