@@ -206,12 +206,8 @@ export function normalizeSpeechCustomWords(words: SpeechCustomWords): SpeechCust
     .slice(0, 100);
 }
 
-export function makeSpeechAliasReplacer(words: SpeechCustomWords): (text: string) => string {
-  return makeSpeechTextCorrector([], words);
-}
-
 export function applySpeechAliases(text: string, words: SpeechCustomWords): string {
-  return makeSpeechAliasReplacer(words)(text);
+  return makeSpeechTextCorrector([], words)(text);
 }
 
 export function transcriptionCustomWords(
