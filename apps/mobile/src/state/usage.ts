@@ -67,6 +67,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           isConnected: presentation.connection.phase === "connected",
           ...access,
           summary: null,
+          needsCursorKeychainAccess: false,
         });
         continue;
       }

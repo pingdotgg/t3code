@@ -63,6 +63,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           label: presentation.entry.target.label,
           ...access,
           summary: null,
+          needsCursorKeychainAccess: false,
         });
         continue;
       }

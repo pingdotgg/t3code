@@ -233,6 +233,9 @@ const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
+  if (method === WS_METHODS.serverRetryResourceTelemetry) {
+    return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
+  }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
     return [

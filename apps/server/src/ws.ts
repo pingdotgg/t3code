@@ -29,8 +29,6 @@ import {
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
-  AuthEnvironmentMaintainScope,
-  AuthOrchestrationReadScope,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
