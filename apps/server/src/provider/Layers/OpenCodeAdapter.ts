@@ -1690,7 +1690,7 @@ export function makeOpenCodeAdapter(
                     boundInstanceId,
                   );
                 } else {
-                  yield* runOpenCodeSdk("mcp.add", () =>
+                  const registration = yield* runOpenCodeSdk("mcp.add", () =>
                     client.mcp.add({
                       directory,
                       name: "t3-code",
@@ -1704,6 +1704,13 @@ export function makeOpenCodeAdapter(
                       },
                     }),
                   );
+                  const status = registration.data?.["t3-code"]?.status;
+                  if (status !== "connected") {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "mcp.add",
+                      detail: `T3 Code MCP registration did not connect (status: ${status ?? "missing"}). Restart the session to reconnect T3 tools.`,
+                    });
+                  }
                 }
               }
               // Resume: re-adopt the session named by the durable cursor —

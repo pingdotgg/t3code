@@ -92,6 +92,7 @@ const runtimeMock = {
     sessionChildren: new Map<string, Array<{ id: string }>>(),
     sessionChildrenCalls: [] as string[],
     mcpAddCalls: [] as Array<Record<string, unknown>>,
+    mcpStatus: "connected" as "connected" | "failed" | "needs_auth",
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -130,6 +131,7 @@ const runtimeMock = {
     this.state.sessionChildren.clear();
     this.state.sessionChildrenCalls.length = 0;
     this.state.mcpAddCalls.length = 0;
+    this.state.mcpStatus = "connected";
   },
 };
 
@@ -330,7 +332,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       mcp: {
         add: async (input: Record<string, unknown>) => {
           runtimeMock.state.mcpAddCalls.push(input);
-          return { data: { status: "connected" } };
+          return { data: { "t3-code": { status: runtimeMock.state.mcpStatus } } };
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -434,6 +436,36 @@ const sleep = (ms: number) =>
 it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLayer))(
   "OpenCodeAdapterLive MCP routing",
   (it) => {
+    for (const status of ["failed", "needs_auth"] as const) {
+      it.effect(`rejects session startup when T3 MCP registration is ${status}`, () =>
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const threadId = asThreadId(`thread-opencode-mcp-${status}`);
+          yield* McpSessionRegistry.issueActiveMcpCredential({
+            threadId,
+            providerInstanceId: ProviderInstanceId.make("opencode"),
+          });
+          runtimeMock.state.mcpStatus = status;
+
+          const result = yield* adapter
+            .startSession({
+              provider: ProviderDriverKind.make("opencode"),
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result);
+
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") {
+            assert.match(result.failure.message, /MCP.*registration.*(?:failed|needs_auth)/);
+          }
+          assert.equal(yield* adapter.hasSession(threadId), false);
+          assert.equal(runtimeMock.state.sessionCreateUrls.length, 0);
+          assert.equal(runtimeMock.state.closeCalls.length, 1);
+        }),
+      );
+    }
+
     it.effect("adds only the thread t3-code MCP server to the requested OpenCode directory", () =>
       Effect.gen(function* () {
         const adapter = yield* OpenCodeAdapter;
