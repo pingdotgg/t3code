@@ -1,8 +1,10 @@
 import {
   ChildThreadLifecycleNotification,
   type ChildThreadLifecycle,
+  CrossThreadSendRecord,
   type EventId,
   type OrchestrationThreadActivity,
+  type TurnId,
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 
@@ -67,4 +69,39 @@ export function isChildLifecycleThreadActivity(
 
 export function isTurnLifecycleInsightActivity(activity: OrchestrationThreadActivity): boolean {
   return TURN_LIFECYCLE_INSIGHT_KINDS.has(activity.kind);
+}
+
+export const CROSS_THREAD_SEND_ACTIVITY_KIND = "cross-thread.send";
+
+export type CrossThreadSendActivity = Omit<OrchestrationThreadActivity, "kind" | "payload"> & {
+  readonly kind: typeof CROSS_THREAD_SEND_ACTIVITY_KIND;
+  readonly payload: CrossThreadSendRecord;
+};
+
+const isCrossThreadSendRecord = Schema.is(CrossThreadSendRecord);
+
+export function crossThreadSendRecordToActivity(input: {
+  readonly eventId: EventId;
+  readonly payload: CrossThreadSendRecord;
+  readonly turnId: TurnId | null;
+  readonly sequence?: number;
+}): CrossThreadSendActivity {
+  return {
+    id: input.eventId,
+    tone: "info",
+    kind: CROSS_THREAD_SEND_ACTIVITY_KIND,
+    summary: `Sent a message to ${input.payload.destinationThreadTitle}`,
+    payload: input.payload,
+    turnId: input.turnId,
+    ...(input.sequence === undefined ? {} : { sequence: input.sequence }),
+    createdAt: input.payload.createdAt,
+  };
+}
+
+export function isCrossThreadSendActivity(
+  activity: OrchestrationThreadActivity,
+): activity is CrossThreadSendActivity {
+  return (
+    activity.kind === CROSS_THREAD_SEND_ACTIVITY_KIND && isCrossThreadSendRecord(activity.payload)
+  );
 }

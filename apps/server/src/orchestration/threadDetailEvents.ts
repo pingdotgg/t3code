@@ -17,6 +17,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.child-lifecycle-notified"
+      | "thread.cross-thread-send-recorded"
       | "thread.turn-diff-completed"
       | "thread.reverted"
       | "thread.session-set"
@@ -44,6 +45,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     case "thread.proposed-plan-upserted":
     case "thread.activity-appended":
     case "thread.child-lifecycle-notified":
+    case "thread.cross-thread-send-recorded":
     case "thread.turn-diff-completed":
     case "thread.reverted":
     case "thread.session-set":

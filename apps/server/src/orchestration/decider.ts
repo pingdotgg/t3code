@@ -119,6 +119,10 @@ type ChildLifecycleNotificationEvent = Extract<
   PlannedOrchestrationEvent,
   { type: "thread.child-lifecycle-notified" }
 >;
+type CrossThreadSendRecordedEvent = Extract<
+  PlannedOrchestrationEvent,
+  { type: "thread.cross-thread-send-recorded" }
+>;
 
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
@@ -835,6 +839,62 @@ function deriveCrossThreadOrigin(input: {
     sourceMessageId: sourceMessage.id,
     sourceThreadTitle: sourceThread.title,
   });
+}
+
+/**
+ * `CrossThreadOrigin` only lives on the destination message, so the sending
+ * thread keeps no record of where its message went. Write the counterpart
+ * record to the source thread, anchored to the user message whose turn
+ * performed the send, so the timeline can link to the message it produced.
+ */
+function crossThreadSendRecordedEventFor(input: {
+  readonly command: Extract<
+    OrchestrationCommand,
+    { type: "thread.turn.start" | "thread.queued-turn.create" }
+  >;
+  readonly origin: MessageSentPayload["origin"];
+  readonly destinationThread: OrchestrationReadModel["threads"][number];
+  readonly destinationMessageId: MessageId;
+  readonly readModel: OrchestrationReadModel;
+}): CrossThreadSendRecordedEvent | null {
+  const origin = input.origin;
+  if (origin === undefined || origin.kind !== "cross-thread") {
+    return null;
+  }
+  const sourceThread = input.readModel.threads.find(
+    (thread) => thread.id === origin.sourceThreadId,
+  );
+  if (!sourceThread) {
+    return null;
+  }
+  return {
+    ...withEventBase({
+      aggregateKind: "thread",
+      aggregateId: sourceThread.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    }),
+    type: "thread.cross-thread-send-recorded",
+    payload: {
+      sourceThreadId: sourceThread.id,
+      sourceMessageId: origin.sourceMessageId,
+      sourceTurnId: sourceThread.session?.activeTurnId ?? null,
+      destinationThreadId: input.destinationThread.id,
+      destinationThreadTitle: input.destinationThread.title,
+      destinationMessageId: input.destinationMessageId,
+      createdAt: input.command.createdAt,
+    },
+  };
+}
+
+function withCrossThreadSendRecord(
+  decided: DecideOrchestrationCommandResult,
+  record: CrossThreadSendRecordedEvent | null,
+): DecideOrchestrationCommandResult {
+  if (!record) {
+    return decided;
+  }
+  return [...(Array.isArray(decided) ? decided : [decided]), record];
 }
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
@@ -3413,22 +3473,31 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               },
             ]
           : [];
-      return appendChildLifecycleNotification({
-        readModel,
-        childThread: targetThread,
-        sourceEvents: [
-          ...workspaceBindingEvent,
-          userMessageEvent,
-          turnStartRequestedEvent,
-          ...delegationEvents,
-          ...lifecycleEvents,
-        ],
-        sourceEvent: turnStartRequestedEvent,
-        lifecycle: "started",
-        sourceKey: command.message.messageId,
-        createdAt: command.createdAt,
-        authority: "parent",
-      });
+      return withCrossThreadSendRecord(
+        appendChildLifecycleNotification({
+          readModel,
+          childThread: targetThread,
+          sourceEvents: [
+            ...workspaceBindingEvent,
+            userMessageEvent,
+            turnStartRequestedEvent,
+            ...delegationEvents,
+            ...lifecycleEvents,
+          ],
+          sourceEvent: turnStartRequestedEvent,
+          lifecycle: "started",
+          sourceKey: command.message.messageId,
+          createdAt: command.createdAt,
+          authority: "parent",
+        }),
+        crossThreadSendRecordedEventFor({
+          command,
+          origin,
+          destinationThread: targetThread,
+          destinationMessageId: command.message.messageId,
+          readModel,
+        }),
+      );
     }
 
     case "thread.queued-turn.create": {
@@ -3495,7 +3564,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurn,
         },
       };
-      if (!command.assignment && !command.respondToReportId) return queuedEvent;
+      const crossThreadSendRecord = crossThreadSendRecordedEventFor({
+        command,
+        origin,
+        destinationThread: thread,
+        // The queued turn's message id is reused verbatim when the turn
+        // dispatches, so this is the id the sent message will carry.
+        destinationMessageId: command.message.messageId,
+        readModel,
+      });
+      if (!command.assignment && !command.respondToReportId) {
+        return withCrossThreadSendRecord(queuedEvent, crossThreadSendRecord);
+      }
       const delegation = thread.nudging?.delegation;
       if (
         thread.archivedAt !== null ||
@@ -3571,7 +3651,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             }),
           );
         }
-        return assignmentEvents;
+        return withCrossThreadSendRecord(assignmentEvents, crossThreadSendRecord);
       }
       if (
         !delegation?.decision ||
@@ -3584,17 +3664,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "The decision is no longer current. Refresh the child before responding.",
         });
       }
-      return [
-        queuedEvent,
-        nudgingMetaEvent(thread, queuedEvent, {
-          ...thread.nudging,
-          delegation: {
-            ...delegation,
-            decision: null,
-            pendingResponse: { queuedTurnId: queuedTurn.id, report: delegation.decision },
-          },
-        }),
-      ];
+      return withCrossThreadSendRecord(
+        [
+          queuedEvent,
+          nudgingMetaEvent(thread, queuedEvent, {
+            ...thread.nudging,
+            delegation: {
+              ...delegation,
+              decision: null,
+              pendingResponse: { queuedTurnId: queuedTurn.id, report: delegation.decision },
+            },
+          }),
+        ],
+        crossThreadSendRecord,
+      );
     }
 
     case "thread.queued-turn.update": {

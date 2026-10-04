@@ -31,6 +31,7 @@ import {
   ThreadRevertedPayload as ContractsThreadRevertedPayloadSchema,
   ThreadActivityAppendedPayload as ContractsThreadActivityAppendedPayloadSchema,
   ThreadChildLifecycleNotifiedPayload as ContractsThreadChildLifecycleNotifiedPayloadSchema,
+  ThreadCrossThreadSendRecordedPayload as ContractsThreadCrossThreadSendRecordedPayloadSchema,
   ThreadTurnStartRequestedPayload as ContractsThreadTurnStartRequestedPayloadSchema,
   ThreadQueuedTurnCreatedPayload as ContractsThreadQueuedTurnCreatedPayloadSchema,
   ThreadQueuedTurnUpdatedPayload as ContractsThreadQueuedTurnUpdatedPayloadSchema,
@@ -97,6 +98,8 @@ export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
 export const ThreadChildLifecycleNotifiedPayload =
   ContractsThreadChildLifecycleNotifiedPayloadSchema;
+export const ThreadCrossThreadSendRecordedPayload =
+  ContractsThreadCrossThreadSendRecordedPayloadSchema;
 
 export const ThreadTurnStartRequestedPayload = ContractsThreadTurnStartRequestedPayloadSchema;
 export const ThreadQueuedTurnCreatedPayload = ContractsThreadQueuedTurnCreatedPayloadSchema;

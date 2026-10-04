@@ -132,6 +132,7 @@ describe("compaction timeline boundaries", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
   it("splits work groups around each compaction instead of folding it into a work log", () => {
@@ -509,6 +510,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const assistantRows = rows.filter(
@@ -615,6 +617,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const reasoningRows = rows.filter(
@@ -674,6 +677,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.some((row) => row.kind === "reasoning")).toBe(false);
@@ -714,6 +718,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const workRow = rows.find(
@@ -786,6 +791,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.id)).toEqual([
@@ -843,6 +849,7 @@ describe("deriveMessagesTimelineRows", () => {
         ["assistant-1" as never, assistantTurnDiffSummary],
       ]),
       revertTurnCountByUserMessageId: new Map([["user-1" as never, 1]]),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const userRow = rows.find(
@@ -927,6 +934,7 @@ describe("computeStableMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const initial = computeStableMessagesTimelineRows(rows, {
@@ -979,6 +987,7 @@ describe("computeStableMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const initial = computeStableMessagesTimelineRows(firstRows, {
@@ -1027,6 +1036,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: "2026-01-01T00:00:00Z",
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const initial = computeStableMessagesTimelineRows(buildRows(), {
@@ -1093,6 +1103,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: null,
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const firstRows = buildRows();
@@ -1198,6 +1209,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: streamingAssistant.createdAt,
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const initial = computeStableMessagesTimelineRows(buildRows("Streaming"), {
@@ -1339,6 +1351,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
   it("renders the marker as a transition row and hides the boilerplate continuation", () => {
@@ -1393,6 +1406,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map([["continuation-1" as never, 2]]),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const markerRow = rows.find(
@@ -1495,6 +1509,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.kind)).toEqual(["message", "message"]);

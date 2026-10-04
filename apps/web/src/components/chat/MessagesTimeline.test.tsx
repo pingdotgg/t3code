@@ -8,6 +8,7 @@ import {
   MessagesTimeline,
   shouldAutoloadOlderHistory,
 } from "./MessagesTimeline";
+import { deriveMessagesTimelineRows } from "./MessagesTimeline.logic";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -212,6 +213,43 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Source chat");
     expect(markup).toContain("Source chat unavailable");
+  });
+
+  it("renders a quiet receipt under the message that sent to another thread", () => {
+    const sourceMessageId = MessageId.make("message-1");
+    const destinationMessageId = MessageId.make("message-destination");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [buildUserTimelineEntry("Investigate this.")],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map([
+        [
+          sourceMessageId,
+          [
+            {
+              sourceThreadId: ACTIVE_THREAD_ID,
+              sourceMessageId,
+              sourceTurnId: null,
+              destinationThreadId: ThreadId.make("destination-thread"),
+              destinationThreadTitle: "Nested investigation",
+              destinationMessageId,
+              createdAt: MESSAGE_CREATED_AT,
+            },
+          ],
+        ],
+      ]),
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[]} rows={rows} />,
+    );
+
+    expect(markup).toContain("Sent to");
+    expect(markup).toContain("Nested investigation");
+    expect(markup).toContain("Destination chat unavailable");
   });
 
   it.each([

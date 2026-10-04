@@ -37,7 +37,10 @@ import {
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
-import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import {
+  childLifecycleNotificationToActivity,
+  crossThreadSendRecordToActivity,
+} from "@t3tools/shared/orchestrationActivity";
 import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import {
   sameThreadPullRequest,
@@ -2491,20 +2494,29 @@ function applyEnvironmentOrchestrationEvent(
 
     case "thread.activity-appended":
     case "thread.child-lifecycle-notified":
+    case "thread.cross-thread-send-recorded":
       return updateThreadState(
         state,
         event.type === "thread.activity-appended"
           ? event.payload.threadId
-          : event.payload.parentThreadId,
+          : event.type === "thread.child-lifecycle-notified"
+            ? event.payload.parentThreadId
+            : event.payload.sourceThreadId,
         (thread) => {
           const nextActivity =
             event.type === "thread.activity-appended"
               ? { ...event.payload.activity }
-              : childLifecycleNotificationToActivity({
-                  eventId: event.eventId,
-                  payload: event.payload,
-                  sequence: event.sequence,
-                });
+              : event.type === "thread.child-lifecycle-notified"
+                ? childLifecycleNotificationToActivity({
+                    eventId: event.eventId,
+                    payload: event.payload,
+                    sequence: event.sequence,
+                  })
+                : crossThreadSendRecordToActivity({
+                    eventId: event.eventId,
+                    payload: event.payload,
+                    sequence: event.sequence,
+                  });
           const tailActivity = thread.activities.at(-1);
           let canAppendInOrder =
             tailActivity === undefined || compareActivities(tailActivity, nextActivity) <= 0;

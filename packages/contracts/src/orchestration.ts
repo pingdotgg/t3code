@@ -315,6 +315,24 @@ export const CrossThreadOrigin = Schema.Struct({
 });
 export type CrossThreadOrigin = typeof CrossThreadOrigin.Type;
 
+/**
+ * The source-side counterpart of `CrossThreadOrigin`. `CrossThreadOrigin` only
+ * lives on the destination message, so the sending thread has no way to show
+ * where its message went. This record is written to the source thread and
+ * anchored to the user message whose turn performed the send.
+ */
+export const CrossThreadSendRecord = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceMessageId: MessageId,
+  /** The source turn that performed the send; scopes the record for turn reverts. */
+  sourceTurnId: Schema.NullOr(TurnId),
+  destinationThreadId: ThreadId,
+  destinationThreadTitle: TrimmedNonEmptyString,
+  destinationMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+export type CrossThreadSendRecord = typeof CrossThreadSendRecord.Type;
+
 export const ChildReportKind = Schema.Literals(["progress", "decision-needed", "important-update"]);
 export const ChildDecision = Schema.Struct({
   question: TrimmedNonEmptyString.check(Schema.isMaxLength(2000)),
@@ -2260,6 +2278,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-diff-completed",
   "thread.activity-appended",
   "thread.child-lifecycle-notified",
+  "thread.cross-thread-send-recorded",
   "workflow.run-requested",
   "workflow.artifact-created",
   "workflow.node-worker-started",
@@ -2703,6 +2722,8 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
 
 export const ThreadChildLifecycleNotifiedPayload = ChildThreadLifecycleNotification;
 
+export const ThreadCrossThreadSendRecordedPayload = CrossThreadSendRecord;
+
 export const WorkflowRunRequestedPayload = Schema.Struct({
   run: WorkflowRun,
   definition: WorkflowDefinition,
@@ -3035,6 +3056,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.child-lifecycle-notified"),
     payload: ThreadChildLifecycleNotifiedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.cross-thread-send-recorded"),
+    payload: ThreadCrossThreadSendRecordedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

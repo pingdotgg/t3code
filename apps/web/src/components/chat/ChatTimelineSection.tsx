@@ -30,6 +30,7 @@ import {
 import { useSearch } from "@tanstack/react-router";
 import {
   deriveCompletionDividerBeforeEntryId,
+  deriveCrossThreadSendsBySourceMessageId,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   formatElapsed,
@@ -364,6 +365,11 @@ export const ChatTimelineSection = forwardRef<ChatTimelineSectionHandle, ChatTim
       [proposedPlans, timelineMessages, workLogEntries],
     );
 
+    const crossThreadSendsBySourceMessageId = useMemoEqual(
+      () => deriveCrossThreadSendsBySourceMessageId(threadActivities),
+      [threadActivities],
+    );
+
     const inferredCheckpointTurnCountByTurnId = useMemo(
       () => inferCheckpointTurnCountByTurnId(turnDiffSummariesProp),
       [turnDiffSummariesProp],
@@ -519,10 +525,12 @@ export const ChatTimelineSection = forwardRef<ChatTimelineSectionHandle, ChatTim
         activeTurnStartedAt: activeWorkStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        crossThreadSendsBySourceMessageId,
       });
     }, [
       activeWorkStartedAt,
       completionDividerBeforeEntryId,
+      crossThreadSendsBySourceMessageId,
       effectiveActiveTurnId,
       revertTurnCountByUserMessageId,
       timelineActiveWork,

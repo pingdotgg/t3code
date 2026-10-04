@@ -11,6 +11,7 @@ import { extractToolCommandInput } from "@t3tools/shared/toolActivity";
 import {
   ApprovalRequestId,
   type ChildThreadLifecycle,
+  type CrossThreadSendRecord,
   isToolLifecycleItemType,
   MessageId,
   type OrchestrationLatestTurn,
@@ -29,6 +30,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-status";
 import {
   isChildLifecycleThreadActivity,
+  isCrossThreadSendActivity,
   isTurnLifecycleInsightActivity,
 } from "@t3tools/shared/orchestrationActivity";
 
@@ -647,6 +649,7 @@ export function deriveWorkLogEntries(
         activity.kind !== "context-window.updated" &&
         !isTurnLifecycleInsightActivity(activity) &&
         activity.summary !== "Checkpoint captured" &&
+        !isCrossThreadSendActivity(activity) &&
         !isPlanBoundaryToolActivity(activity),
     )
     .map(toDerivedWorkLogEntry);
@@ -1422,6 +1425,28 @@ function compareActivityLifecycleRank(kind: string): number {
     return 2;
   }
   return 1;
+}
+
+/**
+ * Cross-thread sends recorded against the user message that authorized them.
+ * These render as a quiet receipt under the message rather than as work-log
+ * rows, so they stay out of `deriveWorkLogEntries`.
+ */
+export function deriveCrossThreadSendsBySourceMessageId(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyMap<MessageId, readonly CrossThreadSendRecord[]> {
+  const bySourceMessageId = new Map<MessageId, CrossThreadSendRecord[]>();
+  for (const activity of activities) {
+    if (!isCrossThreadSendActivity(activity)) continue;
+    const record = activity.payload;
+    const existing = bySourceMessageId.get(record.sourceMessageId);
+    if (existing) {
+      existing.push(record);
+    } else {
+      bySourceMessageId.set(record.sourceMessageId, [record]);
+    }
+  }
+  return bySourceMessageId;
 }
 
 export function hasToolActivityForTurn(
