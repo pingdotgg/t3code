@@ -49,6 +49,7 @@ const DAY_MS = 86_400_000;
 
 const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
+  rules.worktreeSettledAfterDays !== null ||
   rules.worktreeOnMerge ||
   rules.worktreeOnDelete ||
   rules.worktreeUnchanged;
@@ -152,7 +153,7 @@ export const make = Effect.gen(function* () {
     const active = yield* projections.getShellSnapshot();
     const archived = yield* projections.getShellSnapshot({ location: "archive" });
     const projects = yield* projectStore.listShells();
-    return { projects, threads: [...active.threads, ...archived.threads] };
+    return { projects, threads: [...active.threads, ...archived.archivedThreads] };
   });
 
   // Local threads under another project need not have a worktreePath of their own.
@@ -215,10 +216,26 @@ export const make = Effect.gen(function* () {
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
+      const old =
+        !deleted &&
+        settings.worktreeAfterDays !== null &&
+        storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+      const settled =
+        !deleted &&
+        settings.worktreeSettledAfterDays !== null &&
+        thread.settledOverride !== "active" &&
+        thread.settledAt !== null &&
+        Math.max(
+          DateTime.toEpochMillis(thread.settledAt),
+          DateTime.toEpochMillis(thread.updatedAt),
+        ) <=
+          now - settings.worktreeSettledAfterDays * DAY_MS;
       if (
         project === undefined ||
         (!deleted && !storageCleanupThreadIdle(thread, now)) ||
-        hasTerminal(worktreePath)
+        hasTerminal(worktreePath) ||
+        // Only the merge and unchanged rules need Git to decide eligibility.
+        (!deleted && !old && !settled && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
       )
         continue;
       yield* Effect.gen(function* () {
@@ -246,11 +263,7 @@ export const make = Effect.gen(function* () {
             .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
         )
           return;
-        const old =
-          !deleted &&
-          settings.worktreeAfterDays !== null &&
-          storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
-        let eligible = deleted || old;
+        let eligible = deleted || old || settled;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
@@ -315,7 +328,10 @@ export const make = Effect.gen(function* () {
           latest.length !== 1 ||
           latest[0]!.id !== thread.id ||
           !storageCleanupThreadIdle(latest[0]!, now) ||
-          storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
+          storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread) ||
+          latest[0]!.settledOverride !== thread.settledOverride ||
+          !Equal.equals(latest[0]!.settledAt, thread.settledAt) ||
+          !Equal.equals(latest[0]!.updatedAt, thread.updatedAt)
         )
           return;
         // Sessions can outlive their run and can be shared across app threads.
@@ -434,14 +450,24 @@ export const make = Effect.gen(function* () {
       Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
     );
   });
+  // Settle and session-stop events arrive in bursts; one queued sweep covers them all.
+  let sweepQueued = false;
   const worker = yield* makeDrainableWorker(() =>
-    sweep().pipe(
+    Effect.sync(() => {
+      sweepQueued = false;
+    }).pipe(
+      Effect.andThen(sweep()),
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) => Effect.logWarning("storage cleanup failed", { cause }),
       ),
     ),
   );
+  const requestSweep = Effect.suspend(() => {
+    if (sweepQueued) return Effect.void;
+    sweepQueued = true;
+    return worker.enqueue(undefined);
+  });
 
   const start = Effect.fn("StorageCleanup.start")(function* () {
     const unsubscribe = yield* terminals.subscribeMetadata((event) =>
@@ -463,13 +489,11 @@ export const make = Effect.gen(function* () {
     const events = engine.streamDomainEvents;
     let lastSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
     yield* forkParked(
-      worker
-        .enqueue(undefined)
-        .pipe(
-          Effect.andThen(worker.drain),
-          Effect.repeat(Schedule.spaced("1 hour")),
-          Effect.asVoid,
-        ),
+      requestSweep.pipe(
+        Effect.andThen(worker.drain),
+        Effect.repeat(Schedule.spaced("1 hour")),
+        Effect.asVoid,
+      ),
     );
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {
@@ -480,16 +504,21 @@ export const make = Effect.gen(function* () {
         )
           return Effect.void;
         lastSettings = settings;
-        return worker.enqueue(undefined);
+        return requestSweep;
       }),
     );
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" || event.type === "provider-session.updated") &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
-          ? worker.enqueue(undefined)
-          : Effect.void,
-      ).pipe(
+      Stream.runForEach(events, (event) => {
+        if (
+          ((event.type === "thread.deleted" || event.type === "provider-session.updated") &&
+            anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)) ||
+          ((event.type === "thread.settled" ||
+            (event.type === "provider-session.updated" && event.payload.status === "stopped")) &&
+            anyWorktreePolicy(lastSettings, (rules) => rules.worktreeSettledAfterDays === 0))
+        )
+          return requestSweep;
+        return Effect.void;
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),
         ),
