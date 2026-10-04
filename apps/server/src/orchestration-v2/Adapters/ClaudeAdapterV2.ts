@@ -3966,6 +3966,7 @@ export function makeClaudeAdapterV2(
           // when this call registers the subagent.
           readonly owner?: ActiveClaudeSubagent;
           readonly progress?: string;
+          readonly usage?: { readonly total_tokens: number; readonly tool_uses: number };
           readonly result?: string;
           readonly status: Extract<
             OrchestrationV2ExecutionNode["status"],
@@ -4034,16 +4035,17 @@ export function makeClaudeAdapterV2(
           const turnItemOrdinal =
             existingSubagent?.turnItemOrdinal ??
             (yield* resolveItemOrdinal(input.context, `${nativeItemId}:subagent`));
-          // A resumed subagent's previous final answer and progress no longer
-          // represent its outcome; the next task_progress/task_notification
+          // A resumed subagent's previous final answer, progress, and usage no
+          // longer represent its outcome; the next task_progress/task_notification
           // carry the new ones.
           const priorTask =
             existingSubagent === undefined
               ? undefined
               : isReopen
-                ? (({ progress: _staleProgress, ...rest }) => ({ ...rest, result: null }))(
-                    existingSubagent.task,
-                  )
+                ? (({ progress: _staleProgress, usage: _staleUsage, ...rest }) => ({
+                    ...rest,
+                    result: null,
+                  }))(existingSubagent.task)
                 : existingSubagent.task;
           const task = {
             ...(priorTask ?? {
@@ -4085,6 +4087,14 @@ export function makeClaudeAdapterV2(
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
+            ...(input.usage === undefined
+              ? {}
+              : {
+                  usage: {
+                    contextTokens: input.usage.total_tokens,
+                    toolUses: input.usage.tool_uses,
+                  },
+                }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(isReopen ? { startedAt: now } : {}),
             completedAt: input.status === "running" ? null : (priorTask?.completedAt ?? now),
@@ -5118,7 +5128,11 @@ export function makeClaudeAdapterV2(
               if (registered === undefined || registered.task.status === "running") {
                 return current;
               }
-              const { progress: _staleProgress, ...priorTask } = registered.task;
+              const {
+                progress: _staleProgress,
+                usage: _staleUsage,
+                ...priorTask
+              } = registered.task;
               return new Map(current).set(message.task_id, {
                 ...registered,
                 task: {
@@ -5903,16 +5917,13 @@ export function makeClaudeAdapterV2(
               liveQuery.nativeThreadId,
               message.task_id,
             );
-            if (
-              progress.length > 0 &&
-              !context.ignoredTaskIds.has(message.task_id) &&
-              !isBackgroundTask
-            ) {
+            if (!context.ignoredTaskIds.has(message.task_id) && !isBackgroundTask) {
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-                progress,
+                ...(progress.length === 0 ? {} : { progress }),
+                usage: message.usage,
                 status: "running",
               });
             }
@@ -5966,6 +5977,7 @@ export function makeClaudeAdapterV2(
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(message.usage === undefined ? {} : { usage: message.usage }),
                 result: message.summary,
                 status:
                   message.status === "completed"

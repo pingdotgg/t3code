@@ -16,16 +16,6 @@ export type RuntimeSubagentStatus =
   | "cancelled"
   | "interrupted";
 
-export interface SubagentUsage {
-  readonly totalTokens: number;
-  readonly inputTokens?: number;
-  readonly cachedInputTokens?: number;
-  readonly outputTokens?: number;
-  readonly reasoningOutputTokens?: number;
-  readonly toolUses?: number;
-  readonly durationMs?: number;
-}
-
 export interface SubagentActivityEntry {
   readonly at: string;
   readonly summary: string;
@@ -52,7 +42,7 @@ export interface RuntimeSubagent {
   readonly effort: string | null;
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
-  readonly usage: SubagentUsage | null;
+  readonly usage: OrchestrationV2Subagent["usage"] | null;
   readonly progress: string | null;
   readonly lastToolName: string | null;
   readonly result: string | null;
@@ -103,6 +93,7 @@ export function projectedSubagentsToRuntime(
     readonly model: string | null;
     readonly status: OrchestrationV2Subagent["status"];
     readonly progress?: string | undefined;
+    readonly usage?: OrchestrationV2Subagent["usage"];
     readonly result: string | null;
     readonly startedAt: DateTime.Utc | null;
     readonly completedAt: DateTime.Utc | null;
@@ -123,7 +114,7 @@ export function projectedSubagentsToRuntime(
       effort: null,
       status: subagent.status,
       activationCount: 1,
-      usage: null,
+      usage: subagent.usage ?? null,
       progress: subagent.progress ?? null,
       lastToolName: null,
       result: subagent.result,

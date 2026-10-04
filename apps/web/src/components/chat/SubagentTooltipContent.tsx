@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItemStatus,
   OrchestrationProjectShell,
@@ -6,6 +7,7 @@ import type {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import {
+  formatSubagentUsage,
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
@@ -16,6 +18,7 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   FolderIcon,
+  GaugeIcon,
   GitBranchIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -38,9 +41,11 @@ export function SubagentTooltipContent(props: {
   status: OrchestrationV2TurnItemStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
+  usage?: OrchestrationV2Subagent["usage"] | null;
 }) {
   const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
   const preview = subagentDetailPreview(props);
+  const usage = formatSubagentUsage(props.usage ?? null);
   const driver = props.provider?.driver ?? props.driver;
   const working = ["running", "in_progress", "pending", "waiting"].includes(props.status);
   const failed = ["failed", "error"].includes(props.status);
@@ -94,6 +99,12 @@ export function SubagentTooltipContent(props: {
           </div>
         );
       })}
+      {usage ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <GaugeIcon aria-hidden className="size-3 shrink-0" />
+          <span className="min-w-0 truncate tabular-nums">{usage}</span>
+        </div>
+      ) : null}
       {preview ? (
         <div className="flex min-w-0 items-center gap-2">
           <TerminalIcon aria-hidden className="size-3 shrink-0" />

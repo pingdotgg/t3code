@@ -1,10 +1,12 @@
 import type {
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItemStatus,
   OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
   ServerProvider,
 } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { fileBasename } from "../markdownLinks.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
@@ -129,4 +131,11 @@ export function subagentDetailPreview(input: {
     (isTerminalSubagentStatus(input.status) ? result || progress : progress || result) || "";
   const compact = detail.replace(/\s+/gu, " ");
   return compact.length > 280 ? `${compact.slice(0, 280).trimEnd()}…` : compact || null;
+}
+
+/** Context size, not a running total, so callers must not sum it across agents. */
+export function formatSubagentUsage(usage: OrchestrationV2Subagent["usage"] | null): string | null {
+  if (!usage) return null;
+  const tools = `${usage.toolUses} ${usage.toolUses === 1 ? "tool use" : "tool uses"}`;
+  return `${formatTokens(usage.contextTokens)} context · ${tools}`;
 }

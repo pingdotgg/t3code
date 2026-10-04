@@ -6230,6 +6230,80 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("records subagent usage from task frames and clears it on resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-subagent-usage";
+        const TOOL_USE_ID = "toolu-subagent-usage";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-subagent-usage"),
+            text: "Run an auditor.",
+            attachments: [],
+          }),
+        );
+        const frames = [
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000361",
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Reading files",
+            usage: { total_tokens: 12_000, tool_uses: 2, duration_ms: 900 },
+            uuid: "00000000-0000-4000-8000-000000000362",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: "Audit done.",
+            usage: { total_tokens: 18_500, tool_uses: 5, duration_ms: 2_400 },
+            uuid: "00000000-0000-4000-8000-000000000363",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // A resume reports fresh usage on its own frames.
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000365",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000364",
+            result: "The auditor finished.",
+          }),
+        ];
+        for (const frame of frames) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        const usages = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" ? [event.subagent.usage] : [],
+        );
+        assert.deepEqual(usages, [
+          undefined,
+          { contextTokens: 12_000, toolUses: 2 },
+          { contextTokens: 18_500, toolUses: 5 },
+          undefined,
+        ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {
