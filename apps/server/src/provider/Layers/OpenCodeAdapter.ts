@@ -1341,7 +1341,19 @@ export function makeOpenCodeAdapter(
           context.nativeIdleTurnId === turnId ||
           (statusData !== undefined && (status === undefined || status.type === "idle"));
         const messages = result.success.messages.data ?? [];
-        for (const entry of messages) {
+        // Replay only this turn: emitted-state dedupe is per context, so replaying
+        // earlier turns on a fresh context re-emits all history under this turn.
+        const promptIndex = messages.findIndex(
+          (candidate) => candidate.info.id === promptMessageId,
+        );
+        const turnMessages =
+          promptIndex >= 0
+            ? messages.slice(promptIndex)
+            : messages.filter(
+                (entry) =>
+                  entry.info.role === "assistant" && entry.info.parentID === promptMessageId,
+              );
+        for (const entry of turnMessages) {
           const info = entry.info as {
             readonly id: string;
             readonly role: "user" | "assistant";
@@ -1382,17 +1394,7 @@ export function makeOpenCodeAdapter(
           });
         }
 
-        const promptIndex = messages.findIndex(
-          (candidate) => candidate.info.id === promptMessageId,
-        );
-        const assistant = messages.find(
-          (entry) =>
-            entry.info.role === "assistant" &&
-            ((entry.info as { readonly parentID?: string }).parentID === promptMessageId ||
-              (promptIndex >= 0 &&
-                messages.findIndex((candidate) => candidate.info.id === entry.info.id) >
-                  promptIndex)),
-        );
+        const assistant = turnMessages.find((entry) => entry.info.role === "assistant");
         if (assistant?.info.role === "assistant" && assistant.info.error !== undefined) {
           yield* finishTurn(context, turnId, "failed", sessionErrorMessage(assistant.info.error));
           return;
