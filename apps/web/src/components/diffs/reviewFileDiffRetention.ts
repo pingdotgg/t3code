@@ -41,15 +41,19 @@ export function isPendingReviewFile(file: { readonly cacheKey?: string | undefin
   return file.cacheKey?.endsWith(":pending") === true;
 }
 
-/** Show the file already on screen until its replacement patch arrives. */
+/**
+ * Show the file already on screen while its replacement is still loading.
+ * A failure, or a snapshot that no longer contains the file, must not keep the old diff.
+ */
 export function retainedReviewFile<T extends { readonly cacheKey?: string | undefined }>(input: {
   readonly loaded: T | null;
   readonly previous: T | undefined;
   readonly placeholder: T;
   readonly sameFamily: boolean;
+  readonly pending: boolean;
 }): T {
   if (input.loaded) return input.loaded;
-  if (input.sameFamily && input.previous && !isPendingReviewFile(input.previous)) {
+  if (input.pending && input.sameFamily && input.previous && !isPendingReviewFile(input.previous)) {
     return input.previous;
   }
   return input.placeholder;

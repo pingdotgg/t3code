@@ -8,8 +8,9 @@ export interface ReviewDiffSliceState<Slice> {
 }
 
 /**
- * A refresh rereads the first page, and the pages already on screen stay until that page
- * arrives. Clearing them remounts the viewer and sends the reader back to the top.
+ * A refresh rereads from the first page. That page stays on screen so the reader does not
+ * jump. Later pages are positions in the snapshot being replaced: keeping them when the
+ * first page comes back unchanged would leave those files stale for good.
  */
 export function retainReviewDiffSlices<Slice>(
   previous: ReviewDiffSliceState<Slice>,
@@ -18,8 +19,12 @@ export function retainReviewDiffSlices<Slice>(
   if (previous.key !== scopeKey) {
     return { key: scopeKey, cursor: null, slices: [] };
   }
-  if (previous.cursor === null) return previous;
-  return { key: previous.key, cursor: null, slices: previous.slices };
+  const first = previous.slices[0];
+  if (first === undefined) {
+    return previous.cursor === null ? previous : { key: scopeKey, cursor: null, slices: [] };
+  }
+  if (previous.slices.length === 1 && previous.cursor === null) return previous;
+  return { key: scopeKey, cursor: null, slices: [first] };
 }
 
 /** Only rendered hunks can anchor comments; list others off-diff. */

@@ -21,18 +21,17 @@ function fileWithHunks(
 }
 
 describe("retainReviewDiffSlices", () => {
-  const slices = [{ cursor: null, patch: "page-1" }];
+  const first = { cursor: null, patch: "page-1" };
+  const slices = [first, { cursor: "page-2", patch: "page-2" }];
 
-  it("keeps the open pages when the same review refreshes", () => {
-    const previous = { key: "pr-1", cursor: "page-2", slices };
-    expect(retainReviewDiffSlices(previous, "pr-1")).toEqual({
+  it("keeps the first page and drops later ones when the same review refreshes", () => {
+    expect(retainReviewDiffSlices({ key: "pr-1", cursor: "page-2", slices }, "pr-1")).toEqual({
       key: "pr-1",
       cursor: null,
-      slices,
+      slices: [first],
     });
-    expect(retainReviewDiffSlices({ key: "pr-1", cursor: null, slices }, "pr-1").slices).toBe(
-      slices,
-    );
+    const open = { key: "pr-1", cursor: null, slices: [first] };
+    expect(retainReviewDiffSlices(open, "pr-1")).toBe(open);
   });
 
   it("starts over when the review itself changes", () => {

@@ -210,8 +210,9 @@ export interface DiffPanelOpenContext {
 
 /**
  * Generic openings show Changes: the first time the diff is on screen, a tab
- * fallback, or a switch to another thread. A timeline click passes the same
- * thread ref it just selected and keeps that turn. An agent turn replaces the
+ * fallback, or a switch to another thread. A timeline click names the thread it
+ * just selected and keeps that turn, matched by id because the shell hands out
+ * a new ref object whenever the thread updates. An agent turn replaces the
  * thread shell without closing the diff, and that refresh must leave Uncommitted
  * or the selected turn alone.
  */
@@ -223,7 +224,13 @@ export function shouldResetDiffSelectionToChanges(input: {
   readonly threadKey: string | null;
 }): boolean {
   if (!input.diffOpen || input.activeThreadRef === null) return false;
-  if (input.explicitThreadRef === input.activeThreadRef) return false;
+  if (
+    input.explicitThreadRef !== null &&
+    input.explicitThreadRef.environmentId === input.activeThreadRef.environmentId &&
+    input.explicitThreadRef.threadId === input.activeThreadRef.threadId
+  ) {
+    return false;
+  }
   return !(
     input.previous !== null &&
     input.previous.diffOpen &&
