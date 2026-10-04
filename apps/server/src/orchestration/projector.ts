@@ -10,7 +10,10 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
-import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import {
+  childLifecycleNotificationToActivity,
+  crossThreadSendRecordToActivity,
+} from "@t3tools/shared/orchestrationActivity";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 import { Effect, Schema } from "effect";
 
@@ -39,6 +42,7 @@ import {
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadChildLifecycleNotifiedPayload,
+  ThreadCrossThreadSendRecordedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDecoupledPayload,
@@ -1248,6 +1252,34 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.parentThreadId, {
               activities: appendThreadActivity(parent, activity),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.cross-thread-send-recorded":
+      return decodeForEvent(
+        ThreadCrossThreadSendRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const source = nextBase.threads.find((entry) => entry.id === payload.sourceThreadId);
+          if (!source) {
+            return nextBase;
+          }
+          const activity = crossThreadSendRecordToActivity({
+            eventId: event.eventId,
+            payload,
+            turnId: payload.sourceTurnId,
+            sequence: event.sequence,
+          });
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.sourceThreadId, {
+              activities: appendThreadActivity(source, activity),
               updatedAt: event.occurredAt,
             }),
           };

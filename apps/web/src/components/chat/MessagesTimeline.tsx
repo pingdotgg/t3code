@@ -1,4 +1,5 @@
 import {
+  type CrossThreadSendRecord,
   type DelegationAuditActivityEvidence,
   type DelegationAuditPage,
   EnvironmentId,
@@ -28,6 +29,7 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowUpRightIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -296,6 +298,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        crossThreadSendsBySourceMessageId: EMPTY_CROSS_THREAD_SENDS_BY_MESSAGE_ID,
       }),
     [
       providedRows,
@@ -782,6 +785,9 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                   forceExpanded={ctx.activeChatFindRowId === row.id}
                 />
               </div>
+              {row.crossThreadSends && row.crossThreadSends.length > 0 && (
+                <CrossThreadSendReceipts sends={row.crossThreadSends} />
+              )}
             </div>
           );
         })()}
@@ -1095,6 +1101,90 @@ function CrossThreadProvenance({
       />
       <span className="truncate decoration-current/30 underline-offset-2 group-hover/origin:underline">
         {sourceTitle}
+      </span>
+    </button>
+  );
+}
+
+const EMPTY_CROSS_THREAD_SENDS_BY_MESSAGE_ID: ReadonlyMap<
+  MessageId,
+  readonly CrossThreadSendRecord[]
+> = new Map();
+
+/** Most turns send once; anything beyond this stays collapsed behind a count. */
+const MAX_VISIBLE_CROSS_THREAD_SENDS = 3;
+
+function CrossThreadSendReceipts({ sends }: { sends: readonly CrossThreadSendRecord[] }) {
+  const visible = sends.slice(0, MAX_VISIBLE_CROSS_THREAD_SENDS);
+  const hiddenCount = sends.length - visible.length;
+  return (
+    <div className="mt-1 mr-2 flex max-w-[80%] flex-col items-end gap-0.5">
+      {visible.map((send) => (
+        <CrossThreadSendReceipt key={send.destinationMessageId} send={send} />
+      ))}
+      {hiddenCount > 0 && (
+        <span className="text-[length:var(--app-status-line-font-size)] text-muted-foreground/40">
+          +{hiddenCount} more thread{sends.length - visible.length === 1 ? "" : "s"}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Quiet receipt for a message this turn pushed into another thread. The
+ * destination side shows the source (`CrossThreadProvenance`); this is the
+ * matching half, linking to the message that was sent.
+ */
+function CrossThreadSendReceipt({ send }: { send: CrossThreadSendRecord }) {
+  const navigate = useNavigate();
+  const ctx = use(TimelineRowCtx);
+  // scopeThreadRef allocates a fresh object; memoize the ref on the primitives
+  // so the selector (and its subscription) stays stable across stream chunks.
+  const environmentId = ctx.activeThreadEnvironmentId;
+  const destinationThreadId = send.destinationThreadId;
+  const destinationSelector = useMemo(() => {
+    const ref = scopeThreadRef(environmentId, destinationThreadId);
+    return (state: AppState) => selectSidebarThreadSummaryByRef(state, ref);
+  }, [environmentId, destinationThreadId]);
+  const destinationThread = useStore(destinationSelector);
+  const destinationTitle = destinationThread?.title.trim() || send.destinationThreadTitle;
+
+  if (destinationThread === null || destinationThread === undefined) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[length:var(--app-status-line-font-size)] text-muted-foreground/40"
+        title={`Destination chat unavailable: ${destinationTitle}`}
+      >
+        <ArrowUpRightIcon className="size-2.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">Sent to {destinationTitle}</span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="group/send inline-flex max-w-full cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-muted-foreground/45 transition-colors hover:text-muted-foreground/85 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
+      title={`Open ${destinationTitle} at the sent message`}
+      aria-label={`Open thread ${destinationTitle} at the message sent from here`}
+      onClick={() => {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: destinationThreadId },
+          search: (previous) => ({ ...previous, message: send.destinationMessageId }),
+        });
+      }}
+    >
+      <ArrowUpRightIcon
+        className="size-2.5 shrink-0 transition-colors group-hover/send:text-violet-400/90"
+        aria-hidden="true"
+      />
+      <span className="truncate">
+        Sent to{" "}
+        <span className="decoration-current/30 underline-offset-2 group-hover/send:underline">
+          {destinationTitle}
+        </span>
       </span>
     </button>
   );

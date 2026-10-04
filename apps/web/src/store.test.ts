@@ -1260,6 +1260,7 @@ describe("incremental orchestration updates", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.kind)).toEqual(["workspace-handoff"]);

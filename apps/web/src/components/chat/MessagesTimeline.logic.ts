@@ -1,6 +1,7 @@
 import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import {
+  type CrossThreadSendRecord,
   type DelegationAuditEvent,
   type MessageId,
   type TurnId,
@@ -120,6 +121,8 @@ type BaseMessagesTimelineRow =
       showCompletionDivider: boolean;
       showAssistantCopyButton: boolean;
       showAssistantTerminalMetadata: boolean;
+      /** Messages this turn pushed into other threads, in send order. */
+      crossThreadSends?: readonly CrossThreadSendRecord[] | undefined;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
     }
@@ -401,6 +404,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  crossThreadSendsBySourceMessageId: ReadonlyMap<MessageId, readonly CrossThreadSendRecord[]>;
 }): MessagesTimelineRow[] {
   const nextRows: BaseMessagesTimelineRow[] = [];
   // Last assistant message row per response key (turn). Only the final
@@ -535,6 +539,10 @@ export function deriveMessagesTimelineRows(input: {
       // know which assistant row is the last of its turn.
       showAssistantCopyButton: false,
       showAssistantTerminalMetadata: false,
+      crossThreadSends:
+        message.role === "user"
+          ? input.crossThreadSendsBySourceMessageId.get(message.id)
+          : undefined,
       assistantTurnDiffSummary:
         message.role === "assistant"
           ? input.turnDiffSummaryByAssistantMessageId.get(message.id)
@@ -758,6 +766,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showCompletionDivider === bm.showCompletionDivider &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.showAssistantTerminalMetadata === bm.showAssistantTerminalMetadata &&
+        areCrossThreadSendsUnchanged(a.crossThreadSends, bm.crossThreadSends) &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount
       );
@@ -766,6 +775,22 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "reasoning":
       return areReasoningRowsUnchanged(a, b as typeof a);
   }
+}
+
+// Records are the activity payloads themselves, so an unchanged send keeps its
+// identity across streaming chunks and must not invalidate the message row.
+function areCrossThreadSendsUnchanged(
+  a: readonly CrossThreadSendRecord[] | undefined,
+  b: readonly CrossThreadSendRecord[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  return a.every(
+    (record, index) =>
+      record === b[index] ||
+      (record.destinationThreadId === b[index]?.destinationThreadId &&
+        record.destinationMessageId === b[index]?.destinationMessageId),
+  );
 }
 
 function areReasoningRowsUnchanged(

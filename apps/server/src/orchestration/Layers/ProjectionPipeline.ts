@@ -10,7 +10,10 @@ import {
 } from "@t3tools/client-runtime/validation-lifecycle";
 import { Effect, Layer, Option, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import {
+  childLifecycleNotificationToActivity,
+  crossThreadSendRecordToActivity,
+} from "@t3tools/shared/orchestrationActivity";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
@@ -817,6 +820,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.cross-thread-send-recorded": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.sourceThreadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
         case "thread.child-lifecycle-notified": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.parentThreadId,
@@ -1009,6 +1026,27 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             updatedAt: event.payload.proposedPlan.updatedAt,
           });
           return;
+
+        case "thread.cross-thread-send-recorded": {
+          const activity = crossThreadSendRecordToActivity({
+            eventId: event.eventId,
+            payload: event.payload,
+            turnId: event.payload.sourceTurnId,
+            sequence: event.sequence,
+          });
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: activity.id,
+            threadId: event.payload.sourceThreadId,
+            turnId: activity.turnId,
+            tone: activity.tone,
+            kind: activity.kind,
+            summary: activity.summary,
+            payload: activity.payload,
+            ...(activity.sequence === undefined ? {} : { sequence: activity.sequence }),
+            createdAt: activity.createdAt,
+          });
+          return;
+        }
 
         case "thread.reverted": {
           // Pure-SQL trim without payload hydration: retention is turn-based,

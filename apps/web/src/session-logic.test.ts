@@ -16,6 +16,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
+  deriveCrossThreadSendsBySourceMessageId,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   findSidebarProposedPlan,
@@ -87,6 +88,7 @@ describe("deriveAgentRunTimelineEntries", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
     expect(rows).toMatchObject([
       { kind: "message", message: { role: "user" } },
@@ -641,6 +643,54 @@ describe("findSidebarProposedPlan", () => {
         threadId: ThreadId.make("thread-1"),
       })?.planMarkdown,
     ).toBe("# Latest");
+  });
+});
+
+describe("deriveCrossThreadSendsBySourceMessageId", () => {
+  const record = (sourceMessageId: string, destinationThreadId: string) => ({
+    sourceThreadId: ThreadId.make("source-thread"),
+    sourceMessageId: MessageId.make(sourceMessageId),
+    sourceTurnId: TurnId.make("turn-1"),
+    destinationThreadId: ThreadId.make(destinationThreadId),
+    destinationThreadTitle: `Chat ${destinationThreadId}`,
+    destinationMessageId: MessageId.make(`message-${destinationThreadId}`),
+    createdAt: "2026-02-23T00:00:00.000Z",
+  });
+
+  const crossThreadSendActivity = (
+    id: string,
+    sourceMessageId: string,
+    destinationThreadId: string,
+  ) =>
+    makeActivity({
+      id,
+      kind: "cross-thread.send",
+      summary: `Sent a message to Chat ${destinationThreadId}`,
+      payload: record(sourceMessageId, destinationThreadId),
+      turnId: "turn-1",
+    });
+
+  it("groups sends by the message that authorized them, in send order", () => {
+    const sends = deriveCrossThreadSendsBySourceMessageId([
+      crossThreadSendActivity("send-1", "message-1", "thread-a"),
+      crossThreadSendActivity("send-2", "message-2", "thread-b"),
+      crossThreadSendActivity("send-3", "message-1", "thread-c"),
+    ]);
+
+    expect(
+      [...(sends.get(MessageId.make("message-1")) ?? [])].map((send) => send.destinationThreadId),
+    ).toEqual([ThreadId.make("thread-a"), ThreadId.make("thread-c")]);
+    expect(sends.get(MessageId.make("message-2"))).toHaveLength(1);
+    expect(sends.get(MessageId.make("message-unknown"))).toBeUndefined();
+  });
+
+  it("keeps sends out of the work log", () => {
+    expect(
+      deriveWorkLogEntries(
+        [crossThreadSendActivity("send-1", "message-1", "thread-a")],
+        TurnId.make("turn-1"),
+      ),
+    ).toEqual([]);
   });
 });
 
