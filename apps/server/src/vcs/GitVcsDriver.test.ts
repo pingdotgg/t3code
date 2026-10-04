@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -1120,6 +1121,37 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
                 stdoutTruncated: false,
                 stderrTruncated: false,
               };
+            }),
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("GitVcsDriver lists a partial-clone remote whose fetch line carries its filter", () => {
+  const url = "https://github.com/pingdotgg/t3code";
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    const { remotes } = yield* driver.listRemotes("/repo");
+
+    assert.deepStrictEqual(
+      remotes.map((remote) => ({ ...remote, pushUrl: Option.getOrNull(remote.pushUrl) })),
+      [{ name: "origin", url, pushUrl: url, isPrimary: true }],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: `origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)\n`,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
             }),
         }),
       ),

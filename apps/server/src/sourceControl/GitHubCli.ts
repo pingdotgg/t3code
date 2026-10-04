@@ -22,6 +22,7 @@ import {
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
+import { parseGitRemoteVerbose } from "../git/remoteRefs.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
@@ -527,12 +528,11 @@ export function selectGitHubBaseRepository(input: {
 }): { readonly owner: string; readonly name: string } | null {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
-  for (const line of input.remotes.split("\n")) {
-    const match = /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim());
-    if (!match) continue;
-    const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(match[2]!).split("/");
+  for (const remote of parseGitRemoteVerbose(input.remotes)) {
+    if (remote.direction !== "fetch") continue;
+    const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
-    repositories.set(match[1]!, { owner, name });
+    repositories.set(remote.name, { owner, name });
   }
   const marks = input.resolved
     .split("\n")

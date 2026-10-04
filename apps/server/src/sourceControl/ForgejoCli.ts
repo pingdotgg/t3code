@@ -13,6 +13,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { parseGitRemoteVerbose } from "../git/remoteRefs.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import type { SourceControlProviderContext } from "./SourceControlProvider.ts";
@@ -516,12 +517,13 @@ export const make = Effect.gen(function* () {
       if (input.host) {
         const matchingUrls = [
           ...new Set(
-            result.stdout.split("\n").flatMap((line) => {
-              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)$/.exec(line.trim())?.[1];
-              return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
+            parseGitRemoteVerbose(result.stdout).flatMap(({ url, direction }) =>
+              direction === "fetch" &&
+              /^https?:\/\//.test(url) &&
+              parseForgejoRemote(url)?.host === input.host?.toLowerCase()
                 ? [url]
-                : [];
-            }),
+                : [],
+            ),
           ),
         ];
         const origins = [...new Set(matchingUrls.map((url) => new URL(url).origin))];

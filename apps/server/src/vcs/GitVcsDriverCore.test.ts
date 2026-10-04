@@ -3061,6 +3061,40 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
       }),
     );
+
+    it.effect("ensureRemote reuses a partial-clone remote with an annotated fetch line", () =>
+      Effect.gen(function* () {
+        const url = "https://github.com/pingdotgg/t3code.git";
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const partialCloneSpawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          command.args[0] === "remote" &&
+          command.args[1] === "-v"
+            ? Effect.succeed(
+                makeSuccessfulHandle(`origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)\n`),
+              )
+            : delegate.spawn(command),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, partialCloneSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd).pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+        );
+        yield* git(cwd, ["remote", "add", "origin", url]);
+
+        const remoteName = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "git@github.com:pingdotgg/t3code.git",
+        });
+
+        assert.equal(remoteName, "origin");
+        assert.equal(yield* git(cwd, ["remote"]), "origin");
+      }),
+    );
   });
 
   describe("commit context", () => {

@@ -1086,6 +1086,48 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
   );
 });
 
+it.effect("matches a partial-clone Forgejo remote whose fetch line carries its filter", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const repository = yield* cli.resolveRepository({
+      cwd: "/repo",
+      host: "forgejo.local:3000",
+      repository: "maria/project",
+    });
+    // Only the matched HTTP remote opts the server into HTTP.
+    assert.strictEqual(repository.baseUrl, "http://forgejo.local:3000");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forgejo.local:3000": { type: "Application", token: "test-token" } },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("unexpected Forgejo HTTP request")),
+    ),
+    Effect.provide(
+      Layer.mock(VcsProcess.VcsProcess)({
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "git"
+                ? "origin\thttp://forgejo.local:3000/maria/project.git (fetch) [blob:none]\norigin\thttp://forgejo.local:3000/maria/project.git (push)\n"
+                : "",
+            ),
+          ),
+      }),
+    ),
+  ),
+);
+
 it.effect("loads later fj review pages when the server caps pages below the requested size", () => {
   const pages: number[] = [];
   let issueCommentRequests = 0;

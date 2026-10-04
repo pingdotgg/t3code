@@ -191,6 +191,14 @@ describe("selectGitHubBaseRepository", () => {
     );
   });
 
+  it("reads a partial-clone remote whose fetch line carries its filter", () => {
+    const url = "https://github.com/pingdotgg/t3code";
+    assert.deepStrictEqual(
+      select({ remotes: `origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)` }),
+      { owner: "pingdotgg", name: "t3code" },
+    );
+  });
+
   it("leaves gh to choose when it might weigh the remotes differently", () => {
     for (const input of [
       { remotes: "" },

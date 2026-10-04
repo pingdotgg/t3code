@@ -13,6 +13,31 @@ export function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return parseRemoteNamesInGitOrder(stdout).toSorted((a, b) => b.length - a.length);
 }
 
+/**
+ * Reads `git remote -v` output, one entry per remote and direction. Promisor (partial-clone)
+ * remotes print their filter after the direction, as in `origin <url> (fetch) [blob:none]`, so
+ * trailing bracketed annotations are accepted and dropped.
+ */
+export function parseGitRemoteVerbose(stdout: string) {
+  const remotes: Array<{ name: string; url: string; direction: "fetch" | "push" }> = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]*\])*$/.exec(line.trim());
+    if (!match) continue;
+    const [, name = "", url = "", direction] = match;
+    remotes.push({ name, url, direction: direction === "fetch" ? "fetch" : "push" });
+  }
+  return remotes;
+}
+
+/** Fetch URL per remote name from `git remote -v` output; a later line for the same name wins. */
+export function parseRemoteFetchUrls(stdout: string): Map<string, string> {
+  return new Map(
+    parseGitRemoteVerbose(stdout)
+      .filter((entry) => entry.direction === "fetch")
+      .map((entry) => [entry.name, entry.url]),
+  );
+}
+
 export function parseRemoteRefWithRemoteNames(
   ref: string,
   remoteNames: ReadonlyArray<string>,
