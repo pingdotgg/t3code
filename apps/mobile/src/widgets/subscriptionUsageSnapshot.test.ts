@@ -221,12 +221,50 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.expiresAt).toBe(now + 15 * 60_000);
     expect(snapshot.providers[0]?.windows[0]?.reset).toBe("Reset time unavailable");
   });
+  it.each([
+    ["2026-09-05T14:13:00.000Z", "resets in 2h 13m"],
+    ["2026-09-08T16:00:00.000Z", "resets in 3d 4h"],
+    [undefined, "Reset time unavailable"],
+  ])("formats reset %s relative to the timeline entry", (resetsAt, expected) => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([provider({ usageLimits: { checkedAt, windows: [{ ...window, resetsAt }] } })]),
+      deepLink,
+    );
+    expect(snapshot.providers[0]?.windows[0]?.reset).toBe(expected);
+    expect(subscriptionUsageTimeline(snapshot, now)[0]?.props.providers[0]?.windows[0]?.reset).toBe(
+      expected,
+    );
+  });
   it("schedules a reset boundary without inventing a zero quota", () => {
     const snapshot = buildSubscriptionUsageSnapshot(presentations(), deepLink);
     const timeline = subscriptionUsageTimeline(snapshot, now);
-    expect(timeline.map((entry) => entry.date.getTime())).toEqual([now, now + 10 * 60_000]);
-    expect(timeline[1]?.props.providers[0]?.windows).toEqual([]);
+    expect(timeline.map((entry) => entry.date.getTime())).toEqual(
+      Array.from({ length: 11 }, (_, minute) => now + minute * 60_000),
+    );
+    expect(timeline[0]?.props.providers[0]?.windows[0]?.reset).toBe("resets in 10m");
+    expect(timeline[1]?.props.providers[0]?.windows[0]?.reset).toBe("resets in 9m");
+    expect(timeline.at(-1)?.props.providers[0]?.windows).toEqual([]);
     expect(subscriptionUsageTimeline(snapshot, now + 60 * 60_000)).toHaveLength(1);
+  });
+  it("includes the countdown cap when the server clock is ahead", () => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([
+        provider({
+          usageLimits: {
+            checkedAt: new Date(now + 5 * 60_000).toISOString(),
+            windows: [{ ...window, resetsAt: new Date(now + 120 * 60_000).toISOString() }],
+          },
+        }),
+      ]),
+      deepLink,
+    );
+    const timeline = subscriptionUsageTimeline(snapshot, now);
+    expect(timeline.map((entry) => entry.date.getTime())).toEqual([
+      ...Array.from({ length: 16 }, (_, minute) => now + minute * 60_000),
+      now + 20 * 60_000,
+    ]);
+    expect(timeline[15]?.props.providers[0]?.windows[0]?.reset).toBe("resets in 1h 45m");
+    expect(timeline.at(-1)?.props.providers[0]?.windows).toEqual([]);
   });
   it("expires providers independently without inventing a refill", () => {
     const snapshot = buildSubscriptionUsageSnapshot(
@@ -241,14 +279,12 @@ describe("subscription widget snapshots", () => {
       deepLink,
     );
     const timeline = subscriptionUsageTimeline(snapshot, now);
-    expect(timeline.map((entry) => entry.date.getTime())).toEqual([
-      now,
-      now + 10 * 60_000,
-      now + 15 * 60_000,
-    ]);
-    expect(timeline[1]?.props.providers[0]?.windows).toEqual([]);
-    expect(timeline[1]?.props.providers[1]?.windows[0]?.remaining).toBe(60);
-    expect(timeline[2]?.props.providers.every((provider) => provider.windows.length === 0)).toBe(
+    expect(timeline.map((entry) => entry.date.getTime())).toEqual(
+      Array.from({ length: 16 }, (_, minute) => now + minute * 60_000),
+    );
+    expect(timeline[10]?.props.providers[0]?.windows).toEqual([]);
+    expect(timeline[10]?.props.providers[1]?.windows[0]?.remaining).toBe(60);
+    expect(timeline[15]?.props.providers.every((provider) => provider.windows.length === 0)).toBe(
       true,
     );
   });
