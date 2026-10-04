@@ -115,6 +115,7 @@ export function gitHubProviderFailure(
   if (error._tag === "SourceControlRateLimitPausedError") {
     return { reason: "rate-limited", retryAt: error.retryAt };
   }
+  if (error._tag === "GitHubPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 

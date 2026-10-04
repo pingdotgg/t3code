@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   PullRequestDetail,
+  PullRequestOperationError,
   pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
@@ -1159,6 +1160,12 @@ export function buildAddSelectionToAgentHandoff(input: {
     prompt: bounded(input.request),
     reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
   };
+}
+
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
+export function isPullRequestNotFound(failure: unknown): boolean {
+  return isPullRequestOperationError(failure) && failure.reason === "not-found";
 }
 
 /**
