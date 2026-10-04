@@ -1811,6 +1811,100 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("reconciles only the current turn and never replays earlier history", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-history-replay");
+      const observed = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "New turn",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
+      });
+      const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID: string };
+
+      yield* sleep(150);
+      runtimeMock.state.messages = [
+        {
+          info: { id: "old-prompt", role: "user" },
+          parts: [{ id: "old-user-part", type: "text", messageID: "old-prompt", text: "Old" }],
+        },
+        {
+          info: { id: "old-assistant", role: "assistant", parentID: "old-prompt" },
+          parts: [
+            {
+              id: "old-tool-part",
+              messageID: "old-assistant",
+              type: "tool",
+              callID: "old-call",
+              tool: "bash",
+              state: {
+                status: "completed",
+                input: { command: "ls" },
+                output: "",
+                title: "ls",
+                metadata: {},
+                time: { start: 1, end: 2 },
+              },
+            },
+            {
+              id: "old-text-part",
+              messageID: "old-assistant",
+              type: "text",
+              text: "Old output",
+              time: { start: 1, end: 2 },
+            },
+          ],
+        },
+        {
+          info: { id: prompt.messageID, role: "user" },
+          parts: [{ id: "user-part", type: "text", messageID: prompt.messageID, text: "New" }],
+        },
+        {
+          info: { id: "new-assistant", role: "assistant", parentID: prompt.messageID },
+          parts: [
+            {
+              id: "new-text-part",
+              messageID: "new-assistant",
+              type: "text",
+              text: "New output",
+              time: { start: 3, end: 4 },
+            },
+          ],
+        },
+      ];
+      runtimeMock.state.sessionStatus = "idle";
+
+      const events = Array.from(yield* Fiber.join(observed).pipe(Effect.timeout("2 seconds")));
+      assert.equal(
+        events.filter((event) => event.type === "turn.completed" && event.turnId === turn.turnId)
+          .length,
+        1,
+      );
+      assert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+        ["New output"],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.itemId === "old-call" || event.itemId === "old-text-part"),
+        [],
+      );
+    }),
+  );
+
   it.effect(
     "reconciles from an assistant parent when the prompt is absent from the transcript page",
     () =>
