@@ -1,4 +1,4 @@
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
@@ -26,9 +26,10 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   const onAdvance = vi.fn();
   const onDismiss = vi.fn();
   const prompt = {
-    requestId: ApprovalRequestId.make("scoped-answer"),
+    requestId: RuntimeRequestId.make("scoped-answer"),
     createdAt: "2026-09-05T00:00:00.000Z",
     dismissible: false,
+    responseCapability: "live" as const,
     questions: [
       {
         id: "approach",

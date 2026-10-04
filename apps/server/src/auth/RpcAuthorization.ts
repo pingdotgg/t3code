@@ -1,6 +1,9 @@
 import {
   type DeviceListInput,
   AuthAccessReadScope,
+  ServerSettingsPatch,
+  ProviderInstanceMutation,
+  requiredScopesForServerSettingsPatch,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -18,6 +21,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
@@ -69,16 +73,16 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthOrchestrationOperateScope,
-  [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthOrchestrationOperateScope,
-  [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
+  [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthProvidersManageScope,
+  [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: AuthProvidersManageScope,
   [WS_METHODS.serverListAcpRegistrySessions]: AuthOrchestrationReadScope,
   [WS_METHODS.serverImportAcpRegistrySession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDeleteAcpRegistrySession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverListAcpRegistryProviders]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverSetAcpRegistryProvider]: AuthOrchestrationOperateScope,
-  [WS_METHODS.serverDisableAcpRegistryProvider]: AuthOrchestrationOperateScope,
-  [WS_METHODS.serverLogoutAcpRegistry]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverSetAcpRegistryProvider]: AuthProvidersManageScope,
+  [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
+  [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,
@@ -230,13 +234,30 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
     requiredScope,
   });
 
+const SettingsUpdate = Schema.Struct({
+  patch: ServerSettingsPatch,
+  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+});
+
+const requiredScopesForSettingsUpdate = (payload: unknown) => {
+  const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
+  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+  if (input.providerInstanceMutation === undefined) return scopes;
+  // An atomic provider mutation carries an empty patch unless it also changes settings.
+  return Object.values(input.patch).every((value) => value === undefined)
+    ? [AuthProvidersManageScope]
+    : [...new Set([...scopes, AuthProvidersManageScope])];
+};
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
-    const requiredScope = requiredScopeForRpcMethod(rpc._tag);
-    return scopes.includes(requiredScope)
-      ? effect
-      : Effect.fail(rpcAuthorizationError(requiredScope));
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    const requiredScopes =
+      rpc._tag === WS_METHODS.serverUpdateSettings
+        ? requiredScopesForSettingsUpdate(payload)
+        : [requiredScopeForRpcMethod(rpc._tag)];
+    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+    return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

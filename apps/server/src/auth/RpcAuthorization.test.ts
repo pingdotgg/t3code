@@ -1,5 +1,9 @@
 import {
   AuthEnvironmentMaintainScope,
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -76,13 +80,13 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareAcpRegistryAgent)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverUninstallAcpRegistryManagedBinary)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverAcceptAcpRegistryUrlAuth)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverListAcpRegistrySessions)).toBe(
       AuthOrchestrationReadScope,
@@ -91,7 +95,7 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationOperateScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverLogoutAcpRegistry)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
   });
 
@@ -161,9 +165,78 @@ describe("RPC scope middleware", () => {
         yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip),
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
-        requiredScope: AuthOrchestrationOperateScope,
+        requiredScope: AuthEnvironmentMaintainScope,
       });
       expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("settings mutation authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.serverUpdateSettings> =>
+        tag !== WS_METHODS.serverUpdateSettings,
+    ),
+  );
+  const providerInstanceMutation = {
+    operation: "remove" as const,
+    instanceId: ProviderInstanceId.make("codex_work"),
+  };
+
+  it.effect("allows provider-only mutations while denying mixed settings without their grant", () =>
+    Effect.gen(function* () {
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled++;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+            ),
+            rpcScopeAuthorizationLayer([AuthProvidersManageScope]),
+          ),
+        ),
+      );
+      yield* client[WS_METHODS.serverUpdateSettings]({ patch: {}, providerInstanceMutation });
+      expect(handled).toBe(1);
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { defaultRuntimeMode: "full-access" },
+          providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredScope: AuthSettingsWriteScope });
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not let a settings grant create or remove providers", () =>
+    Effect.gen(function* () {
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled = true;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+            ),
+            rpcScopeAuthorizationLayer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: {},
+          providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredScope: AuthProvidersManageScope });
+      expect(handled).toBe(false);
     }).pipe(Effect.scoped),
   );
 });

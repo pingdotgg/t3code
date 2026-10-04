@@ -34,6 +34,8 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: string) => (atom === "config-path" ? "/fixture/keybindings.json" : []),
 }));
 
+vi.mock("@tanstack/react-router", () => ({ useLocation: () => "" }));
+vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/server", () => ({
   primaryServerKeybindingsAtom: "keybindings",
   primaryServerKeybindingsConfigPathAtom: "config-path",

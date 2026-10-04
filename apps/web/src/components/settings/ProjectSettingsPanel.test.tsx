@@ -185,6 +185,7 @@ vi.mock("./settingsLayout", () => ({
     onClick: () => void;
   }) => <button {...props} aria-label={`Reset ${label} to default`} />,
 }));
+vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
 vi.mock("./ProjectActionsSettings", () => ({ ProjectActionsSettings: () => null }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: "model-picker" }));

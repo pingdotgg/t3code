@@ -107,12 +107,17 @@ vi.mock("../localApi", () => ({
   }),
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
+  resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: (projects: readonly { id: ProjectId }[]) => projects[0],
   matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>
     candidate.url === href,
   parseChangeRequestUrl: (href: string) =>
     href === linkedPullRequest.url
-      ? { repository: linkedPullRequest.repository, number: linkedPullRequest.number }
+      ? {
+          host: "github.com",
+          repository: linkedPullRequest.repository,
+          number: linkedPullRequest.number,
+        }
       : null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));

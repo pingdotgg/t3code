@@ -87,7 +87,6 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  requiredScopesForServerSettingsPatch,
   EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,

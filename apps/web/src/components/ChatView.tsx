@@ -4513,12 +4513,14 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  const canInterruptRunningThread = canOperateThread && deriveCanInterruptRunningThread(
-    activeThread !== undefined,
-    activeRuntime,
-  );
+  const canInterruptRunningThread =
+    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = useCallback(async () => {
-    if (!activeThread || !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)) return;
+    if (
+      !activeThread ||
+      !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
@@ -7236,7 +7238,8 @@ export default function ChatView(props: ChatViewProps) {
   const isStoppingBackgroundWork =
     stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
   const handleStopBackgroundWork = useCallback(async () => {
-    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return;
     const requestKey = `${environmentId}:${activeThread.id}`;
     setStoppingBackgroundWorkKey(requestKey);
     const result = await interruptThreadTurn({
@@ -8212,7 +8215,13 @@ export default function ChatView(props: ChatViewProps) {
   const onRevertToTurnCount = useCallback(
     async (turnCount: number, messageId: MessageId, restoreFiles?: boolean) => {
       const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+      if (
+        !localApi ||
+        !activeThread ||
+        isRevertingCheckpoint ||
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      )
+        return;
       const sourceMessage = serverProjection?.messages.find((message) => message.id === messageId);
       const message = sourceMessage
         ? {
@@ -9226,7 +9235,6 @@ export default function ChatView(props: ChatViewProps) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      abortQueuedReplay();
       return;
     }
     beginLocalDispatch({
@@ -9903,7 +9911,8 @@ export default function ChatView(props: ChatViewProps) {
 
   const onRespondToApproval = useCallback(
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
-      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+        return;
       if (
         pendingApprovals.find((approval) => approval.requestId === requestId)
           ?.responseCapability !== "live"
@@ -9936,7 +9945,8 @@ export default function ChatView(props: ChatViewProps) {
 
   const onRespondToUserInput = useCallback(
     async (requestId: RuntimeRequestId, answers: Record<string, unknown>) => {
-      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+        return;
       const pendingInput = pendingUserInputs.find((input) => input.requestId === requestId);
       if (!pendingInput || pendingInput.responseCapability === "not_resumable") return;
       const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
@@ -10167,7 +10177,14 @@ export default function ChatView(props: ChatViewProps) {
     context?: ReturnType<typeof buildMessageContext>;
     interactionMode: "default" | "plan";
   }) {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) || !activeThread || !isServerThread || isSendBusy || isConnecting || sendInFlightRef.current) {
+    if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      !activeThread ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
       return false;
     }
 
@@ -11391,18 +11408,19 @@ export default function ChatView(props: ChatViewProps) {
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
-                                !canOperateThread ? "This connection cannot change threads." :
-                                isEnvironmentChanging
-                                  ? "Preparing machine"
-                                  : isRevertingCheckpoint
-                                    ? "Rewinding conversation"
-                                    : feedbackUploading
-                                      ? "Sending feedback"
-                                      : threadDetailLoading
-                                        ? "Messages loading"
-                                        : worktreeSetupBlocksSend
-                                          ? "Preparing worktree"
-                                          : projectCloneSendBlockReason
+                                !canOperateThread
+                                  ? "This connection cannot change threads."
+                                  : isEnvironmentChanging
+                                    ? "Preparing machine"
+                                    : isRevertingCheckpoint
+                                      ? "Rewinding conversation"
+                                      : feedbackUploading
+                                        ? "Sending feedback"
+                                        : threadDetailLoading
+                                          ? "Messages loading"
+                                          : worktreeSetupBlocksSend
+                                            ? "Preparing worktree"
+                                            : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={

@@ -90,6 +90,7 @@ vi.mock("../ui/menu", () => ({
   }) => cloneElement(render, disabled === undefined ? {} : { disabled }, children),
   MenuPopup: "section",
   MenuItem: "button",
+  MenuItemLabel: "span",
   MenuShortcut: "span",
 }));
 

@@ -213,7 +213,10 @@ export function useSelectedThreadRequests() {
 
   const onRespondToApproval = useCallback(
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
-      if (!selectedThreadShell || !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)) {
+      if (
+        !selectedThreadShell ||
+        !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+      ) {
         return;
       }
       if (
@@ -321,7 +324,11 @@ export function useSelectedThreadRequests() {
 
   // Closes an async question without messaging the agent.
   const onDismissUserInput = useCallback(async () => {
-    if (!selectedThreadShell || !activePendingUserInput) {
+    if (
+      !selectedThreadShell ||
+      !activePendingUserInput ||
+      !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+    ) {
       return;
     }
 

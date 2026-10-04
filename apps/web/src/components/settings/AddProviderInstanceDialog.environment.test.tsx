@@ -118,7 +118,7 @@ function button(dialog: unknown, label: string) {
 
 function prepareInstance() {
   let dialog = renderDialog();
-  (button(dialog, "Next").props.onClick as () => void)();
+  (button(dialog, "Configure manually").props.onClick as () => void)();
   dialog = renderDialog();
   const label = visitElements(dialog, (entry) => entry.props.placeholder === "e.g. Work");
   if (!label) throw new Error("Missing instance label input.");
@@ -374,12 +374,20 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("adds an instance with the selected environment's provider grant alone", () => {
+  it("adds an instance with the selected environment's provider grant alone", async () => {
     const dialog = prepareInstance();
     (button(dialog, "Add instance").props.onClick as () => void)();
 
+    await Promise.resolve();
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      providerInstances: { codex_work: { driver: "codex", enabled: true, displayName: "Work" } },
+      operation: "create",
+      instanceId: "codex_work",
+      instance: {
+        driver: "codex",
+        enabled: true,
+        displayName: "Work",
+        config: { setupMode: "existing" },
+      },
     });
     expect(actions.toast).toHaveBeenCalledWith(
       expect.objectContaining({ type: "success", title: "Provider instance added" }),
@@ -399,7 +407,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(button(renderDialog(), "Add instance").props.disabled).toBe(true);
   });
 
-  it("keeps a denied draft available when the provider grant arrives", () => {
+  it("keeps a denied draft available when the provider grant arrives", async () => {
     actions.canManageProviders = false;
     let dialog = prepareInstance();
     (button(dialog, "Add instance").props.onClick as () => void)();
@@ -410,6 +418,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     dialog = renderDialog();
     expect(button(dialog, "Add instance").props.disabled).toBe(false);
     (button(dialog, "Add instance").props.onClick as () => void)();
+    await Promise.resolve();
     expect(settingsHooks.mutate).toHaveBeenCalledOnce();
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });

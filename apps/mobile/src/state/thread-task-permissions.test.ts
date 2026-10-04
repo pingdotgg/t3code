@@ -1,6 +1,6 @@
-import { AuthOrchestrationOperateScope, ApprovalRequestId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, RuntimeRequestId } from "@t3tools/contracts";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { AsyncResult, type Atom } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   grantedEnvironments: new Set<string>(),
   connectionState: "connected",
   draft: { text: "Keep my draft", attachments: [] as DraftComposerImageAttachment[] },
-  activities: [] as OrchestrationThreadActivity[],
+  pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
   clearDraft: vi.fn(),
   approve: vi.fn(),
@@ -28,8 +28,8 @@ const state = vi.hoisted(() => ({
     modelSelection: { instanceId: "codex", model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
-    session: { status: "ready", providerName: "codex" },
-    latestTurn: null,
+    runtime: null,
+    latestRun: null,
   },
 }));
 
@@ -43,6 +43,17 @@ vi.mock("react", () => ({
     vi.fn(),
   ],
 }));
+vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
+vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
+vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
+vi.mock("./queued-run-edit", () => ({
+  useQueuedRunEdit: () => null,
+  getQueuedRunEdit: () => null,
+}));
+vi.mock("./preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/unstable/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+});
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@effect/atom-react", async () => {
   const { appAtomRegistry } = await import("./atom-registry");
@@ -67,16 +78,22 @@ vi.mock("./use-thread-selection", () => ({
   }),
 }));
 vi.mock("./use-thread-detail", () => ({
-  useSelectedThreadDetail: () => ({ ...state.thread, messages: [], activities: state.activities }),
+  useSelectedThreadProjection: () => null,
+  useSelectedThreadVisibleTurnItems: () => [],
+  useSelectedThreadPendingRequests: () => state.pendingRequests,
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
-vi.mock("./threads", () => ({
-  threadEnvironment: {
-    respondToApproval: state.approve,
-    respondToUserInput: state.answer,
-    uploadFeedback: state.feedback,
-  },
-}));
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return {
+    environmentThreadDetails: { queueWorkflowAtom: () => Atom.make(null) },
+    threadEnvironment: {
+      respondToApproval: state.approve,
+      respondToUserInput: state.answer,
+      uploadFeedback: state.feedback,
+    },
+  };
+});
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
   return { dispatchingQueuedMessageIdAtom: Atom.make(null), useThreadOutboxMessages: () => ({}) };
@@ -94,6 +111,7 @@ vi.mock("./use-composer-drafts", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
   return {
     composerDraftsAtom: Atom.make({}),
+    composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
@@ -134,7 +152,17 @@ beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
   state.draft = { text: "Keep my draft", attachments: [] };
-  state.activities = [];
+  state.pendingRequests = {
+    approvals: [
+      {
+        requestId: RuntimeRequestId.make("approval"),
+        requestKind: "command",
+        createdAt: "2026-09-05T00:00:00.000Z",
+        responseCapability: "live",
+      },
+    ],
+    userInputs: [],
+  };
   vi.clearAllMocks();
   state.approve.mockResolvedValue(AsyncResult.success(undefined));
   state.answer.mockResolvedValue(AsyncResult.success(undefined));
@@ -188,10 +216,10 @@ describe("mobile task permissions", () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
     state.grantedEnvironments.delete("secondary");
-    await requests.onRespondToApproval(ApprovalRequestId.make("approval"), "accept");
+    await requests.onRespondToApproval(RuntimeRequestId.make("approval"), "accept");
     expect(state.approve).not.toHaveBeenCalled();
     state.grantedEnvironments.add("secondary");
-    await requests.onRespondToApproval(ApprovalRequestId.make("approval"), "accept");
+    await requests.onRespondToApproval(RuntimeRequestId.make("approval"), "accept");
     expect(state.approve).toHaveBeenCalledWith({
       environmentId: "secondary",
       input: { threadId: "thread", requestId: "approval", decision: "accept" },
@@ -199,18 +227,19 @@ describe("mobile task permissions", () => {
   });
 
   it("keeps answer drafts editable after revocation while blocking their submission", async () => {
-    state.activities = [
-      {
-        id: "input-activity",
-        kind: "user-input.requested",
-        summary: "Choose language",
-        tone: "info",
-        turnId: null,
-        createdAt: "2026-09-05T00:00:00.000Z",
-        payload: { requestId: "input", questions: [state.question] },
-      },
-    ] as OrchestrationThreadActivity[];
-    const requestId = ApprovalRequestId.make("input");
+    state.pendingRequests = {
+      approvals: [],
+      userInputs: [
+        {
+          requestId: RuntimeRequestId.make("input"),
+          createdAt: "2026-09-05T00:00:00.000Z",
+          responseCapability: "live",
+          dismissible: false,
+          questions: [state.question],
+        },
+      ],
+    };
+    const requestId = RuntimeRequestId.make("input");
     useSelectedThreadRequests().onSelectUserInputOption(requestId, state.question, "TypeScript");
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();

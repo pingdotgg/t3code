@@ -1157,53 +1157,47 @@ export function EnvironmentProviderSettings({
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
-            {readOnly ? (
-              <span className="min-w-0 truncate text-xs text-muted-foreground">
-                <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-              </span>
-            ) : (
-              <>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost-muted"
-                        disabled={isRefreshingProviders || !canRefreshProviders}
-                        aria-busy={isRefreshingProviders}
-                        onClick={() => void refreshProviders()}
-                      >
-                        <RefreshIcon refreshing={isRefreshingProviders} />
-                        <span className="sr-only">Refresh provider status</span>
-                        <span className="hidden min-w-0 truncate sm:inline">
-                          {isRefreshingProviders ? (
-                            "Refreshing providers"
-                          ) : (
-                            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-                          )}
-                        </span>
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">Refresh provider status</TooltipPopup>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        onClick={() => setIsAddInstanceDialogOpen(true)}
-                        aria-label="Add provider"
-                      >
-                        <PlusIcon />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">Add provider</TooltipPopup>
-                </Tooltip>
-              </>
-            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={isRefreshingProviders || !canRefreshProviders}
+                    aria-busy={isRefreshingProviders}
+                    onClick={() => void refreshProviders()}
+                  >
+                    <RefreshIcon refreshing={isRefreshingProviders} />
+                    <span className="sr-only">Refresh provider status</span>
+                    <span className="hidden min-w-0 truncate sm:inline">
+                      {isRefreshingProviders ? (
+                        "Refreshing providers"
+                      ) : (
+                        <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
+                      )}
+                    </span>
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+            </Tooltip>
+            {!readOnly ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      onClick={() => setIsAddInstanceDialogOpen(true)}
+                      aria-label="Add provider"
+                    >
+                      <PlusIcon />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Add provider</TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
         }
       >

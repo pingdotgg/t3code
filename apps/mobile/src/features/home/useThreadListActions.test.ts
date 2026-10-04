@@ -1,3 +1,4 @@
+import { makeThreadShellFixture } from "../../test-fixtures";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -146,30 +147,14 @@ const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
 
 function makeThread(input: Partial<EnvironmentThreadShell> = {}): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     id: ThreadId.make("thread"),
     title: "Thread",
     environmentId: primaryEnvironmentId,
     projectId: ProjectId.make("project"),
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    pullRequests: [],
-    createdAt: "2026-09-01T00:00:00.000Z",
-    updatedAt: "2026-09-01T00:00:00.000Z",
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
     ...input,
-  };
+  });
 }
 
 const mutationCases = [

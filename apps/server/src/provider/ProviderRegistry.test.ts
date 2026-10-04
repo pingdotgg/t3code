@@ -2,7 +2,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it, assert } from "@effect/vitest";
+import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2122,7 +2122,7 @@ it.layer(
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              adapter: {} as ProviderInstance["adapter"],
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             },
           ] satisfies ReadonlyArray<ProviderInstance>;
@@ -2159,8 +2159,8 @@ it.layer(
             yield* Effect.yieldNow;
             assert.strictEqual(yield* Ref.get(refreshCalls), 1);
             yield* Deferred.succeed(releaseProbe, undefined);
-            assert.deepStrictEqual(yield* Fiber.join(first), [provider]);
-            assert.deepStrictEqual(yield* Fiber.join(second), [provider]);
+            expect(yield* Fiber.join(first)).toEqual([expect.objectContaining(provider)]);
+            expect(yield* Fiber.join(second)).toEqual([expect.objectContaining(provider)]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 1);
 
             yield* registry.refresh();

@@ -15,6 +15,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
+  AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ThreadId,
@@ -678,7 +679,11 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (!selectedThread || !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) || composer.interruptibleRunId === null) {
+    if (
+      !selectedThread ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) ||
+      composer.interruptibleRunId === null
+    ) {
       return;
     }
     return interruptThreadTurn({

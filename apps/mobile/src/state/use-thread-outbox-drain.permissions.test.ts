@@ -209,13 +209,12 @@ describe("queued task operation access", () => {
       interactionMode: "plan",
     });
     await state.manager.enqueue(queued);
-    state.metadata.mockImplementationOnce(async () => {
+    state.runtime.mockImplementationOnce(async () => {
       state.grantedEnvironments.delete("secondary");
       return AsyncResult.success(undefined);
     });
     await runDrain();
-    expect(state.metadata).toHaveBeenCalledOnce();
-    expect(state.runtime).not.toHaveBeenCalled();
+    expect(state.runtime).toHaveBeenCalledOnce();
     expect(state.interaction).not.toHaveBeenCalled();
     expect(state.prepare).not.toHaveBeenCalled();
     expect(state.start).not.toHaveBeenCalled();
