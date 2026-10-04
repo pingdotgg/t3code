@@ -184,6 +184,7 @@ type ThreadFeedEntryContent =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId;
+      readonly expandKey: string;
       readonly label: string;
       readonly expanded: boolean;
     }
@@ -943,6 +944,8 @@ export function threadFeedActivityIsVisible(
 }
 
 interface ThreadFeedRunFold {
+  /** The run id, or `${runId}:${anchorId}` when steers split the run into several folds. */
+  readonly expandKey: string;
   readonly runId: RunId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
@@ -987,16 +990,27 @@ function deriveThreadFeedRunFolds(
   const failedRunIds = failedFeedRunIds(feed, latestRun);
   const groupsByRunId = new Map<
     RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
+    {
+      entries: ThreadFeedEntry[];
+      startBoundary: string | null;
+      /** A steer splits the settled fold so work stays under the message it answered. */
+      segments: Array<{ startIndex: number; startBoundary: string }>;
+    }
   >();
   // Fold state is keyed by run, so each runless prompt lends its response a
   // stable key of its own. Decide per prompt, not per thread: a V1 thread's
   // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
   let pendingUserBoundary: string | null = null;
+  let pendingSteer: { createdAt: string; runId: RunId | null } | null = null;
   for (const entry of feed) {
     if (entry.type === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
+      pendingSteer =
+        entry.message.inputIntent === "steer" ||
+        entry.message.inputIntent === "promoted_queued_to_steer"
+          ? { createdAt: entry.message.createdAt, runId: entry.message.runId ?? null }
+          : null;
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
     }
@@ -1009,9 +1023,17 @@ function deriveThreadFeedRunFolds(
     if (!runId) continue;
     let group = groupsByRunId.get(runId);
     if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary };
+      group = { entries: [], startBoundary: pendingUserBoundary, segments: [] };
       pendingUserBoundary = null;
+      pendingSteer = null;
       groupsByRunId.set(runId, group);
+    }
+    if (pendingSteer && (pendingSteer.runId === null || pendingSteer.runId === runId)) {
+      group.segments.push({
+        startIndex: group.entries.length,
+        startBoundary: pendingSteer.createdAt,
+      });
+      pendingSteer = null;
     }
     group.entries.push(entry);
     if (entry.type === "message") {
@@ -1068,46 +1090,66 @@ function deriveThreadFeedRunFolds(
         .map((entry) => entry.id),
     );
     const firstEntry = group.entries[0];
-    const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
-    if (!firstHiddenEntry || !firstEntry || !lastEntry) continue;
-    const hidesNonCompactionWork = group.entries.some(
-      (entry) =>
-        hiddenEntryIds.has(entry.id) &&
-        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)),
-    );
-    if (!hidesNonCompactionWork) continue;
+    if (!firstEntry || !lastEntry) continue;
+    const sections = [{ startIndex: 0, startBoundary: group.startBoundary }, ...group.segments]
+      .map((section, index, all) => ({
+        endBoundary: all[index + 1]?.startBoundary ?? null,
+        hiddenEntries: group.entries
+          .slice(section.startIndex, all[index + 1]?.startIndex)
+          .filter((entry) => hiddenEntryIds.has(entry.id)),
+      }))
+      .filter((section) =>
+        section.hiddenEntries.some(
+          (entry) => !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)),
+        ),
+      );
+    if (sections.length === 0) continue;
     const terminalEntry = terminalAssistantId
       ? group.entries.find((entry) => entry.id === terminalAssistantId)
       : null;
     const latestRunMatches = latestRun?.runId === runId;
     const lastEntryEnd =
       lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const elapsedMs =
+    const runTiming =
       latestRunMatches && latestRun.startedAt && latestRun.completedAt
-        ? computeElapsedMs(latestRun.startedAt, latestRun.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(
-              terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
-              lastEntryEnd,
-            ) ?? lastEntryEnd,
-          );
-    const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
+        ? { start: latestRun.startedAt, end: latestRun.completedAt }
+        : {
+            start: group.startBoundary ?? firstEntry.createdAt,
+            end:
+              maxIsoTimestamp(
+                terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
+                lastEntryEnd,
+              ) ?? lastEntryEnd,
+          };
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
-    foldsByAnchorId.set(firstHiddenEntry.id, {
-      runId,
-      createdAt: firstHiddenEntry.createdAt,
-      hiddenEntryIds,
-      label: interrupted
-        ? duration
-          ? `You stopped after ${duration}`
-          : "You stopped this response"
-        : duration
-          ? `Worked for ${duration}`
-          : "Worked",
-    });
+    // Each fold runs until the steer after it; time without folded work joins
+    // the next fold, so the folds add up to the run.
+    let sectionStart = runTiming.start;
+    for (const [index, section] of sections.entries()) {
+      const anchor = section.hiddenEntries[0];
+      if (!anchor) continue;
+      const nextSection = sections[index + 1];
+      const sectionEnd = nextSection ? (section.endBoundary ?? runTiming.end) : runTiming.end;
+      const elapsedMs = computeElapsedMs(sectionStart, sectionEnd);
+      sectionStart = sectionEnd;
+      const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
+      foldsByAnchorId.set(anchor.id, {
+        expandKey: sections.length === 1 ? runId : `${runId}:${anchor.id}`,
+        runId,
+        createdAt: anchor.createdAt,
+        hiddenEntryIds: new Set(section.hiddenEntries.map((entry) => entry.id)),
+        label:
+          interrupted && !nextSection
+            ? duration
+              ? `You stopped after ${duration}`
+              : "You stopped this response"
+            : duration
+              ? `Worked for ${duration}`
+              : "Worked",
+      });
+    }
   }
   return foldsByAnchorId;
 }
@@ -1146,7 +1188,7 @@ function settleSupersededReasoning(
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
-  expandedRunIds: ReadonlySet<RunId>,
+  expandedRunIds: ReadonlySet<string>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
   /** The live work is a provider-native subagent's runless root turn. */
@@ -1168,9 +1210,12 @@ export function deriveThreadFeedPresentation(
     latestRun,
     isWorking && runlessWorkActive,
   );
+  // A run id expands every fold of that run.
+  const foldExpanded = (fold: ThreadFeedRunFold) =>
+    expandedRunIds.has(fold.expandKey) || expandedRunIds.has(fold.runId);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
-    if (!expandedRunIds.has(fold.runId)) {
+    if (!foldExpanded(fold)) {
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
@@ -1187,10 +1232,11 @@ export function deriveThreadFeedPresentation(
       entry.runId === activeRunId;
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
-      const expanded = expandedRunIds.has(fold.runId);
+      const expanded = foldExpanded(fold);
       let row = runFoldRowsCache.get(entry);
       if (
         !row ||
+        row.expandKey !== fold.expandKey ||
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
@@ -1198,9 +1244,10 @@ export function deriveThreadFeedPresentation(
       ) {
         row = {
           type: "run-fold",
-          id: `run-fold:${fold.runId}`,
+          id: `run-fold:${fold.expandKey}`,
           createdAt: fold.createdAt,
           runId: fold.runId,
+          expandKey: fold.expandKey,
           label: fold.label,
           expanded,
         };
