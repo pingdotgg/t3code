@@ -155,18 +155,22 @@ it.each(["data", "end"] as const)(
     };
     const controller = new AbortController();
     const reason = new Error("cancel verification");
+    const onVerificationStart = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(bytes)),
     );
     const createReadStream = vi.mocked(NodeFS.createReadStream).getMockImplementation()!;
-    vi.mocked(NodeFS.createReadStream).mockImplementation((...args) => {
+    vi.mocked(NodeFS.createReadStream).mockImplementationOnce((...args) => {
+      expect(onVerificationStart).toHaveBeenCalledTimes(1);
       const stream = createReadStream(...args);
       stream.once(event, () => controller.abort(reason));
       return stream;
     });
     try {
-      await expect(downloadSpeechModel(directory, model, controller.signal)).rejects.toBe(reason);
+      await expect(
+        downloadSpeechModel(directory, model, controller.signal, undefined, onVerificationStart),
+      ).rejects.toBe(reason);
       expect(controller.signal.aborted).toBe(true);
       expect(await isSpeechModelReady(directory, model)).toBe(false);
       expect(await NodeFSP.readdir(directory)).toEqual([]);

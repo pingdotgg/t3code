@@ -260,6 +260,7 @@ async function hasExpectedFile(
   path: string,
   model: SpeechModel,
   signal?: AbortSignal,
+  onVerificationStart?: () => void,
 ): Promise<boolean> {
   signal?.throwIfAborted();
   const stat = await NodeFSP.stat(path).catch(() => null);
@@ -271,6 +272,7 @@ async function hasExpectedFile(
     return true;
   const digest = NodeCrypto.createHash("sha256");
   try {
+    onVerificationStart?.();
     for await (const chunk of NodeFS.createReadStream(path, { signal })) digest.update(chunk);
     signal?.throwIfAborted();
     if (digest.digest("hex") !== model.sha256) return false;
@@ -299,11 +301,12 @@ export async function downloadSpeechModel(
   model: SpeechModel,
   signal?: AbortSignal,
   onProgress?: (downloaded: number) => void,
+  onVerificationStart?: () => void,
 ): Promise<string> {
   const finalPath = speechModelPath(directory, model);
   signal?.throwIfAborted();
   await NodeFSP.mkdir(directory, { recursive: true });
-  const alreadyVerified = await hasExpectedFile(finalPath, model, signal);
+  const alreadyVerified = await hasExpectedFile(finalPath, model, signal, onVerificationStart);
   signal?.throwIfAborted();
   if (alreadyVerified) return finalPath;
   const partialPath = `${finalPath}.${NodeCrypto.randomUUID()}.part`;
@@ -373,7 +376,7 @@ export async function downloadSpeechModel(
         if (signal?.aborted || !retryable || attempt === 2) throw error;
       }
     }
-    if (!(await hasExpectedFile(partialPath, model, signal)))
+    if (!(await hasExpectedFile(partialPath, model, signal, onVerificationStart)))
       throw new Error("speech model verification failed");
     signal?.throwIfAborted();
     await NodeFSP.rm(finalPath, { force: true });

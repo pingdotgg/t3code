@@ -305,10 +305,15 @@ export const make = Effect.gen(function* () {
         definition,
         controller.signal,
         (downloaded) => {
-          if (downloading?.modelId === modelId) downloading.downloaded = downloaded;
+          if (downloading?.modelId === modelId) {
+            downloading.downloaded = downloaded;
+            downloading.verifying = false;
+          }
+        },
+        () => {
+          if (downloading?.modelId === modelId) downloading.verifying = true;
         },
       );
-      if (downloading?.modelId === modelId) downloading.verifying = true;
       return modelPath;
     } catch (error) {
       if (controller.signal.aborted) throw new SpeechDownloadCancelledError({ modelId });

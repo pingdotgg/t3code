@@ -45,7 +45,15 @@ const loadNative = vi.hoisted(() =>
   ),
 );
 const downloadModel = vi.hoisted(() =>
-  vi.fn(async (_directory: string, _model: unknown, _signal?: AbortSignal) => "test.gguf"),
+  vi.fn(
+    async (
+      _directory: string,
+      _model: unknown,
+      _signal?: AbortSignal,
+      _onProgress?: (downloaded: number) => void,
+      _onVerificationStart?: () => void,
+    ) => "test.gguf",
+  ),
 );
 const readyModels = vi.hoisted(() => new Set(["test-model", "fallback-model"]));
 const modelDefinitions = vi.hoisted(() => [
@@ -842,6 +850,38 @@ it.effect(
       }).pipe(Effect.provide(layer));
     }),
 );
+it.effect("reports verification while a model download is still pending", () =>
+  Effect.gen(function* () {
+    const verifying = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<string>();
+    downloadModel.mockImplementationOnce(
+      async (_directory, _model, _signal, onProgress, onVerificationStart) => {
+        onProgress?.(4);
+        onVerificationStart?.();
+        verifying.resolve();
+        return finished.promise;
+      },
+    );
+    const speech = yield* SpeechService.SpeechService;
+    const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
+    yield* Effect.promise(() => verifying.promise);
+    try {
+      expect(
+        (yield* speech.models).models.find((model) => model.id === "test-model"),
+      ).toMatchObject({
+        state: "verifying",
+        downloaded: 4,
+      });
+    } finally {
+      finished.resolve("test.gguf");
+    }
+    const result = yield* Fiber.join(request);
+    expect(result.models.find((model) => model.id === "test-model")).toMatchObject({
+      state: "installed",
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
   Effect.gen(function* () {
     const result = yield* Effect.gen(function* () {
