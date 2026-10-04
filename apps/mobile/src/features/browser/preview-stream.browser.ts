@@ -548,8 +548,9 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     const shortcut = event.ctrlKey || event.metaKey;
-    // Paste arrives as input text from this device's clipboard.
-    if (shortcut && event.key.toLowerCase() === "v") return;
+    // Paste arrives as input text from this device's clipboard. Cut is not forwarded:
+    // the page's selection never reaches this clipboard, so it would be lost.
+    if (shortcut && ["v", "x"].includes(event.key.toLowerCase())) return;
     // Enter carries "\r" like Puppeteer's key table, so forms submit and textareas break lines.
     const text = shortcut
       ? undefined
@@ -614,6 +615,9 @@ export function start(configuration: PreviewStreamConfiguration) {
     input.addEventListener("input", onInput);
     input.addEventListener("compositionend", onCompositionEnd);
     input.addEventListener("focus", resetInput);
+    // Copying the input would put its sentinel on this device's clipboard.
+    input.addEventListener("copy", preventDefault);
+    input.addEventListener("cut", preventDefault);
     resetInput();
   }
 

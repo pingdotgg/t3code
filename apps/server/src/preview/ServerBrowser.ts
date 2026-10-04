@@ -247,6 +247,16 @@ const modifiersOf = (message: Record<string, unknown>) => {
   return Number.isInteger(value) && value >= 0 && value < 16 ? value : 0;
 };
 
+// Cmd shortcuts from Apple viewers are no editing shortcut for Linux or headless
+// Chromium, so they carry the command. Ctrl already works natively on Linux.
+const metaEditingCommand = (key: string, modifiers: number) => {
+  if ((modifiers & 0b0111) !== 4) return null;
+  const lower = key.toLowerCase();
+  const command =
+    lower === "a" ? "selectAll" : lower === "z" ? (modifiers & 8 ? "redo" : "undo") : null;
+  return command ? { commands: [command] } : null;
+};
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const enabled = isServerBrowserEnabled(config.mode);
@@ -342,7 +352,8 @@ const make = Effect.gen(function* () {
 
   const reportLoaded = async (tab: ServerTab) => {
     const url = tab.page.url();
-    if (url === "about:blank") return;
+    // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
+    if (url === "about:blank" || url.startsWith("chrome-error://")) return;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
     report(tab, { _tag: "Success", url: url.slice(0, 2048), title });
   };
@@ -1108,6 +1119,7 @@ const make = Effect.gen(function* () {
           code,
           modifiers,
           ...(text ? { text, unmodifiedText: text } : {}),
+          ...metaEditingCommand(key, modifiers),
           windowsVirtualKeyCode: num(
             message.keyCode,
             key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,

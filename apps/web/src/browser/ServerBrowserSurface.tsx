@@ -607,8 +607,9 @@ export function ServerBrowserSurface(props: {
       return;
     }
     const shortcut = event.ctrlKey || event.metaKey;
-    // Paste arrives as a paste event carrying this device's clipboard.
-    if (shortcut && event.key.toLowerCase() === "v") return;
+    // Paste arrives as a paste event carrying this device's clipboard. Cut is not forwarded:
+    // the page's selection never reaches this clipboard, so it would be lost.
+    if (shortcut && ["v", "x"].includes(event.key.toLowerCase())) return;
     // Enter carries "\r" like Puppeteer's key table, so forms submit and textareas break lines.
     const text = shortcut
       ? undefined
@@ -698,6 +699,9 @@ export function ServerBrowserSurface(props: {
         onKeyUp={(event) => handleKey("up", event)}
         onInput={handleInput}
         onCompositionEnd={handleCompositionEnd}
+        // Copying the input would put its sentinel on this device's clipboard.
+        onCopy={(event) => event.preventDefault()}
+        onCut={(event) => event.preventDefault()}
         onPaste={handlePaste}
       />
       {visible && accessDenied ? (
