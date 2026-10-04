@@ -1,9 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference and IPC cleanup need killable Promise boundaries outside the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
-import type { SpeechStreamText } from "@t3tools/contracts";
+import { makeSpeechTextCorrector } from "./customWords.ts";
+import type { SpeechCustomWords, SpeechStreamText } from "@t3tools/contracts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
 const entry = `
+const makeCorrector = ${makeSpeechTextCorrector.toString()};
+let correct = (text) => text;
 let model;
 let session;
 let stream;
@@ -31,6 +34,7 @@ process.on("message", async (message) => {
         supportsTranslation: model.capabilities.supportsTranslate,
         supportsInitialPrompt: model.supports("initial_prompt") });
     } else if (message.kind === "begin") {
+      correct = makeCorrector(message.customWords ?? [], message.dictionary ?? []);
       session = model.createSession();
       stream = await session.stream({ timestamps: "none", language: message.language });
       process.send({ type: "t3-speech-reply", ok: true });
@@ -38,10 +42,10 @@ process.on("message", async (message) => {
       const update = await stream.feed(message.pcm);
       const text = update.committedChanged || update.tentativeChanged ? stream.text : null;
       process.send({ type: "t3-speech-reply", ok: true, revision: update.revision,
-        preview: text ? { committed: text.committed, tentative: text.tentative } : null });
+        preview: text ? { committed: correct(text.committed), tentative: correct(text.tentative) } : null });
     } else if (message.kind === "finish") {
       await stream.finalize();
-      const text = stream.text.full;
+      const text = correct(stream.text.full);
       stream.reset();
       session.dispose();
       stream = session = undefined;
@@ -258,8 +262,12 @@ export async function loadNativeSpeechModel(
     supportsStreaming,
     supportsTranslation,
     supportsInitialPrompt,
-    begin: async (language?: string) => {
-      await send({ kind: "begin", language });
+    begin: async (
+      language?: string,
+      customWords: readonly string[] = [],
+      dictionary: SpeechCustomWords = [],
+    ) => {
+      await send({ kind: "begin", language, customWords, dictionary });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });

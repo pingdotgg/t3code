@@ -32,7 +32,6 @@ import {
 import {
   applySpeechCustomWords,
   applySpeechAliases,
-  makeSpeechAliasReplacer,
   normalizeSpeechCustomWords,
   transcriptionCustomWords,
 } from "./customWords.ts";
@@ -668,8 +667,6 @@ export const make = Effect.gen(function* () {
         const settings = { ...rawSettings, ...preferences };
         const customWords = transcriptionCustomWords(settings, preferences.projectName);
         const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-        const replaceAliases = makeSpeechAliasReplacer(dictionary);
-        const correct = (text: string) => replaceAliases(applySpeechCustomWords(text, customWords));
         const removeFillerWords = settings.speechRemoveFillerWords;
         const definition =
           getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
@@ -682,7 +679,7 @@ export const make = Effect.gen(function* () {
           loaded = prepared;
           if (!prepared.supportsStreaming)
             throw new Error("The selected model does not support streaming.");
-          await prepared.begin(language === "auto" ? undefined : language);
+          await prepared.begin(language === "auto" ? undefined : language, customWords, dictionary);
           started = true;
           return { prepared, durationMs: performance.now() - startedAt };
         });
@@ -727,12 +724,6 @@ export const make = Effect.gen(function* () {
                 return {
                   ...update,
                   revision: ++revision,
-                  text: update.text
-                    ? {
-                        committed: correct(update.text.committed),
-                        tentative: correct(update.text.tentative),
-                      }
-                    : null,
                 };
               } catch (cause) {
                 if (
@@ -751,25 +742,23 @@ export const make = Effect.gen(function* () {
                 }
                 streamModel = await loadModel(definition, signal, "cpu");
                 loaded = streamModel;
-                await streamModel.begin(language === "auto" ? undefined : language);
+                await streamModel.begin(
+                  language === "auto" ? undefined : language,
+                  customWords,
+                  dictionary,
+                );
                 let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
                 for (const chunk of received) update = await streamModel.feed(chunk);
                 if (!update) throw cause;
                 return {
                   ...update,
                   revision: ++revision,
-                  text: update.text
-                    ? {
-                        committed: correct(update.text.committed),
-                        tentative: correct(update.text.tentative),
-                      }
-                    : null,
                 };
               }
             }),
           finish: run(async () => {
             const startedAt = performance.now();
-            const corrected = correct(await streamModel.finish());
+            const corrected = await streamModel.finish();
             const text = removeFillerWords
               ? removeSpeechFillerWords(
                   corrected,

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
+import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
 import { expect, it, vi } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
@@ -294,3 +295,93 @@ it("times out and terminates a GPU probe that never replies", async () => {
     probe.mockRestore();
   }
 });
+
+it.each(["t three code", "t 3 code"])(
+  "matches %s across committed increments and resets dictionaries",
+  async (phrase) => {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      streamingFixture(`async function (pcm) {
+      this.text.committed = pcm[0] === 1 ? "open t " : "open ${phrase}";
+      this.text.tentative = "";
+      this.text.full = this.text.committed;
+      return { revision: pcm[0], committedChanged: true };
+    }`),
+    );
+    try {
+      await model.begin(undefined, ["T3 Code"], [{ term: "T3 Code", aliases: ["t three code"] }]);
+      await model.feed(new Float32Array([1]));
+      expect((await model.feed(new Float32Array([2]))).text?.committed).toBe("open T3 Code");
+      expect(await model.finish()).toBe("open T3 Code");
+      await model.begin();
+      expect((await model.feed(new Float32Array([2]))).text?.committed).toBe(`open ${phrase}`);
+      await model.reset();
+      await model.begin("er", ["err"]);
+      // Also exercise fuzzy correction rather than only exact aliases.
+      expect(await model.finish()).toBe("err");
+    } finally {
+      await model.dispose();
+    }
+  },
+);
+
+it("serves HTTP requests while the child corrects a large streaming transcript", async () => {
+  const server = NodeHttp.createServer((_request, response) => response.end("responsive"));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing test server port");
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(`async function () {
+      this.text.committed = "dictionary ".repeat(1200);
+      process.send({ type: "correction-starting" });
+      return { revision: 1, committedChanged: true };
+    }`),
+  );
+  try {
+    const child = vi.mocked(NodeChildProcess.spawn).mock.results.at(-1)?.value;
+    if (!child) throw new Error("Missing inference child");
+    const started = new Promise<void>((resolve) =>
+      child.on("message", (message: unknown) => {
+        if (
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "correction-starting"
+        )
+          resolve();
+      }),
+    );
+    await model.begin(
+      undefined,
+      Array.from({ length: 100 }, (_, index) => `dictionary${index}`),
+    );
+    let finished = false;
+    const feeding = model.feed(new Float32Array([1])).then((result) => {
+      finished = true;
+      return result;
+    });
+    await started;
+    const response = await new Promise<string>((resolve, reject) => {
+      NodeHttp.get(`http://127.0.0.1:${address.port}`, (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () => resolve(body));
+        response.on("error", reject);
+      }).on("error", reject);
+    });
+    expect(response).toBe("responsive");
+    expect(finished).toBe(false);
+    expect((await feeding).text?.committed).toContain("dictionary");
+  } finally {
+    await model.dispose();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}, 10000);

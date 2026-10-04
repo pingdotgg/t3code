@@ -21,7 +21,7 @@ const native = vi.hoisted(() => ({
   supportsStreaming: true,
   supportsTranslation: true,
   supportsInitialPrompt: false,
-  begin: vi.fn(async (_language?: string) => {}),
+  begin: vi.fn(async (_language?: string, _words?: readonly string[], _dictionary?: unknown) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
     text: { committed: "", tentative: "hello" },
@@ -246,7 +246,7 @@ it.effect("applies the selected language to transcription and streaming", () =>
       });
       yield* stream.finish;
     }).pipe(Effect.scoped);
-    expect(native.begin).toHaveBeenCalledWith("fr");
+    expect(native.begin).toHaveBeenCalledWith("fr", [], []);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -267,7 +267,7 @@ it.effect("translates supported non-English batch transcription to English", () 
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("recognizes the correction word in stream previews and final text", () =>
+it.effect("passes the correction word to the inference child", () =>
   Effect.gen(function* () {
     native.feed.mockResolvedValueOnce({
       revision: 1,
@@ -278,9 +278,10 @@ it.effect("recognizes the correction word in stream previews and final text", ()
     yield* Effect.gen(function* () {
       const stream = yield* speech.startStream(correctionWordOptions);
       expect(yield* stream.feed(pcm())).toMatchObject({
-        text: { committed: "orange, err,", tentative: "yellow" },
+        text: { committed: "orange, er,", tentative: "yellow" },
       });
-      expect(yield* stream.finish).toBe("orange, err, yellow");
+      expect(yield* stream.finish).toBe("orange, er, yellow");
+      expect(native.begin.mock.calls[0]?.[1]).toContain("err");
     }).pipe(Effect.scoped);
   }).pipe(Effect.provide(layer)),
 );
@@ -318,7 +319,7 @@ it.effect("includes the active project name in the transcription prompt", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("uses the active project name to correct streaming text", () =>
+it.effect("passes the active project name to the streaming inference child", () =>
   Effect.gen(function* () {
     native.feed.mockResolvedValueOnce({
       revision: 1,
@@ -332,7 +333,8 @@ it.effect("uses the active project name to correct streaming text", () =>
       });
       return yield* stream.feed(pcm());
     }).pipe(Effect.scoped);
-    expect(text.text?.tentative).toBe("Acme Studio");
+    expect(text.text?.tentative).toBe("acme studio");
+    expect(native.begin.mock.calls[0]?.[1]).toContain("Acme Studio");
   }).pipe(Effect.provide(layer)),
 );
 
@@ -763,11 +765,13 @@ it.effect("replays streaming audio on CPU after an accelerated feed crashes", ()
     native.feed.mockRejectedValueOnce(new Error("worker stopped"));
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      const stream = yield* speech.startStream(customWordsOptions);
       expect((yield* stream.feed(pcm())).text).toEqual({ committed: "", tentative: "hello" });
       expect(loadNative).toHaveBeenCalledTimes(2);
       expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
       expect(native.begin).toHaveBeenCalledTimes(2);
+      expect(native.begin.mock.calls[1]).toEqual(native.begin.mock.calls[0]);
+      expect(native.begin.mock.calls[1]?.[1]).toContain("T3 Code");
       expect(native.feed).toHaveBeenCalledTimes(2);
       yield* stream.finish;
     }).pipe(Effect.scoped, Effect.provide(layer));
@@ -1044,6 +1048,11 @@ it.effect("uses the supplied dictionary in live transcription", () =>
       });
       return yield* stream.feed(pcm());
     }).pipe(Effect.scoped);
-    expect(result.text?.tentative).toBe("Parakeet");
+    expect(result.text?.tentative).toBe("pair a keet");
+    expect(native.begin).toHaveBeenCalledWith(
+      "en",
+      ["Parakeet"],
+      [{ term: "Parakeet", aliases: ["pair a keet"] }],
+    );
   }).pipe(Effect.provide(layer)),
 );
