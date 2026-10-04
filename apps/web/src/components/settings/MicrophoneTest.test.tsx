@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { MicrophoneTest } from "./MicrophoneTest";
 
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
 vi.mock("~/hooks/useMediaQuery", () => ({ useMediaQuery: () => false }));
 vi.mock("../ui/tooltip", () => ({
@@ -140,10 +141,10 @@ it("shows permission failures and lets the user try again", async () => {
     root = create(createElement(MicrophoneTest, { microphoneId: "" }));
   });
   await click("Test mic");
-  expect(root.root.findByProps({ role: "alert" }).props.children).toBe(
+  expect(root.root.findByProps({ role: "status" }).props["aria-label"]).toBe(
     "Microphone permission denied",
   );
-  await click("Test mic");
+  await click("Record again");
   expect(recorder.state).toBe("recording");
   await click("Stop recording");
   await click("Done");

@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { VoiceInputPill, VoiceWaveform } from "../chat/VoiceInputPill";
+import { VoiceInputErrorPill } from "../chat/VoiceInputErrorPill";
 import { MicrophoneTestPlayback } from "./MicrophoneTestPlayback";
 
 export function MicrophoneTest({
@@ -58,6 +59,7 @@ export function MicrophoneTest({
   }, [releaseCapture]);
 
   async function start() {
+    releaseCapture();
     discard();
     setError(null);
     setLevel(0);
@@ -164,7 +166,14 @@ export function MicrophoneTest({
       control={
         <div className="flex w-full flex-col gap-2 sm:w-auto">
           <div className="flex min-h-10 min-w-0 items-center gap-2">
-            {phase === "idle" ? (
+            {error ? (
+              <VoiceInputErrorPill
+                error={error}
+                errorAction="retry"
+                onRetry={() => void start()}
+                onDismiss={cancel}
+              />
+            ) : phase === "idle" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -233,11 +242,6 @@ export function MicrophoneTest({
             )}
             {microphoneControl}
           </div>
-          {error ? (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          ) : null}
         </div>
       }
     />

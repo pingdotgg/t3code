@@ -100,7 +100,7 @@ export function TranscriptionTest({
     };
   }, [prepared, microphoneId]);
 
-  const busy = state.phase !== "idle" && state.phase !== "error";
+  const showPill = state.phase !== "idle";
   return (
     <SettingsRow
       {...searchableSetting("transcription-test")}
@@ -108,13 +108,18 @@ export function TranscriptionTest({
       description="Models run on the selected environment. Test without post-processing. Recordings are deleted after transcription."
       control={
         <div className="flex flex-wrap items-center gap-3">
-          {busy ? (
+          {showPill ? (
             <ComposerSpeechRecordingPill
               state={state}
               progress={null}
               level={level}
               recordingLimitSeconds={10}
-              onStart={() => void controller.current?.start()}
+              disabled={disabled || !prepared}
+              onStart={() => {
+                setTranscript(null);
+                setPreview(null);
+                void controller.current?.start();
+              }}
               onStop={() => void controller.current?.stop()}
               onCancel={() => controller.current?.cancel()}
               onSkipPostProcessing={() => {}}
@@ -162,11 +167,6 @@ export function TranscriptionTest({
             )}
           </p>
         </div>
-      ) : null}
-      {state.error ? (
-        <p role="alert" className="pt-3 pb-2 text-xs text-destructive">
-          {state.error}
-        </p>
       ) : null}
     </SettingsRow>
   );

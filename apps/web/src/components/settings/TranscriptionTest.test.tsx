@@ -33,11 +33,26 @@ vi.mock("../../speech/browserVoiceInput", () => ({
   },
 }));
 vi.mock("../chat/ComposerSpeechButton", () => ({
-  ComposerSpeechRecordingPill: ({ onStop, onCancel }: { onStop(): void; onCancel(): void }) =>
+  ComposerSpeechRecordingPill: ({
+    state,
+    onStart,
+    onStop,
+    onCancel,
+  }: {
+    state: { phase: string; error: string | null };
+    onStart(): void;
+    onStop(): void;
+    onCancel(): void;
+  }) =>
     createElement(
       "div",
       null,
-      createElement("button", { onClick: onStop }, "Stop"),
+      state.phase === "error" ? createElement("span", { role: "status" }, state.error) : null,
+      createElement(
+        "button",
+        { onClick: state.phase === "error" ? onStart : onStop },
+        state.phase === "error" ? "Retry" : "Stop",
+      ),
       createElement("button", { onClick: onCancel }, "Cancel"),
     ),
 }));
@@ -109,12 +124,11 @@ it("shows transcription errors and allows another test", async () => {
   await mount();
   await click("Test model");
   await click("Stop");
-  expect(root.root.findByProps({ role: "alert" }).children.join("")).toBe(
+  expect(root.root.findByProps({ role: "status" }).children.join("")).toBe(
     "Could not transcribe this recording.",
   );
   mocks.transcribe.mockResolvedValue("Try again.");
-  await click("Test model");
-  await click("Stop");
+  await click("Retry");
   expect(root.root.findByProps({ "aria-label": "Test transcription" }).children.join("")).toBe(
     "Try again.",
   );
