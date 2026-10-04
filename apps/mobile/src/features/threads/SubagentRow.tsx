@@ -1,4 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -125,7 +126,7 @@ function SubagentMetadata(props: {
         size={12}
       />
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
-        {provider?.displayName ? `${provider.displayName} · ` : ""}
+        {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
       </Text>
       {workspace.map(({ label, value }) => (

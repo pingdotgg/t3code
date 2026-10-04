@@ -18,6 +18,8 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 export function ProviderSubagentBar(props: {
   /** The provider running the subagent; no icon while its catalog loads. */
   readonly provider: ProviderInstanceEntry | null;
+  /** Several accounts on this provider: badge the glyph, as the composer does. */
+  readonly showInstanceBadge: boolean;
   readonly modelLabel: string;
   /** Reasoning effort as the composer names it, when the subagent has one. */
   readonly effortLabel: string | null;
@@ -60,8 +62,10 @@ export function ProviderSubagentBar(props: {
             accentColor={props.provider.accentColor}
             acpRegistryAgentId={props.provider.acpRegistryAgentId}
             acpRegistryIconUrl={props.provider.acpRegistryIconUrl}
+            showBadge={props.showInstanceBadge}
             className="size-4 shrink-0"
             iconClassName="size-4"
+            badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
           />
         ) : null}
         <span className="min-w-0 truncate font-medium text-foreground">{props.modelLabel}</span>
