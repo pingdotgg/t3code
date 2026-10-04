@@ -3224,6 +3224,11 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadId,
     activePendingUserInput?.requestId,
   ]);
+  // A question only takes the composer and Send once the user chooses to
+  // answer it; until then the composer keeps the message being written.
+  const [answeringRequestKey, setAnsweringRequestKey] = useState<string | null>(null);
+  const isAnsweringPendingUserInput =
+    activePendingUserInput !== null && answeringRequestKey === activePendingRequestKey;
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -8393,7 +8398,7 @@ export default function ChatView(props: ChatViewProps) {
       });
       return;
     }
-    if (activePendingProgress) {
+    if (isAnsweringPendingUserInput && activePendingProgress) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -9854,8 +9859,11 @@ export default function ChatView(props: ChatViewProps) {
           },
         };
       });
-      promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
+      // Only an answering composer shows the custom answer the option cleared.
+      if (isAnsweringPendingUserInput) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState({ cursor: 0 });
+      }
     },
     [
       activePendingProgress?.activeQuestion,
@@ -9863,6 +9871,7 @@ export default function ChatView(props: ChatViewProps) {
       activePendingRequestKey,
       composerDraftTarget,
       composerRef,
+      isAnsweringPendingUserInput,
       pendingUserInputAnswersByRequestId,
       setComposerDraftPrompt,
     ],
@@ -9936,6 +9945,16 @@ export default function ChatView(props: ChatViewProps) {
     }
     setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
   }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
+
+  const onToggleAnsweringPendingUserInput = useCallback(() => {
+    setAnsweringRequestKey(isAnsweringPendingUserInput ? null : activePendingRequestKey);
+    scheduleComposerFocus();
+  }, [
+    activePendingRequestKey,
+    isAnsweringPendingUserInput,
+    scheduleComposerFocus,
+    setAnsweringRequestKey,
+  ]);
 
   async function onSubmitPlanFollowUp({
     text,
@@ -11218,7 +11237,10 @@ export default function ChatView(props: ChatViewProps) {
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
                               pendingUserInputs={pendingUserInputs}
-                              activePendingProgress={activePendingProgress}
+                              activePendingProgress={
+                                isAnsweringPendingUserInput ? activePendingProgress : null
+                              }
+                              onToggleAnsweringPendingUserInput={onToggleAnsweringPendingUserInput}
                               activePendingResolvedAnswers={activePendingResolvedAnswers}
                               activePendingIsResponding={activePendingIsResponding}
                               activePendingDraftAnswers={activePendingDraftAnswers}

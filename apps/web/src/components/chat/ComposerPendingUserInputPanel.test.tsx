@@ -31,6 +31,8 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt) {
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
+      isAnswering={false}
+      onToggleAnswering={() => {}}
       onToggleOption={() => {}}
       onAdvance={() => {}}
       onDismiss={() => {}}

@@ -77,6 +77,7 @@ import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
+  composerStateForReturningDraft,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
@@ -1546,6 +1547,7 @@ export interface ChatComposerProps {
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
+  /** Present only while the user is answering the active question. */
   activePendingProgress: {
     questionIndex: number;
     isLastQuestion: boolean;
@@ -1557,6 +1559,7 @@ export interface ChatComposerProps {
       allowCustomAnswer?: boolean | undefined;
     } | null;
   } | null;
+  onToggleAnsweringPendingUserInput: () => void;
   activePendingResolvedAnswers: Record<string, unknown> | null;
   activePendingIsResponding: boolean;
   activePendingDraftAnswers: Record<string, PendingUserInputDraftAnswer>;
@@ -1713,8 +1716,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable,
     activePendingApproval,
     pendingApprovals,
-    pendingUserInputs,
+    pendingUserInputs: availablePendingUserInputs,
     activePendingProgress,
+    onToggleAnsweringPendingUserInput,
     activePendingResolvedAnswers,
     activePendingIsResponding,
     activePendingDraftAnswers,
@@ -1791,6 +1795,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
+  // The question panel shows every pending question; the editor, Send and
+  // attachments belong to a question only while the user is answering it.
+  const pendingUserInputs = activePendingProgress ? availablePendingUserInputs : [];
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -2769,12 +2776,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerApprovalState = activePendingApproval !== null;
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
-  const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const activePendingUserInput = availablePendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
     isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
+    availablePendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
@@ -3386,18 +3393,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     requestId: string | null;
     questionId: string | null;
   } | null>(null);
+  // Where the message caret was when the user chose to answer a question.
+  const messageCaretBeforeAnsweringRef = useRef<{ text: string; cursor: number } | null>(null);
 
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
-      // The question is gone and the editor shows the thread draft again. The
-      // ref still holds the last answer text, and Send reads the ref. Place
-      // the caret at the end so the next keystroke appends.
+      // The editor shows the thread draft again: the user went back to it, or
+      // the question is gone. The ref still holds the last answer text, and
+      // Send reads the ref. Return the caret to where the message was left.
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateForReturningDraft(
+          prompt,
+          messageCaretBeforeAnsweringRef.current,
+        );
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
+        messageCaretBeforeAnsweringRef.current = null;
       }
       lastSyncedPendingInputRef.current = null;
       return;
@@ -3849,6 +3862,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerCursor, promptRef]);
 
+  const toggleAnsweringPendingUserInput = useCallback(() => {
+    if (!activePendingProgress) {
+      const { value, cursor } = readComposerSnapshot();
+      messageCaretBeforeAnsweringRef.current = { text: value, cursor };
+    }
+    onToggleAnsweringPendingUserInput();
+  }, [activePendingProgress, onToggleAnsweringPendingUserInput, readComposerSnapshot]);
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -4202,7 +4223,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       compactDisabled ||
       noProviderAvailable ||
       activePendingApproval !== null ||
-      pendingUserInputs.length > 0 ||
+      availablePendingUserInputs.length > 0 ||
       phase === "running" ||
       isSendBusy ||
       isConnecting ||
@@ -4214,12 +4235,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     activePendingApproval,
     activeThreadId,
+    availablePendingUserInputs.length,
     compactDisabled,
     isConnecting,
     isSendBusy,
     noProviderAvailable,
     onCompactContext,
-    pendingUserInputs.length,
     phase,
   ]);
   const expandMobileComposer = useCallback(() => {
@@ -5029,7 +5050,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, []);
   const hasBannerItems = props.bannerItems.length > 0;
   const hasBlockingComposerTopDrawer =
-    activePendingApproval !== null || pendingUserInputs.length > 0;
+    activePendingApproval !== null || availablePendingUserInputs.length > 0;
   const showInlineTasksBadge =
     activeTasksProgress !== null &&
     activeTaskSteps !== null &&
@@ -6613,9 +6634,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </ComposerBanner.Actions>
                   </ComposerBanner.Row>
-                ) : !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
+                ) : availablePendingUserInputs.length > 0 &&
+                  (!isComposerCollapsedMobile || !activePendingProgress) ? (
                   <ComposerPendingUserInputPanel
-                    pendingUserInputs={pendingUserInputs}
+                    pendingUserInputs={availablePendingUserInputs}
                     respondingRequestIds={
                       activePendingIsResponding && activePendingUserInput
                         ? [...respondingRequestIds, activePendingUserInput.requestId]
@@ -6623,6 +6645,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    isAnswering={activePendingProgress !== null}
+                    onToggleAnswering={toggleAnsweringPendingUserInput}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
@@ -6643,6 +6667,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       answers={activePendingDraftAnswers}
                       questionIndex={activePendingQuestionIndex}
+                      isAnswering
+                      onToggleAnswering={toggleAnsweringPendingUserInput}
                       onToggleOption={onSelectActivePendingUserInputOption}
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}
@@ -7350,7 +7376,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerApprovalState ||
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
+                      (activePendingProgress !== null && activePendingIsResponding)
                     }
                   />
                 </ComposerContextActionsContext>
