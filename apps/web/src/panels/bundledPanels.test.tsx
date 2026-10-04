@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { act, Suspense } from "react";
 import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -8,6 +8,8 @@ const loaded = vi.hoisted(() => ({
   preview: 0,
   terminal: 0,
   device: 0,
+  pullRequest: 0,
+  pullRequests: 0,
   previewRenders: [] as unknown[],
 }));
 vi.mock("./diff/DiffSidePanel", () => {
@@ -32,6 +34,15 @@ vi.mock("./preview/PreviewSidePanel", () => {
   };
 });
 
+vi.mock("./pullRequest/PullRequestSidePanel", () => {
+  loaded.pullRequest += 1;
+  return { default: () => null };
+});
+vi.mock("./pullRequest/PullRequestsSidePanel", () => {
+  loaded.pullRequests += 1;
+  return { default: () => null };
+});
+
 import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { RegisteredSidePanel } from "./bundledPanels";
@@ -51,7 +62,14 @@ const host: PanelHost = {
 
 describe("bundled side panels", () => {
   it("loads only the selected panel body and lends it the host", async () => {
-    expect(loaded).toMatchObject({ diff: 0, preview: 0, terminal: 0, device: 0 });
+    expect(loaded).toMatchObject({
+      diff: 0,
+      preview: 0,
+      terminal: 0,
+      device: 0,
+      pullRequest: 0,
+      pullRequests: 0,
+    });
     await act(async () => {
       create(
         <PanelHostContext value={host}>
@@ -61,7 +79,14 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
-    expect(loaded).toMatchObject({ diff: 0, preview: 1, terminal: 0, device: 0 });
+    expect(loaded).toMatchObject({
+      diff: 0,
+      preview: 1,
+      terminal: 0,
+      device: 0,
+      pullRequest: 0,
+      pullRequests: 0,
+    });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
 
@@ -116,6 +141,20 @@ export function typeFixtures(
     onActiveTerminalChange: () => undefined,
     onCloseTerminal: () => undefined,
   };
+  const reference = { projectId: ProjectId.make("project"), repository: "owner/repo", number: 7 };
+  const pullRequest = {
+    reference,
+    context: "thread" as const,
+    shortcutsEnabled: true,
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+    }),
+  };
   return (
     <>
       <RegisteredSidePanel id="diff" />
@@ -128,6 +167,16 @@ export function typeFixtures(
       {/* @ts-expect-error Terminal props on Preview. */}
       <RegisteredSidePanel id="preview" surface={terminalSurface} />
       <RegisteredSidePanel id="device" surface={deviceSurface} onDismissSetup={dismiss} />
+      <RegisteredSidePanel id="pull-request" {...pullRequest} onBack={undefined} />
+      <RegisteredSidePanel id="pull-requests" />
+      {/* @ts-expect-error Pull request detail needs its reference and shortcut inputs. */}
+      <RegisteredSidePanel id="pull-request" context="thread" />
+      {/* @ts-expect-error Pull request props on the linked list. */}
+      <RegisteredSidePanel id="pull-requests" reference={reference} />
+      {/* @ts-expect-error Pull request props on Preview. */}
+      <RegisteredSidePanel id="preview" shortcutsEnabled />
+      {/* @ts-expect-error The host owns the composer draft target. */}
+      <RegisteredSidePanel id="pull-request" {...pullRequest} composerDraftTarget={threadRef} />
       {/* @ts-expect-error Preview props on Diff. */}
       <RegisteredSidePanel id="diff" tabId="tab-1" />
       {/* @ts-expect-error Device props on Preview. */}

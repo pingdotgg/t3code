@@ -16,6 +16,8 @@ export interface PanelDefinition<Id extends string, Body extends PanelBody> {
   unavailableHint: string;
   /** Full reason shown in the add menu tooltip while unavailable. */
   unavailableReason: string;
+  /** Shown while the body's code loads; null when the panel has nothing lighter to show. */
+  fallback?: ReactNode;
   load: () => Promise<{ default: Body }>;
 }
 

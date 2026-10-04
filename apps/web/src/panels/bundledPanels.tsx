@@ -1,6 +1,9 @@
 import { FileDiff, Globe2, Smartphone, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+
+import { PullRequestPanelPending } from "./pullRequest/PullRequestPanelPending";
 import { createPanelRegistry, type PanelMetadata, type PanelProps } from "./panelRegistry";
 
 const bundledPanels = createPanelRegistry([
@@ -40,6 +43,27 @@ const bundledPanels = createPanelRegistry([
     unavailableReason: "Devices are only available from a thread.",
     load: () => import("./device/DeviceSidePanel"),
   },
+  {
+    id: "pull-request",
+    title: "Pull request",
+    icon: PullRequestGlyph.pullRequest,
+    launcherKey: "P",
+    unavailableHint: "No pull request on this branch yet.",
+    unavailableReason: "This thread's branch has no pull request yet.",
+    // The detail's code is large; the first open would otherwise show an empty panel.
+    fallback: <PullRequestPanelPending label="Loading pull request" />,
+    load: () => import("./pullRequest/PullRequestSidePanel"),
+  },
+  {
+    id: "pull-requests",
+    title: "Linked pull requests",
+    icon: PullRequestGlyph.link,
+    launcherKey: "L",
+    unavailableHint: "No linked pull requests available.",
+    unavailableReason: "No linked pull requests are available for this thread.",
+    fallback: <PullRequestPanelPending label="Loading pull requests" />,
+    load: () => import("./pullRequest/PullRequestsSidePanel"),
+  },
 ]);
 
 export type SidePanelId = (typeof bundledPanels.definitions)[number]["id"];
@@ -73,7 +97,7 @@ export function RegisteredSidePanel({ id, ...props }: RegisteredSidePanelProps) 
   // The union caller already paired id with its props; destructuring loses that correlation.
   const Component = panel.Component as ComponentType<typeof props>;
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={panel.fallback ?? null}>
       <Component {...props} />
     </Suspense>
   );

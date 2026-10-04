@@ -33,13 +33,11 @@ describe("right panel surface actions", () => {
       diff: { available: true, onOpen: () => undefined },
       terminal: { available: true, onOpen: () => undefined },
       device: { available: true, onOpen: () => undefined },
+      "pull-request": { available: true, onOpen: () => undefined },
+      "pull-requests": { available: true, onOpen: () => undefined },
     },
     onAddFiles: () => undefined,
-    onAddPullRequest: () => undefined,
-    onAddPullRequests: () => undefined,
     filesAvailable: true,
-    pullRequestAvailable: true,
-    pullRequestsAvailable: true,
   });
 
   it("keeps launcher order, letters and copy for registered and local surfaces", () => {
@@ -169,14 +167,12 @@ function renderTabs(
         diff: { available: false, onOpen: () => undefined },
         terminal: { available: false, onOpen: () => undefined },
         device: { available: false, onOpen: () => undefined },
+        "pull-request": { available: false, onOpen: () => undefined },
+        "pull-requests": { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={() => undefined}
-      onAddPullRequest={() => undefined}
-      onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
       filesAvailable={false}
-      pullRequestAvailable={false}
-      pullRequestsAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

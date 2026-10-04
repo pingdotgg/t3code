@@ -81,14 +81,12 @@ function Harness({ terminalAvailable }: { terminalAvailable: boolean }) {
           onOpen: () => useRightPanelStore.getState().openTerminal(threadRef, "term-1"),
         },
         device: { available: false, onOpen: () => undefined },
+        "pull-request": { available: false, onOpen: () => undefined },
+        "pull-requests": { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={() => undefined}
-      onAddPullRequest={() => undefined}
-      onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
       filesAvailable={false}
-      pullRequestAvailable={false}
-      pullRequestsAvailable={false}
     >
       {null}
     </RightPanelTabs>

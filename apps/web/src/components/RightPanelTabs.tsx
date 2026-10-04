@@ -126,11 +126,7 @@ interface RightPanelTabsProps {
   panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
   onAddFiles: () => void;
-  onAddPullRequest: () => void;
-  onAddPullRequests: () => void;
   filesAvailable: boolean;
-  pullRequestAvailable: boolean;
-  pullRequestsAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -181,16 +177,7 @@ interface SurfaceAction {
   onClick: () => void;
 }
 
-type SurfaceActionInputs = Pick<
-  RightPanelTabsProps,
-  | "panels"
-  | "onAddFiles"
-  | "onAddPullRequest"
-  | "onAddPullRequests"
-  | "filesAvailable"
-  | "pullRequestAvailable"
-  | "pullRequestsAvailable"
->;
+type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels" | "onAddFiles" | "filesAvailable">;
 
 /**
  * The surfaces the empty launcher and the add menu offer, in launcher order.
@@ -227,26 +214,8 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
       onClick: props.onAddFiles,
     },
     registered("diff"),
-    {
-      id: "pull-request",
-      label: "Pull request",
-      icon: PullRequestGlyph.pullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      unavailableHint: "No pull request on this branch yet.",
-      unavailableReason: "This thread's branch has no pull request yet.",
-      onClick: props.onAddPullRequest,
-    },
-    {
-      id: "pull-requests",
-      label: "Linked pull requests",
-      icon: PullRequestGlyph.link,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      unavailableHint: "No linked pull requests available.",
-      unavailableReason: "No linked pull requests are available for this thread.",
-      onClick: props.onAddPullRequests,
-    },
+    registered("pull-request"),
+    registered("pull-requests"),
     registered("device"),
   ];
 }
@@ -679,8 +648,10 @@ function SurfaceIcon({
           seed={pullRequestStatusSeeds?.[surface.id]}
         />
       );
-    case "pull-requests":
-      return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "pull-requests": {
+      const Icon = getSidePanelMetadata("pull-requests").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "device": {
       const DeviceIcon = getSidePanelMetadata("device").icon;
       return surface.target?.platform === "ios" ? (

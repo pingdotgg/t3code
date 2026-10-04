@@ -277,6 +277,8 @@ const UNAVAILABLE_SIDE_PANELS = {
   diff: { available: false, onOpen: () => undefined },
   terminal: { available: false, onOpen: () => undefined },
   device: { available: false, onOpen: () => undefined },
+  "pull-request": { available: false, onOpen: () => undefined },
+  "pull-requests": { available: false, onOpen: () => undefined },
 };
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
@@ -2255,11 +2257,7 @@ function PullRequestsRouteView() {
             panels={UNAVAILABLE_SIDE_PANELS}
             onAddBrowserInProfile={() => undefined}
             onAddFiles={() => undefined}
-            onAddPullRequest={() => undefined}
-            onAddPullRequests={() => undefined}
             filesAvailable={false}
-            pullRequestAvailable={false}
-            pullRequestsAvailable={false}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
