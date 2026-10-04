@@ -13,6 +13,7 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./CursorProvider.ts";
+import { CursorSdkError } from "../cursorSdk.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettingsSchema);
@@ -227,6 +228,34 @@ describe("checkCursorProviderStatus", () => {
         status: "error",
         auth: { status: "unauthenticated" },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      });
+    }),
+  );
+
+  it.effect("says when Cursor rejects the account's plan", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "free-plan-test-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.makeCursorSdkCatalogTestLayer(() =>
+            Effect.fail(
+              new CursorSdkCatalog.CursorSdkCatalogError({
+                authenticationFailure: false,
+                cause: new CursorSdkError(
+                  "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
+                  { code: "plan_required", status: 403, isRetryable: false },
+                ),
+              }),
+            ),
+          ),
+        ),
+      );
+
+      expect(provider).toMatchObject({
+        status: "error",
+        message:
+          "Cursor's SDK is not available on the free plan. Upgrade the Cursor account to Pro.",
       });
     }),
   );

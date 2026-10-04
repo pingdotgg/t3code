@@ -21,6 +21,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { CursorSdkError } from "../cursorSdk.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {
@@ -297,6 +298,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       cause: catalogResult.failure.cause,
     });
     const authenticationFailure = catalogResult.failure.authenticationFailure;
+    const cause = catalogResult.failure.cause;
+    const planRequired = cause instanceof CursorSdkError && cause.code === "plan_required";
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -311,7 +314,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
           ? authenticationType === "browser"
             ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
             : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
-          : "Cursor SDK catalog request failed. Check server logs for details.",
+          : planRequired
+            ? "Cursor's SDK is not available on the free plan. Upgrade the Cursor account to Pro."
+            : "Cursor SDK catalog request failed. Check server logs for details.",
       },
     });
   }
