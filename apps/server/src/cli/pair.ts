@@ -22,6 +22,7 @@ import {
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
   readTailscaleStatus,
+  type TailscaleServeError,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -364,6 +365,7 @@ const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
 const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
   function* (input: { readonly target: DiscoveredPairTarget; readonly servePort: number }) {
     const notes: Array<string> = [];
+    let replaceVerifiedHandler = false;
     const status = yield* readTailscaleStatus.pipe(
       Effect.mapError((cause) => new TailscaleUnavailableError({ cause })),
     );
@@ -375,9 +377,8 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       servePort: input.servePort,
     });
 
-    // Only an unreachable port, or a mapping already fronting this exact
-    // environment, is safe to (re)configure. Any other responder — T3 or not
-    // — must not have its mapping silently replaced.
+    // A responding endpoint must belong to this environment. The live Serve
+    // configuration below decides whether its handler can be reused or repointed.
     const existing = yield* probeEnvironmentDescriptor(baseUrl);
     if (existing._tag === "descriptor") {
       if (existing.descriptor.environmentId !== input.target.descriptor.environmentId) {
@@ -386,10 +387,10 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       // Matching environment id proves the mapping reaches this server, but
       // not through which port: for a dev server it may front the backend
       // (whose /.well-known also answers) while /pair only renders through
-      // the web origin. Reuse as-is for regular servers; fall through and
-      // repoint our own mapping at the web port for dev servers.
-      if (input.target.state.devUrl === undefined) {
-        return { baseUrl, notes };
+      // the web origin. Regular servers must still pass the handler check;
+      // dev servers may repoint a verified mapping at the web port.
+      if (input.target.state.devUrl !== undefined) {
+        replaceVerifiedHandler = true;
       }
     }
     if (existing._tag === "not-a-t3-server") {
@@ -403,12 +404,18 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,
+      replaceVerifiedHandler,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
+      Effect.mapError((cause: TailscaleServeError) =>
+        cause._tag === "TailscaleServePortOccupiedError"
+          ? new ServePortOccupiedError({ servePort: input.servePort })
+          : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
       ),
     );
+    if (existing._tag === "descriptor" && input.target.state.devUrl === undefined) {
+      return { baseUrl, notes };
+    }
     notes.push(
       `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} off\`.`,
     );

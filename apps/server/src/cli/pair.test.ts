@@ -6,12 +6,16 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { cli } from "../binCli.ts";
 import {
@@ -28,6 +32,7 @@ import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
+  ServePortOccupiedError,
 } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -119,6 +124,89 @@ const testDescriptor = {
   capabilities: { repositoryIdentity: true },
 };
 
+const withTailscalePairing = <A, E, R>(
+  input: {
+    readonly handlers: Record<string, { readonly Proxy: string }>;
+    readonly funnel?: boolean;
+    readonly devUrl?: string;
+    readonly tailscaleProbeError?: Error;
+  },
+  run: (baseDir: string, commands: Array<ReadonlyArray<string>>) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const baseDir = yield* Effect.acquireRelease(
+      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-tailscale-"))),
+      (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
+    );
+    yield* persistServerRuntimeState({
+      path: NodePath.join(
+        baseDir,
+        input.devUrl === undefined ? "userdata" : "dev",
+        "server-runtime.json",
+      ),
+      state: yield* makePersistedServerRuntimeState({
+        config: {
+          host: "127.0.0.1",
+          devUrl: input.devUrl === undefined ? undefined : new URL(input.devUrl),
+        },
+        port: baseState.port,
+      }),
+    });
+
+    const commands: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return Effect.die("Expected a standard Tailscale command");
+      }
+      commands.push(command.args);
+      const stdout =
+        command.args[0] === "status"
+          ? { Self: { DNSName: "desktop.tail.ts.net." } }
+          : {
+              TCP: { 443: { HTTPS: true } },
+              Web: { "desktop.tail.ts.net:443": { Handlers: input.handlers } },
+              AllowFunnel: { "desktop.tail.ts.net:443": input.funnel ?? false },
+            };
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(JSON.stringify(stdout))),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    });
+
+    return yield* run(baseDir, commands).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(FetchHttpClient.Fetch, (url) => {
+        expect([
+          "http://127.0.0.1:3773/.well-known/t3/environment",
+          "https://desktop.tail.ts.net/.well-known/t3/environment",
+        ]).toContain(String(url));
+        if (
+          String(url) === "https://desktop.tail.ts.net/.well-known/t3/environment" &&
+          input.tailscaleProbeError !== undefined
+        ) {
+          return Promise.reject(input.tailscaleProbeError);
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify(testDescriptor), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }),
+    );
+  }).pipe(Effect.scoped);
+
 const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
@@ -144,6 +232,101 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
   );
 
 describe("t3 pair", () => {
+  it.effect("preserves a foreign handler when the tailnet probe fails DNS resolution", () =>
+    provideCliTestLayers(
+      withTailscalePairing(
+        {
+          handlers: { "/": { Proxy: "http://127.0.0.1:9000" } },
+          tailscaleProbeError: new TypeError("fetch failed", {
+            cause: Object.assign(new Error("getaddrinfo ENOTFOUND desktop.tail.ts.net"), {
+              code: "ENOTFOUND",
+            }),
+          }),
+        },
+        (baseDir, commands) =>
+          Effect.gen(function* () {
+            const error = yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+              Effect.flip,
+            );
+            expect(error).toBeInstanceOf(ServePortOccupiedError);
+            expect(commands).toEqual([
+              ["status", "--json"],
+              ["serve", "status", "--json"],
+            ]);
+          }),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { name: "Funnel", handlers: { "/": { Proxy: "http://127.0.0.1:3773" } }, funnel: true },
+    {
+      name: "an additional route",
+      handlers: {
+        "/": { Proxy: "http://127.0.0.1:3773" },
+        "/other": { Proxy: "http://127.0.0.1:9000" },
+      },
+    },
+    { name: "a different proxy target", handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } },
+  ])("rejects $name even when the regular environment matches", (input) =>
+    provideCliTestLayers(
+      withTailscalePairing(input, (baseDir, commands) =>
+        Effect.gen(function* () {
+          const error = yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+            Effect.flip,
+          );
+          expect(error).toBeInstanceOf(ServePortOccupiedError);
+          expect(commands).toEqual([
+            ["status", "--json"],
+            ["serve", "status", "--json"],
+          ]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("reuses an exact private regular-server handler without changing it", () =>
+    provideCliTestLayers(
+      withTailscalePairing(
+        { handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } },
+        (baseDir, commands) =>
+          Effect.gen(function* () {
+            yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]);
+            const output =
+              (yield* TestConsole.logLines).findLast(
+                (line): line is string => typeof line === "string",
+              ) ?? "";
+            assert.include(output, "Pairing URL: https://desktop.tail.ts.net/pair#token=");
+            assert.notInclude(output, "Tailscale Serve now maps");
+            expect(commands).toEqual([
+              ["status", "--json"],
+              ["serve", "status", "--json"],
+            ]);
+          }),
+      ),
+    ),
+  );
+
+  it.effect("repoints a verified dev-server handler to its web port", () =>
+    provideCliTestLayers(
+      withTailscalePairing(
+        {
+          handlers: { "/": { Proxy: "http://127.0.0.1:3773" } },
+          devUrl: "http://localhost:5733/",
+        },
+        (baseDir, commands) =>
+          Effect.gen(function* () {
+            yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]);
+            expect(commands).toEqual([
+              ["status", "--json"],
+              ["serve", "status", "--json"],
+              ["serve", "--bg", "--https=443", "http://127.0.0.1:5733"],
+            ]);
+          }),
+      ),
+    ),
+  );
+
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
