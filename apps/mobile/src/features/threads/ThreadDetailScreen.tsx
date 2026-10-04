@@ -522,6 +522,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
+  // Follow-ups fill the composer, so they only act while it is on screen: not for
+  // provider subagents, while a question owns its slot, or after a failed creation.
+  const composerAcceptsFollowUps =
+    !isProviderSubagent &&
+    activeUserInputRequestId === null &&
+    props.creationState?.kind !== "failed";
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -1114,7 +1120,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onEndFollowEnabledChange={setEndFollowEnabled}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
-              {...(isProviderSubagent ? {} : { onUseCodexFollowUp: handleUseCodexFollowUp })}
+              {...(composerAcceptsFollowUps ? { onUseCodexFollowUp: handleUseCodexFollowUp } : {})}
             />
           </RenderErrorBoundary>
         </View>
