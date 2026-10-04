@@ -176,7 +176,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
-      turnItemTypes: ["user_input_request"],
+      turnItemTypes: ["user_input_request", "approval_request"],
     })
     .pipe(
       Effect.mapError((error) =>

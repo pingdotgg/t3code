@@ -302,7 +302,11 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["t3_project_create", "Registering a project", "Registered a project"],
     ["t3_thread_launch", "Launching a project thread", "Launched a project thread"],
     ["t3_queue_edit", "Editing a queued message", "Edited a queued message"],
-    ["t3_pending_request_respond", "Answering pending questions", "Answered pending questions"],
+    [
+      "t3_pending_request_respond",
+      "Responding to pending requests",
+      "Responded to pending requests",
+    ],
     ["t3_thread_configure", "Setting thread model", "Set thread model"],
     ["t3_thread_fork", "Forking this thread", "Requested a fork of this thread"],
     ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],

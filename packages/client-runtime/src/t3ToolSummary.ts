@@ -269,20 +269,20 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "question-list":
-      label = phrase("Listed", "list", `pending questions ${times}`);
+      label = phrase("Listed", "list", `pending requests ${times}`);
       break;
     case "question-read":
       label = phrase(
         "Read",
         "read",
-        quantity(countEntities(entityIds("requestId")), "pending question request"),
+        quantity(countEntities(entityIds("requestId")), "pending request"),
       );
       break;
     case "question-respond":
       label = phrase(
-        "Answered",
-        "answer",
-        quantity(countEntities(entityIds("requestId")), "pending question request"),
+        "Responded to",
+        "respond to",
+        quantity(countEntities(entityIds("requestId")), "pending request"),
       );
       break;
     case "worktree-handoff":

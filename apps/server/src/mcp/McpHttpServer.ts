@@ -46,6 +46,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import { ReviewToolkitHandlersLive } from "./toolkits/review/handlers.ts";
+import { ReviewToolkit } from "./toolkits/review/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
@@ -675,6 +677,10 @@ const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
   Layer.provide(WorktreeMcpService.layer),
 );
 
+const ReviewToolkitRegistrationLive = McpServer.toolkit(ReviewToolkit).pipe(
+  Layer.provide(ReviewToolkitHandlersLive),
+);
+
 const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit).pipe(
   Layer.provide(PreviewControlsHandlersLive),
 );
@@ -724,6 +730,7 @@ export const layer = Layer.mergeAll(
   EnvironmentRegistrationLive,
   PreviewControlsRegistrationLive,
   WorktreeToolkitRegistrationLive,
+  ReviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

@@ -31,6 +31,7 @@ import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
+import { ReviewToolkit } from "./review/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
 import { PullRequestsToolkit } from "./pullRequests/tools.ts";
 import {
@@ -47,6 +48,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     OrchestratorToolkit,
     PreviewToolkit,
     WorktreeToolkit,
+    ReviewToolkit,
     ThreadToolkit,
     AttachmentToolkit,
     ProjectToolkit,

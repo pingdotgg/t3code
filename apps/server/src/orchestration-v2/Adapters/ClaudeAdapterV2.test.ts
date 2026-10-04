@@ -55,6 +55,7 @@ import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
+import { ReviewToolkit } from "../../mcp/toolkits/review/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
@@ -648,6 +649,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(OrchestratorToolkit.tools),
       ...Object.values(ThreadToolkit.tools),
       ...Object.values(WorktreeToolkit.tools),
+      ...Object.values(ReviewToolkit.tools),
       ...Object.values(ProjectToolkit.tools),
       ...Object.values(EnvironmentToolkit.tools),
       ...Object.values(PreviewControlsToolkit.tools),

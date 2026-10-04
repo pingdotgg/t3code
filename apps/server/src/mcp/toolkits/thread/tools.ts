@@ -11,6 +11,9 @@ import {
   ProviderInteractionMode,
   RuntimeRequestId,
   ProviderUserInputAnswers,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+  OrchestrationV2RuntimeRequest,
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
@@ -30,7 +33,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, mark read or unread, toggle auto-settle, or permanently delete a thread. Omit threadId for this thread. snooze requires snoozedUntil. delete cannot be undone and requires a full-access/default caller. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -42,7 +45,11 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unsettle",
       "archive",
       "unarchive",
+      "mark_read",
       "mark_unread",
+      "auto_settle_on",
+      "auto_settle_off",
+      "delete",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
   }),
@@ -140,23 +147,34 @@ const question = Schema.Struct({
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   required: Schema.optional(Schema.Boolean),
 });
+const pendingRequestKind = OrchestrationV2RuntimeRequest.fields.kind;
 const pendingRequest = Schema.Struct({
   requestId: RuntimeRequestId,
-  questions: Schema.Array(question),
+  kind: pendingRequestKind,
+  /** Present for user_input requests. */
+  questions: Schema.optional(Schema.Array(question)),
+  /** Present for approvals when the provider supplied them. */
+  prompt: Schema.optional(Schema.String),
+  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
 });
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
-    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
+    "List pending user questions (kind user_input) and approval requests in a thread. Omit threadId for this thread.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
-  success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
+  success: Schema.Struct({
+    requestIds: Schema.Array(RuntimeRequestId),
+    requests: Schema.Array(
+      Schema.Struct({ requestId: RuntimeRequestId, kind: pendingRequestKind }),
+    ),
+  }),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   ...commandTool,
   description:
-    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+    "Read a pending user question or approval request. Respond with t3_pending_request_respond; existing live or message response handling is used.",
   parameters: Schema.Struct(requestTarget),
   success: pendingRequest,
 })
@@ -165,11 +183,21 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...commandTool,
   description:
-    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
-  parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
+    "Respond to a pending request using the existing runtime response command: answers for a user question, decision for an approval (one of the options from t3_pending_request_read, else cancel, decline, acceptForSession, or accept). Approving requires a full-access/default caller; declining or cancelling does not.",
+  parameters: Schema.Struct({
+    ...requestTarget,
+    answers: Schema.optional(ProviderUserInputAnswers),
+    decision: Schema.optional(ProviderApprovalDecision),
+  }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+const PendingRequestDismissTool = Tool.make("t3_pending_request_dismiss", {
+  ...commandTool,
+  description:
+    "Dismiss a pending user question without answering it. Only questions answered by message can be dismissed; others need an answer or an interrupt.",
+  parameters: Schema.Struct(requestTarget),
+}).annotate(Tool.Destructive, true);
 
 const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
   ...commandTool,
@@ -250,6 +278,32 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const InboxTool = Tool.make("t3_inbox", {
+  ...commandTool,
+  description:
+    "List active threads that need attention: pending requests first, then failed runs, then unread completed work, newest first. Limited to one project (projectId, else the calling thread's project); a caller outside a T3 thread that omits projectId sees every project. Settled and snoozed threads only appear for pending requests.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
+  }),
+  success: Schema.Struct({
+    items: Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        projectId: ProjectId,
+        title: Schema.String,
+        updatedAt: IsoDateTime,
+        reason: Schema.Literals(["pending_request", "error", "unread"]),
+        pendingRequest: Schema.optional(
+          Schema.Struct({ requestId: RuntimeRequestId, kind: pendingRequestKind }),
+        ),
+      }),
+    ),
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -278,6 +332,8 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestListTool,
   PendingRequestReadTool,
   PendingRequestRespondTool,
+  PendingRequestDismissTool,
+  InboxTool,
   ThreadOrganizeTool,
   QueueListTool,
   QueueReadTool,
