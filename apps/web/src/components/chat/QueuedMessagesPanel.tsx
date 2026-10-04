@@ -70,6 +70,12 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   const visibleQueuedTurns = queuedTurns.flatMap((queuedTurn, queueIndex) =>
     isHiddenQueuedTurn(queuedTurn) ? [] : [{ queuedTurn, queueIndex }],
   );
+  // A stale hold outlives its queue: deleting the last queued turn leaves
+  // queueHeldAt set with nothing left to run. There is nothing to release, so
+  // render nothing rather than a Resume control for an empty queue.
+  if (queuedTurns.length === 0) {
+    return null;
+  }
   // The hold banner must render even with no visible rows: crash recovery holds
   // queues whose only turns are hidden ones (a child nudge, a healthy workspace
   // handoff), and those live on dedicated surfaces that have no resume control.
@@ -77,6 +83,11 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   if (visibleQueuedTurns.length === 0 && queueHeldAt === null) {
     return null;
   }
+  const hiddenHeldCount = queuedTurns.length - visibleQueuedTurns.length;
+  const holdMessage =
+    queueHeldAt !== null && visibleQueuedTurns.length === 0
+      ? `Queue held after restart. ${hiddenHeldCount === 1 ? "1 queued follow-up" : `${hiddenHeldCount} queued follow-ups`} will not run until you resume ${hiddenHeldCount === 1 ? "it" : "them"}.`
+      : "Queue held after restart. These messages will not run until you resume them.";
 
   return (
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
@@ -220,7 +231,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
         <div className="mt-1.5 flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
           <PauseCircle className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="composer-input-font-secondary min-w-0 flex-1 text-muted-foreground">
-            Queue held after restart. These messages will not run until you resume them.
+            {holdMessage}
           </span>
           <Button type="button" size="xs" onClick={onReleaseQueue}>
             Resume queue
