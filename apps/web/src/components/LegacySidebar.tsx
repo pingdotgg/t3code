@@ -2748,7 +2748,11 @@ function ProjectSortMenu({
     <Menu>
       <Tooltip>
         <TooltipTrigger
-          render={<MenuTrigger render={<Button size="icon-xs" variant="ghost-muted" />} />}
+          render={
+            <MenuTrigger
+              render={<Button size="icon-xs" variant="ghost-muted" aria-label="Sidebar options" />}
+            />
+          }
         >
           <ArrowUpDownIcon className="size-3.5" />
         </TooltipTrigger>
