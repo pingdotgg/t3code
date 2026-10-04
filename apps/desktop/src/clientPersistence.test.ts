@@ -93,6 +93,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadFilter: "all",
   sidebarThreadSortOrder: "created_at",
   sidebarV2Enabled: false,
+  sidebarSettledThreadCount: 5,
   threadCompletionNotifications: "background-only",
   timestampFormat: "24-hour",
   uiDensity: "default",

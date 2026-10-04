@@ -16,6 +16,7 @@ import {
   resolveSidebarV2ThreadRouteTarget,
   resolveThreadLifecycleSupport,
   resolveWorkingStartedAt,
+  resolveSettledThreadVisibility,
   selectSnoozeShelfBulkTargets,
   shouldReserveMacSidebarChrome,
   type SidebarV2ThreadGroup,
@@ -140,6 +141,68 @@ function rowTitles(groups: readonly SidebarV2ThreadGroup[]): readonly string[] {
     group.rows.map((row) => `${"  ".repeat(row.depth)}${row.thread.title}`),
   );
 }
+
+describe("resolveSettledThreadVisibility", () => {
+  const settledThreads = Array.from({ length: 7 }, (_, index) =>
+    thread({
+      id: ThreadId.make(`settled-${index}`),
+      title: `Settled ${index}`,
+      updatedAt: `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+      settledOverride: "settled",
+    }),
+  );
+  const settled = classifySidebarV2Shelves({ threads: settledThreads, now }).settled;
+
+  it("shows the configured most-recent groups and counts the remaining groups", () => {
+    const result = resolveSettledThreadVisibility({
+      settled,
+      visibleCount: 5,
+      showAll: false,
+      activeThreadKey: null,
+    });
+
+    expect(rootsOf(result.groups).map((item) => item.title)).toEqual([
+      "Settled 6",
+      "Settled 5",
+      "Settled 4",
+      "Settled 3",
+      "Settled 2",
+    ]);
+    expect(result.remainingCount).toBe(2);
+  });
+
+  it("keeps an older routed group visible without losing the show-more count", () => {
+    const oldest = settled[settled.length - 1];
+    const result = resolveSettledThreadVisibility({
+      settled,
+      visibleCount: 5,
+      showAll: false,
+      activeThreadKey: oldest?.rootKey ?? null,
+    });
+
+    expect(rootsOf(result.groups).map((item) => item.title)).toEqual([
+      "Settled 6",
+      "Settled 5",
+      "Settled 4",
+      "Settled 3",
+      "Settled 2",
+      "Settled 0",
+    ]);
+    expect(result.remainingCount).toBe(1);
+  });
+
+  it("reveals every group when Show more is activated", () => {
+    const result = resolveSettledThreadVisibility({
+      settled,
+      visibleCount: 5,
+      showAll: true,
+      activeThreadKey: null,
+    });
+
+    expect(result.groups).toEqual(settled);
+    expect(result.remainingCount).toBe(0);
+  });
+});
 
 describe("classifySidebarV2Shelves", () => {
   it("keeps pinned threads in their durable project order and out of other shelves", () => {

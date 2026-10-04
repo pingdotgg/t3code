@@ -211,6 +211,33 @@ export interface SidebarV2Shelves {
   readonly settled: readonly SidebarV2ThreadGroup[];
 }
 
+export function resolveSettledThreadVisibility(input: {
+  readonly settled: readonly SidebarV2ThreadGroup[];
+  readonly visibleCount: number;
+  readonly showAll: boolean;
+  readonly activeThreadKey: string | null;
+}): { readonly groups: readonly SidebarV2ThreadGroup[]; readonly remainingCount: number } {
+  const groups = input.showAll ? input.settled : input.settled.slice(0, input.visibleCount);
+  const containsActiveThread = (group: SidebarV2ThreadGroup) =>
+    group.rows.some((row) => row.threadKey === input.activeThreadKey);
+
+  if (input.activeThreadKey !== null && !groups.some(containsActiveThread)) {
+    const activeGroup = input.settled.find(containsActiveThread);
+    if (activeGroup) {
+      const visibleGroups = [...groups, activeGroup];
+      return {
+        groups: visibleGroups,
+        remainingCount: Math.max(0, input.settled.length - visibleGroups.length),
+      };
+    }
+  }
+
+  return {
+    groups,
+    remainingCount: Math.max(0, input.settled.length - groups.length),
+  };
+}
+
 export function classifySidebarV2Shelves(input: {
   readonly threads: readonly SidebarThreadSummary[];
   readonly now: string;

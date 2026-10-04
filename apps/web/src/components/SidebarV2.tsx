@@ -69,6 +69,7 @@ import {
   classifySidebarV2Shelves,
   resolveThreadLifecycleSupport,
   resolveSidebarV2ThreadRouteTarget,
+  resolveSettledThreadVisibility,
   selectSnoozeShelfBulkTargets,
   shouldReserveMacSidebarChrome,
   type SidebarV2ThreadGroup,
@@ -95,7 +96,6 @@ import { reportClientError } from "../lib/clientLogger";
 import { cn, isMacPlatform } from "../lib/utils";
 import { resolveSidebarThreadClickKind } from "./Sidebar.logic";
 
-const SETTLED_PAGE_SIZE = 25;
 const EMPTY_THREAD_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 
 function SortablePinnedThreadGroup({
@@ -256,7 +256,7 @@ function Shelf({
 
 export default function SidebarV2() {
   const [now, setNow] = useState(nowIso);
-  const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_PAGE_SIZE);
+  const [showAllSettled, setShowAllSettled] = useState(false);
   const { defaultProjectRef, handleNewThread } = useHandleNewThread();
   const { archiveThread, settleThread, snoozeThread, unsettleThread, unsnoozeThread } =
     useThreadActions();
@@ -276,6 +276,7 @@ export default function SidebarV2() {
       ? `${activeThreadRef.environmentId}:agent-run:${activeThreadRef.threadId}:${activeAgentTaskId}`
       : activeThreadKey;
   const confirmThreadArchive = useSettings((settings) => settings.confirmThreadArchive);
+  const settledThreadCount = useSettings((settings) => settings.sidebarSettledThreadCount);
   const { projects, threads } = useStore(
     useShallow((state) => ({
       projects: selectProjectsAcrossEnvironments(state),
@@ -446,16 +447,17 @@ export default function SidebarV2() {
     [lifecycleSupport, now, shelves.snoozed],
   );
 
-  const openedSettled = useMemo(() => {
-    const included = shelves.settled.slice(0, settledVisibleCount);
-    const containsActive = (group: SidebarV2ThreadGroup) =>
-      group.rows.some((row) => row.threadKey === activeClassificationThreadKey);
-    if (activeClassificationThreadKey !== null && !included.some(containsActive)) {
-      const routed = shelves.settled.find(containsActive);
-      if (routed) return [...included, routed];
-    }
-    return included;
-  }, [activeClassificationThreadKey, settledVisibleCount, shelves.settled]);
+  const settledVisibility = useMemo(
+    () =>
+      resolveSettledThreadVisibility({
+        settled: shelves.settled,
+        visibleCount: settledThreadCount,
+        showAll: showAllSettled,
+        activeThreadKey: activeClassificationThreadKey,
+      }),
+    [activeClassificationThreadKey, settledThreadCount, shelves.settled, showAllSettled],
+  );
+  const openedSettled = settledVisibility.groups;
 
   const openThread = useCallback(
     (thread: SidebarThreadSummary) => {
@@ -919,14 +921,14 @@ export default function SidebarV2() {
           <SidebarMenu className="gap-[var(--app-sidebar-row-gap)]">
             {openedSettled.map(renderSlimGroup)}
           </SidebarMenu>
-          {shelves.settled.length > openedSettled.length ? (
+          {settledVisibility.remainingCount > 0 ? (
             <Button
               className="mx-2 mt-1"
-              onClick={() => setSettledVisibleCount((count) => count + SETTLED_PAGE_SIZE)}
+              onClick={() => setShowAllSettled(true)}
               size="sm"
               variant="ghost"
             >
-              Show more
+              Show {settledVisibility.remainingCount} more
             </Button>
           ) : null}
         </Shelf>
