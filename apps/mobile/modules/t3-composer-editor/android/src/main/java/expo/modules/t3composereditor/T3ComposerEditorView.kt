@@ -173,12 +173,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
             ),
           )
           emitContentSizeIfNeeded()
+          editor.keepSelectionVisible()
         }
       },
     )
     editor.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
       if (right - left != oldRight - oldLeft) applyTokenSpans()
       emitContentSizeIfNeeded()
+      editor.keepSelectionVisible()
     }
     addView(
       editor,
@@ -312,6 +314,10 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
 
   fun setScrollEnabled(scrollEnabled: Boolean) {
     editor.isVerticalScrollBarEnabled = scrollEnabled
+    editor.scrollEnabled = scrollEnabled
+    if (scrollEnabled) {
+      editor.keepSelectionVisible()
+    }
   }
 
   fun setAutoFocus(autoFocus: Boolean) {
@@ -362,6 +368,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     // state, so a no-op assignment must be skipped.
     if (editor.selectionStart == safeStart && editor.selectionEnd == safeEnd) return
     editor.setSelection(safeStart, safeEnd)
+    editor.keepSelectionVisible()
   }
 
   private fun updateInputFlags() {
@@ -589,6 +596,40 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+  var scrollEnabled = true
+  private val keepSelectionVisibleRunnable = Runnable {
+    if (scrollEnabled && isFocused) {
+      val textLayout = layout ?: return@Runnable
+      val offset = selectionEnd.coerceIn(0, text?.length ?: 0)
+      val line = textLayout.getLineForOffset(offset)
+      val viewportHeight = height - compoundPaddingTop - compoundPaddingBottom
+      if (viewportHeight <= 0) return@Runnable
+
+      val lineTop = textLayout.getLineTop(line)
+      val lineBottom = textLayout.getLineBottom(line)
+      val targetScrollY = when {
+        lineBottom > scrollY + viewportHeight -> lineBottom - viewportHeight
+        lineTop < scrollY -> lineTop
+        else -> scrollY
+      }.coerceIn(0, (textLayout.height - viewportHeight).coerceAtLeast(0))
+
+      if (targetScrollY != scrollY) {
+        scrollTo(scrollX, targetScrollY)
+      }
+    }
+  }
+
+  override fun scrollTo(x: Int, y: Int) {
+    if (scrollEnabled) {
+      super.scrollTo(x, y)
+    }
+  }
+
+  fun keepSelectionVisible() {
+    if (!scrollEnabled) return
+    removeCallbacks(keepSelectionVisibleRunnable)
+    post(keepSelectionVisibleRunnable)
+  }
 
   /**
    * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
@@ -675,6 +716,9 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
+    if (isAttachedToWindow) {
+      keepSelectionVisible()
+    }
   }
 
   override fun onTextContextMenuItem(id: Int): Boolean {
