@@ -180,6 +180,9 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   const agentAChild =
     agentA?.childThreadId == null ? undefined : result.projections.get(agentA.childThreadId);
   assert.isDefined(agentAChild);
+  // The thread starts on the Agent call's "haiku"; the snapshot's model, which
+  // only arrives with the subagent's first reply, replaces it.
+  assert.equal(agentAChild.thread.modelSelection.model, AGENT_A_OBSERVED_MODEL);
   assert.deepEqual(assistantTexts(agentAChild), ["A_FIRST", "A_SECOND"]);
   assert.deepEqual(conversation(agentAChild), [
     "user:Reply with exactly: A_FIRST",
