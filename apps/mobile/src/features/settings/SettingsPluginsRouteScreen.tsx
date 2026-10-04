@@ -4,9 +4,15 @@ import {
   type EnvironmentId,
   type PluginInstallation,
   type PluginInstallationId,
+  type PluginInstallationManifest,
   type PluginNpmPackage,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import {
+  describePluginCapabilities,
+  describePluginContributions,
+  type PluginOfferedViews,
+} from "@t3tools/client-runtime/state/pluginContributions";
 import {
   describePluginNpmSource,
   PLUGIN_NPM_INTEGRITY_STATEMENT,
@@ -31,7 +37,12 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { pluginEnvironment, pluginNpmEnvironment } from "../../state/plugins";
+import { usePluginActionsSnapshot } from "../../state/plugin-actions";
+import {
+  pluginEnvironment,
+  pluginNpmEnvironment,
+  pluginViewEnvironment,
+} from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import {
@@ -279,6 +290,16 @@ function PluginListRow({
   );
 }
 
+/** Each declared capability on its own line, with what it lets the plugin do. */
+function capabilityLines(capabilities: ReadonlyArray<string>): string {
+  if (capabilities.length === 0) return "None declared";
+  return describePluginCapabilities(capabilities)
+    .map((capability) =>
+      capability.meaning ? `${capability.name}: ${capability.meaning}` : capability.name,
+    )
+    .join("\n");
+}
+
 function DetailField({
   label,
   value,
@@ -445,9 +466,7 @@ function PluginDetail({
             <DetailField
               label="Capabilities"
               value={
-                (manifest.capabilities.length === 0
-                  ? "None declared"
-                  : manifest.capabilities.join(", ")) +
+                capabilityLines(manifest.capabilities) +
                 (manifest.proposedApi
                   ? "\nUses proposed APIs that may change between T3 Code versions."
                   : "")
@@ -458,6 +477,15 @@ function PluginDetail({
             <DetailField label="Problem" value={installation.problem} />
           ) : null}
         </SettingsSection>
+        {manifest ? (
+          <PluginContributionsSection
+            environmentId={environmentId}
+            environment={environment}
+            manifest={manifest}
+            installation={installation}
+          />
+        ) : null}
+
         {npm.state._tag === "failed" ? (
           <SettingsSection title="npm package">
             <Text selectable className="p-4 text-base text-danger-foreground">
@@ -472,5 +500,87 @@ function PluginDetail({
         <ViewOnlyNotice />
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+/**
+ * What a plugin adds to T3 Code, from its manifest summary. For an enabled
+ * installation, the environment's action and view snapshots say what is offered
+ * now; listing them never starts the plugin.
+ */
+function PluginContributionsSection({
+  environmentId,
+  environment,
+  manifest,
+  installation,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environment: SettingsTarget | undefined;
+  readonly manifest: PluginInstallationManifest;
+  readonly installation: PluginInstallation;
+}) {
+  const capabilities = environment?.serverConfig.environment.capabilities;
+  const offered = installation.enabled;
+  const actions = usePluginActionsSnapshot(
+    offered && capabilities?.pluginActions === true ? environmentId : null,
+  );
+  const views = useEnvironmentQuery(
+    offered && capabilities?.pluginViews === true
+      ? pluginViewEnvironment.views({ environmentId, input: {} })
+      : null,
+  ).data;
+  const offeredViews: PluginOfferedViews | null =
+    views?._tag === "available"
+      ? {
+          views: views.views.filter(
+            (view) =>
+              view.installationId === installation.installationId &&
+              view.generation === installation.generation,
+          ),
+          problems: views.problems.filter(
+            (problem) =>
+              problem.installationId === installation.installationId &&
+              problem.generation === installation.generation,
+          ),
+        }
+      : null;
+  const groups = describePluginContributions({
+    manifest,
+    installation,
+    actions: actions ?? null,
+    views: offeredViews,
+  });
+  return (
+    <SettingsSection title="Contributes">
+      {groups.length === 0 ? (
+        <Text className="p-4 text-base text-foreground-muted">Nothing declared</Text>
+      ) : (
+        groups.map((group, index) => (
+          <View
+            key={group.kind}
+            className={
+              index === 0 ? "gap-2 px-4 py-3" : "gap-2 border-t border-border-subtle px-4 py-3"
+            }
+          >
+            <Text className="text-sm text-foreground-muted">{group.label}</Text>
+            {group.items.map((item) => (
+              <View key={item.key} className="gap-0.5">
+                <Text selectable className="text-base text-foreground">
+                  {item.title}
+                </Text>
+                {item.detail ? (
+                  <Text selectable className="text-sm text-foreground-muted">
+                    {item.detail}
+                  </Text>
+                ) : null}
+              </View>
+            ))}
+            {group.notice ? (
+              <Text className="text-sm text-warning-foreground">{group.notice}</Text>
+            ) : null}
+          </View>
+        ))
+      )}
+    </SettingsSection>
   );
 }

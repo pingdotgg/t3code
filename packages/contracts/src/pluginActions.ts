@@ -78,6 +78,7 @@ export const PluginActionDeclaration = Schema.Struct({
     Schema.isMaxLength(PluginActionPlacement.literals.length),
   ),
 });
+export type PluginActionDeclaration = typeof PluginActionDeclaration.Type;
 
 /** Opaque and server-issued. Clients pass it back unchanged and never parse it. */
 export const PluginActionId = TrimmedNonEmptyString.check(Schema.isMaxLength(256)).pipe(

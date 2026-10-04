@@ -33,6 +33,13 @@ export function usePluginActions(environmentId: EnvironmentId | null): ReadonlyA
   );
 }
 
+/** The environment's plugin actions snapshot, including what its limit left out; null until it arrives. */
+export function usePluginActionsSnapshot(environmentId: EnvironmentId | null) {
+  return useEnvironmentQuery(
+    environmentId === null ? null : pluginActionEnvironment.snapshot({ environmentId, input: {} }),
+  ).data;
+}
+
 /** Whether this connection may run plugin actions now, read from the live grant. */
 export function canRunPluginActionsNow(environmentId: EnvironmentId): boolean {
   return readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);

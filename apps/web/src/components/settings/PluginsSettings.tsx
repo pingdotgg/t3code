@@ -46,6 +46,7 @@ import {
   type PluginNpmStepMarker,
 } from "@t3tools/client-runtime/state/pluginNpmPresentation";
 import { settlePluginNpmStep } from "@t3tools/client-runtime/state/pluginNpm";
+import { describePluginCapabilities } from "@t3tools/client-runtime/state/pluginContributions";
 import {
   canManagePlugins,
   createPluginActionGate,
@@ -118,6 +119,7 @@ import { Label } from "../ui/label";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { PluginContributionsList } from "./PluginContributions";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -982,7 +984,7 @@ interface PluginNpmDetails {
   readonly settle: (reply: PluginNpmPackage | null) => PluginNpmStepMarker | null;
 }
 
-/** Each declared capability; `added` ones are highlighted. */
+/** Each declared capability with what it lets the plugin do; `added` ones are highlighted. */
 function CapabilityList({
   capabilities,
   added,
@@ -992,11 +994,18 @@ function CapabilityList({
 }) {
   if (capabilities.length === 0) return "None declared";
   return (
-    <span className="flex flex-wrap gap-1">
-      {capabilities.map((capability) => (
-        <Badge key={capability} variant={added.includes(capability) ? "warning" : "outline"}>
-          {capability}
-        </Badge>
+    <span className="block space-y-1">
+      {describePluginCapabilities(capabilities).map((capability) => (
+        <span key={capability.name} className="flex items-baseline gap-2">
+          <span className="shrink-0">
+            <Badge variant={added.includes(capability.name) ? "warning" : "outline"}>
+              {capability.name}
+            </Badge>
+          </span>
+          {capability.meaning ? (
+            <span className="text-muted-foreground">{capability.meaning}</span>
+          ) : null}
+        </span>
       ))}
     </span>
   );
@@ -1207,6 +1216,15 @@ export function PluginReviewDialog({
                         Uses proposed APIs that may change between T3 Code versions.
                       </span>
                     ) : null}
+                  </ReviewField>
+                ) : null}
+                {manifest ? (
+                  <ReviewField label="Contributes">
+                    <PluginContributionsList
+                      environment={environment}
+                      manifest={manifest}
+                      installation={installation}
+                    />
                   </ReviewField>
                 ) : null}
                 {view.delivery ? (
@@ -1506,6 +1524,13 @@ function PluginNpmUpdateSection({
                   No longer declared: {update.removedCapabilities.join(", ")}
                 </span>
               ) : null}
+            </ReviewField>
+            <ReviewField label="Contributes">
+              <PluginContributionsList
+                environment={environment}
+                manifest={update.update.manifest}
+                installation={null}
+              />
             </ReviewField>
             <ReviewField label="Downloaded">
               {formatRelativeTimeLabel(update.update.stagedAt)}

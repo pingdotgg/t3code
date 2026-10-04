@@ -326,6 +326,11 @@ describe("updating an npm plugin", () => {
     // The download had landed after all: the next read shows it for review.
     await answerList(afterFailure, { packages: [npmPackage(STAGED)] });
     expect(reviewField("New version")).toBe("1.1.0");
+    // The installed version's list, then the download's: its summary may come from an
+    // older server that leaves declarations out, so it never claims nothing is declared.
+    expect(
+      elements("dt", "Contributes").map((label) => label.nextElementSibling?.textContent),
+    ).toEqual(["Nothing declared", "Nothing listed"]);
     expect(button("Apply update").disabled).toBe(true);
     await acknowledge();
     await click(button("Apply update"));

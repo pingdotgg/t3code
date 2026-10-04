@@ -42,6 +42,7 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "consent" ? consent : command === "enable" ? enable : add,
 }));
+vi.mock("./PluginContributions", () => ({ PluginContributionsList: () => null }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: () => null },
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),

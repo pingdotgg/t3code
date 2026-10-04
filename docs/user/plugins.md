@@ -15,8 +15,10 @@ plugins has its own list. Choose **Add plugin** and enter the absolute path of t
 on that environment's machine. Adding reads the manifest and the files; nothing runs yet.
 
 Review the plugin before it runs: the review shows the plugin ID, its directory, the number and size
-of its files, a digest of their exact contents, and the capabilities it declares. Confirm that you
-trust it, then **Approve and enable**. The plugin starts the first time it is used.
+of its files, a digest of their exact contents, the capabilities it declares and what each allows,
+and what it contributes: its actions, tools, settings, and the events it receives. View titles show
+once the plugin is enabled. Listing them never starts the plugin. Confirm that you trust it, then
+**Approve and enable**. The plugin starts the first time it is used.
 
 Add a plugin's build directory, not a git checkout. Every file in the directory counts, hidden files
 included, and symbolic links are refused.
@@ -163,7 +165,7 @@ project or thread you are in; the thread menu in the sidebar, the chat header, o
 actions** in a thread's long-press menu on mobile; and the composer's `/` menu, which in a new,
 unsent thread shows only environment and project actions. An action picked from a list that has
 since changed is refused; open the menu again. If an environment's plugins declare more than 128
-actions, the plugins that do not fit are left out whole.
+actions, the plugins that do not fit are left out whole, and their details in **Plugins** say so.
 
 ### Views
 
