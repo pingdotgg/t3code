@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 import type {
   Query as ClaudeQuery,
@@ -58,6 +59,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -1605,6 +1607,67 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
+  it.effect(
+    "forks history from the provider environment without changing the server environment",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-fork-" });
+        const configDir = path.join(root, "provider");
+        const cwd = path.join(root, "project");
+        const projectDir = path.join(configDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        yield* fileSystem.makeDirectory(cwd);
+        const sessionId = NodeCrypto.randomUUID();
+        const cursor = NodeCrypto.randomUUID();
+        const source =
+          [cursor, NodeCrypto.randomUUID()]
+            .map((uuid, index) =>
+              JSON.stringify({
+                uuid,
+                parentUuid: index === 0 ? null : cursor,
+                sessionId,
+                cwd,
+                type: "user",
+                isSidechain: false,
+                timestamp: "2026-01-01T00:00:00.000Z",
+                message: { role: "user", content: index === 0 ? "checkpoint" : "later" },
+              }),
+            )
+            .join("\n") + "\n";
+        const sourcePath = path.join(projectDir, sessionId + ".jsonl");
+        yield* fileSystem.writeFileString(sourcePath, source);
+        const environment = { ...process.env };
+        const fork = yield* runner.forkSession({
+          environment: { ...environment, CLAUDE_CONFIG_DIR: configDir },
+          sessionId,
+          options: { dir: cwd, upToMessageId: cursor },
+          threadId: ThreadId.make("fork-target"),
+          providerSessionId: ProviderSessionId.make("fork-session"),
+        });
+        assert.notEqual(fork.sessionId, sessionId);
+        const forkText = yield* fileSystem.readFileString(
+          path.join(projectDir, fork.sessionId + ".jsonl"),
+        );
+        assert.include(forkText, "checkpoint");
+        assert.notInclude(forkText, "later");
+        assert.equal(yield* fileSystem.readFileString(sourcePath), source);
+        assert.deepEqual(process.env, environment);
+      }).pipe(
+        Effect.provide(ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer),
+        Effect.provide(
+          Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+            native: undefined,
+            canonical: undefined,
+          }),
+        ),
+        Effect.provide(NodeServices.layer),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("forks at the source assistant cursor and resumes the forked session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1615,6 +1678,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         });
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
         const forkCalls: Array<{
+          readonly environment: NodeJS.ProcessEnv;
           readonly sessionId: string;
           readonly options: unknown;
           readonly threadId: ThreadId;
@@ -1623,7 +1687,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
-          environment: {},
+          environment: { CLAUDE_CONFIG_DIR: "/provider-home" },
           attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
@@ -1706,6 +1770,7 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         assert.deepEqual(forkCalls, [
           {
+            environment: { CLAUDE_CONFIG_DIR: "/provider-home" },
             sessionId: "source-native-session",
             options: {
               dir: "/workspace",
