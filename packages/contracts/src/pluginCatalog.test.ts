@@ -49,6 +49,27 @@ describe("PluginCatalogSnapshot from a newer server", () => {
   });
 });
 
+describe("PluginInstallation.eventDelivery", () => {
+  it("decodes known delivery states and keeps the row for unknown or missing ones", () => {
+    const quarantined = { _tag: "quarantined", failures: 5, reason: "onEvent failed" };
+    const decoded = decodeSnapshot({
+      installations: [
+        { ...installation, eventDelivery: quarantined },
+        { ...installation, installationId: "installation-2", eventDelivery: { _tag: "paused" } },
+        // An older server sends no delivery state at all.
+        { ...installation, installationId: "installation-3" },
+      ],
+    });
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    if (!Exit.isSuccess(decoded)) return;
+    const [known, unknown, older] = decoded.value.installations;
+    expect(known?.eventDelivery).toEqual(quarantined);
+    expect(unknown?.eventDelivery).toBeUndefined();
+    expect(unknown?.hostState).toEqual({ _tag: "running" });
+    expect(older?.eventDelivery).toBeUndefined();
+  });
+});
+
 describe("pluginInstallationStatus", () => {
   it("asks for consent again when the bytes differ from what was approved", () => {
     expect(pluginInstallationStatus(installation)).toBe("enabled");

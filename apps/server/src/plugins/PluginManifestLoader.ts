@@ -1,5 +1,6 @@
 import {
   PLUGIN_API_VERSION,
+  PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
   PluginManifest,
   type PluginCapabilityName,
@@ -10,7 +11,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
-const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set();
+const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  PLUGIN_EVENTS_CAPABILITY,
+]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 

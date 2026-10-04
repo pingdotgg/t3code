@@ -4,6 +4,12 @@
 /** File descriptor of the newline-delimited JSON channel inside the child. */
 export const PLUGIN_IPC_FD = 3;
 
+/**
+ * Handler name the server delivers event pages to. The child runtime answers
+ * it with the plugin's `onEvent` handlers, so plugins cannot register it.
+ */
+export const PLUGIN_EVENTS_HANDLER = "t3.events";
+
 /** Default upper bound for one encoded IPC message, newline excluded. */
 export const DEFAULT_PLUGIN_IPC_MAX_BYTES = 1024 * 1024;
 

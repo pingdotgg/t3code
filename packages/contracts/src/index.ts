@@ -55,6 +55,7 @@ export * from "./browserProfile.ts";
 export * from "./device.ts";
 export * from "./plugin.ts";
 export * from "./pluginCatalog.ts";
+export * from "./pluginEvents.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";

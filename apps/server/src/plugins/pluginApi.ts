@@ -1,3 +1,5 @@
+import type { PluginEvent as PluginEventSchema } from "@t3tools/contracts";
+
 /**
  * The surface a plugin entry module sees, plugin API version 1.
  *
@@ -44,9 +46,29 @@ interface PluginDisposable {
   dispose(): void;
 }
 
+/** One event from the environment, as JSON (see `PluginEvent` in contracts). */
+export type PluginEvent = typeof PluginEventSchema.Encoded;
+
+export type PluginEventHandler = (
+  event: PluginEvent,
+  context: PluginHandlerContext,
+) => void | Promise<void>;
+
 interface PluginProposedApi {
-  /** Registers the entry point the server calls by `name`. Names are unique per plugin. */
+  /**
+   * Registers the entry point the server calls by `name`. Names are unique per
+   * plugin; names starting with `t3.` are reserved.
+   */
   handle(name: string, handler: PluginHandler): PluginDisposable;
+  /**
+   * Receives environment events, in log order, when the manifest declares the
+   * `events` capability. Register during `activate`. The server acknowledges a
+   * page of events once every handler returned for each of them; a throw or
+   * rejection fails the page, and the same events arrive again later.
+   * Delivery is at-least-once: deduplicate side effects by `event.deliveryId`
+   * and ignore event types you do not know.
+   */
+  onEvent(handler: PluginEventHandler): PluginDisposable;
 }
 
 export interface PluginContext {

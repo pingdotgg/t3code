@@ -79,6 +79,12 @@ checkpoint or diff must not extend the recorded provider duration or keep the cl
 provider work as active. PR discovery after completion also checks that the checkout still matches
 the thread's non-default branch and that a newer run is not active.
 
+Every newly finished run that was not rolled back records exactly one of `run.finalized` or
+`run.finalization-failed`, in the same commit as the work it concludes, so a restart either replays
+that work or honours the recorded outcome. [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts)
+finalizes runs that never enqueue a checkpoint capture, so new terminal paths need no extra work.
+Neither event is `thread.settled`, which is the sidebar's parking state.
+
 [Checkpoints](../../apps/server/src/checkpointing/CheckpointStore.ts) use hidden Git refs to
 capture workspace state without adding commits to the user's branch. A revert must coordinate
 workspace state with the provider conversation. A provider that cannot roll back its conversation

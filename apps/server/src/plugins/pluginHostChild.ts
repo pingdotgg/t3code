@@ -5,11 +5,19 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
-import type { PluginContext, PluginHandler, PluginJson, PluginModule } from "./pluginApi.ts";
+import type {
+  PluginContext,
+  PluginEvent,
+  PluginEventHandler,
+  PluginHandler,
+  PluginJson,
+  PluginModule,
+} from "./pluginApi.ts";
 import type { PluginChildMessage, PluginHostMessage, PluginLogLevel } from "./PluginIpc.ts";
 import {
   DEFAULT_PLUGIN_IPC_MAX_BYTES,
   PLUGIN_IPC_FD,
+  PLUGIN_EVENTS_HANDLER,
   PLUGIN_IPC_MAX_BYTES_LIMIT,
   makeLineDecoder,
 } from "./pluginIpcFraming.ts";
@@ -34,6 +42,7 @@ export const runPluginHostChild = (): void => {
   let maxBytes = DEFAULT_PLUGIN_IPC_MAX_BYTES;
   let activated: { module: Partial<PluginModule>; controller: AbortController } | undefined;
   const handlers = new Map<string, PluginHandler>();
+  const eventHandlers = new Set<PluginEventHandler>();
   const requests = new Map<number, AbortController>();
 
   const write = (line: string) => {
@@ -86,6 +95,8 @@ export const runPluginHostChild = (): void => {
     const proposed = message.proposedApi
       ? {
           handle(name: string, handler: PluginHandler) {
+            if (name.startsWith("t3."))
+              throw new Error(`Handler names starting with "t3." are reserved.`);
             if (handlers.has(name)) throw new Error(`Handler "${name}" is already registered.`);
             handlers.set(name, handler);
             return {
@@ -93,6 +104,12 @@ export const runPluginHostChild = (): void => {
                 if (handlers.get(name) === handler) handlers.delete(name);
               },
             };
+          },
+          onEvent(handler: PluginEventHandler) {
+            // A wrapper per registration, so registering one function twice runs it twice.
+            const registered: PluginEventHandler = (event, context) => handler(event, context);
+            eventHandlers.add(registered);
+            return { dispose: () => void eventHandlers.delete(registered) };
           },
         }
       : undefined;
@@ -139,8 +156,32 @@ export const runPluginHostChild = (): void => {
     }
   };
 
+  // Runs every onEvent handler for each event of the page, in order. Any failure fails the
+  // whole page, so the server keeps its cursor before it and delivers the page again.
+  const deliverEvents: PluginHandler = async (input, context) => {
+    if (eventHandlers.size === 0)
+      throw new Error(
+        "The plugin declares the events capability but registered no onEvent handler.",
+      );
+    const { events } = input as unknown as { readonly events: ReadonlyArray<PluginEvent> };
+    for (const event of events) {
+      for (const handler of eventHandlers) {
+        context.signal.throwIfAborted();
+        try {
+          await handler(event, context);
+        } catch (error) {
+          throw new Error(`onEvent failed for ${event.deliveryId}: ${errorMessage(error)}`, {
+            cause: error,
+          });
+        }
+      }
+    }
+    return null;
+  };
+
   const invoke = (message: Extract<PluginHostMessage, { _tag: "Invoke" }>) => {
-    const handler = handlers.get(message.handler);
+    const handler =
+      message.handler === PLUGIN_EVENTS_HANDLER ? deliverEvents : handlers.get(message.handler);
     if (!handler) {
       settle(message.requestId, new Error(`No handler named "${message.handler}".`));
       return;
