@@ -108,13 +108,17 @@ export const executorLayer: Layer.Layer<
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
-          case "provider-runtime.continue":
-            return continueRestartedRun({
-              threadId: effect.threadId,
-              sourceRunId: effect.request.sourceRunId,
-            }).pipe(
+          case "provider-runtime.continue": {
+            const sourceRunId = effect.request.sourceRunId;
+            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              // A continuation that will never run still owes a delegated parent a result.
+              Effect.tapError(() =>
+                willRetry
+                  ? Effect.void
+                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -124,6 +128,7 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          }
           case "provider-session.detach":
             return providerSessions
               .detach({
@@ -175,10 +180,12 @@ export const executorLayer: Layer.Layer<
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
                 // work no process will report on, so the Stop ends it too.
+                // One Stop can interrupt several provider threads, so the
+                // settle is keyed by effect, not by the Stop command.
                 Effect.andThen(
                   threads.dispatch({
                     type: "thread.background-work.settle",
-                    commandId: CommandId.make(`${effect.commandId}:background-work-settled`),
+                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
                     threadId: effect.threadId,
                     providerThreadId: effect.request.providerThreadId,
                     providerTurnId: effect.request.providerTurnId,

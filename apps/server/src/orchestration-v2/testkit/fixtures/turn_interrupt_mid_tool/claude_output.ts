@@ -81,7 +81,7 @@ export function assertTurnInterruptMidToolClaudeOutput(
   assert.isDefined(commandItem);
   assert.isDefined(interruptRequest);
   assert.isDefined(interruptResult);
-  assert.equal(commandItem.status, "failed");
+  assert.equal(commandItem.status, "interrupted");
   assert.include(commandItem.input, "node -e");
   assert.equal(interruptRequest.status, "completed");
   assert.equal(interruptResult.status, "interrupted");

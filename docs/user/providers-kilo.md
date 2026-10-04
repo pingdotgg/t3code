@@ -50,6 +50,8 @@ signed in through the official Kilo login, an accessible GitHub repository, its
 branch and a model. Personal accounts are supported. Enabling paid cloud execution
 allows prompts and that remote repository to be sent to Kilo. T3 never uploads
 local checkout files or uncommitted changes. Each cloud thread has a remote worktree.
+Start cloud threads at the project root. T3 skips local setup scripts and managed
+folders, and rejects local worktree strategies for cloud launches and setup retries.
 
 Cloud requires **Full access**. The deployed runtime does not apply custom agent
 permissions, so T3 rejects restricted and Plan modes before paid admission. Remote
