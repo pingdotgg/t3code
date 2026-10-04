@@ -449,10 +449,19 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
-/** Carries authored image source metadata through the sanitizer to the image renderer. */
-function rehypePreserveImageSourceMeta() {
+/** Prepares app link schemes and authored image metadata for the sanitizer. */
+function rehypePrepareMarkdownSources() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.tagName === "a" && typeof href === "string" && isExternalAppLink(href)) {
+        // The sanitizer matches protocols case-sensitively. Preserve the rest of the URL.
+        const colon = href.indexOf(":");
+        node.properties = {
+          ...node.properties,
+          href: href.slice(0, colon).toLowerCase() + href.slice(colon),
+        };
+      }
       const src = node.properties?.src;
       const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
@@ -522,7 +531,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
-  rehypePreserveImageSourceMeta,
+  rehypePrepareMarkdownSources,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 

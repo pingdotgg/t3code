@@ -80,23 +80,42 @@ describe.each([
   "obsidian://open?vault=Example&file=Notes",
 ])("ChatMarkdown app deep link %s", (href) => {
   it.each([true, false])(
-    "preserves app destinations through the markdown pipeline with parseRawHtml=%s",
+    "preserves app destinations with lowercase and mixed-case schemes with parseRawHtml=%s",
     async (parseRawHtml) => {
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       let renderer: ReactTestRenderer | undefined;
+      const uppercaseHref = href.replace(/^[^:]+/, (scheme) => scheme.toUpperCase());
+      const mixedCaseHref = href.replace(/^./, (letter) => letter.toUpperCase());
+      const text = [
+        `[Open in app](${href})`,
+        "[Open][app]",
+        `[app]: ${uppercaseHref}`,
+        `<${mixedCaseHref}>`,
+        `[Uppercase](${uppercaseHref})`,
+        "[Unsafe](JAVASCRIPT:alert)",
+        "[Unknown](UNKNOWN://example.com)",
+        ...(parseRawHtml
+          ? [
+              `<a href="${mixedCaseHref}">HTML app link</a>`,
+              '<a href="JAVASCRIPT:alert">Unsafe HTML</a>',
+            ]
+          : []),
+      ].join("\n\n");
       try {
         await act(async () => {
           renderer = create(
-            <ChatMarkdown
-              cwd="/workspace/project"
-              text={`[Open in app](${href})\n\n[Open][app]\n\n[app]: ${href}\n\n<${href}>\n\n[Unsafe](javascript:alert)\n\n[Unknown](unknown://example.com)`}
-              parseRawHtml={parseRawHtml}
-            />,
+            <ChatMarkdown cwd="/workspace/project" text={text} parseRawHtml={parseRawHtml} />,
           );
         });
 
         const destinations = renderer!.root.findAllByType("a").map((link) => link.props.href);
-        expect(destinations.filter(Boolean)).toEqual([href, href, href]);
+        expect(destinations.filter(Boolean)).toEqual([
+          href,
+          parseRawHtml ? href : uppercaseHref,
+          parseRawHtml ? href : mixedCaseHref,
+          parseRawHtml ? href : uppercaseHref,
+          ...(parseRawHtml ? [href] : []),
+        ]);
       } finally {
         await act(async () => {
           renderer?.unmount();
