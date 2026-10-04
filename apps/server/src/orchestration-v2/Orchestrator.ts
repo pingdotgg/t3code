@@ -8408,6 +8408,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
+          cause: `Subagent ${command.subagentId} is not a running native Codex subagent with a child thread.`,
         });
       }
       const childThreadId = subagent.childThreadId;
@@ -8426,6 +8427,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
+          cause: `Child thread ${childThreadId} for subagent ${command.subagentId} has no running provider turn or provider session.`,
         });
       }
       const providerSessionId = providerThread.providerSessionId;

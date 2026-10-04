@@ -107,45 +107,47 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
       occurredAt: now,
       payload: subagent,
     });
+    const providerThread = {
+      id: providerThreadId,
+      driver: adapter.driver,
+      providerInstanceId: instanceId,
+      providerSessionId,
+      appThreadId: childThreadId,
+      ownerNodeId: subagentId,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    } as const;
     yield* projections.apply({
       id: EventId.make("provider-thread:stop-subagent"),
       type: "provider-thread.updated",
       threadId: childThreadId,
       occurredAt: now,
-      payload: {
-        id: providerThreadId,
-        driver: adapter.driver,
-        providerInstanceId: instanceId,
-        providerSessionId,
-        appThreadId: childThreadId,
-        ownerNodeId: subagentId,
-        nativeThreadRef: null,
-        nativeConversationHeadRef: null,
-        status: "active",
-        firstRunOrdinal: null,
-        lastRunOrdinal: null,
-        handoffIds: [],
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-      },
+      payload: providerThread,
     });
+    const providerTurn = {
+      id: providerTurnId,
+      providerThreadId,
+      nodeId: NodeId.make("root:child-stop-subagent"),
+      runAttemptId: null,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running",
+      startedAt: now,
+      completedAt: null,
+    } as const;
     yield* projections.apply({
       id: EventId.make("provider-turn:stop-subagent"),
       type: "provider-turn.updated",
       threadId: childThreadId,
       occurredAt: now,
-      payload: {
-        id: providerTurnId,
-        providerThreadId,
-        nodeId: NodeId.make("root:child-stop-subagent"),
-        runAttemptId: null,
-        nativeTurnRef: null,
-        ordinal: 1,
-        status: "running",
-        startedAt: now,
-        completedAt: null,
-      },
+      payload: providerTurn,
     });
     const commandId = CommandId.make("interrupt:stop-subagent");
     const accepted = yield* orchestrator.dispatch({
@@ -179,6 +181,44 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
         },
       ],
     );
+    for (const missing of ["turn", "session"] as const) {
+      yield* projections.apply({
+        id: EventId.make(`provider-turn:stop-subagent:missing-${missing}`),
+        type: "provider-turn.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: {
+          ...providerTurn,
+          status: missing === "turn" ? "completed" : "running",
+          completedAt: missing === "turn" ? now : null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`provider-thread:stop-subagent:missing-${missing}`),
+        type: "provider-thread.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: {
+          ...providerThread,
+          providerSessionId: missing === "session" ? null : providerSessionId,
+        },
+      });
+      const rejectedCommandId = CommandId.make(`interrupt:stop-subagent:missing-${missing}`);
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "subagent.interrupt",
+          commandId: rejectedCommandId,
+          threadId: parentThreadId,
+          subagentId,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(rejected, Orchestrator.OrchestratorDispatchError);
+      assert.equal(
+        rejected.cause,
+        `Child thread ${childThreadId} for subagent ${subagentId} has no running provider turn or provider session.`,
+      );
+      assert.deepEqual(yield* outbox.listByCommandId(rejectedCommandId), []);
+    }
     yield* projections.apply({
       id: EventId.make("subagent:stop-subagent:completed"),
       type: "subagent.updated",
@@ -196,7 +236,10 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
       })
       .pipe(Effect.flip);
     assert.instanceOf(rejected, Orchestrator.OrchestratorDispatchError);
-    assert.equal(rejected.cause, undefined);
+    assert.equal(
+      rejected.cause,
+      `Subagent ${subagentId} is not a running native Codex subagent with a child thread.`,
+    );
     assert.deepEqual(yield* outbox.listByCommandId(settledCommandId), []);
   }).pipe(Effect.provide(testLayer)),
 );
