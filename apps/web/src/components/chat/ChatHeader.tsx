@@ -20,7 +20,7 @@ import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
-import { readLocalApi } from "~/localApi";
+import { showProjectSettingsContextMenu } from "~/projectSettingsContextMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -195,22 +195,14 @@ export const ChatHeader = memo(function ChatHeader({
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (renamingTitle !== null) return;
-      if (!isServerThread && onOpenProjectSettings === undefined) return;
-      cancelPendingTitleMenu();
-      event.preventDefault();
       if (!isServerThread) {
-        const api = readLocalApi();
-        if (!api) return;
-        void api.contextMenu
-          .show([{ id: "project-settings", label: "Project settings", icon: "settings" }], {
-            x: event.clientX,
-            y: event.clientY,
-          })
-          .then((action) => {
-            if (action === "project-settings") onOpenProjectSettings?.();
-          });
+        if (onOpenProjectSettings === undefined) return;
+        cancelPendingTitleMenu();
+        showProjectSettingsContextMenu(event, onOpenProjectSettings);
         return;
       }
+      cancelPendingTitleMenu();
+      event.preventDefault();
       openMenu({ x: event.clientX, y: event.clientY });
     },
     [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, renamingTitle],

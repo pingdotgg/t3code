@@ -11030,6 +11030,11 @@ export default function ChatView(props: ChatViewProps) {
                           draftId={draftId}
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
+                          onOpenProjectSettings={
+                            activeDraftLogicalProjectKey
+                              ? handleOpenDraftProjectSettings
+                              : undefined
+                          }
                         />
                       </div>
                     </div>
