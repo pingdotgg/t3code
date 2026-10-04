@@ -39,6 +39,70 @@ const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
+// Scope finalizers cannot run after a backend crash. The guard's stdin is a
+// backend-owned lifeline; EOF terminates OpenCode's group even after SIGKILL.
+const OPENCODE_SERVER_GUARD_SOURCE = `
+const { spawn, spawnSync } = require("node:child_process");
+const [command, args, shell] = JSON.parse(process.argv[1]);
+const child = spawn(command, args, {
+  detached: process.platform !== "win32",
+  shell,
+  stdio: ["ignore", "inherit", "inherit"],
+});
+let stopping = false;
+let exitCode = 0;
+function killGroup(signal) {
+  if (child.pid === undefined) return false;
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "pipe",
+      timeout: 2000,
+    });
+    if (result.error || (result.status !== 0 && child.exitCode === null && child.signalCode === null)) {
+      console.error("OpenCode process-tree cleanup failed:", result.error?.message ?? result.stderr.toString());
+      exitCode = 1;
+      child.kill("SIGKILL");
+    }
+    return false;
+  }
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      console.error("OpenCode process-group cleanup failed:", error.message);
+      exitCode = 1;
+    }
+    return false;
+  }
+}
+function stop(code = 0) {
+  if (stopping) return;
+  stopping = true;
+  exitCode = code;
+  if (!killGroup("SIGTERM")) {
+    process.exit(exitCode);
+  }
+  setTimeout(() => {
+    killGroup("SIGKILL");
+    process.exit(exitCode);
+  }, 1000);
+}
+child.once("error", (error) => {
+  console.error("OpenCode server spawn failed:", error.message);
+  stop(1);
+});
+child.once("exit", (code) => stop(code ?? 1));
+process.once("SIGTERM", () => stop());
+process.once("SIGINT", () => stop());
+process.stdin.once("end", () => stop());
+process.stdin.once("error", (error) => {
+  console.error("OpenCode backend lifeline failed:", error.message);
+  stop(1);
+});
+process.stdin.resume();
+`;
+
 export function resolveOpenCodeConfigContent(
   inputEnvironment: Readonly<Record<string, string | undefined>> | undefined,
   inheritedEnvironment: Readonly<Record<string, string | undefined>> = process.env,
@@ -167,7 +231,8 @@ const MAX_OPENCODE_SKILLS = 512;
 export interface OpenCodeRuntimeShape {
   /**
    * Spawns a local OpenCode server process. Its lifetime is bound to the caller's
-   * `Scope.Scope` — the child is killed automatically when that scope closes.
+   * `Scope.Scope` and backend lifetime — the process tree is killed when the
+   * scope closes or the backend exits, including an abrupt crash.
    * Consumers that want a long-lived server must create and hold a scope explicitly
    * (see {@link Scope.make}) and close it when done.
    */
@@ -573,11 +638,16 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       });
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(serverTarget, args, {
-            detached: process.platform !== "win32",
-            shell: serverShell,
-            env: serverEnv,
-          }),
+          ChildProcess.make(
+            process.execPath,
+            ["-e", OPENCODE_SERVER_GUARD_SOURCE, JSON.stringify([serverTarget, args, serverShell])],
+            {
+              detached: false,
+              stdin: "pipe",
+              env: { ...serverEnv, ELECTRON_RUN_AS_NODE: "1" },
+              forceKillAfter: "3 seconds",
+            },
+          ),
         )
         .pipe(
           Effect.provideService(Scope.Scope, runtimeScope),
@@ -591,23 +661,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         );
 
-      const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
-        process.platform === "win32"
-          ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)
-          : Effect.sync(() => {
-              try {
-                process.kill(-Number(child.pid), signal);
-              } catch {
-                // The direct child may already have exited after starting the
-                // server; the process group kill is best-effort cleanup for
-                // any serve process left in that group.
-              }
-            });
-      const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
-        Effect.andThen(Effect.sleep("1 second")),
-        Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
-        Effect.ignore,
-      );
+      const terminateChild = child
+        .kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" })
+        .pipe(Effect.ignore({ log: true }));
       yield* Scope.addFinalizer(runtimeScope, terminateChild);
 
       const stdoutRef = yield* Ref.make("");
