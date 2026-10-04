@@ -1,4 +1,10 @@
-import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -26,6 +32,9 @@ export function createEnvironmentThreadDetailAtoms<E>(
     environmentId: ScopedThreadRef["environmentId"],
     threadId: ScopedThreadRef["threadId"],
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentThreadState, E>>,
+  shellIndexAtom?: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>>,
 ) {
   const threadStateValueAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
@@ -104,20 +113,30 @@ export function createEnvironmentThreadDetailAtoms<E>(
   });
 
   const turnSubagentsAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    let previousChildren: ReadonlyArray<OrchestrationV2ThreadShell | undefined> = [];
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents"> | null = null;
     let value: ThreadTurnSubagents | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const shells =
+        shellIndexAtom === undefined ? undefined : get(shellIndexAtom(ref.environmentId));
+      const children =
+        projection?.subagents.map((agent) =>
+          agent.childThreadId === null ? undefined : shells?.get(agent.childThreadId),
+        ) ?? [];
       if (projection === null) {
         previous = null;
         value = null;
       } else if (
         projection.runs !== previous?.runs ||
-        projection.subagents !== previous?.subagents
+        projection.subagents !== previous?.subagents ||
+        !arrayElementsEqual(children, previousChildren)
       ) {
         const { runs, subagents } = projection;
         previous = { runs, subagents };
-        value = deriveThreadTurnSubagents(previous);
+        previousChildren = children;
+        value = deriveThreadTurnSubagents(previous, shells);
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-turn-subagents:${key}`));

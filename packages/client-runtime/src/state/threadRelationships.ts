@@ -4,6 +4,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { withSubagentThreadActivity } from "./subagentRuntime.ts";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -96,7 +97,8 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status: subagent.status,
+        status: withSubagentThreadActivity(subagent, threadsById.get(subagent.childThreadId))
+          .status,
       });
     }
     for (const transfer of input.projection.contextTransfers) {

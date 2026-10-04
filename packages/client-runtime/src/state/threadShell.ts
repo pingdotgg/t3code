@@ -7,6 +7,8 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { activeSubagentThreadStatus } from "./subagentRuntime.ts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
@@ -55,12 +57,75 @@ export function createEnvironmentThreadShellAtoms(input: {
     return value;
   };
 
-  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationV2ThreadShell> =>
-        get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
-    ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
-  );
+  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
+    const derived = new WeakMap<OrchestrationV2ThreadShell, OrchestrationV2ThreadShell>();
+    return Atom.make((get): ReadonlyArray<OrchestrationV2ThreadShell> => {
+      const threads = get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS;
+      const childrenByParent = new Map<ThreadId, OrchestrationV2ThreadShell[]>();
+      for (const child of threads) {
+        const parentId = child.lineage.parentThreadId;
+        if (
+          parentId === null ||
+          child.lineage.relationshipToParent !== "subagent" ||
+          isProviderNativeSubagentThread(child) ||
+          child.forkedFrom?.type !== "node" ||
+          activeSubagentThreadStatus(child) === null
+        )
+          continue;
+        const children = childrenByParent.get(parentId);
+        if (children === undefined) childrenByParent.set(parentId, [child]);
+        else children.push(child);
+      }
+      return threads.map((thread) => {
+        const children = childrenByParent.get(thread.id);
+        // Match the server's foreground/settlement gate. Child activity arrives
+        // through shell updates even when the original delegation is completed.
+        if (
+          children === undefined ||
+          thread.activeRunId !== null ||
+          (thread.activityRunStatus != null && thread.activityRunStatus !== "waiting") ||
+          !["completed", "waiting", "failed", "interrupted", "cancelled"].includes(thread.status)
+        )
+          return thread;
+        const tasks = [...(thread.pendingBackgroundTasks ?? [])];
+        const knownChildren = new Set(
+          tasks.flatMap((task) =>
+            task.kind === "subagent" && task.childThreadId ? [task.childThreadId] : [],
+          ),
+        );
+        for (const child of children) {
+          if (knownChildren.has(child.id) || child.forkedFrom?.type !== "node") continue;
+          knownChildren.add(child.id);
+          tasks.push({
+            taskId: child.forkedFrom.nodeId,
+            kind: "subagent",
+            childThreadId: child.id,
+            description: child.title,
+          });
+        }
+        if (tasks.length === (thread.pendingBackgroundTasks?.length ?? 0)) return thread;
+        const previous = derived.get(thread);
+        if (
+          previous?.pendingBackgroundTasks?.length === tasks.length &&
+          tasks.every((task, index) => {
+            const old = previous.pendingBackgroundTasks?.[index];
+            return (
+              old?.taskId === task.taskId &&
+              old.kind === task.kind &&
+              old.description === task.description &&
+              (old.kind !== "subagent" ||
+                task.kind !== "subagent" ||
+                old.childThreadId === task.childThreadId)
+            );
+          })
+        )
+          return previous;
+        const next = { ...thread, pendingBackgroundTasks: tasks };
+        derived.set(thread, next);
+        return next;
+      });
+    }).pipe(Atom.withLabel(`environment-threads:${environmentId}`));
+  });
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {

@@ -299,7 +299,7 @@ function taskStatusForRun(
 
 export function delegatedTaskRun(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
-  task: OrchestrationV2Subagent,
+  task: Pick<OrchestrationV2Subagent, "threadId" | "childThreadId">,
 ): OrchestrationV2Run | undefined {
   const spawnTransfer = childProjection.contextTransfers.find(
     (transfer) =>
@@ -366,7 +366,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = input.parent.contextTransfers.find(
+  const transfer = input.parent.contextTransfers.findLast(
     (transfer) =>
       transfer.type === "subagent_result" &&
       transfer.sourceThreadId === input.target.thread.id &&
@@ -1059,37 +1059,35 @@ const make = Effect.gen(function* () {
         messages: [...childControls.messages, ...resultRecords.messages],
         turnItems: resultRecords.turnItems,
       };
-      // A restart cut the child's run and its continuation has not settled, or
-      // the child started working again after this read.
+      const currentRun =
+        childControls.runs.findLast((run) =>
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
+        ) ??
+        childControls.runs.findLast((run) => run.status === "queued" && run.queueHeld !== true) ??
+        progress.resultRun ??
+        childRun;
+      // A restart-cut run is not a final result while its continuation is pending.
       const heldForRestart =
-        task.result === null &&
         progress.state === "result_available" &&
+        !(
+          task.result !== null &&
+          (task.resultRunId === undefined || task.resultRunId === currentRun?.id)
+        ) &&
         (yield* threadManagement
           .delegatedTaskResultPending(task.childThreadId)
           .pipe(Effect.mapError(threadManagementFailure)));
-      const workState =
-        task.result !== null ? "result_available" : heldForRestart ? "working" : progress.state;
-      const status =
-        task.result !== null
-          ? taskStatusForRun(
-              task.status === "completed" ||
-                task.status === "failed" ||
-                task.status === "cancelled" ||
-                task.status === "interrupted"
-                ? { status: task.status }
-                : childRun,
-            )
-          : workState === "result_available"
-            ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
+      const workState = heldForRestart ? "working" : progress.state;
+      const status = heldForRestart
+        ? ("running" as const)
+        : workState === "waiting_for_children"
+          ? ("waiting" as const)
+          : taskStatusForRun(currentRun);
       const derivedResult =
-        task.result !== null
-          ? task.result
-          : progress.resultRun !== undefined && isTerminalTaskStatus(status)
-            ? subagentResultForRun(childProjection, progress.resultRun).text
-            : null;
+        currentRun !== undefined && isTerminalTaskStatus(status)
+          ? currentRun.id === task.resultRunId && task.result !== null
+            ? task.result
+            : subagentResultForRun(childProjection, currentRun).text
+          : null;
       const resultTransfers = parentProjection.contextTransfers.filter(
         (transfer) =>
           transfer.type === "subagent_result" &&
@@ -1104,12 +1102,12 @@ const make = Effect.gen(function* () {
               ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
               : undefined) ??
             null);
-      const resultTransfer = resultTransfers[0] ?? null;
+      const resultTransfer = isTerminalTaskStatus(status) ? resultTransferForRun(currentRun) : null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
-        childRunId: childRun?.id ?? null,
+        childRunId: currentRun?.id ?? null,
         childNodeId: task.id,
         status,
         workState,
@@ -1122,7 +1120,7 @@ const make = Effect.gen(function* () {
         latestTerminalStatus:
           terminalStatus !== null && isTerminalTaskStatus(terminalStatus) ? terminalStatus : null,
         latestTerminalSummary: canExposeTaskRunResult(terminalRun)
-          ? terminalRun.id === childRun?.id
+          ? terminalRun.id === currentRun?.id && derivedResult !== null
             ? derivedResult
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
@@ -1147,6 +1145,7 @@ const make = Effect.gen(function* () {
             }),
             parentThreadId: scope.threadId,
             taskId,
+            ...(terminalRun === undefined ? {} : { resultRunId: terminalRun.id }),
             observedByRunId:
               observingRun?.providerInstanceId === scope.providerInstanceId
                 ? observingRun.id
@@ -1523,13 +1522,20 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
-        // Published task results stay terminal. Later child-thread messages do not
-        // reopen the task, so cancelling it must not interrupt those separate runs.
-        if (isTerminalTaskStatus(current.status)) {
+        // Task cancellation owns the original delegation, not separate later child turns.
+        const childControls = yield* threadManagement
+          .getThreadRecords(current.childThreadId, ["runs", "contextTransfers"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        const originalRun = delegatedTaskRun(childControls, {
+          threadId: scope.threadId,
+          childThreadId: current.childThreadId,
+        });
+        const originalStatus = taskStatusForRun(originalRun);
+        if (isTerminalTaskStatus(originalStatus)) {
           yield* disposeCompletionDelivery;
           return {
             taskId: input.taskId,
-            status: current.status,
+            status: originalStatus,
           } satisfies OrchestratorMcpTaskCancelResult;
         }
         const child = yield* loadProjection(current.childThreadId);
@@ -1797,7 +1803,7 @@ const make = Effect.gen(function* () {
         const messagesByThreadId = new Map(sourceMessages);
         const task = directAppOwnedChildTask(parent, target);
         if (task !== undefined && (input.textOffset ?? 0) === 0) {
-          const transfer = parent.contextTransfers.find(
+          const transfer = parent.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&
@@ -1822,7 +1828,24 @@ const make = Effect.gen(function* () {
               maxChars,
             })
           ) {
-            yield* readTask(scope, task.id, false, true, "thread-read-acknowledge");
+            const observingRun = ThreadManagementService.latestActiveRun(parent);
+            yield* threadManagement
+              .dispatch({
+                type: "delegated_task.completion-delivery.acknowledge",
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: yield* requestKey(undefined),
+                  operation: "thread-read-acknowledge",
+                }),
+                parentThreadId: scope.threadId,
+                taskId: task.id,
+                ...(resultRunId === undefined ? {} : { resultRunId }),
+                observedByRunId:
+                  observingRun?.providerInstanceId === scope.providerInstanceId
+                    ? observingRun.id
+                    : null,
+              })
+              .pipe(Effect.mapError(threadManagementFailure));
           }
         }
         return {

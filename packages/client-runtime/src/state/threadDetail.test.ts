@@ -14,7 +14,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { v2Projection, v2Now } from "./orchestrationV2TestFixtures.ts";
+import { v2Projection, v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import type { EnvironmentThreadState } from "./threads.ts";
@@ -222,7 +222,11 @@ it("does not notify the agents pill for unrelated projection updates", () => {
       threadState({ data: Option.some(projection), status: "live", error: Option.none() }),
     ),
   );
-  const details = createEnvironmentThreadDetailAtoms(() => source);
+  const shellIndex = Atom.make(new Map([[ThreadId.make("thread-child"), v2ThreadShell]]));
+  const details = createEnvironmentThreadDetailAtoms(
+    () => source,
+    () => shellIndex,
+  );
   const registry = AtomRegistry.make();
   const dispose = registry.mount(details.turnSubagentsAtom(ref));
   const before = registry.get(details.turnSubagentsAtom(ref));
@@ -238,6 +242,41 @@ it("does not notify the agents pill for unrelated projection updates", () => {
     ),
   );
   expect(registry.get(details.turnSubagentsAtom(ref))).toBe(before);
+  const completedProjection = {
+    ...projection,
+    subagents: projection.subagents.map((agent) => ({
+      ...agent,
+      status: "completed" as const,
+      result: "Original result",
+      completedAt: v2Now,
+    })),
+  };
+  registry.set(
+    source,
+    AsyncResult.success(
+      threadState({ data: Option.some(completedProjection), status: "live", error: Option.none() }),
+    ),
+  );
+  expect(registry.get(details.turnSubagentsAtom(ref))?.liveCount).toBe(0);
+  const child = { ...v2ThreadShell, id: ThreadId.make("thread-child"), status: "running" as const };
+  registry.set(shellIndex, new Map([[child.id, child]]));
+  const resumed = registry.get(details.turnSubagentsAtom(ref));
+  expect(resumed?.liveCount).toBe(1);
+  expect(resumed?.subagents[0]?.result).toBeNull();
+  registry.set(
+    shellIndex,
+    new Map([
+      [child.id, child],
+      [ThreadId.make("unrelated"), v2ThreadShell],
+    ]),
+  );
+  expect(registry.get(details.turnSubagentsAtom(ref))).toBe(resumed);
+  registry.set(shellIndex, new Map([[child.id, { ...child, status: "completed" }]]));
+  expect(registry.get(details.turnSubagentsAtom(ref))?.liveCount).toBe(0);
+  expect(registry.get(details.turnSubagentsAtom(ref))?.subagents[0]?.result).toBe(
+    "Original result",
+  );
+
   dispose();
   registry.dispose();
 });

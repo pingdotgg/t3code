@@ -4,14 +4,24 @@
  *
  * Scoped to a run rather than the whole thread: a thread accumulates every
  * subagent it ever spawned, while the pill and its sheet answer "what is this
- * turn doing right now". Statuses come from the v2 projection directly, so
- * this stays a pure fold over `runs` and `subagents`.
+ * turn doing right now". Live follow-ups to completed delegated tasks also
+ * appear, using their child thread shells without changing the original result.
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationV2Subagent, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
-import { isActiveSubagentStatus, isTerminalSubagentStatus } from "./subagentRuntime.ts";
+import {
+  activeSubagentThreadStatus,
+  isActiveSubagentStatus,
+  isTerminalSubagentStatus,
+  withSubagentThreadActivity,
+} from "./subagentRuntime.ts";
 import { resolveActiveThreadRun } from "./threadWorkflows.ts";
 
 type Projection = OrchestrationV2ThreadProjection;
@@ -40,6 +50,7 @@ function orderKey(subagent: Subagent): number {
 /** null when the thread has never spawned a subagent. */
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,
+  children?: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
 ): ThreadTurnSubagents | null {
   if (projection.subagents.length === 0) return null;
   const activeRun = resolveActiveThreadRun(projection);
@@ -52,7 +63,17 @@ export function deriveThreadTurnSubagents(
   );
   const runId = activeRun?.id ?? latestUpdated.runId;
   const subagents = copySorted(
-    projection.subagents.filter((subagent) => subagent.runId === runId),
+    projection.subagents.flatMap((subagent) => {
+      const live = withSubagentThreadActivity(
+        subagent,
+        subagent.childThreadId === null ? undefined : children?.get(subagent.childThreadId),
+      );
+      return subagent.runId === runId ||
+        (subagent.childThreadId !== null &&
+          activeSubagentThreadStatus(children?.get(subagent.childThreadId)) !== null)
+        ? [live]
+        : [];
+    }),
     (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );
   if (subagents.length === 0) return null;

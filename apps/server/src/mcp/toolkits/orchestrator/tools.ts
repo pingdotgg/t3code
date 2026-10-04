@@ -70,7 +70,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read a T3-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task or extend task_cancel to those turns. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery.",
+    "Read current work for a T3-owned delegated child created by this parent thread. childRunId identifies the current run. workState distinguishes working, waiting_for_children, and result_available. summary is null while work is pending and otherwise contains the current result, including provider errors on failure. Follow-ups update current status and result; the original result remains in the timeline. hasPendingChildRuns reports later queued or executing turns. latestTerminal* exposes the most recent non-monitor result while work is active. Reading a terminal result acknowledges that result's automatic parent delivery. task_cancel remains scoped to the original delegation.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -84,7 +84,7 @@ const TaskStatusTool = Tool.make("task_status", {
 
 const TaskCancelTool = Tool.make("task_cancel", {
   description:
-    "Request interruption of an active T3-owned delegated task and dispose its automatic parent delivery. For a terminal task, return its existing status and dispose delivery without interrupting later child-thread runs, even when task_status reports hasPendingChildRuns=true. Published task results remain available. Use t3_thread_interrupt for a later active run.",
+    "Request interruption of an active T3-owned delegated task and dispose its automatic parent delivery. If the original delegated run is terminal, return its status and dispose delivery without interrupting later child-thread runs, even when task_status reports current follow-up work. Results remain available in the timeline. Use t3_thread_interrupt for a later active run.",
   parameters: OrchestratorMcpTaskCancelInput,
   success: OrchestratorMcpTaskCancelResult,
   failure: OrchestratorMcpFailure,
@@ -200,7 +200,7 @@ export const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to a T3 thread in the calling project. Do not use a delegated task's childThreadId to start another review round here; use delegate_task with the full review context and a new clientRequestId for that round. Thread messages do not create a new delegated task or reopen a completed task. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
+    "Send a message to a T3 thread in the calling project. Do not use a delegated task's childThreadId to start another review round here; use delegate_task with the full review context and a new clientRequestId for that round. Thread messages do not create a new delegated task. A follow-up to an app-owned child updates its current status and returns its result to the parent. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,

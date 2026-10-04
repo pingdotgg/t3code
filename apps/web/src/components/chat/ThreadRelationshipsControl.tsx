@@ -5,7 +5,10 @@ import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  projectedSubagentsToRuntime,
+  withSubagentThreadActivity,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
@@ -169,22 +172,6 @@ export function ThreadRelationshipsPanel(props: {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providers = useServerConfigs().get(props.environmentId)?.providers;
-  const subagentsByThreadId = useMemo(
-    () =>
-      new Map(
-        (projection?.subagents ?? [])
-          .filter((subagent) => subagent.childThreadId !== null)
-          .map((subagent) => [
-            subagent.childThreadId,
-            {
-              ...projectedSubagentsToRuntime([subagent])[0]!,
-              driver: subagent.driver,
-              providerInstanceId: subagent.providerInstanceId,
-            },
-          ]),
-      ),
-    [projection?.subagents],
-  );
   const threadShells = useThreadShells();
   const projects = useProjects().filter((project) => project.environmentId === props.environmentId);
   const archived = useArchivedThreadSnapshots([props.environmentId]);
@@ -200,6 +187,27 @@ export function ThreadRelationshipsPanel(props: {
     ];
     return deriveThreadRelationshipGraph({ threads: shells, projection });
   }, [archivedShells, projection, props.environmentId, threadShells]);
+  const subagentsByThreadId = useMemo(
+    () =>
+      new Map(
+        (projection?.subagents ?? [])
+          .filter((subagent) => subagent.childThreadId !== null)
+          .map((subagent) => [
+            subagent.childThreadId,
+            {
+              ...projectedSubagentsToRuntime([
+                withSubagentThreadActivity(
+                  subagent,
+                  graph.nodes.get(subagent.childThreadId!)?.thread ?? undefined,
+                ),
+              ])[0]!,
+              driver: subagent.driver,
+              providerInstanceId: subagent.providerInstanceId,
+            },
+          ]),
+      ),
+    [graph, projection?.subagents],
+  );
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const navigate = useNavigate();
@@ -240,8 +248,12 @@ export function ThreadRelationshipsPanel(props: {
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
   const runningCount =
-    projection?.subagents.filter((agent) => agent.status === "running").length ??
-    active.filter(({ edge }) => edge.status === "running").length;
+    projection?.subagents.filter(
+      (agent) =>
+        (agent.childThreadId === null
+          ? agent.status
+          : (subagentsByThreadId.get(agent.childThreadId)?.status ?? agent.status)) === "running",
+    ).length ?? active.filter(({ edge }) => edge.status === "running").length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
     return null;

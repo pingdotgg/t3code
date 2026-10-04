@@ -6,9 +6,12 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { withSubagentThreadActivity } from "./subagentRuntime.ts";
 import { deriveThreadTurnSubagents, resolveSubagentPillSegment } from "./threadSubagents.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -147,5 +150,65 @@ describe("resolveSubagentPillSegment", () => {
     });
 
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1/1");
+  });
+});
+
+describe("delegated child follow-ups", () => {
+  const completed = subagent({
+    id: "finished",
+    status: "completed",
+    result: "Original result",
+    completedAt: at("2026-06-20T00:01:00Z"),
+  });
+  const child = {
+    ...v2ThreadShell,
+    id: completed.childThreadId!,
+    status: "running" as const,
+    activityRunStatus: "running" as const,
+    activityRunStartedAt: at("2026-06-20T00:02:00Z"),
+  };
+
+  it.each(["queued", "preparing", "starting", "running", "waiting"] as const)(
+    "shows a %s follow-up as live without changing its original result",
+    (status) => {
+      const live = withSubagentThreadActivity(completed, {
+        ...child,
+        status,
+        activityRunStatus: null,
+      });
+      expect(live.status).toBe(
+        ["queued", "preparing", "starting"].includes(status) ? "pending" : status,
+      );
+      expect(live.result).toBeNull();
+      expect(live.completedAt).toBeNull();
+      expect(live.startedAt).toEqual(child.activityRunStartedAt);
+      expect(completed.result).toBe("Original result");
+      expect(completed.status).toBe("completed");
+    },
+  );
+
+  it("includes a resumed agent from an earlier parent run and removes it after it settles", () => {
+    const projection = {
+      runs: [finishedRun, run("run-2", "running")],
+      subagents: [completed, subagent({ id: "current", runId: RunId.make("run-2") })],
+    };
+    const children = new Map<ThreadId, OrchestrationV2ThreadShell>([[child.id, child]]);
+    const live = deriveThreadTurnSubagents(projection, children);
+    expect(live?.subagents.map((agent) => agent.id)).toEqual(["current", "finished"]);
+    expect(live?.liveCount).toBe(2);
+    children.set(child.id, { ...child, status: "completed", activityRunStatus: null });
+    expect(
+      deriveThreadTurnSubagents(projection, children)?.subagents.map((agent) => agent.id),
+    ).toEqual(["current"]);
+  });
+
+  it("keeps provider-owned and unavailable children on their task status", () => {
+    expect(
+      withSubagentThreadActivity({ ...completed, origin: "provider_native" }, child).status,
+    ).toBe("completed");
+    expect(withSubagentThreadActivity(completed, undefined)).toBe(completed);
+    expect(withSubagentThreadActivity(completed, { ...child, archivedAt: child.createdAt })).toBe(
+      completed,
+    );
   });
 });

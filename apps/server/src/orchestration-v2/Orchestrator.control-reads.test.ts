@@ -49,6 +49,39 @@ const testLayer = Layer.mergeAll(
   ),
 );
 
+it.effect.each(["message.dispatch", "queue.resume"] as const)(
+  "persists a rejected receipt for %s on a missing thread",
+  (type) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:missing-receipt");
+      const commandId = CommandId.make(`command:missing-receipt:${type}`);
+      const command =
+        type === "queue.resume"
+          ? { type, threadId, commandId }
+          : {
+              type,
+              threadId,
+              commandId,
+              messageId: MessageId.make("message:missing-receipt"),
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              text: "This thread does not exist.",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" as const },
+            };
+      yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      const receipts = yield* sql<{ readonly status: string }>`
+        SELECT status FROM orchestration_command_receipts WHERE command_id = ${commandId}
+      `;
+      assert.deepEqual(receipts, [{ status: "rejected" }]);
+      const replay = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.equal(replay._tag, "OrchestratorCommandPreviouslyRejectedError");
+    }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>

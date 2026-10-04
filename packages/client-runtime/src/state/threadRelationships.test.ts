@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, NodeId, RunId, ProviderDriverKind } from "@t3tools/contracts";
+import { v2Projection, v2ThreadShell, v2Now } from "./orchestrationV2TestFixtures.ts";
 import * as DateTime from "effect/DateTime";
 
+import { withSubagentThreadActivity } from "./subagentRuntime.ts";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -471,4 +473,55 @@ describe("web thread lineage ordering", () => {
       }),
     ).toEqual([first, second, third]);
   });
+  it.each(["running", "failed", "completed", "interrupted", "cancelled"] as const)(
+    "lineage reflects the latest follow-up outcome %s",
+    (status) => {
+      const parentId = v2Projection.thread.id;
+      const childId = ThreadId.make("review:child");
+      const task = {
+        id: NodeId.make("review:task"),
+        threadId: parentId,
+        runId: null,
+        parentNodeId: NodeId.make("review:root"),
+        origin: "app_owned" as const,
+        createdBy: "agent" as const,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: v2Projection.thread.providerInstanceId,
+        providerThreadId: null,
+        childThreadId: childId,
+        nativeTaskRef: null,
+        prompt: "initial",
+        title: null,
+        model: null,
+        status: "completed" as const,
+        result: "Original success",
+        startedAt: v2Now,
+        completedAt: v2Now,
+        updatedAt: v2Now,
+      };
+      const child = {
+        ...v2ThreadShell,
+        id: childId,
+        lineage: {
+          rootThreadId: parentId,
+          parentThreadId: parentId,
+          relationshipToParent: "subagent" as const,
+        },
+        status,
+        latestRunId: RunId.make("review:followup"),
+        activityRunStatus: status === "running" ? ("running" as const) : null,
+        latestRunRequestedAt: DateTime.add(v2Now, { seconds: 1 }),
+        lastError: status === "failed" ? "Follow-up failure" : null,
+      };
+      const graph = deriveThreadRelationshipGraph({
+        threads: [child],
+        projection: { ...v2Projection, subagents: [task] },
+      });
+      expect(withSubagentThreadActivity(task, child).result).toBe(
+        status === "failed" ? "Follow-up failure" : null,
+      );
+      expect(graph.edges.find((edge) => edge.kind === "subagent")?.status).toBe(status);
+      expect(task.result).toBe("Original success");
+    },
+  );
 });

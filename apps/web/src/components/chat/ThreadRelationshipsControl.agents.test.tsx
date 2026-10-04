@@ -48,6 +48,7 @@ it("shows the matching child agent details and refreshes them when the agent set
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const agent = {
     id: "agent-1",
+    origin: "app_owned",
     driver: "codex",
     providerInstanceId: "codex",
     childThreadId: "child-1",
@@ -137,6 +138,34 @@ it("shows the matching child agent details and refreshes them when the agent set
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
   expect(text()).toContain("Checker");
+
+  const completedProjection = state.projection;
+  const child = {
+    archivedAt: null,
+    deletedAt: null,
+    lineage: { parentThreadId: ThreadId.make("parent"), relationshipToParent: "subagent" },
+    updatedAt: DateTime.makeUnsafe("2026-09-16T12:03:00Z"),
+    id: ThreadId.make("child-1"),
+    title: "Checker",
+    status: "running" as const,
+    activityRunStatus: "running" as const,
+    activityRunStartedAt: DateTime.makeUnsafe("2026-09-16T12:03:00Z"),
+  };
+  state.shells = [{ environmentId: "test", source: child }];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(state.projection).toBe(completedProjection);
+  expect(text()).toContain("Lineage · 1 running");
+  expect(text()).toContain("Checker");
+  expect(text()).not.toContain("Previous agents");
+  expect(text()).not.toContain("Done");
+  expect(text()).not.toContain("2m 15s");
+  state.shells = [
+    { environmentId: "test", source: { ...child, status: "completed", activityRunStatus: null } },
+  ];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("Previous agents");
+  expect(text()).toContain("Done");
+  state.shells = [];
 
   state.projection = {
     ...projection,

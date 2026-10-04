@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  NodeId,
   ProjectId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
@@ -11,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { presentPendingBackgroundWork } from "./threadExecution.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -198,4 +200,92 @@ describe("v2 thread shell lists", () => {
       harness.registry.dispose();
     }
   });
+});
+
+it("tracks resumed delegated children in the waiting roster through shell updates", () => {
+  const { registry, threads, snapshotAtom } = makeHarness([environmentId, remoteEnvironmentId]);
+  const parent = { ...v2ThreadShell, status: "completed" as const };
+  const child = {
+    ...v2ThreadShell,
+    id: ThreadId.make("resumed-child"),
+    title: "Resumed worker",
+    creationSource: "mcp" as const,
+    lineage: {
+      rootThreadId: parent.id,
+      parentThreadId: parent.id,
+      relationshipToParent: "subagent" as const,
+    },
+    forkedFrom: { type: "node" as const, threadId: parent.id, nodeId: NodeId.make("delegation") },
+    status: "completed" as const,
+  };
+  const snapshot = { ...v2ShellSnapshot, threads: [parent, child] };
+  registry.set(snapshotAtom(environmentId), snapshot);
+  registry.set(snapshotAtom(remoteEnvironmentId), snapshot);
+  const ref = { environmentId, threadId: parent.id };
+  const dispose = registry.mount(threads.threadShellAtom(ref));
+  const read = () => registry.get(threads.threadShellAtom(ref));
+  expect(read()?.pendingBackgroundTasks).toEqual([]);
+  for (const status of ["queued", "running", "completed"] as const) {
+    const next = applyShellStreamEvent(snapshot, {
+      kind: "thread.updated",
+      location: "active",
+      sequence: 1,
+      thread: { ...child, status },
+    });
+    registry.set(snapshotAtom(environmentId), next);
+    if (status === "completed") expect(read()?.pendingBackgroundTasks).toEqual([]);
+    else
+      expect(read()?.pendingBackgroundTasks).toEqual([
+        {
+          taskId: "delegation",
+          kind: "subagent",
+          childThreadId: child.id,
+          description: child.title,
+        },
+      ]);
+    if (status === "running") {
+      expect(presentPendingBackgroundWork(read()!.pendingBackgroundTasks)?.title).toBe(
+        "Waiting on subagent Resumed worker",
+      );
+      const beforeOutput = read();
+      registry.set(
+        snapshotAtom(environmentId),
+        applyShellStreamEvent(next, {
+          kind: "thread.updated",
+          location: "active",
+          sequence: 2,
+          thread: { ...child, status, itemCount: 1 },
+        }),
+      );
+      expect(read()).toBe(beforeOutput);
+    }
+    expect(
+      registry.get(threads.threadShellAtom({ ...ref, environmentId: remoteEnvironmentId }))
+        ?.pendingBackgroundTasks,
+    ).toEqual([]);
+  }
+  const running = { ...child, status: "running" as const };
+  const existingTask = {
+    taskId: "original-turn-item",
+    kind: "subagent" as const,
+    childThreadId: child.id,
+    description: child.title,
+  };
+  registry.set(snapshotAtom(environmentId), {
+    ...snapshot,
+    threads: [{ ...parent, pendingBackgroundTasks: [existingTask] }, running],
+  });
+  expect(read()?.pendingBackgroundTasks).toEqual([existingTask]);
+  registry.set(snapshotAtom(environmentId), {
+    ...snapshot,
+    threads: [{ ...parent, status: "running", activityRunStatus: "running" }, running],
+  });
+  expect(read()?.pendingBackgroundTasks).toEqual([]);
+  registry.set(snapshotAtom(environmentId), {
+    ...snapshot,
+    threads: [parent, { ...running, creationSource: "provider" }],
+  });
+  expect(read()?.pendingBackgroundTasks).toEqual([]);
+  dispose();
+  registry.dispose();
 });

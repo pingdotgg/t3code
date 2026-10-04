@@ -233,8 +233,8 @@ prior findings, responses, and unresolved objections. Track each round by its ow
 a distinct `clientRequestId` per round, stable across retries of that round.
 `childThreadId` is backing storage, not a target for another review round through
 `t3_thread_send`. Ordinary thread messaging remains available for user-requested
-conversations; it does not reopen a completed task. There is no task-level follow-up
-API for preserving the same reviewer session.
+conversations. A follow-up to an app-owned child updates its current status and
+returns its result to the parent. Each review round still uses a new task.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -268,23 +268,20 @@ type DelegateTaskResult = {
 
 ### `task_status`
 
-Reads a delegated task from the parent thread's durable projection. A task ID
-from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+Reads current work for a delegated child owned by the parent thread. A task ID
+from another parent thread is rejected. Follow-ups update current status and
+result; the original result stays in the timeline. While work is pending, the
+summary is null and the most recent non-monitor result remains available through
+`latestTerminal*`. Reading a terminal result acknowledges delivery of that exact
+result. Task cancellation remains scoped to the original delegation.
 
 ### `task_cancel`
 
 Interrupts the currently active task run through the normal V2 `run.interrupt`
 command and disposes automatic parent delivery. Native background work between
-turns currently has no interruptible run. For a terminal task, it returns the
-existing status and disposes delivery without interrupting later child-thread runs,
-even when `task_status` reports `hasPendingChildRuns: true`. Published task results
-remain available. It accepts an optional cancellation reason. Use
+turns currently has no interruptible run. If the original delegated run is terminal,
+it returns that run's status and disposes delivery without interrupting later child-thread runs,
+even when `task_status` reports follow-up work. Results remain in the timeline. It accepts an optional cancellation reason. Use
 `t3_thread_interrupt` to stop a later active run.
 
 ### `create_threads`
