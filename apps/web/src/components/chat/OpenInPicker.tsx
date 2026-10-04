@@ -309,7 +309,16 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [canOpenEditor, enableShortcut, environmentId, keybindings, openInCwd, openInEditor, preferredEditor, remote.mode]);
+  }, [
+    canOpenEditor,
+    enableShortcut,
+    environmentId,
+    keybindings,
+    openInCwd,
+    openInEditor,
+    preferredEditor,
+    remote.mode,
+  ]);
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
 
   const editorItems = (

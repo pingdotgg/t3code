@@ -688,8 +688,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
   // Only driver-keyed instances are fallback candidates; a custom instance id
   // is not one, so the selection stays put until the user changes it.
-  for (const fallbackId of ["codex"]) {
-    it.effect(`falls back to enabled instance ${fallbackId} after disabling the selection`, () =>
+  it.effect.each(["codex"])(
+    "falls back to enabled instance %s after disabling the selection",
+    (fallbackId) =>
       Effect.scoped(
         Effect.gen(function* () {
           const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -751,8 +752,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           assert.deepEqual(restored.textGenerationModelSelection, selection);
         }),
       ).pipe(Effect.provide(makeServerSettingsLayer())),
-    );
-  }
+  );
 
   it.effect("skips explicitly disabled instances when choosing a legacy fallback", () =>
     Effect.gen(function* () {

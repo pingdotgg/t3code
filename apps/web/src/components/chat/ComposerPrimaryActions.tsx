@@ -134,7 +134,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             )}
             {...pointerFocusProps}
             disabled={!canOperateThread}
-            onClick={() => { if (canOperateThread) onInterrupt(); }}
+            onClick={() => {
+              if (canOperateThread) onInterrupt();
+            }}
             aria-label="Stop generation"
           />
         }

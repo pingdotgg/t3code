@@ -98,7 +98,13 @@ function AutoSettleSettingsRows() {
       snoozeLimitedThreads?: boolean;
     },
   ) => {
-    if (writeInFlight.current || !syncTargets.every((target) => readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope))) return;
+    if (
+      writeInFlight.current ||
+      !syncTargets.every((target) =>
+        readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
+      )
+    )
+      return;
     const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
     writeInFlight.current = true;

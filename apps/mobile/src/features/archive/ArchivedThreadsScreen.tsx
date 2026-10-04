@@ -202,48 +202,48 @@ function ArchivedThreadRow(props: {
     Boolean(part),
   );
   const rowContent = (
-<View
-          className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
-        >
-          <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
+    <View
+      className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
+    >
+      <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
+        <SymbolView
+          name="archivebox.fill"
+          size={15}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+      </View>
+
+      <View className="min-w-0 flex-1 gap-1">
+        <View className="flex-row items-center gap-2">
+          <Text
+            className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
+            numberOfLines={1}
+          >
+            {props.thread.title}
+          </Text>
+          <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+            {timestamp}
+          </Text>
+        </View>
+        {subtitle.length > 0 ? (
+          <View className="flex-row items-center gap-1.5">
             <SymbolView
-              name="archivebox.fill"
-              size={15}
+              name="arrow.triangle.branch"
+              size={10}
               tintColorClassName="accent-icon-subtle"
               type="monochrome"
             />
+            <Text
+              className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+              numberOfLines={1}
+            >
+              {subtitle.join(" · ")}
+            </Text>
           </View>
-
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-center gap-2">
-              <Text
-                className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
-                numberOfLines={1}
-              >
-                {props.thread.title}
-              </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
-            </View>
-            {subtitle.length > 0 ? (
-              <View className="flex-row items-center gap-1.5">
-                <SymbolView
-                  name="arrow.triangle.branch"
-                  size={10}
-                  tintColorClassName="accent-icon-subtle"
-                  type="monochrome"
-                />
-                <Text
-                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
-                  numberOfLines={1}
-                >
-                  {subtitle.join(" · ")}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
+        ) : null}
+      </View>
+    </View>
   );
   // Keep the group's rounded corners on both interactive and read-only rows.
   const containerStyle = {

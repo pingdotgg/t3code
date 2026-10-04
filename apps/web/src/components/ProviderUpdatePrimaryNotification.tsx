@@ -2,7 +2,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AuthProvidersManageScope, type ServerProvider, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type ServerProvider,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
