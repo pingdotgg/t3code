@@ -97,5 +97,9 @@ If preflight fails before the paid request is attempted, T3 ends that turn local
 and permits an explicit new turn. Interrupted or older admission records without
 proof of that boundary remain uncertain. A timeout or an incomplete search never
 permits automatic resubmission. Repeatedly unreadable admission candidates pause
-automatic scanning; reopening history retries only reads. Remote task and billing
-status remain unknown until Kilo confirms the original operation.
+automatic scanning; reopening history retries only reads. A search also stops at
+100 history pages. Reopening cannot bypass that limit; resolving such an operation
+requires provider support, not another submission. Journal failures pause recovery
+in memory if the pause cannot be saved. After storage is repaired or T3 restarts,
+the durable uncertain request still prevents a second paid start. Remote task and
+billing status remain unknown until Kilo confirms the original operation.

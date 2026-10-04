@@ -18,21 +18,29 @@ export function threadLocalWorkspace(input: {
     active?.driver === "kilo-cloud" ||
     !!active?.nativeMetadata?.cloudExecution;
   const resolved = input.activeProviderThreadId === null || active !== undefined;
+  const local =
+    resolved &&
+    input.driver !== undefined &&
+    input.detailLoaded !== false &&
+    input.providerConfigLoaded !== false &&
+    !!(input.worktreePath ?? input.workspaceRoot);
   const state = cloud
     ? "cloud"
     : input.threadDeleted
       ? "unavailable"
-      : input.loadError
-        ? "error"
-        : input.detailLoaded === false || input.providerConfigLoaded === false
-          ? "loading"
-          : !resolved || input.driver === undefined
-            ? input.providerConfigLoaded === true && input.detailLoaded === true
-              ? "unavailable"
-              : "loading"
-            : !(input.worktreePath ?? input.workspaceRoot)
-              ? "unavailable"
-              : "local";
+      : local
+        ? "local"
+        : input.loadError
+          ? "error"
+          : input.detailLoaded === false || input.providerConfigLoaded === false
+            ? "loading"
+            : !resolved || input.driver === undefined
+              ? input.providerConfigLoaded === true && input.detailLoaded === true
+                ? "unavailable"
+                : "loading"
+              : !(input.worktreePath ?? input.workspaceRoot)
+                ? "unavailable"
+                : "local";
   const enabled = state === "local";
   return {
     localWorkspaceState: state,

@@ -57,6 +57,7 @@ export const CloudIntent = Schema.Struct({
       incompleteReplySeen: Schema.optional(Schema.Boolean),
     }),
   ),
+  submissionRejected: Schema.optional(Schema.Boolean),
   admissionRecoveryPaused: Schema.optional(Schema.Boolean),
   admissionRecoveryFailures: Schema.optional(Schema.Number),
   interruptRequested: Schema.Boolean,

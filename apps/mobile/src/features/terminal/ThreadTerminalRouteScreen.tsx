@@ -243,7 +243,8 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
   const { localWorkspaceEnabled, localWorkspaceState } = useSelectedThreadWorktree();
-  if (!localWorkspaceEnabled) return <LocalWorkspaceNotice state={localWorkspaceState} />;
+  if (!localWorkspaceEnabled)
+    return <LocalWorkspaceNotice title="Terminal" state={localWorkspaceState} />;
   return <LocalThreadTerminalRouteScreen {...props} />;
 }
 

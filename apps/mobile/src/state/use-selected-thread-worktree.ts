@@ -33,13 +33,14 @@ export function useSelectedThreadWorktree() {
     [detailWorktreePath, selectedThread?.worktreePath],
   );
 
+  const serverConfig = selectedEnvironmentRuntime?.serverConfig ?? config.data?.config;
   return threadLocalWorkspace({
-    driver: config.data?.config.providers.find(
+    driver: serverConfig?.providers.find(
       (provider) => provider.instanceId === selectedThread?.providerInstanceId,
     )?.driver,
     detailLoaded: projection !== null,
     threadDeleted: detail.status === "deleted",
-    providerConfigLoaded: config.data !== null,
+    providerConfigLoaded: serverConfig != null,
     loadError:
       Option.getOrNull(detail.error) ??
       config.error ??

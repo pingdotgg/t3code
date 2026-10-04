@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Redacted from "effect/Redacted";
 import * as Cloud from "./KiloCloudWebClient.ts";
+import { KiloCloudError } from "./KiloCloudClient.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -360,7 +361,9 @@ describe("Kilo personal Cloud control-plane customer API", () => {
       },
       [profile],
     );
-    expect((await run(client.prepare(start).pipe(Effect.flip))).reason).toBe("rejected");
+    expect((await run(client.prepare(start, Effect.void).pipe(Effect.flip))).reason).toBe(
+      "rejected",
+    );
     expect(mutations).toBe(0);
   });
   it("fails closed when the repository binding references an unavailable profile", async () => {
@@ -373,7 +376,9 @@ describe("Kilo personal Cloud control-plane customer API", () => {
       [],
       [{ repoFullName: "FIXTURE/PROJECT", platform: "github", profileId: "unavailable" }],
     );
-    expect((await run(client.prepare(start).pipe(Effect.flip))).reason).toBe("rejected");
+    expect((await run(client.prepare(start, Effect.void).pipe(Effect.flip))).reason).toBe(
+      "rejected",
+    );
     expect(mutations).toBe(0);
   });
   it("uses customer authentication and fixed admission identities, no commits, setup or local data", async () => {
@@ -393,7 +398,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         });
       });
     });
-    await run(client.prepare(start));
+    await run(client.prepare(start, Effect.void));
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toMatchObject({
       operationKey: start.operationKey,
@@ -420,7 +425,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         res.destroy();
       });
     });
-    const error = await run(client.prepare(start).pipe(Effect.flip));
+    const error = await run(client.prepare(start, Effect.void).pipe(Effect.flip));
     expect(error.reason).toBe("admission_unknown");
     expect(error.messageId).toBe(messageId);
     expect(accepted).toBe(1);
@@ -448,7 +453,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         (
           await run(
             client
-              .send(binding, { messageId, prompt: "Continue", model: "fixture/model" })
+              .send(binding, { messageId, prompt: "Continue", model: "fixture/model" }, Effect.void)
               .pipe(Effect.flip),
           )
         ).reason,
@@ -544,5 +549,94 @@ describe("Kilo personal Cloud control-plane customer API", () => {
     expect((await run(client.result(binding, messageId)))?.status).toBe("interrupted");
     expect((await run(client.sandbox(binding))).status).toBe("active");
     expect((await run(client.billing(binding))).phase).toBe("active");
+  });
+});
+
+describe("cloud recovery budgets and paid dispatch boundary", () => {
+  it("preserves a recently touched scan's candidate budget when the cache fills", async () => {
+    let lists = 0;
+    const { client } = await server((request, response) => {
+      if (request.url?.startsWith("/api/trpc/cliSessionsV2.list")) {
+        lists++;
+        return json(response, {
+          cliSessions: [
+            {
+              session_id: binding.kiloSessionId,
+              cloud_agent_session_id: binding.cloudAgentSessionId,
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      response.writeHead(503);
+      response.end();
+    });
+    await run(client.findAdmission(binding.repository, "hot"));
+    for (let i = 0; i < 63; i++) await run(client.findAdmission(binding.repository, `cold-${i}`));
+    await run(client.findAdmission(binding.repository, "hot"));
+    await run(client.findAdmission(binding.repository, "new"));
+    const before = lists;
+    expect(
+      (await run(client.findAdmission(binding.repository, "hot").pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    expect(lists).toBe(before); // Kept its original scan, including failed-candidate rounds.
+  });
+  it("distinguishes a finite page limit from transient recovery failures", async () => {
+    let pages = 0;
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("GET");
+      pages++;
+      json(res, { cliSessions: [], nextCursor: String(pages) });
+    });
+    for (let i = 0; i < 4; i++)
+      expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_limit");
+    expect(pages).toBe(101);
+  });
+  it("retains a typed rejection reason when repeated recovery reads are paused", async () => {
+    const { client } = await server((_req, res) => {
+      res.writeHead(403);
+      res.end();
+    });
+    await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip));
+    await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip));
+    const failure = await run(
+      client.findAdmission(binding.repository, messageId).pipe(Effect.flip),
+    );
+    expect(failure.reason).toBe("recovery_incomplete");
+    expect(failure.recoveryCause).toBe("rejected");
+  });
+  it("does not execute a paid POST until its caller's durable marker succeeds", async () => {
+    let posts = 0;
+    let marked = false;
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("POST");
+      expect(marked).toBe(true);
+      posts++;
+      json(res, {
+        cloudAgentSessionId: binding.cloudAgentSessionId,
+        kiloSessionId: binding.kiloSessionId,
+      });
+    });
+    await run(
+      client
+        .prepare(
+          start,
+          Effect.fail(new KiloCloudError({ operation: "fixture-journal", reason: "rejected" })),
+        )
+        .pipe(Effect.flip),
+    );
+    expect(posts).toBe(0);
+    await run(
+      client.prepare(
+        start,
+        Effect.sync(() => {
+          marked = true;
+        }),
+      ),
+    );
+    expect(posts).toBe(1);
   });
 });

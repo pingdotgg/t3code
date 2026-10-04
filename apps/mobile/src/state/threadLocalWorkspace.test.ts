@@ -44,6 +44,12 @@ function expectBlocked(input: Parameters<typeof threadLocalWorkspace>[0], state:
   });
 }
 describe("mobile thread workspace routing", () => {
+  it("keeps a resolved local workspace mounted across reconnect errors", () => {
+    expect(threadLocalWorkspace({ ...local, loadError: "Reconnecting" })).toEqual(
+      threadLocalWorkspace(local),
+    );
+    expectBlocked({ ...local, detailLoaded: false, loadError: "Reconnect failed" }, "error");
+  });
   it("restores actual local Kilo worktree, repository and draft flows after hydration", () => {
     expectBlocked({ ...local, providerThreads: [], detailLoaded: false }, "loading");
     expect(threadLocalWorkspace(local)).toEqual({

@@ -15,7 +15,6 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
 
-import * as ServerLedger from "../OpenCodeServerLedger.ts";
 import * as KiloRuntime from "./KiloRuntime.ts";
 import { KiloDriver } from "../Drivers/KiloDriver.ts";
 import * as ServerConfig from "../../config.ts";
@@ -338,16 +337,13 @@ describe.skipIf(!binary)("KiloRuntime native lifecycle", () => {
           const replacementProfile = globalLedger ? path.join(root, "moved-profile") : profile;
           if (globalLedger) {
             yield* fs.rename(profile, replacementProfile);
-            // This is the same server-global startup reaper. No account/profile
-            // lookup is needed, so removal from settings cannot hide the process.
-            const ledger = yield* ServerLedger.make({ stateDir: processStateDirectory });
-            yield* ledger.reapOrphans;
             yield* fs.makeDirectory(profile);
           }
           const restarted = yield* KiloRuntime.make({
             instanceId: "crash-fixture",
             binaryPath: binary!,
             profileDirectory: replacementProfile,
+            ...(globalLedger ? { processStateDirectory } : {}),
             environment: { ...environment, HOME: profile },
           });
           assert.isFalse(yield* running(message.pid));

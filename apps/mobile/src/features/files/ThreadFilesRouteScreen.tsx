@@ -492,8 +492,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     }
   }, [cwd, fileInspector.supported, showAuxiliaryPane]);
 
-  if (threadId !== null && ["cloud", "error", "unavailable"].includes(localWorkspaceState))
-    return <LocalWorkspaceNotice state={localWorkspaceState} />;
+  if (threadId !== null && localWorkspaceState !== "local" && localWorkspaceState !== "loading")
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
 
   if (selectedThread === null || environmentId === null || threadId === null) {
     if (fileInspector.supported) {
@@ -509,7 +509,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   }
 
   if (cwd === null) {
-    return <LocalWorkspaceNotice state={localWorkspaceState} />;
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
   }
 
   if (fileInspector.supported) {
@@ -852,18 +852,18 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     handleReturnToThread();
   }, [handleReturnToThread, navigation]);
 
+  if (threadId !== null && localWorkspaceState !== "local" && localWorkspaceState !== "loading")
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
+
   // A file opened from a project draft has no thread, and needs none: the thread only supplies
   // the workspace to read from and the target to navigate back to, both of which a draft names
   // for itself. Wait only for what this file actually cannot render without.
-  if (threadId !== null && ["cloud", "error", "unavailable"].includes(localWorkspaceState))
-    return <LocalWorkspaceNotice state={localWorkspaceState} />;
-
   if (environmentId === null || (threadId !== null && selectedThread === null)) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
   if (cwd === null) {
-    return <LocalWorkspaceNotice state={localWorkspaceState} />;
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
   }
 
   if (relativePath === null) {

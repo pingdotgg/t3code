@@ -10604,7 +10604,7 @@ export default function ChatView(props: ChatViewProps) {
     addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
-  return (
+  const workspaceContent = (
     <div
       ref={workspaceLayoutRef}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
@@ -11432,5 +11432,11 @@ export default function ChatView(props: ChatViewProps) {
         />
       )}
     </div>
+  );
+  // Composer chips and panels can render Markdown outside the timeline too.
+  return (
+    <ChatMarkdownLocalWorkspaceContext value={!isCloudThread && !paintOnlyDisplayedTimeline}>
+      {workspaceContent}
+    </ChatMarkdownLocalWorkspaceContext>
   );
 }

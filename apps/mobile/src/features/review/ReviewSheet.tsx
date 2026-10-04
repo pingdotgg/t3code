@@ -448,14 +448,15 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  useAdaptiveWorkspacePaneRole("inspector");
   const { localWorkspaceEnabled, localWorkspaceState } = useSelectedThreadWorktree();
-  if (!localWorkspaceEnabled) return <LocalWorkspaceNotice state={localWorkspaceState} />;
+  if (!localWorkspaceEnabled)
+    return <LocalWorkspaceNotice title="Review" state={localWorkspaceState} />;
   return <LocalReviewSheet {...props} />;
 }
 
 function LocalReviewSheet(props: ReviewSheetProps) {
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
-  useAdaptiveWorkspacePaneRole("inspector");
   const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();

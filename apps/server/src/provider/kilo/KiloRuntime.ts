@@ -107,13 +107,14 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   const ledger = yield* ServerLedger.make({
     stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
   });
+  // Await profile handoff before any caller can spawn a replacement. Removed
+  // profiles are also covered by OpenCodeServerLedger.layer's boot reaper,
+  // which shares this stateDir/opencode-servers directory.
+  yield* ledger.reapOrphans;
   if (input.processStateDirectory) {
-    // The server-global ledger also reaps at startup, even when no Kilo profile
-    // remains configured. Do not block model discovery on orphan shutdown.
-    yield* ledger.reapOrphans.pipe(Effect.forkIn(owner));
     const legacy = yield* ServerLedger.make({ stateDir: path.join(profile, "t3-processes") });
-    yield* legacy.reapOrphans.pipe(Effect.forkIn(owner));
-  } else yield* ledger.reapOrphans;
+    yield* legacy.reapOrphans;
+  }
   const authContent = input.authContent ?? (yield* readAuth(profile, input.environment));
   const environment: NodeJS.ProcessEnv = {
     ...input.environment,

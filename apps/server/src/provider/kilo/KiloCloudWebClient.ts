@@ -396,6 +396,8 @@ export const make = (options: {
           admissionScans.set(key, scan);
         }
         scan.touchedAt = now;
+        admissionScans.delete(key);
+        admissionScans.set(key, scan);
         // At most 25 candidate reads per call. Later polls continue this scan.
         for (let budget = 25; budget > 0; budget--) {
           if (!scan.pending.length) {
@@ -431,11 +433,10 @@ export const make = (options: {
                 nextCursor: Schema.NullOr(Schema.String),
               }),
             );
-            if (
-              page.nextCursor &&
-              (scan.seenCursors.has(page.nextCursor) || scan.seenCursors.size >= 100)
-            )
+            if (page.nextCursor && scan.seenCursors.has(page.nextCursor))
               return yield* failure("reconcile-admission", "recovery_incomplete");
+            if (page.nextCursor && scan.seenCursors.size >= 100)
+              return yield* failure("reconcile-admission", "recovery_limit");
             if (page.nextCursor) scan.seenCursors.add(page.nextCursor);
             scan.cursor = page.nextCursor ?? undefined;
             scan.loaded = true;
@@ -481,11 +482,19 @@ export const make = (options: {
           Effect.gen(function* () {
             const key = `${repository}\0${initialMessageId}`;
             const scan = admissionScans.get(key);
-            if (scan && ++scan.failures >= 3) {
+            if (scan && ++scan.failures >= 3 && cause.reason !== "recovery_limit") {
               admissionScans.delete(key);
-              return yield* failure("reconcile-admission", "recovery_incomplete");
+              return yield* new KiloCloudError({
+                operation: cause.operation,
+                reason: "recovery_incomplete",
+                recoveryCause: cause.recoveryCause ?? cause.reason,
+              });
             }
-            if (cause.reason === "recovery_incomplete" || cause.reason === "wrong_owner")
+            if (
+              cause.reason === "recovery_incomplete" ||
+              cause.reason === "recovery_limit" ||
+              cause.reason === "wrong_owner"
+            )
               admissionScans.delete(key);
             return yield* cause;
           }),
@@ -506,7 +515,7 @@ export const make = (options: {
         readonly model: string;
         readonly variant?: string;
       },
-      beforePaidPost: Effect.Effect<void, KiloCloudError> = Effect.void,
+      beforePaidPost: Effect.Effect<void, KiloCloudError>,
     ) =>
       preflight(input.repository).pipe(
         Effect.andThen(
@@ -570,7 +579,7 @@ export const make = (options: {
         readonly model: string;
         readonly variant?: string;
       },
-      beforePaidPost: Effect.Effect<void, KiloCloudError> = Effect.void,
+      beforePaidPost: Effect.Effect<void, KiloCloudError>,
     ) =>
       check(binding).pipe(
         Effect.andThen(
