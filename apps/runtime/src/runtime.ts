@@ -93,7 +93,9 @@ export class Runtime {
         const turn = object(response.turn);
         if (session.status === "running") session.turnId = string(turn.id);
       } catch (error) {
-        session.status = "error"; session.turnId = null; session.error = error instanceof Error ? error.message : String(error);
+        session.status = this.closing ? "interrupted" : "error"; session.turnId = null;
+        session.error = this.closing ? "Backend stopped during this turn. Send another prompt to continue."
+          : error instanceof Error ? error.message : String(error);
         this.emit({ event: "session", session });
         try { await this.store.save([...this.sessions.values()]); } catch { /* The request still reports the original failure. */ }
         throw error;

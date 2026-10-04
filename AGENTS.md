@@ -26,3 +26,7 @@ The user requested these skills for the workflow. Installed files live in
 skill before using it. Use module-design guidance, agreed TDD interfaces and the
 implementation skill's final code review. Repository checks stay scoped to mobile
 and runtime, rather than the deleted upstream monorepo.
+
+Configured tracker, labels, domain layout, and agreed test scope are linked from
+`CLAUDE.md` and recorded in `docs/agents/`. Read those files before using a skill
+that depends on repository configuration.

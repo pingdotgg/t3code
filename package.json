@@ -12,6 +12,7 @@
     "dev:runtime": "npm run start --workspace @t3mobile/runtime",
     "typecheck:runtime": "npm run typecheck --workspace @t3mobile/runtime",
     "typecheck:mobile": "npm run typecheck --workspace @t3mobile/mobile",
+    "test": "npm run test --workspace @t3mobile/runtime",
     "postinstall": "patch-package"
   },
   "engines": {

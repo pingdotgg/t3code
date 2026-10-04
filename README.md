@@ -72,10 +72,16 @@ history but cannot guarantee that an interrupted process continued.
 Run only the checks for the scope you changed:
 
 ```sh
+npm test
 npm run typecheck:runtime
 npm run typecheck:mobile
 npm run export:android --workspace @t3mobile/mobile
 ```
+
+The test suite runs the real mobile connection client against the real WebSocket
+backend with a fake external Codex process. It covers pairing, streamed responses,
+approvals, questions, Stop, crashes, reconnect/restart, and storage failures.
+It needs no Codex login. Android native/device behavior still needs phone validation.
 
 Backend protocol: `packages/protocol`. Backend and Codex adapter: `apps/runtime`.
 Mobile interface and connection module: `apps/mobile`. Other agents are not enabled

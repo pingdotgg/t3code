@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/bin.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "ws": "^8.18.3"
