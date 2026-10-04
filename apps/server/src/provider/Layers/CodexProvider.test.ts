@@ -137,6 +137,16 @@ it("prefers sol over terra when both are available", () => {
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
 });
 
+it("prefers the newest sol over the rest of the gpt-6 lineup", () => {
+  const models = applyPreferredCodexDefaultModel([
+    { slug: "gpt-6-astra", name: "GPT-6-Astra", isCustom: false, capabilities: null },
+    { slug: "gpt-6-sol", name: "GPT-6-Sol", isCustom: false, capabilities: null },
+    { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isCustom: false, capabilities: null },
+  ]);
+
+  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-6.1-sol");
+});
+
 it("ranks qualified Codex models while preserving their wire ids", () => {
   const models = applyPreferredCodexDefaultModel([
     {
