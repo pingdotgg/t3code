@@ -80,6 +80,13 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onFinish).toHaveBeenCalledOnce();
   });
 
+  it("moves to the pointer on the move that starts the drag", () => {
+    const drag = gesture();
+    document.dispatchEvent(pointer("pointermove", { clientY: 90 }));
+    expect(drag.onStart).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 10 });
+    expect(drag.onMove).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 90 });
+  });
+
   const interruptions = {
     blur: () => window.dispatchEvent(new Event("blur")),
     hidden: () => {
@@ -122,10 +129,11 @@ describe("sidebar pointer lifecycle", () => {
     const drag = gesture({ onMove, onDrop });
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
     document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 30 }));
-    expect(drag.onMove).toHaveBeenCalledExactlyOnceWith({ x: 30, y: 30 });
+    expect(drag.onMove).toHaveBeenNthCalledWith(1, { x: 10, y: 20 });
+    expect(drag.onMove).toHaveBeenNthCalledWith(2, { x: 30, y: 30 });
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
     // Outside the list the sort no longer sees the pointer.
-    expect(drag.onMove).toHaveBeenCalledOnce();
+    expect(drag.onMove).toHaveBeenCalledTimes(2);
     document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 90, clientY: 30 }));
     expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 90, y: 30 });
     expect(drag.onCancel).toHaveBeenCalledOnce();
@@ -148,7 +156,8 @@ describe("sidebar pointer lifecycle", () => {
     document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 30 }));
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 100 }));
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 200 }));
-    expect(drag.onMove).toHaveBeenCalledExactlyOnceWith({ x: 30, y: 30 });
+    expect(drag.onMove).toHaveBeenCalledTimes(2);
+    expect(drag.onMove).toHaveBeenLastCalledWith({ x: 30, y: 30 });
 
     document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 60 }));
     expect(drag.onMove).toHaveBeenLastCalledWith({ x: 30, y: 60 });
