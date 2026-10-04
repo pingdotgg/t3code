@@ -415,6 +415,53 @@ describe("pull request association recovery", () => {
     });
   });
 
+  it.each([
+    [
+      "gh api with an explicit POST method",
+      "gh api repos/acme/app/pulls --method POST -f title=Feature -f head=feature -f base=main",
+    ],
+    [
+      "gh api with POST form fields",
+      "gh api repos/acme/app/pulls -f title=Feature -f head=feature -f base=main",
+    ],
+    [
+      "curl with an explicit POST method",
+      `curl --request POST https://api.github.com/repos/acme/app/pulls -d '{"title":"Feature","head":"feature","base":"main"}'`,
+    ],
+  ])("recovers a PR created by %s", async (_description, command) => {
+    const h = await harness();
+    h.updateThread({
+      messages: [message("Done.")],
+      activities: [copilotCommand(command, JSON.stringify({ html_url: url }))],
+    });
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.commands[0]).toMatchObject({
+      type: "thread.meta.update",
+      pullRequest: status.pr,
+      pullRequestSource: "agent",
+    });
+  });
+
+  it("does not treat a REST pull-request listing as creation evidence", async () => {
+    const h = await harness();
+    h.updateThread({
+      messages: [message("Done.")],
+      activities: [
+        copilotCommand(
+          "gh api repos/acme/app/pulls --method GET",
+          JSON.stringify([{ html_url: url }]),
+        ),
+      ],
+    });
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.commands).toEqual([]);
+    expect(h.lookups()).toBe(0);
+  });
+
   it("upgrades a created PR that was previously linked as recovered, then stops checking", async () => {
     const h = await harness();
     const pullRequest = status.pr;
