@@ -2197,7 +2197,7 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;
   // a fanned-out model choice is validated against every target before it
   // is written. Per-machine tuning (background activity overrides) still
@@ -2233,11 +2233,20 @@ export function GeneralSettingsPanel() {
 
   function changeAutoSettleMode(value: AutoSettleMode | null) {
     if (value === null) return;
-    const sidebarAutoSettleAfterDays =
-      value === "off" ? null : (autoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS);
+    if (value === "off") {
+      updateSettings({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" });
+      return;
+    }
+    // A scope change keeps each target's own duration. Only a selection that
+    // includes a target with inactivity off needs a duration written.
+    const turnsOn =
+      autoSettleAfterDays === null ||
+      targets.some((target) => target.settings.sidebarAutoSettleAfterDays === null);
     updateSettings({
-      sidebarAutoSettleAfterDays,
-      sidebarAutoSettleScope: value === "off" ? "all" : value,
+      ...(turnsOn
+        ? { sidebarAutoSettleAfterDays: autoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS }
+        : {}),
+      sidebarAutoSettleScope: value,
     });
   }
 

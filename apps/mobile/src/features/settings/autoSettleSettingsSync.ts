@@ -26,9 +26,10 @@ export function planAutoSettleSettingsSync(
   const patch = {
     sidebarAutoSettleAfterDays: reference.settings.sidebarAutoSettleAfterDays,
     sidebarAutoSettleOnMerge: reference.settings.sidebarAutoSettleOnMerge,
-    ...(reference.supportsScope
-      ? { sidebarAutoSettleScope: reference.settings.sidebarAutoSettleScope }
-      : {}),
+    // A reference without scope support settles every thread, so it stands for "all".
+    sidebarAutoSettleScope: reference.supportsScope
+      ? reference.settings.sidebarAutoSettleScope
+      : ("all" as const),
   };
   const mismatches = targets.filter(
     (target) =>
@@ -38,7 +39,6 @@ export function planAutoSettleSettingsSync(
       (target.settings.sidebarAutoSettleAfterDays !== patch.sidebarAutoSettleAfterDays ||
         target.settings.sidebarAutoSettleOnMerge !== patch.sidebarAutoSettleOnMerge ||
         (target.supportsScope === true &&
-          patch.sidebarAutoSettleScope !== undefined &&
           target.settings.sidebarAutoSettleScope !== patch.sidebarAutoSettleScope)),
   );
   return { patch, mismatches };

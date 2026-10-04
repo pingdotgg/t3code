@@ -36,6 +36,7 @@ describe("auto-settle settings sync", () => {
     expect(plan.patch).toEqual({
       sidebarAutoSettleAfterDays: 7,
       sidebarAutoSettleOnMerge: true,
+      sidebarAutoSettleScope: "all",
     });
   });
 
@@ -67,7 +68,7 @@ describe("auto-settle settings sync", () => {
     expect(updated.sourceControlWritingStyle).toEqual(target.settings.sourceControlWritingStyle);
   });
 
-  it("syncs differing scope only between servers supporting it", () => {
+  it("compares scope only on targets supporting it", () => {
     const target = {
       environmentId: EnvironmentId.make("remote"),
       label: "Remote",
@@ -82,7 +83,10 @@ describe("auto-settle settings sync", () => {
         { ...target, supportsScope: false },
       ]).mismatches,
     ).toEqual([]);
-    expect(planAutoSettleSettingsSync(reference, [target]).mismatches).toEqual([]);
+    // A reference without scope support settles every thread.
+    const legacyPlan = planAutoSettleSettingsSync(reference, [target]);
+    expect(legacyPlan.mismatches).toEqual([target]);
+    expect(legacyPlan.patch.sidebarAutoSettleScope).toBe("all");
   });
 
   it("does not compare the reference or a target without loaded settings", () => {
