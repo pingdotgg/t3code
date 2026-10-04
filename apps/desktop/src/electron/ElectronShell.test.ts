@@ -36,6 +36,41 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens known app deep links in the OS handler", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const urls = [
+        "linear://linear.app/example/issue/EXAMPLE-123",
+        "slack://channel?team=T123&id=C123",
+        "notion://www.notion.so/example-page",
+        "obsidian://open?vault=Example&file=Notes",
+      ];
+      const results = yield* Effect.forEach(urls, electronShell.openExternal);
+
+      assert.deepEqual(results, [true, true, true, true]);
+      assert.deepEqual(
+        openExternalMock.mock.calls,
+        urls.map((url) => [url]),
+      );
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open executable or unknown schemes", () =>
+    Effect.gen(function* () {
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("javascript:alert(1)"),
+        electronShell.openExternal("data:text/html,<script>alert(1)</script>"),
+        electronShell.openExternal("unknown://example.com"),
+      ]);
+
+      assert.deepEqual(results, [false, false, false]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("copies text to the system clipboard", () =>
     Effect.gen(function* () {
       writeTextMock.mockResolvedValue(undefined);

@@ -73,6 +73,40 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe.each([
+  "linear://linear.app/example/issue/EXAMPLE-123",
+  "slack://channel?team=T123&id=C123",
+  "notion://www.notion.so/example-page",
+  "obsidian://open?vault=Example&file=Notes",
+])("ChatMarkdown app deep link %s", (href) => {
+  it.each([true, false])(
+    "preserves app destinations through the markdown pipeline with parseRawHtml=%s",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ChatMarkdown
+              cwd="/workspace/project"
+              text={`[Open in app](${href})\n\n[Open][app]\n\n[app]: ${href}\n\n<${href}>\n\n[Unsafe](javascript:alert)\n\n[Unknown](unknown://example.com)`}
+              parseRawHtml={parseRawHtml}
+            />,
+          );
+        });
+
+        const destinations = renderer!.root.findAllByType("a").map((link) => link.props.href);
+        expect(destinations.filter(Boolean)).toEqual([href, href, href]);
+      } finally {
+        await act(async () => {
+          renderer?.unmount();
+        });
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+});
+
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

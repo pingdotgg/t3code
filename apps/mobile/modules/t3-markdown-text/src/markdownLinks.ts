@@ -6,6 +6,7 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/client-runtime/markdown-links";
 import { videoMimeType } from "@t3tools/shared/video";
+import { isExternalAppLink } from "@t3tools/shared/externalAppLinks";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
 
@@ -293,7 +294,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
 
   return {
     kind: "link",
-    href: /^(?:mailto|tel):/i.test(normalized) ? normalized : null,
+    href: /^(?:mailto|tel):/i.test(normalized) || isExternalAppLink(normalized) ? normalized : null,
   };
 }
 

@@ -17,6 +17,22 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it.each([
+    "linear://linear.app/example/issue/EXAMPLE-123",
+    "slack://channel?team=T123&id=C123",
+    "notion://www.notion.so/example-page",
+    "obsidian://open?vault=Example&file=Notes",
+  ])("preserves app deep link %s for the native URL handler", (href) => {
+    expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,test", "unknown://example.com"])(
+    "does not make unsupported scheme %s clickable",
+    (href) => {
+      expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href: null });
+    },
+  );
+
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",
