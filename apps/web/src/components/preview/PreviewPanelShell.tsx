@@ -130,6 +130,8 @@ function PreviewPanelShellFrame(
       }
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
+      // Inline shells animate their width around full-width content.
+      data-browser-surface-container={isInline ? "true" : undefined}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
       <div className={cn("h-full min-h-0 w-full", collapsible && "overflow-clip")}>

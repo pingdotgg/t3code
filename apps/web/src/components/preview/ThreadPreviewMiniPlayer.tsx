@@ -374,7 +374,11 @@ function MiniPlayerShell({
   };
 
   return (
-    <div className="pointer-events-none absolute inset-0">
+    <div
+      className="pointer-events-none absolute inset-0"
+      // The frame keeps its column-relative spot when the column shifts (sidebar toggles).
+      data-browser-surface-container="true"
+    >
       {frame ? (
         <section
           aria-label={label}

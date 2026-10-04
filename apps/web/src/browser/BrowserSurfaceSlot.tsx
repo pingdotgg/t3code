@@ -64,10 +64,10 @@ export function BrowserSurfaceSlot(props: {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
-    // Inline panels animate their outer width while keeping the content at
-    // full width. The slot moves without resizing, so measure on shell resizes too.
-    const panel = element.closest('[data-preview-panel-mode="inline"]');
-    if (panel) observer.observe(panel);
+    // A container marked with data-browser-surface-container can move the slot
+    // without resizing it, so measure on container resizes too.
+    const container = element.closest("[data-browser-surface-container]");
+    if (container) observer.observe(container);
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
