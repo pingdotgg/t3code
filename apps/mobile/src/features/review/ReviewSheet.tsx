@@ -1,3 +1,4 @@
+import { LocalWorkspaceNotice } from "../../components/LocalWorkspaceNotice";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
@@ -447,8 +448,15 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
-  const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
+  const { localWorkspaceEnabled, localWorkspaceState } = useSelectedThreadWorktree();
+  if (!localWorkspaceEnabled)
+    return <LocalWorkspaceNotice title="Review changes" state={localWorkspaceState} />;
+  return <LocalReviewSheet {...props} />;
+}
+
+function LocalReviewSheet(props: ReviewSheetProps) {
+  const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();

@@ -29,6 +29,9 @@ export const CloudIntent = Schema.Struct({
       kiloSessionId: Schema.NonEmptyString,
     }),
   ),
+  // Absent on older records: their admission remains uncertain. Only a durable
+  // preflight marker proves that the paid request has not reached execute.
+  submissionPhase: Schema.optional(Schema.Literals(["preflight", "post_attempted"])),
   state: Schema.Literals([
     "admission_unknown",
     "active",
@@ -54,6 +57,9 @@ export const CloudIntent = Schema.Struct({
       incompleteReplySeen: Schema.optional(Schema.Boolean),
     }),
   ),
+  submissionRejected: Schema.optional(Schema.Boolean),
+  admissionRecoveryPaused: Schema.optional(Schema.Boolean),
+  admissionRecoveryFailures: Schema.optional(Schema.Number),
   interruptRequested: Schema.Boolean,
   answeredRequestIds: Schema.Array(Schema.String),
   providerThread: OrchestrationV2ProviderThread,
@@ -65,9 +71,11 @@ export class CloudJournalError extends Schema.TaggedError<CloudJournalError>()(
   "CloudJournalError",
   {
     operation: Schema.Literals(["read", "write"]),
+    reason: Schema.optional(Schema.Literal("conflict")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+const isJournalError = Schema.is(CloudJournalError);
 const codec = Schema.fromJsonString(Schema.toCodecJson(CloudIntent));
 const encode = Schema.encodeEffect(codec);
 const decode = Schema.decodeUnknownEffect(codec);
@@ -126,25 +134,32 @@ export const make = Effect.fn("KiloCloudJournal.make")(function* (directory: str
         if (!row) return yield* new CloudJournalError({ operation: "write" });
         const prior = yield* decode(row.body);
         if (
-          prior.revision !== intent.revision ||
           prior.accountId !== intent.accountId ||
           prior.repository !== intent.repository ||
           prior.branch !== intent.branch ||
           prior.messageId !== intent.messageId ||
           prior.payloadHash !== intent.payloadHash ||
           prior.policyHash !== intent.policyHash ||
+          (intent.submissionPhase === "preflight" && prior.submissionPhase !== "preflight") ||
           prior.providerThread.id !== intent.providerThread.id ||
           prior.providerTurn.id !== intent.providerTurn.id ||
           (["completed", "failed", "interrupted"].includes(prior.state) &&
             prior.state !== intent.state)
         )
           return yield* new CloudJournalError({ operation: "write" });
+        if (prior.revision !== intent.revision)
+          return yield* new CloudJournalError({ operation: "write", reason: "conflict" });
         const next = { ...intent, revision: intent.revision + 1 };
         const body = yield* encode(next);
         const updated =
           yield* sql`UPDATE intents SET state = ${intent.state}, body = ${body} WHERE operation_key = ${intent.operationKey} AND body = ${row.body} RETURNING operation_key`;
-        if (updated.length !== 1) return yield* new CloudJournalError({ operation: "write" });
+        if (updated.length !== 1)
+          return yield* new CloudJournalError({ operation: "write", reason: "conflict" });
         return next;
-      }).pipe(Effect.mapError((cause) => new CloudJournalError({ operation: "write", cause }))),
+      }).pipe(
+        Effect.mapError((cause) =>
+          isJournalError(cause) ? cause : new CloudJournalError({ operation: "write", cause }),
+        ),
+      ),
   };
 });

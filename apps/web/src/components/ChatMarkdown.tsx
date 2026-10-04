@@ -2925,6 +2925,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
+    const localWorkspaceEnabled = use(ChatMarkdownLocalWorkspaceContext);
     const {
       cwd,
       environmentId,
@@ -3027,7 +3028,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             // the panel it opens offers the browser as one of its actions.
             if (
               !href ||
-              openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
+              (localWorkspaceEnabled &&
+                openChangeRequestLink(event, href, undefined, environmentId ?? undefined))
             ) {
               return;
             }
@@ -3130,6 +3132,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             target={pullRequestPreviewTarget}
             confirmBeforeOpen={confirmBeforeOpen}
             onOpenPullRequest={(targetUrl) =>
+              localWorkspaceEnabled &&
               openChangeRequestLink(
                 {
                   metaKey: false,

@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Redacted from "effect/Redacted";
 import * as Cloud from "./KiloCloudWebClient.ts";
+import { KiloCloudError } from "./KiloCloudClient.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -73,6 +74,64 @@ function json(response: NodeHttp.ServerResponse, data: unknown) {
   response.end(JSON.stringify({ result: { data } }));
 }
 describe("Kilo personal Cloud control-plane customer API", () => {
+  it("never binds a partial match after bounded candidate failures and drops failed scan state", async () => {
+    let unavailable = true;
+    let lists = 0;
+    let badReads = 0;
+    const missing = "workspace_00000000-0000-0000-0000-000000000000";
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("GET");
+      const url = new URL(req.url!, "http://localhost");
+      const input = JSON.parse(url.searchParams.get("input")!) as Record<string, string>;
+      if (url.pathname.endsWith("cliSessionsV2.list")) {
+        lists++;
+        return json(res, {
+          cliSessions: [
+            { session_id: "ses_unavailable", cloud_agent_session_id: missing },
+            { session_id: session.kiloSessionId, cloud_agent_session_id: session.sessionId },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (input.cloudAgentSessionId === missing) {
+        badReads++;
+        res.writeHead(unavailable ? 503 : 404);
+        res.end();
+        return;
+      }
+      return json(res, session);
+    });
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    expect(badReads).toBe(3);
+    expect(lists).toBe(1);
+    unavailable = false;
+    expect(await run(client.findAdmission(binding.repository, messageId))).toEqual({
+      cloudAgentSessionId: session.sessionId,
+      kiloSessionId: session.kiloSessionId,
+    });
+    expect(lists).toBe(2);
+  });
+  it("clears abandoned scans and repeated cursors without treating partial reads as absence", async () => {
+    let repeated = true;
+    const cursors: Array<string | undefined> = [];
+    const { client } = await server((req, res) => {
+      const url = new URL(req.url!, "http://localhost");
+      const input = JSON.parse(url.searchParams.get("input")!) as Record<string, string>;
+      cursors.push(input.cursor);
+      return json(res, { cliSessions: [], nextCursor: repeated ? "cycle" : null });
+    });
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    repeated = false;
+    expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(cursors).toEqual([undefined, "cycle", undefined]);
+    await run(client.forgetAdmission(binding.repository, messageId));
+  });
   it("continues an uncertain-admission scan across read budgets and cursor pages without resubmitting", async () => {
     const reads: string[] = [];
     const cursors: Array<string | null> = [];
@@ -217,7 +276,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
     repeated = true;
     expect(
       (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
-    ).toBe("invalid_response");
+    ).toBe("recovery_incomplete");
   });
   it("authenticates a customer WebSocket, resumes its cursor and rejects a foreign session event", async () => {
     const expiresAt = await run(Clock.currentTimeMillis);
@@ -302,7 +361,9 @@ describe("Kilo personal Cloud control-plane customer API", () => {
       },
       [profile],
     );
-    expect((await run(client.prepare(start).pipe(Effect.flip))).reason).toBe("rejected");
+    expect((await run(client.prepare(start, Effect.void).pipe(Effect.flip))).reason).toBe(
+      "rejected",
+    );
     expect(mutations).toBe(0);
   });
   it("fails closed when the repository binding references an unavailable profile", async () => {
@@ -315,7 +376,9 @@ describe("Kilo personal Cloud control-plane customer API", () => {
       [],
       [{ repoFullName: "FIXTURE/PROJECT", platform: "github", profileId: "unavailable" }],
     );
-    expect((await run(client.prepare(start).pipe(Effect.flip))).reason).toBe("rejected");
+    expect((await run(client.prepare(start, Effect.void).pipe(Effect.flip))).reason).toBe(
+      "rejected",
+    );
     expect(mutations).toBe(0);
   });
   it("uses customer authentication and fixed admission identities, no commits, setup or local data", async () => {
@@ -335,7 +398,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         });
       });
     });
-    await run(client.prepare(start));
+    await run(client.prepare(start, Effect.void));
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toMatchObject({
       operationKey: start.operationKey,
@@ -362,7 +425,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         res.destroy();
       });
     });
-    const error = await run(client.prepare(start).pipe(Effect.flip));
+    const error = await run(client.prepare(start, Effect.void).pipe(Effect.flip));
     expect(error.reason).toBe("admission_unknown");
     expect(error.messageId).toBe(messageId);
     expect(accepted).toBe(1);
@@ -390,7 +453,7 @@ describe("Kilo personal Cloud control-plane customer API", () => {
         (
           await run(
             client
-              .send(binding, { messageId, prompt: "Continue", model: "fixture/model" })
+              .send(binding, { messageId, prompt: "Continue", model: "fixture/model" }, Effect.void)
               .pipe(Effect.flip),
           )
         ).reason,
@@ -487,4 +550,126 @@ describe("Kilo personal Cloud control-plane customer API", () => {
     expect((await run(client.sandbox(binding))).status).toBe("active");
     expect((await run(client.billing(binding))).phase).toBe("active");
   });
+});
+
+describe("cloud recovery budgets and paid dispatch boundary", () => {
+  it("preserves a recently touched scan's candidate budget when the cache fills", async () => {
+    let lists = 0;
+    const { client } = await server((request, response) => {
+      if (request.url?.startsWith("/api/trpc/cliSessionsV2.list")) {
+        lists++;
+        return json(response, {
+          cliSessions: [
+            {
+              session_id: binding.kiloSessionId,
+              cloud_agent_session_id: binding.cloudAgentSessionId,
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      response.writeHead(503);
+      response.end();
+    });
+    await run(client.findAdmission(binding.repository, "hot"));
+    for (let i = 0; i < 63; i++) await run(client.findAdmission(binding.repository, `cold-${i}`));
+    await run(client.findAdmission(binding.repository, "hot"));
+    await run(client.findAdmission(binding.repository, "new"));
+    const before = lists;
+    expect(
+      (await run(client.findAdmission(binding.repository, "hot").pipe(Effect.flip))).reason,
+    ).toBe("recovery_incomplete");
+    expect(lists).toBe(before); // Kept its original scan, including failed-candidate rounds.
+  });
+  it("distinguishes a finite page limit from transient recovery failures", async () => {
+    let pages = 0;
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("GET");
+      pages++;
+      json(res, { cliSessions: [], nextCursor: String(pages) });
+    });
+    for (let i = 0; i < 4; i++)
+      expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("recovery_limit");
+    expect(pages).toBe(101);
+  });
+  it("retains a typed rejection reason when repeated recovery reads are paused", async () => {
+    const { client } = await server((_req, res) => {
+      res.writeHead(403);
+      res.end();
+    });
+    await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip));
+    await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip));
+    const failure = await run(
+      client.findAdmission(binding.repository, messageId).pipe(Effect.flip),
+    );
+    expect(failure.reason).toBe("recovery_incomplete");
+    expect(failure.recoveryCause).toBe("rejected");
+  });
+  it("does not execute a paid POST until its caller's durable marker succeeds", async () => {
+    let posts = 0;
+    let marked = false;
+    const { client } = await server((req, res) => {
+      expect(req.method).toBe("POST");
+      expect(marked).toBe(true);
+      posts++;
+      json(res, {
+        cloudAgentSessionId: binding.cloudAgentSessionId,
+        kiloSessionId: binding.kiloSessionId,
+      });
+    });
+    await run(
+      client
+        .prepare(
+          start,
+          Effect.fail(new KiloCloudError({ operation: "fixture-journal", reason: "rejected" })),
+        )
+        .pipe(Effect.flip),
+    );
+    expect(posts).toBe(0);
+    await run(
+      client.prepare(
+        start,
+        Effect.sync(() => {
+          marked = true;
+        }),
+      ),
+    );
+    expect(posts).toBe(1);
+  });
+});
+
+it("resets transient failures after successful progress in the same incomplete scan", async () => {
+  let unavailable = true;
+  let pages = 0;
+  const { client } = await server((req, res) => {
+    expect(req.method).toBe("GET");
+    if (unavailable) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
+    pages++;
+    json(res, { cliSessions: [], nextCursor: String(pages) });
+  });
+  for (let i = 0; i < 2; i++)
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("invalid_response");
+  unavailable = false;
+  expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+  expect(pages).toBe(25);
+  unavailable = true;
+  expect(
+    (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+  ).toBe("invalid_response");
+  // Progress resets only transient failures, not the finite pagination budget.
+  unavailable = false;
+  for (let i = 0; i < 3; i++) await run(client.findAdmission(binding.repository, messageId));
+  expect(
+    (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+  ).toBe("recovery_limit");
+  expect(pages).toBe(101);
 });

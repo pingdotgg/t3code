@@ -1,3 +1,4 @@
+import { LocalWorkspaceNotice } from "../../components/LocalWorkspaceNotice";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -351,7 +352,8 @@ function useThreadFilesWorkspace(params: {
   const routeCwd = firstRouteParam(params.cwd);
   const routeProjectName = firstRouteParam(params.projectName);
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd, localWorkspaceEnabled } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, localWorkspaceEnabled, localWorkspaceState } =
+    useSelectedThreadWorktree();
   const environmentId =
     routeEnvironmentId !== null
       ? EnvironmentId.make(routeEnvironmentId)
@@ -363,6 +365,7 @@ function useThreadFilesWorkspace(params: {
   } | null;
 
   return {
+    localWorkspaceState: routeThreadId !== null ? localWorkspaceState : ("unavailable" as const),
     cwd:
       routeThreadId !== null
         ? localWorkspaceEnabled
@@ -374,18 +377,6 @@ function useThreadFilesWorkspace(params: {
     selectedThread,
     threadId,
   };
-}
-
-function FilesUnavailable() {
-  return (
-    <View className="flex-1 items-center justify-center bg-sheet px-6">
-      <NativeStackScreenOptions options={{ title: "Files" }} />
-      <EmptyState
-        title="Files unavailable"
-        detail="This thread does not have an active workspace path."
-      />
-    </View>
-  );
 }
 
 function FilesToolbarBottomFade() {
@@ -422,9 +413,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, selectedThread, threadId, localWorkspaceState } =
+    useThreadFilesWorkspace(props.route.params);
   const revealedInspectorRef = useRef(false);
   const entriesQuery = useFileTreeEntries({
     environmentId,
@@ -502,6 +492,9 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     }
   }, [cwd, fileInspector.supported, showAuxiliaryPane]);
 
+  if (threadId !== null && localWorkspaceState !== "local" && localWorkspaceState !== "loading")
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
+
   if (selectedThread === null || environmentId === null || threadId === null) {
     if (fileInspector.supported) {
       return (
@@ -516,7 +509,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   }
 
   if (cwd === null) {
-    return <FilesUnavailable />;
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
   }
 
   if (fileInspector.supported) {
@@ -570,9 +563,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const params = props.route.params;
   const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, selectedThread, threadId, localWorkspaceState } =
+    useThreadFilesWorkspace(props.route.params);
   const [modeOverride, setModeOverride] = useState<{
     readonly path: string;
     readonly mode: FileViewMode;
@@ -860,6 +852,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     handleReturnToThread();
   }, [handleReturnToThread, navigation]);
 
+  if (threadId !== null && localWorkspaceState !== "local" && localWorkspaceState !== "loading")
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
+
   // A file opened from a project draft has no thread, and needs none: the thread only supplies
   // the workspace to read from and the target to navigate back to, both of which a draft names
   // for itself. Wait only for what this file actually cannot render without.
@@ -868,7 +863,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   }
 
   if (cwd === null) {
-    return <FilesUnavailable />;
+    return <LocalWorkspaceNotice title="Files" state={localWorkspaceState} />;
   }
 
   if (relativePath === null) {

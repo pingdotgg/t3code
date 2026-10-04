@@ -118,6 +118,7 @@ export const KiloDriver: ProviderDriver<KiloSettings, KiloDriverEnv> = {
       instanceId: continuationKey,
       binaryPath: input.config.binaryPath,
       profileDirectory,
+      processStateDirectory: server.stateDir,
       environment,
       authContent,
     }).pipe(

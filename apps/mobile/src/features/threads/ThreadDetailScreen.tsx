@@ -1,3 +1,4 @@
+import { cloudExecutionLabel } from "@t3tools/client-runtime/cloudExecutionLabels";
 import { AppText } from "../../components/AppText";
 import { useThreadCloudExecution, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
@@ -1276,9 +1277,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     </AppText>
                     <AppText>
                       Last observation: {cloudExecution.observedAt ?? "unavailable"}. Task:{" "}
-                      {cloudExecution.task}.{" "}
-                      {cloudExecution.result ? `Result: ${cloudExecution.result}. ` : ""}Sandbox:{" "}
-                      {cloudExecution.sandbox}. Compute: {cloudExecution.billing}
+                      {cloudExecutionLabel(cloudExecution.task)}.{" "}
+                      {cloudExecution.result
+                        ? `Result: ${cloudExecutionLabel(cloudExecution.result)}. `
+                        : ""}
+                      Sandbox: {cloudExecutionLabel(cloudExecution.sandbox)}. Compute:{" "}
+                      {cloudExecutionLabel(cloudExecution.billing)}
                       {cloudExecution.billingAttribution === "payer_shared"
                         ? " (shared account)"
                         : ""}

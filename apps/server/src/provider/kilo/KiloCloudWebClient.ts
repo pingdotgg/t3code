@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as Socket from "effect/unstable/socket/Socket";
 import * as Redacted from "effect/Redacted";
@@ -184,6 +185,7 @@ export const make = (options: {
     schema: Schema.Decoder<A>,
     mutation = false,
     messageId?: string,
+    beforePaidPost: Effect.Effect<void, KiloCloudError> = Effect.void,
   ) => {
     const uncertain = () =>
       failure(operation, mutation ? "admission_unknown" : "invalid_response", messageId);
@@ -204,9 +206,13 @@ export const make = (options: {
           },
         },
       );
-      const response = yield* client.execute(
-        mutation ? HttpClientRequest.bodyText(req, encode(body), "application/json") : req,
-      );
+      const preparedRequest = mutation
+        ? HttpClientRequest.bodyText(req, encode(body), "application/json")
+        : req;
+      // Commit the durable attempt boundary after all local/preflight work. A failed
+      // commit must prevent execute; after this point an outcome may be uncertain.
+      yield* beforePaidPost;
+      const response = yield* client.execute(preparedRequest);
       if (response.status < 200 || response.status >= 300)
         return yield* response.status >= 500 || response.status === 408 || response.status === 409
           ? uncertain()
@@ -313,6 +319,9 @@ export const make = (options: {
       pending: Array<{ session_id: string; cloud_agent_session_id: string | null }>;
       deferred: Array<{ session_id: string; cloud_agent_session_id: string | null }>;
       loaded: boolean;
+      rounds: number;
+      failures: number;
+      touchedAt: number;
       seenCursors: Set<string>;
       matches: Map<string, typeof Prepared.Type>;
     }
@@ -368,9 +377,16 @@ export const make = (options: {
     findAdmission: (repository: string, initialMessageId: string) =>
       Effect.gen(function* () {
         const key = `${repository}\0${initialMessageId}`;
+        const now = yield* Clock.currentTimeMillis;
+        for (const [cachedKey, cached] of admissionScans)
+          if (now - cached.touchedAt > 300_000) admissionScans.delete(cachedKey);
         let scan = admissionScans.get(key);
         if (!scan) {
+          if (admissionScans.size >= 64) admissionScans.delete(admissionScans.keys().next().value!);
           scan = {
+            rounds: 0,
+            failures: 0,
+            touchedAt: now,
             pending: [],
             deferred: [],
             loaded: false,
@@ -379,11 +395,16 @@ export const make = (options: {
           };
           admissionScans.set(key, scan);
         }
+        scan.touchedAt = now;
+        admissionScans.delete(key);
+        admissionScans.set(key, scan);
         // At most 25 candidate reads per call. Later polls continue this scan.
         for (let budget = 25; budget > 0; budget--) {
           if (!scan.pending.length) {
             if (scan.loaded && !scan.cursor) {
               if (scan.deferred.length) {
+                if (++scan.rounds >= 3)
+                  return yield* failure("reconcile-admission", "recovery_incomplete");
                 scan.pending = scan.deferred;
                 scan.deferred = [];
                 return null;
@@ -413,7 +434,9 @@ export const make = (options: {
               }),
             );
             if (page.nextCursor && scan.seenCursors.has(page.nextCursor))
-              return yield* failure("reconcile-admission", "invalid_response");
+              return yield* failure("reconcile-admission", "recovery_incomplete");
+            if (page.nextCursor && scan.seenCursors.size >= 100)
+              return yield* failure("reconcile-admission", "recovery_limit");
             if (page.nextCursor) scan.seenCursors.add(page.nextCursor);
             scan.cursor = page.nextCursor ?? undefined;
             scan.loaded = true;
@@ -454,17 +477,52 @@ export const make = (options: {
             });
         }
         return null;
+      }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const scan = admissionScans.get(`${repository}\0${initialMessageId}`);
+            if (scan) scan.failures = 0;
+          }),
+        ),
+        Effect.catchTag("KiloCloudError", (cause) =>
+          Effect.gen(function* () {
+            const key = `${repository}\0${initialMessageId}`;
+            const scan = admissionScans.get(key);
+            if (scan && ++scan.failures >= 3 && cause.reason !== "recovery_limit") {
+              admissionScans.delete(key);
+              return yield* new KiloCloudError({
+                operation: cause.operation,
+                reason: "recovery_incomplete",
+                recoveryCause: cause.recoveryCause ?? cause.reason,
+              });
+            }
+            if (
+              cause.reason === "recovery_incomplete" ||
+              cause.reason === "recovery_limit" ||
+              cause.reason === "wrong_owner"
+            )
+              admissionScans.delete(key);
+            return yield* cause;
+          }),
+        ),
+      ),
+    forgetAdmission: (repository: string, initialMessageId: string) =>
+      Effect.sync(() => {
+        admissionScans.delete(`${repository}\0${initialMessageId}`);
       }),
     /** Admission is paid. Persist operationKey and initialMessageId before calling; no retries here. */
-    prepare: (input: {
-      readonly operationKey: string;
-      readonly initialMessageId: string;
-      readonly prompt: string;
-      readonly repository: string;
-      readonly branch: string;
-      readonly model: string;
-      readonly variant?: string;
-    }) =>
+    prepare: (
+      input: {
+        readonly operationKey: string;
+        readonly initialMessageId: string;
+        readonly prompt: string;
+        readonly repository: string;
+        readonly branch: string;
+        readonly model: string;
+        readonly variant?: string;
+      },
+      beforePaidPost: Effect.Effect<void, KiloCloudError>,
+    ) =>
       preflight(input.repository).pipe(
         Effect.andThen(
           request(
@@ -491,6 +549,7 @@ export const make = (options: {
             Prepared,
             true,
             input.initialMessageId,
+            beforePaidPost,
           ),
         ),
       ),
@@ -526,6 +585,7 @@ export const make = (options: {
         readonly model: string;
         readonly variant?: string;
       },
+      beforePaidPost: Effect.Effect<void, KiloCloudError>,
     ) =>
       check(binding).pipe(
         Effect.andThen(
@@ -547,6 +607,7 @@ export const make = (options: {
             Sent,
             true,
             input.messageId,
+            beforePaidPost,
           ),
         ),
         Effect.flatMap((sent) =>
