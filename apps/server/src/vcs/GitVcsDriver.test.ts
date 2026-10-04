@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -317,6 +318,45 @@ it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
       assert.strictEqual(yield* fileSystem.readFileString(laterOverCap), "y".repeat(1025));
       assert.isFalse(yield* fileSystem.exists(laterUnderCap));
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+// Windows ignores POSIX directory modes and root bypasses them, so neither can deny the lstat.
+it.effect.skipIf(
+  HostProcessPlatform.defaultValue() === "win32" || globalThis.process.getuid?.() === 0,
+)("checkpoint restore refuses a file it cannot classify before changing files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-size-cap-lstat-",
+    });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "edited\n");
+    const locked = path.join(cwd, "locked");
+    yield* fileSystem.makeDirectory(locked);
+    yield* fileSystem.writeFileString(path.join(locked, "big.bin"), "x".repeat(1025));
+    // Readable but not searchable: Git lists the file, lstat fails with EACCES.
+    yield* Effect.acquireRelease(fileSystem.chmod(locked, 0o600), () =>
+      fileSystem.chmod(locked, 0o700).pipe(Effect.orDie),
+    );
+
+    const result = yield* Effect.result(
+      driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "VcsProcessExitError");
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
+    yield* fileSystem.chmod(locked, 0o700);
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(locked, "big.bin")),
+      "x".repeat(1025),
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
 it.effect("checkpoint restore keeps an over-cap file the restored .gitignore exposes", () =>

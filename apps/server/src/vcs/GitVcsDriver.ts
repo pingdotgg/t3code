@@ -809,8 +809,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
   // Lists files over the checkpoint cap that are untracked in the real index, as git status
   // shows them, relative to cwd. Returns undefined when the listing is incomplete: Git failed
-  // (an unreadable index), output was truncated, or a path is not valid UTF-8 and so cannot be
-  // named back to Git or lstat.
+  // (an unreadable index), output was truncated, a path is not valid UTF-8 and so cannot be
+  // named back to Git or lstat, or lstat failed for a reason other than the file vanishing.
   const listOversizedUntrackedFiles = Effect.fn(
     "GitVcsDriver.checkpoints.listOversizedUntrackedFiles",
   )(function* (operation: string, cwd: string) {
@@ -834,9 +834,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       (entry) =>
         Effect.tryPromise(() => NodeFSP.lstat(path.join(cwd, entry))).pipe(
           Effect.map((stats) => stats.isFile() && stats.size > checkpointMaxUntrackedFileBytes),
-          Effect.orElseSucceed(() => false),
+          // A file that vanished after the listing leaves clean nothing to delete.
+          Effect.catchIf(
+            (error) => Predicate.hasProperty(error.cause, "code") && error.cause.code === "ENOENT",
+            () => Effect.succeed(false),
+          ),
         ),
       { concurrency: 16 },
+    ).pipe(
+      // Any other lstat failure leaves a file unclassified, so the listing is incomplete.
+      Effect.orElseSucceed(() => undefined),
     );
   });
 
