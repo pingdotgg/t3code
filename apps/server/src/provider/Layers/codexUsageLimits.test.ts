@@ -325,6 +325,15 @@ describe("mergeCodexRateLimits", () => {
     });
   });
 
+  it("keeps a member's credit cap so a stop it causes still learns its reset", () => {
+    const merged = mergeCodexRateLimits(
+      { limitId: "codex", individualLimit: { remainingPercent: 0, resetsAt: 1_800_000_000 } },
+      { rateLimitReachedType: "workspace_member_usage_limit_reached" },
+    );
+
+    expect(codexUsageLimitResetAt(merged)).toBe("2027-01-15T08:00:00.000Z");
+  });
+
   it("ignores a model-specific snapshot so it cannot replace the main allowance", () => {
     const main = {
       limitId: "codex",
