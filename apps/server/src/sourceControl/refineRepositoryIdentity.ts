@@ -25,7 +25,8 @@ export const refineRepositoryIdentity = (
     const handle = yield* registry.resolveHandle({
       cwd: identity.rootPath,
       context: {
-        provider: detected?.kind === "unknown" ? detected : { ...UNKNOWN_PROVIDER, name: remote.host },
+        provider:
+          detected?.kind === "unknown" ? detected : { ...UNKNOWN_PROVIDER, name: remote.host },
         remoteName: identity.locator.remoteName,
         remoteUrl: identity.locator.remoteUrl,
       },
