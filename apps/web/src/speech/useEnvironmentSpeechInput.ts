@@ -237,6 +237,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }),
       readDraft,
       commitDraft: (text, selection) => {
+        if (latestInputRef.current.disabled) return;
         latestInputRef.current.commitDraft(text, selection);
         if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
       },
@@ -308,14 +309,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
-    if (previousOwnerRef.current === input.ownerKey) return;
+    if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     setQueuedStart(null);
     controllerRef.current?.ownerChanged();
     setSetupOpen(false);
-  }, [input.ownerKey]);
+  }, [input.ownerKey, input.disabled]);
 
   useEffect(() => {
     const pending = pendingSubmissionRef.current;
@@ -344,11 +345,18 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
-    if (!expectedController || !prepared || !currentStatus?.supported) return;
+    if (
+      latestInputRef.current.disabled ||
+      !expectedController ||
+      !prepared ||
+      !currentStatus?.supported
+    )
+      return;
     const stillCurrent = () =>
       request === startRequestRef.current &&
       controllerRef.current === expectedController &&
-      latestInputRef.current.ownerKey === expectedOwner;
+      latestInputRef.current.ownerKey === expectedOwner &&
+      !latestInputRef.current.disabled;
     setQueuedStart({ prepared, request });
     let latestStatus: EnvironmentSpeechStatus;
     try {
@@ -429,8 +437,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const startAfterSetup = useCallback(async () => {
     setSetupOpen(false);
-    await controllerRef.current?.start();
-  }, []);
+    await start();
+  }, [start]);
 
   return {
     available:

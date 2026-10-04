@@ -7,7 +7,6 @@ import type {
   SpeechTranscriptionOptions,
   SpeechPostProcessingOptions,
 } from "@t3tools/contracts";
-import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -48,24 +47,6 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
     url: input.path,
     timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
     requestInit: { redirect: "error" },
-    validateUrl: (baseUrl) =>
-      Effect.try({
-        try: () => {
-          const url = new URL(baseUrl);
-          const loopback =
-            url.hostname === "localhost" ||
-            url.hostname === "[::1]" ||
-            /^127\.\d+\.\d+\.\d+$/.test(url.hostname);
-          if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-            throw new Error("Voice input requires HTTPS for remote environments.");
-          }
-        },
-        catch: (cause) =>
-          new RemoteEnvironmentAuthFetchError({
-            message: "Voice input requires HTTPS for remote environments.",
-            cause,
-          }),
-      }),
     request: input.run,
   });
 });

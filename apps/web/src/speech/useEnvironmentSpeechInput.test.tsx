@@ -309,6 +309,78 @@ it("opens setup before requesting microphone access for a missing model", async 
   await act(() => voice.setup.startRecording());
   expect(mocks.microphoneRequests).toBe(1);
 });
+it("does not request microphone access when the editor is already disabled", async () => {
+  mocks.disabled = true;
+  await mountProbe();
+  await act(() => voice.start());
+  expect(mocks.microphoneRequests).toBe(0);
+  expect(voice.state.phase).toBe("idle");
+});
+
+it("abandons setup recording when the editor becomes disabled", async () => {
+  mocks.missingModel = true;
+  await mountProbe();
+  await act(() => voice.start());
+  await act(() => voice.setup.download());
+  const startRecording = voice.setup.startRecording;
+  mocks.disabled = true;
+  await act(() => root!.render(<Probe />));
+  await act(() => startRecording());
+  expect(mocks.microphoneRequests).toBe(0);
+  expect(voice.setup.open).toBe(false);
+  expect(voice.state.phase).toBe("idle");
+});
+
+it("abandons queued dictation when the editor becomes disabled, even if re-enabled", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.busy = true;
+    mocks.microphoneFailure = false;
+    await mountProbe();
+    let starting!: Promise<void>;
+    await act(async () => {
+      starting = voice.start();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(voice.state.phase).toBe("preparing");
+    mocks.disabled = true;
+    await act(() => root!.render(<Probe />));
+    expect(voice.state.phase).toBe("idle");
+    mocks.disabled = false;
+    await act(() => root!.render(<Probe />));
+    mocks.busy = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+      await starting;
+    });
+    expect(mocks.microphoneRequests).toBe(0);
+    expect(voice.state.phase).toBe("idle");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("discards a pending transcript when the editor becomes disabled", async () => {
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = voice.stop();
+  });
+  expect(voice.state.phase).toBe("transcribing");
+  mocks.disabled = true;
+  await act(() => root!.render(<Probe />));
+  await act(async () => {
+    transcript.resolve("Late words");
+    await stopping;
+  });
+  expect(mocks.committed).not.toHaveBeenCalled();
+  expect(voice.state.phase).toBe("idle");
+});
+
 it("uses the primary environment for transcription by default", async () => {
   await mountProbe();
   expect(mocks.preparedEnvironmentIds).toContain(mocks.primaryEnvironmentId);
