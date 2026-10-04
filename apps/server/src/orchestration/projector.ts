@@ -1373,6 +1373,7 @@ export function projectEvent(
           const activity = crossThreadSendRecordToActivity({
             eventId: event.eventId,
             payload,
+            turnId: payload.sourceTurnId,
             sequence: event.sequence,
           });
           return {

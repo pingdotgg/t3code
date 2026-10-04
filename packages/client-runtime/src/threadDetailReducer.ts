@@ -701,6 +701,7 @@ export function applyThreadDetailEvent(
             : crossThreadSendRecordToActivity({
                 eventId: event.eventId,
                 payload: event.payload,
+                turnId: event.payload.sourceTurnId,
                 sequence: event.sequence,
               });
       const activities = pipe(

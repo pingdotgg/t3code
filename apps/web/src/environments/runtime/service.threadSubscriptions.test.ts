@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  QueuedTurnId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -637,6 +638,112 @@ describe("retainThreadDetailSubscription", () => {
 
     stop();
   });
+
+  // Queue/start transitions are user-visible acknowledgements, not token
+  // deltas. They must flush older buffered events without reordering them.
+  it.each(["user", "monitor", "cross-thread"] as const)(
+    "applies %s queue and starting transitions without the stream coalescing delay",
+    async (source) => {
+      const {
+        retainThreadDetailSubscription,
+        startEnvironmentConnectionService,
+        resetEnvironmentServiceForTests,
+      } = await import("./service");
+      const { selectThreadByRef, useStore } = await import("~/store");
+      const stop = startEnvironmentConnectionService(new QueryClient());
+      const environmentId = EnvironmentId.make("env-1");
+      const threadId = ThreadId.make("thread-immediate-queue");
+      const threadRef = { environmentId, threadId };
+      const input = mockCreateEnvironmentConnection.mock.calls[0]![0];
+      input.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
+      retainThreadDetailSubscription(environmentId, threadId);
+      const listener = mockSubscribeThread.mock.calls.at(-1)![1] as (
+        item: OrchestrationThreadStreamItem,
+      ) => void;
+      listener({
+        kind: "snapshot",
+        snapshot: { snapshotSequence: 10, thread: makeOrchestrationThread(threadId, "Base") },
+      });
+      listener({ kind: "event", event: metaUpdatedEvent(threadId, 11, "Leading") });
+      listener({ kind: "event", event: metaUpdatedEvent(threadId, 12, "Buffered") });
+      const base = metaUpdatedEvent(threadId, 13, "Unused");
+      const messageId = MessageId.make("immediate-queued-message");
+      const queuedTurnId = QueuedTurnId.make("immediate-queued-turn");
+      listener({
+        kind: "event",
+        event: {
+          ...base,
+          type: "thread.queued-turn-created",
+          payload: {
+            threadId,
+            queuedTurn: {
+              id: queuedTurnId,
+              threadId,
+              message: { messageId, role: "user", text: "Immediate queue", attachments: [] },
+              ...(source === "monitor"
+                ? {
+                    origin: {
+                      kind: "pull-request-monitor" as const,
+                      repository: "acme/app",
+                      number: 42,
+                    },
+                  }
+                : source === "cross-thread"
+                  ? {
+                      origin: {
+                        kind: "cross-thread" as const,
+                        sourceThreadId: ThreadId.make("source-thread"),
+                        sourceMessageId: MessageId.make("source-message"),
+                        sourceThreadTitle: "Source",
+                      },
+                    }
+                  : {}),
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: base.occurredAt,
+              updatedAt: base.occurredAt,
+              failedAt: null,
+              failureMessage: null,
+            },
+          },
+        },
+      });
+      expect(selectThreadByRef(useStore.getState(), threadRef)?.title).toBe("Buffered");
+      expect(selectThreadByRef(useStore.getState(), threadRef)?.queuedTurns?.[0]?.id).toBe(
+        queuedTurnId,
+      );
+      listener({
+        kind: "event",
+        event: {
+          ...base,
+          sequence: 14,
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: base.occurredAt,
+          },
+        },
+      });
+      listener({
+        kind: "event",
+        event: {
+          ...base,
+          sequence: 15,
+          type: "thread.queued-turn-dispatched",
+          payload: { threadId, queuedTurnId, messageId, dispatchedAt: base.occurredAt },
+        },
+      });
+      expect(selectThreadByRef(useStore.getState(), threadRef)?.pendingTurnStart?.messageId).toBe(
+        messageId,
+      );
+      expect(selectThreadByRef(useStore.getState(), threadRef)?.queuedTurns ?? []).toHaveLength(0);
+      stop();
+      await resetEnvironmentServiceForTests();
+    },
+  );
 
   it("applies streamed thread events immediately, then buffered bursts once", async () => {
     const {

@@ -323,6 +323,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
+  busyAction: "queue" | "steer";
   isConnecting: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
@@ -343,6 +344,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
+        busyAction={props.busyAction}
         isConnecting={props.isConnecting}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
@@ -427,6 +429,7 @@ export interface ChatComposerProps {
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
   queuedTurns: OrchestrationQueuedTurn[];
+  queuedTurnStatuses?: ReadonlyMap<QueuedTurnId, "submitting" | "accepted"> | undefined;
   queueHeldAt: string | null;
   activePendingProgress: {
     questionIndex: number;
@@ -2567,21 +2570,24 @@ export const ChatComposer = memo(
                 onError={setThreadError}
               />
             ) : null}
-            {activePendingApproval || pendingUserInputs.length > 0 ? null : (
-              <QueuedMessagesPanel
-                policyBlocks={queuedPolicyBlocks}
-                queuedTurns={queuedTurns}
-                queueHeldAt={queueHeldAt}
-                editingQueuedTurnId={editingQueuedTurn?.id ?? null}
-                editingText={editingQueuedTurn?.text ?? ""}
-                onStartEditingQueuedTurn={startEditingQueuedTurn}
-                onCancelEditingQueuedTurn={stopEditingQueuedTurn}
-                onSaveEditingQueuedTurn={saveEditingQueuedTurn}
-                onDeleteQueuedTurn={onDeleteQueuedTurn}
-                onMoveQueuedTurn={onMoveQueuedTurn}
-                onReleaseQueue={onReleaseQueue}
-              />
-            )}
+            <QueuedMessagesPanel
+              queuedTurnStatuses={props.queuedTurnStatuses}
+              policyBlocks={queuedPolicyBlocks}
+              queuedTurns={queuedTurns}
+              queueHeldAt={queueHeldAt}
+              editingQueuedTurnId={editingQueuedTurn?.id ?? null}
+              editingText={editingQueuedTurn?.text ?? ""}
+              onStartEditingQueuedTurn={
+                activePendingApproval || pendingUserInputs.length > 0
+                  ? undefined
+                  : startEditingQueuedTurn
+              }
+              onCancelEditingQueuedTurn={stopEditingQueuedTurn}
+              onSaveEditingQueuedTurn={saveEditingQueuedTurn}
+              onDeleteQueuedTurn={onDeleteQueuedTurn}
+              onMoveQueuedTurn={onMoveQueuedTurn}
+              onReleaseQueue={onReleaseQueue}
+            />
 
             {activePendingApproval ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
@@ -2936,6 +2942,11 @@ export const ChatComposer = memo(
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
+                    busyAction={
+                      Array.from(props.queuedTurnStatuses?.values() ?? []).includes("submitting")
+                        ? "queue"
+                        : "steer"
+                    }
                     isConnecting={isConnecting}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={hasComposerSubmitContent}

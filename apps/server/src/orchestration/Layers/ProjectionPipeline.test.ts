@@ -235,6 +235,21 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         ],
       );
+
+      // An unrelated durable job must not make an otherwise fully projected
+      // message wait on shell-summary reads or attachment filesystem cleanup.
+      yield* sql`
+        INSERT INTO projection_reconciliation_jobs
+          (sequence, shell_thread_ids_json, attachment_thread_ids_json, created_at)
+        VALUES (4, '[]', '[]', '2026-03-01T08:00:04.000Z')
+      `;
+      const receipt = yield* project(
+        messageEvent(5, "user", "2026-03-01T08:00:05.000Z", "2026-03-01T08:00:05.000Z"),
+      );
+      yield* receipt.reconcile;
+      assert.deepEqual(yield* sql`SELECT sequence FROM projection_reconciliation_jobs`, [
+        { sequence: 4 },
+      ]);
     }).pipe(
       Effect.provide(
         Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-message-summary-")),

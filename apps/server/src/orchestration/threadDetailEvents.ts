@@ -5,6 +5,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
   {
     type:
       | "thread.message-sent"
+      | "thread.turn-start-requested"
       | "thread.review-result-set"
       | "thread.validation-requested"
       | "thread.validation-request-failed"
@@ -33,6 +34,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
 > {
   switch (event.type) {
     case "thread.message-sent":
+    case "thread.turn-start-requested":
     case "thread.review-result-set":
     case "thread.validation-requested":
     case "thread.validation-request-failed":
