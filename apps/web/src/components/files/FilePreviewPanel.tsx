@@ -47,6 +47,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -930,6 +931,7 @@ export default function FilePreviewPanel({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const environmentServerBrowser = useEnvironmentSupportsServerBrowser(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1032,7 +1034,7 @@ export default function FilePreviewPanel({
     previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
-    isPreviewSupportedInRuntime() &&
+    (isPreviewSupportedInRuntime() || environmentServerBrowser) &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;

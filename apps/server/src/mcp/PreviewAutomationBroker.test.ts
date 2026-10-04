@@ -328,6 +328,44 @@ it.effect("announces a live replacement stream before delivering requests", () =
   ),
 );
 
+it.effect(
+  "keeps a server-host open alive for installation without extending other operations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const received = yield* Deferred.make<RoutedRequest>();
+        const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+        yield* Stream.runForEach(requests, (request) =>
+          request.operation === "open"
+            ? Deferred.succeed(received, request)
+            : broker.respond({
+                clientId: "client-1",
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: request.timeoutMs,
+              }),
+        ).pipe(Effect.forkScoped);
+        const opening = yield* broker
+          .invoke({ scope, operation: "open", input: {} })
+          .pipe(Effect.forkScoped);
+        const request = yield* Deferred.await(received);
+        yield* TestClock.adjust(16_000);
+        yield* broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "opened",
+        });
+        expect(yield* Fiber.join(opening)).toBe("opened");
+        expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe(15_000);
+        expect(yield* broker.invoke({ scope, operation: "navigate", input: {} })).toBe(15_000);
+      }),
+    ),
+);
+
 it.effect("preserves bounded request and remote selector diagnostics", () => {
   const locator = "role=button[name='request-secret']";
   const remoteMessage = "Unexpected token near remote-secret.";

@@ -197,6 +197,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server hosts preview tabs in its own headless Chromium (`runtime:
+      "server"`) and streams them over `/api/preview-stream`. Clients
+      without a local browser runtime open server tabs here. */
+  serverBrowser: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

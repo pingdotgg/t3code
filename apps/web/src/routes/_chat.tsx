@@ -7,7 +7,7 @@ import { ThreadRouteView } from "../components/ThreadRouteView";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects } from "../state/entities";
+import { readEnvironmentSupportsServerBrowser, useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -141,7 +141,10 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         if (!routeThreadRef) return;
-        if (!isPreviewSupportedInRuntime()) {
+        if (
+          !isPreviewSupportedInRuntime() &&
+          !readEnvironmentSupportsServerBrowser(routeThreadRef.environmentId)
+        ) {
           toastManager.add(
             stackedThreadToast({
               type: "info",

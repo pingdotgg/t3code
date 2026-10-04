@@ -89,6 +89,44 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("reissues presentation requests without replaying them on navigation", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId, runtime: "server", reveal: false });
+      yield* manager.requestReveal({ threadId, tabId: opened.tabId, force: true });
+      const first = (yield* manager.list({ threadId })).sessions[0];
+      expect(first?.reveal).toBe(true);
+      expect(first?.revealRequest?.force).toBe(true);
+      const navigated = yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "localhost:5173",
+      });
+      expect(navigated.revealRequest).toEqual(first?.revealRequest);
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      expect((yield* manager.list({ threadId })).sessions[0]?.revealRequest).toEqual(
+        first?.revealRequest,
+      );
+      yield* manager.requestReveal({ threadId, tabId: opened.tabId, force: false });
+      const second = (yield* manager.list({ threadId })).sessions[0];
+      expect(second?.revealRequest?.id).not.toBe(first?.revealRequest?.id);
+      expect(second?.revealRequest?.force).toBe(false);
+      const events = yield* collector.drain;
+      const last = events.at(-1);
+      expect(last?.type).toBe("navigated");
+      if (last?.type === "navigated")
+        expect(last.snapshot.revealRequest).toEqual(second?.revealRequest);
+    }),
+  );
+
   it.effect("opens an Idle tab when no URL is supplied", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

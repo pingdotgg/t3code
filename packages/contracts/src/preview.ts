@@ -162,6 +162,15 @@ export const PreviewNavStatus = Schema.Union([
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 
+/**
+ * Where a tab's page runs. `desktop` is an Electron <webview> owned by one
+ * desktop client; `server` is headless Chromium owned by the environment
+ * server, viewed by any client through `/api/preview-stream` and driven by
+ * agents with no client attached. Absent means `desktop`.
+ */
+export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
+export type PreviewRuntime = typeof PreviewRuntime.Type;
+
 export const PreviewSessionSnapshot = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   tabId: PreviewTabId,
@@ -176,6 +185,11 @@ export const PreviewSessionSnapshot = Schema.Struct({
    * switching would require tearing the guest down and losing page state.
    */
   profileId: Schema.optional(BrowserProfileId),
+  runtime: Schema.optional(PreviewRuntime),
+  /** An agent opened this tab and asked to show it, so viewers float it. */
+  reveal: Schema.optional(Schema.Boolean),
+  /** A fresh presentation request, including whether it overrides automatic-floating settings. */
+  revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -193,6 +207,10 @@ export const PreviewOpenInput = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Omit for a desktop tab. `server` requires the `serverBrowser` capability. */
+  runtime: Schema.optional(PreviewRuntime),
+  /** Set by agent opens that should float for viewers; see the snapshot field. */
+  reveal: Schema.optional(Schema.Boolean),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 

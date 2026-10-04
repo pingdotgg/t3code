@@ -157,6 +157,35 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
   );
 }
 
+/**
+ * `<img>` and WebSocket cannot set headers, so media routes (device hub,
+ * preview stream) authenticate the way the `/ws` upgrade does: a cookie for browser
+ * sessions, or a short-lived `wsTicket` minted over authenticated HTTP for
+ * bearer and DPoP clients. The upgrade authenticator already implements that
+ * fallback order, so it is used for plain requests as well.
+ */
+export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (EnvironmentAuth.isServerAuthCredentialError(error)) {
+            return yield* failEnvironmentAuthInvalid(
+              EnvironmentAuth.serverAuthCredentialReason(error),
+              EnvironmentAuth.serverAuthDpopFailureReason(error),
+            );
+          }
+          return yield* failEnvironmentInternal("internal_error", error);
+        }),
+      ),
+    );
+    if (!session.scopes.includes(requiredScope)) {
+      return yield* failEnvironmentScopeRequired(requiredScope);
+    }
+  });
+
 export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, error?: unknown) {
   return Effect.gen(function* () {
     const traceId = yield* currentEnvironmentTraceId;

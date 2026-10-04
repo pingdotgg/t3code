@@ -21,6 +21,7 @@ import {
   type PreviewRefreshInput,
   type PreviewReportStatusInput,
   type PreviewResizeInput,
+  type PreviewRuntime,
   FILL_PREVIEW_VIEWPORT,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
@@ -49,6 +50,9 @@ export class PreviewManager extends Context.Service<
       input: PreviewNavigateInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly reportStatus: (input: PreviewReportStatusInput) => Effect.Effect<void, PreviewError>;
+    readonly requestReveal: (
+      input: PreviewCloseInput & { readonly tabId: string; readonly force: boolean },
+    ) => Effect.Effect<void, PreviewError>;
     readonly resize: (
       input: PreviewResizeInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
@@ -124,6 +128,8 @@ const buildLoadingSnapshot = (input: {
   readonly title: string;
   readonly viewport: PreviewViewportSetting;
   readonly profileId?: string | undefined;
+  readonly runtime?: PreviewRuntime | undefined;
+  readonly reveal?: boolean | undefined;
   readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
@@ -133,6 +139,8 @@ const buildLoadingSnapshot = (input: {
   canGoForward: false,
   viewport: input.viewport,
   ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+  ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
+  ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
   updatedAt: input.updatedAt,
 });
 
@@ -141,6 +149,8 @@ const buildIdleSnapshot = (input: {
   readonly tabId: string;
   readonly viewport: PreviewViewportSetting;
   readonly profileId?: string | undefined;
+  readonly runtime?: PreviewRuntime | undefined;
+  readonly reveal?: boolean | undefined;
   readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
@@ -150,6 +160,8 @@ const buildIdleSnapshot = (input: {
   canGoForward: false,
   viewport: input.viewport,
   ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+  ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
+  ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
   updatedAt: input.updatedAt,
 });
 
@@ -221,7 +233,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
     function* (input) {
-      const tabId = newPreviewTabId();
+      // Persisted client surfaces must not bind to a different tab after a server restart.
+      const tabId = `${newPreviewTabId()}${input.runtime === "server" ? `_${serverEpoch}` : ""}`;
       const updatedAt = yield* currentIsoTimestamp;
       // Clients with a configured default send the viewport up front so the
       // session is born at the right size; older clients omit it and keep the
@@ -235,6 +248,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             title: "",
             viewport,
             profileId: input.profileId,
+            runtime: input.runtime,
+            reveal: input.reveal,
             updatedAt,
           })
         : buildIdleSnapshot({
@@ -242,6 +257,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             tabId,
             viewport,
             profileId: input.profileId,
+            runtime: input.runtime,
+            reveal: input.reveal,
             updatedAt,
           });
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
@@ -290,6 +307,13 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             ...(session.snapshot.profileId === undefined
               ? {}
               : { profileId: session.snapshot.profileId }),
+            ...(session.snapshot.runtime === undefined
+              ? {}
+              : { runtime: session.snapshot.runtime }),
+            ...(session.snapshot.reveal === undefined ? {} : { reveal: session.snapshot.reveal }),
+            ...(session.snapshot.revealRequest === undefined
+              ? {}
+              : { revealRequest: session.snapshot.revealRequest }),
             updatedAt,
           };
           return {
@@ -326,6 +350,11 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           ...(session.snapshot.profileId === undefined
             ? {}
             : { profileId: session.snapshot.profileId }),
+          ...(session.snapshot.runtime === undefined ? {} : { runtime: session.snapshot.runtime }),
+          ...(session.snapshot.reveal === undefined ? {} : { reveal: session.snapshot.reveal }),
+          ...(session.snapshot.revealRequest === undefined
+            ? {}
+            : { revealRequest: session.snapshot.revealRequest }),
           updatedAt,
         };
         const emit: PreviewEventDraft =
@@ -445,8 +474,37 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const requestReveal: PreviewManager["Service"]["requestReveal"] = Effect.fn(
+    "PreviewManager.requestReveal",
+  )(function* (input) {
+    yield* mutateExistingSession(
+      input.threadId,
+      input.tabId,
+      Effect.fn("PreviewManager.revealSession")(function* (session) {
+        const snapshot = {
+          ...session.snapshot,
+          reveal: true,
+          revealRequest: { id: NodeCrypto.randomUUID(), force: input.force },
+          updatedAt: yield* currentIsoTimestamp,
+        };
+        return {
+          next: { ...session, snapshot },
+          emit: {
+            type: "navigated" as const,
+            threadId: session.threadId,
+            tabId: session.tabId,
+            createdAt: snapshot.updatedAt,
+            snapshot,
+          },
+          result: undefined,
+        };
+      }),
+    );
+  });
+
   return PreviewManager.of({
     open,
+    requestReveal,
     navigate,
     reportStatus,
     resize,

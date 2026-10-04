@@ -70,6 +70,9 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
+import * as ServerBrowserToolchain from "./preview/ServerBrowserToolchain.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -647,6 +650,13 @@ const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
+    ServerBrowserStream.routeLayer.pipe(
+      Layer.provide(
+        ServerBrowser.layer.pipe(
+          Layer.provide(ServerBrowserToolchain.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        ),
+      ),
+    ),
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

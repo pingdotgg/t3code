@@ -167,7 +167,11 @@ interface RightPanelStoreState {
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
-  reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
+  reconcileBrowserSurfaces: (
+    ref: ScopedThreadRef,
+    tabIds: readonly string[],
+    hiddenTabIds?: ReadonlySet<string>,
+  ) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
@@ -854,7 +858,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         ),
-      reconcileBrowserSurfaces: (ref, tabIds) =>
+      reconcileBrowserSurfaces: (ref, tabIds, hiddenTabIds) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {
             const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
@@ -867,7 +871,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
             const knownIds = new Set(existingBrowser.map((surface) => surface.id));
             const added = tabIds
-              .filter((tabId) => !knownIds.has(`browser:${tabId}`))
+              .filter((tabId) => !knownIds.has(`browser:${tabId}`) && !hiddenTabIds?.has(tabId))
               .map((tabId) => browserSurface(tabId));
             const surfaces = [...nonBrowser, ...existingBrowser, ...added];
             const activeStillExists = surfaces.some(

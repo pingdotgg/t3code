@@ -97,10 +97,11 @@ export function ChatCanvas({
   }, [composerOverlayElement, timelineElement]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
+    const layout = resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard });
     return {
       container,
       lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
+      layout,
       previewKey: preview?.key ?? null,
       reportPreview,
       clearPreview,

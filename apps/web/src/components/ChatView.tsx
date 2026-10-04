@@ -257,6 +257,7 @@ import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
+import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
@@ -404,6 +405,7 @@ import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/c
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   resolveThreadDetailRef,
+  useEnvironmentSupportsServerBrowser,
   useProject,
   useProjects,
   useThreadProjection,
@@ -2186,6 +2188,11 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  // Electron hosts its own browser tabs; other clients need the environment to host them.
+  const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
+    activeThreadRef?.environmentId ?? null,
+  );
+  const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
   const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
     containerWidth: workspaceLayoutWidth ?? undefined,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
@@ -2251,6 +2258,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
+  const previewSessionsReady = !activeEnvironmentServerBrowser || activePreviewState.listLoaded;
   const resolvePreviewRuntimeTabId = useMemo(
     () =>
       activeThreadRef
@@ -2274,7 +2282,7 @@ export default function ChatView(props: ChatViewProps) {
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],
   );
-  const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
+  const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -2325,21 +2333,35 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !previewSessionsReady) return;
+    const hiddenTabIds = new Set(
+      Object.values(activePreviewState.sessions)
+        .filter((session) => session.runtime === "server" && session.reveal === false)
+        .map((session) => session.tabId),
+    );
     useRightPanelStore
       .getState()
-      .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
-  }, [activePreviewState.sessions, activeThreadRef]);
+      .reconcileBrowserSurfaces(
+        activeThreadRef,
+        Object.keys(activePreviewState.sessions),
+        hiddenTabIds,
+      );
+  }, [activePreviewState.sessions, activeThreadRef, previewSessionsReady]);
 
   useEffect(() => {
-    if (!activeThreadRef || activePreviewMiniPlayer?.source.kind !== "browser") return;
+    if (
+      !activeThreadRef ||
+      !previewSessionsReady ||
+      activePreviewMiniPlayer?.source.kind !== "browser"
+    )
+      return;
     const miniTabStillExists = Boolean(
       activePreviewState.sessions[activePreviewMiniPlayer.source.tabId],
     );
     if (!miniTabStillExists) {
       usePreviewMiniPlayerStore.getState().close(activeThreadRef);
     }
-  }, [activePreviewMiniPlayer, activePreviewState.sessions, activeThreadRef]);
+  }, [activePreviewMiniPlayer, activePreviewState.sessions, activeThreadRef, previewSessionsReady]);
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
@@ -5314,6 +5336,51 @@ export default function ChatView(props: ChatViewProps) {
     deviceState.sessions,
     deviceState.devices,
   ]);
+  // A server tab an agent opens and asks to show floats over chat, as a
+  // desktop automation host does for its own tabs. Tabs present when the
+  // thread's preview state first loads are a baseline, so reloads do not
+  // resurrect them, and tabs already shown in a surface stay where they are.
+  const previousServerPreviewTabs = useRef(new Map<string, Map<string, string | undefined>>());
+  useEffect(() => {
+    if (!activeThreadRef || !activeEnvironmentServerBrowser) return;
+    // Nothing has loaded yet; an empty baseline would make every tab look new.
+    if (!activePreviewState.listLoaded) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    const serverSessions = Object.values(activePreviewState.sessions).filter(
+      (session) => session.runtime === "server",
+    );
+    const previous = previousServerPreviewTabs.current.get(threadKey);
+    previousServerPreviewTabs.current.set(
+      threadKey,
+      new Map(serverSessions.map((session) => [session.tabId, session.revealRequest?.id])),
+    );
+    if (!previous) return;
+    for (const session of serverSessions) {
+      const requested = session.revealRequest;
+      const fresh = requested
+        ? previous.get(session.tabId) !== requested.id
+        : !previous.has(session.tabId);
+      if (!fresh || session.reveal !== true) continue;
+      if (!autoShowFloatingPreview && requested?.force !== true) continue;
+      const surface = rightPanelState.surfaces.find(
+        (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
+      );
+      if (surface && requested?.force === true) {
+        useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
+      } else if (!surface) {
+        usePreviewMiniPlayerStore
+          .getState()
+          .open(activeThreadRef, browserMiniPlayerSource(session.tabId));
+      }
+    }
+  }, [
+    activeEnvironmentServerBrowser,
+    activePreviewState.listLoaded,
+    activePreviewState.sessions,
+    activeThreadRef,
+    autoShowFloatingPreview,
+    rightPanelState.surfaces,
+  ]);
   // A floating device follows its session: once the agent or another client
   // closes the device there is nothing left to stream.
   useEffect(() => {
@@ -5618,7 +5685,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   }, [activeRightPanelSurface, activeThreadRef]);
   const togglePreviewPanel = useCallback(() => {
-    if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
+    if (!activeThreadRef || !browserAvailable) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
@@ -5632,6 +5699,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activePreviewState.activeTabId,
     activeThreadRef,
+    browserAvailable,
     closePreviewPanel,
     createBrowserSurface,
     previewPanelOpen,
@@ -11352,6 +11420,9 @@ export default function ChatView(props: ChatViewProps) {
               </div>
             </div>
 
+            {activeThreadRef && activeEnvironmentServerBrowser ? (
+              <PreviewSessionSync threadRef={activeThreadRef} />
+            ) : null}
             {activeThreadRef && activePreviewMiniPlayer && previewMiniPlayerVisible ? (
               <ThreadPreviewMiniPlayer
                 key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
@@ -11465,7 +11536,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
-          browserAvailable={isPreviewSupportedInRuntime()}
+          browserAvailable={browserAvailable}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -11520,7 +11591,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
-            browserAvailable={isPreviewSupportedInRuntime()}
+            browserAvailable={browserAvailable}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
@@ -11581,4 +11652,10 @@ export default function ChatView(props: ChatViewProps) {
       )}
     </div>
   );
+}
+
+/** Keeps the thread's preview tabs synced while no browser panel is mounted. */
+function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
+  usePreviewSession(props.threadRef);
+  return null;
 }

@@ -19,6 +19,7 @@ import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import { isServerBrowserEnabled } from "../preview/serverBrowserEnabled.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
@@ -254,6 +255,7 @@ export const make = Effect.gen(function* () {
         ? { serverSelfUpdateProgress: true }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
+      ...(isServerBrowserEnabled(serverConfig.mode) ? { serverBrowser: true } : {}),
     },
   };
 
