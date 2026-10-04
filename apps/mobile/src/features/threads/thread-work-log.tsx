@@ -64,7 +64,7 @@ import {
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
-import { turnItemOutputText } from "@t3tools/client-runtime/work-log/item-detail";
+import { toolCallLines, turnItemOutputText } from "@t3tools/client-runtime/work-log/item-detail";
 import { useTurnItemDetail } from "../../state/queries";
 import {
   resolveThreadWorkGroupInitialScroll,
@@ -929,23 +929,41 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const fetchedItem = fetchedDetail.data?.item ?? null;
   // Reads keep their path list; the fetched file contents show as output.
   const isRead = toolGroupAction(row.workEntry) === "read";
+  // Tool calls show the call in the foreground and the result muted below it.
+  const shownItem = fetchedItem ?? row.projectedItem.item;
+  const call =
+    expanded && !isRead && shownItem.type === "command_execution"
+      ? toolCallLines({ command: shownItem.input })
+      : expanded && !isRead && shownItem.type === "dynamic_tool"
+        ? toolCallLines({ args: shownItem.input })
+        : expanded && shownItem.type === "file_search"
+          ? toolCallLines({ args: { pattern: shownItem.pattern } })
+          : expanded && shownItem.type === "web_search"
+            ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
+            : null;
+  const failedExitCode =
+    call && shownItem.type === "command_execution" && shownItem.exitCode
+      ? shownItem.exitCode
+      : null;
   const fullDetail =
-    expanded && !reasoning
+    expanded && !reasoning && !call
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
       : null;
   const fetchedOutput = !expanded
     ? null
-    : fetchedItem
-      ? (turnItemOutputText(fetchedItem) ?? "No output.")
-      : fetchedDetail.error
-        ? `Couldn't load output: ${fetchedDetail.error}`
-        : row.fetchesDetail
-          ? fetchedDetail.data
-            ? "Output is no longer available."
-            : "Loading output…"
-          : null;
+    : shownItem.type === "file_search" || shownItem.type === "web_search"
+      ? turnItemOutputText(shownItem)
+      : fetchedItem
+        ? (turnItemOutputText(fetchedItem) ?? "No output.")
+        : fetchedDetail.error
+          ? `Couldn't load output: ${fetchedDetail.error}`
+          : row.fetchesDetail
+            ? fetchedDetail.data
+              ? "Output is no longer available."
+              : "Loading output…"
+            : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -1091,6 +1109,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       {expanded &&
       (reasoning ||
         fullDetail ||
+        call ||
         fetchedOutput ||
         viewedImagePath ||
         row.workEntry.questionAnswer) ? (
@@ -1120,17 +1139,41 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           >
             {reasoning ? (
               props.renderReasoning(reasoning.text)
-            ) : (
+            ) : call ? (
+              [
+                call.command,
+                ...(call.args ?? []).map(([key, value]) => `${key} ${value}`),
+                call.argsText,
+              ]
+                .filter((line): line is string => Boolean(line))
+                .map((line, index) => (
+                  <Text
+                    key={`${index}:${line}`}
+                    selectable
+                    className="font-mono text-2xs leading-normal text-foreground"
+                  >
+                    {line}
+                  </Text>
+                ))
+            ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fullDetail}
               </Text>
-            )}
+            ) : null}
             {fetchedOutput ? (
               <Text
                 selectable
-                className="mt-1.5 font-mono text-2xs leading-normal text-foreground-muted"
+                className={cn(
+                  "font-mono text-2xs leading-normal text-foreground-muted",
+                  (!call || call.command || call.args || call.argsText) && "mt-1.5",
+                )}
               >
                 {fetchedOutput}
+              </Text>
+            ) : null}
+            {failedExitCode !== null ? (
+              <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
+                exit {failedExitCode}
               </Text>
             ) : null}
           </ScrollView>
