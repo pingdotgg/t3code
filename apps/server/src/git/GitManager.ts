@@ -1379,14 +1379,56 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // The remote holding the repository PRs target: origin, else the only remote,
+  // which gh also reads as the base. Null when several remotes leave it open.
+  const resolveTargetRemoteName = (cwd: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.resolveTargetRemoteName",
+        cwd,
+        args: ["remote"],
+        timeoutMs: 5_000,
+      })
+      .pipe(
+        Effect.map(({ stdout }) => {
+          const names = stdout
+            .split("\n")
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
+          if (names.includes("origin")) return "origin";
+          return names.length === 1 ? names[0]! : null;
+        }),
+        Effect.orElseSucceed(() => "origin"),
+      );
+
+  // The target remote's repository, or the OWNER/REPO that `gh repo set-default`
+  // recorded in its gh-resolved key (`base` means the remote itself).
+  const resolveTargetRepositoryContext = Effect.fn("resolveTargetRepositoryContext")(function* (
+    cwd: string,
+    remoteName: string | null,
+  ) {
+    const context = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+    if (!remoteName) return context;
+    const resolved = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
+    const [owner, name, ...rest] = resolved?.trim().split("/") ?? [];
+    if (!owner || !name || rest.length > 0) return context;
+    const host = context.remoteUrlKey?.split("/")[0];
+    return {
+      remoteUrlKey: host ? `${host}/${owner}/${name}`.toLowerCase() : context.remoteUrlKey,
+      repositoryNameWithOwner: `${owner}/${name}`,
+      ownerLogin: owner,
+    };
+  });
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
+      const targetRemoteName = yield* resolveTargetRemoteName(cwd);
       const [headRemote, targetRemote] = yield* Effect.all(
         [
           resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
+          resolveTargetRepositoryContext(cwd, targetRemoteName),
         ],
         { concurrency: "unbounded" },
       );
@@ -1413,21 +1455,22 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
+    const targetRemoteName = yield* resolveTargetRemoteName(cwd);
+    const [remoteRepository, targetRepository] = yield* Effect.all(
       [
         resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
+        resolveTargetRepositoryContext(cwd, targetRemoteName),
       ],
       { concurrency: "unbounded" },
     );
 
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      targetRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          targetRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
-          remoteName !== "origin" &&
+          remoteName !== targetRemoteName &&
           remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
@@ -1437,7 +1480,7 @@ export const make = Effect.gen(function* () {
     const remoteAliasHeadSelector =
       remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
     const shouldProbeRemoteOwnedSelectors =
-      isCrossRepository || (remoteName !== null && remoteName !== "origin");
+      isCrossRepository || (remoteName !== null && remoteName !== targetRemoteName);
 
     const headSelectors: string[] = [];
     if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
@@ -1468,8 +1511,8 @@ export const make = Effect.gen(function* () {
       remoteName,
       headRemoteUrlKey:
         remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
+        (remoteName === null ? targetRepository.remoteUrlKey : null),
+      targetRemoteUrlKey: targetRepository.remoteUrlKey,
       headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,

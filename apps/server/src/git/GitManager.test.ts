@@ -296,6 +296,27 @@ function configureVisibleRemoteUrlWithLocalRewrite(
   });
 }
 
+// Adds origin as the base repository that a fork remote's PRs target.
+function addBaseOriginRemote(
+  cwd: string,
+): Effect.Effect<
+  void,
+  PlatformError.PlatformError | GitCommandError,
+  FileSystem.FileSystem | Scope.Scope | GitVcsDriver.GitVcsDriver
+> {
+  return Effect.gen(function* () {
+    const originDir = yield* createBareRemote();
+    yield* runGit(cwd, ["remote", "add", "origin", originDir]);
+    yield* runGit(cwd, ["push", "origin", "main"]);
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      cwd,
+      "origin",
+      "git@github.com:pingdotgg/codething-mvp.git",
+      originDir,
+    );
+  });
+}
+
 function createTextGeneration(
   overrides: Partial<FakeGitTextGeneration> = {},
 ): TextGeneration.TextGeneration["Service"] {
@@ -3739,6 +3760,173 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     12_000,
   );
 
+  it.effect.each(["status", "commit_push_pr"] as const)(
+    "finds the open same-repository PR via %s when the only remote is not named origin",
+    (lookup) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          remoteDir,
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const sameRepositoryPr = {
+          number: 3,
+          title: "Dev",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/3",
+          baseRefName: "main",
+          headRefName: "dev",
+          state: "OPEN",
+          isCrossRepository: false,
+          headRepository: { nameWithOwner: "pingdotgg/codething-mvp" },
+          headRepositoryOwner: { login: "pingdotgg" },
+        };
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            prListByHeadSelector: { dev: JSON.stringify([sameRepositoryPr]) },
+          },
+        });
+
+        if (lookup === "status") {
+          const status = yield* manager.status({ cwd: repoDir });
+          expect(status.pr?.number).toBe(3);
+          return;
+        }
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.commit.status).toBe("created");
+        expect(result.push.status).toBe("pushed");
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(3);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+  );
+
+  it.effect("preserves fork PR selectors with fork and upstream remotes but no origin", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "https://github.com/contributor/demo.git",
+        forkDir,
+      );
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "upstream",
+        "https://github.com/acme/demo.git",
+        upstreamDir,
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      const sameRepositoryPr = {
+        number: 3,
+        title: "Same repository",
+        url: "https://github.com/acme/demo/pull/3",
+        baseRefName: "main",
+        headRefName: "dev",
+        state: "OPEN",
+        isCrossRepository: false,
+        headRepository: { nameWithOwner: "contributor/demo" },
+        headRepositoryOwner: { login: "contributor" },
+      };
+      const forkPr = {
+        ...sameRepositoryPr,
+        number: 4,
+        title: "Fork",
+        url: "https://github.com/acme/demo/pull/4",
+        isCrossRepository: true,
+        headRepository: { nameWithOwner: "contributor/demo" },
+        headRepositoryOwner: { login: "contributor" },
+      };
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            dev: encodeCliJson([sameRepositoryPr, forkPr]),
+          },
+        },
+      });
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.pr?.number).toBe(4);
+      // GitHub lists the bare branch and filters the same-repository decoy by its cross-repo flag.
+      expect(
+        ghCalls
+          .filter((call) => call.startsWith("pr list "))
+          .map((call) => call.split(" --state")[0]),
+      ).toEqual(["pr list --head dev"]);
+      ghCalls.length = 0;
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "commit_push_pr" });
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(4);
+      expect(
+        ghCalls
+          .filter((call) => call.startsWith("pr list "))
+          .map((call) => call.split(" --state")[0]),
+      ).toEqual(["pr list --head dev"]);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      const fresh = yield* makeManager();
+      const created = yield* runStackedAction(fresh.manager, { cwd: repoDir, action: "create_pr" });
+      expect(created.pr.status).toBe("created");
+      expect(
+        fresh.ghCalls.some((call) =>
+          call.startsWith("pr create --base main --head contributor:dev "),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "keeps fork PR selectors when gh set-default points the only remote at its parent",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "fork", "main"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "https://github.com/contributor/demo.git",
+          forkDir,
+        );
+        yield* runGit(repoDir, ["config", "remote.fork.gh-resolved", "acme/demo"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const { manager, ghCalls } = yield* makeManager();
+        const created = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+        expect(created.pr.status).toBe("created");
+        expect(
+          ghCalls.some((call) => call.startsWith("pr create --base main --head contributor:dev ")),
+        ).toBe(true);
+      }),
+  );
+
   it.effect(
     "returns the correct existing PR when a slash remote checks out to a synthetic local alias",
     () =>
@@ -3824,6 +4012,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* addBaseOriginRemote(repoDir);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
@@ -3955,6 +4144,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* addBaseOriginRemote(repoDir);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, [
           "config",
@@ -4350,6 +4540,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* addBaseOriginRemote(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
       yield* runGit(repoDir, ["add", "changes.txt"]);
