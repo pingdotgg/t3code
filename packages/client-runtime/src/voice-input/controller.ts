@@ -105,6 +105,10 @@ type TranscriptCommitResult =
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
 
+// Auto-detected transcription has no resolved locale; these scripts join without spaces.
+const UNSPACED_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
   current: VoiceDraftSnapshot | null,
@@ -127,19 +131,33 @@ export function resolveTranscriptCommit(
 
   const isEmptySelection = captured.selection.start === captured.selection.end;
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
-  const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
+  const usesSpaces = !/^(zh|ja|th|lo|km|my)(-|$)/.test(normalizedLocale);
   let insertion = replacement;
-  if (isEmptySelection && usesEnglishSpacing) {
-    const left = captured.text[captured.selection.start - 1];
-    const right = captured.text[captured.selection.start];
+  if (isEmptySelection && usesSpaces) {
+    const left = captured.text.slice(
+      Math.max(0, captured.selection.start - 2),
+      captured.selection.start,
+    );
+    const right = captured.text.slice(captured.selection.start, captured.selection.start + 2);
+    const leftCharacter = left.match(/.$/u)?.[0];
+    const rightCharacter = right.match(/^./u)?.[0];
+    const autoLocale = normalizedLocale === "auto";
     const leftNeedsBoundary =
-      left !== undefined &&
-      /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
-      (right === undefined || /\s/.test(right));
+      /[\p{L}\p{M}\p{N}.!?,:;)\]}'"]$/u.test(left) &&
+      (right.length === 0 || /^\s/u.test(right)) &&
+      !(
+        autoLocale &&
+        (UNSPACED_SCRIPT.test(leftCharacter ?? "") ||
+          UNSPACED_SCRIPT.test(replacement.match(/^./u)?.[0] ?? ""))
+      );
     const rightNeedsBoundary =
-      right !== undefined &&
-      /[A-Za-z0-9([{'"]/.test(right) &&
-      (left === undefined || /\s/.test(left));
+      /^[\p{L}\p{M}\p{N}([{'"]/u.test(right) &&
+      (left.length === 0 || /\s$/u.test(left)) &&
+      !(
+        autoLocale &&
+        (UNSPACED_SCRIPT.test(rightCharacter ?? "") ||
+          UNSPACED_SCRIPT.test(replacement.match(/.$/u)?.[0] ?? ""))
+      );
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
 

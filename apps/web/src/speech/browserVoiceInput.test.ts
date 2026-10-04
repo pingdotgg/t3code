@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
 const mocks = vi.hoisted(() => ({
+  supportsStreaming: true,
+  supportsTranslation: true,
   stream: (() => {
     type Stream = {
       feed: (pcm: Float32Array) => void;
@@ -20,7 +22,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
   getEnvironmentSpeechStatus: () =>
-    Effect.succeed({ supported: true, state: "ready", supportsStreaming: true }),
+    Effect.succeed({
+      supported: true,
+      state: "ready",
+      supportsStreaming: mocks.supportsStreaming,
+      supportsTranslation: mocks.supportsTranslation,
+    }),
+  prepareEnvironmentSpeechModel: () => Effect.succeed({ supported: true, state: "ready" }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
   openSpeechStream: () => mocks.stream.promise,
 }));
@@ -36,7 +44,11 @@ let worklet: {
   };
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  mocks.supportsStreaming = true;
+  mocks.supportsTranslation = true;
+  vi.unstubAllGlobals();
+});
 
 it("preserves audio when recording stops before the streaming model is ready", async () => {
   const feed = vi.fn();
@@ -97,4 +109,60 @@ it("preserves audio when recording stops before the streaming model is ready", a
   ).resolves.toBe("hello");
   expect(feed).toHaveBeenCalledWith(earlyAudio);
   platform.cancelRecording();
+});
+
+it.each([
+  [true, "fr", false, "fr"],
+  [false, "fr", false, "fr"],
+  [true, "ja", false, "ja"],
+  [false, "ja", false, "ja"],
+  [true, "ja", true, "ja"],
+  [false, "ja", true, "en"],
+  [true, "auto", false, "auto"],
+  [false, "auto", false, "auto"],
+] as const)(
+  "carries output locale for streaming=%s, language=%s, translate=%s",
+  async (supportsStreaming, speechLanguage, speechTranslateToEnglish, locale) => {
+    mocks.supportsStreaming = supportsStreaming;
+    const platform = createBrowserVoiceInputPlatform({
+      prepared: {} as PreparedConnection,
+      getTranscriptionOptions: () => ({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage,
+        speechTranslateToEnglish,
+      }),
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onText() {},
+      onError: vi.fn(),
+    });
+    const transcription = await platform.transcriber.prepare({
+      signal: new AbortController().signal,
+    });
+    expect(transcription.locale).toBe(locale);
+    expect(Boolean(transcription.streaming)).toBe(supportsStreaming);
+  },
+);
+
+it("keeps the selected output language when the model cannot translate", async () => {
+  mocks.supportsStreaming = false;
+  mocks.supportsTranslation = false;
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => ({
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      speechLanguage: "ja",
+      speechTranslateToEnglish: true,
+    }),
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError: vi.fn(),
+  });
+  const transcription = await platform.transcriber.prepare({
+    signal: new AbortController().signal,
+  });
+  expect(transcription.locale).toBe("ja");
 });

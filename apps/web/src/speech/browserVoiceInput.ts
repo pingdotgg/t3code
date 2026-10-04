@@ -196,6 +196,12 @@ export function createBrowserVoiceInputPlatform(input: {
         );
         throwIfVoiceTranscriptionAborted(options.signal);
         if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
+        const locale =
+          !status.supportsStreaming &&
+          status.supportsTranslation &&
+          recordingOptions.speechTranslateToEnglish
+            ? "en"
+            : recordingOptions.speechLanguage;
         if (status.supportsStreaming) {
           const url = await runtime.runPromise(
             getEnvironmentSpeechStreamUrl(input.prepared),
@@ -220,7 +226,7 @@ export function createBrowserVoiceInputPlatform(input: {
               );
           });
           return {
-            locale: "en",
+            locale,
             transcribe: transcribeRecording,
             streaming: { finish: async () => (await session).finish() },
           };
@@ -232,7 +238,7 @@ export function createBrowserVoiceInputPlatform(input: {
         // A failed warmup should still allow the normal transcription path to retry.
         void preparedModel.catch(() => undefined);
         return {
-          locale: "en",
+          locale,
           transcribe: async (uri, transcriptionOptions) => {
             await preparedModel.catch(() => undefined);
             return transcribeRecording(uri, transcriptionOptions);

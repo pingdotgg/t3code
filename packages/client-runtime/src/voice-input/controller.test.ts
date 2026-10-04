@@ -284,6 +284,39 @@ describe("resolveTranscriptCommit", () => {
       kind: "stale",
     });
   });
+
+  it.each([
+    ["café", "bonjour", "fr", "café bonjour"],
+    ["cafe\u0301", "bonjour", "fr-FR", "cafe\u0301 bonjour"],
+    ["café", "bonjour", "auto", "café bonjour"],
+    ["हिन्दी", "शब्द", "hi", "हिन्दी शब्द"],
+    ["𐐀", "word", "en", "𐐀 word"],
+    ["𠀀", "世界", "auto", "𠀀世界"],
+    ["こんにちは", "世界", "ja", "こんにちは世界"],
+    ["こんにちは", "世界", "auto", "こんにちは世界"],
+    ["你好", "世界", "zh-CN", "你好世界"],
+    ["你好", "世界", "auto", "你好世界"],
+  ])("appends %s + %s using %s spacing", (text, transcript, locale, expected) => {
+    const captured = draft({ text, selection: { start: text.length, end: text.length } });
+    expect(resolveTranscriptCommit(captured, captured, transcript, locale)).toMatchObject({
+      kind: "commit",
+      text: expected,
+      selection: { start: expected.length, end: expected.length },
+    });
+  });
+
+  it.each([
+    ["école", "une", "fr", "une école"],
+    ["世界", "こんにちは", "ja", "こんにちは世界"],
+    ["世界", "こんにちは", "auto", "こんにちは世界"],
+  ])("prepends to %s using %s in %s", (text, transcript, locale, expected) => {
+    const captured = draft({ text, selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(captured, captured, transcript, locale)).toMatchObject({
+      kind: "commit",
+      text: expected,
+    });
+  });
+
 });
 
 describe("VoiceInputController", () => {
