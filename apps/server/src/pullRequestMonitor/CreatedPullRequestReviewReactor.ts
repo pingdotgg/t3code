@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import {
+  threadBlocksSettlement,
   threadHasInFlightTurn,
   threadHasPendingInteraction,
 } from "../orchestration/commandInvariants.ts";
@@ -56,6 +57,10 @@ export interface CreatedPullRequestReviewReconciliation {
     readonly link: ThreadPullRequestLink;
     readonly observation: CreatedPullRequestReviewObservation;
   }) => Effect.Effect<void, unknown>;
+  readonly settleMergedCreator?: (input: {
+    readonly thread: OrchestrationThread;
+    readonly link: ThreadPullRequestLink;
+  }) => Effect.Effect<void, unknown>;
 }
 
 export function createdPullRequestLinks(
@@ -68,6 +73,20 @@ export function createdPullRequestLinks(
 
 export function creatorIsInactive(thread: OrchestrationThread): boolean {
   return !threadHasInFlightTurn(thread) && !threadHasPendingInteraction(thread);
+}
+
+/**
+ * A merge is the end of the creating thread's work, so the thread sinks out of
+ * the inbox instead of being reviewed again. `settledOverride` decides
+ * eligibility: an already settled thread needs nothing, and "active" is the
+ * user's own reopen (or pin), which suppresses automatic settlement so a
+ * deliberately reopened thread is not dragged back under.
+ */
+export function mergedPullRequestSettlesCreator(
+  thread: OrchestrationThread,
+  options: { readonly now: string },
+): boolean {
+  return (thread.settledOverride ?? null) === null && !threadBlocksSettlement(thread, options);
 }
 
 export interface ReferenceCountedKeyedLock {
@@ -105,6 +124,7 @@ export function makeReferenceCountedKeyedLock(): ReferenceCountedKeyedLock {
 export const reconcileCreatedPullRequestReview = (
   thread: OrchestrationThread,
   reconciliation: CreatedPullRequestReviewReconciliation,
+  options: { readonly now?: string } = {},
 ): Effect.Effect<void, unknown> =>
   Effect.gen(function* () {
     if (
@@ -116,10 +136,11 @@ export const reconcileCreatedPullRequestReview = (
       return;
     }
 
+    const now = options.now ?? new Date().toISOString();
     for (const link of createdPullRequestLinks(thread)) {
       const reconcileLink = Effect.gen(function* () {
         const observation = yield* reconciliation.refresh(link);
-        if (observation === null || observation.state !== "open") return;
+        if (observation === null) return;
 
         const latestThread = yield* reconciliation.readCurrentThread();
         if (
@@ -136,6 +157,17 @@ export const reconcileCreatedPullRequestReview = (
         ) {
           return;
         }
+
+        if (observation.state === "merged") {
+          if (
+            reconciliation.settleMergedCreator !== undefined &&
+            mergedPullRequestSettlesCreator(latestThread, { now })
+          ) {
+            yield* reconciliation.settleMergedCreator({ thread: latestThread, link });
+          }
+          return;
+        }
+        if (observation.state !== "open") return;
 
         yield* reconciliation.submit({
           thread: latestThread,
@@ -154,6 +186,15 @@ function threadIdFromEvent(event: OrchestrationEvent): OrchestrationThread["id"]
 
 const pullRequestKey = (link: ThreadPullRequestLink): string =>
   `${link.pullRequest.url}:${link.pullRequest.number}`;
+
+/**
+ * Derived from the outcome so a repeated reconciliation deduplicates through
+ * the recorded command receipt instead of re-settling or erroring.
+ */
+const mergedPullRequestSettleCommandId = (
+  thread: OrchestrationThread,
+  link: ThreadPullRequestLink,
+): CommandId => `server:merged-pr-settle:${thread.id}:${pullRequestKey(link)}` as CommandId;
 
 export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(input: {
   readonly request: {
@@ -276,6 +317,14 @@ const makeReactor = Effect.gen(function* () {
           });
         },
         readCurrentThread: () => currentThread(thread.id),
+        settleMergedCreator: ({ thread: latestThread, link: mergedLink }) =>
+          engine
+            .dispatch({
+              type: "thread.settle",
+              commandId: mergedPullRequestSettleCommandId(latestThread, mergedLink),
+              threadId: latestThread.id,
+            })
+            .pipe(Effect.asVoid),
         submit: ({ thread: latestThread, observation }) =>
           Effect.gen(function* () {
             const reconciled = yield* acceptance.reconcileAutomaticCandidate({

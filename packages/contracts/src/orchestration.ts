@@ -930,8 +930,8 @@ export const OrchestrationThread = Schema.Struct({
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /**
    * "settled" hides the thread from the inbox. "active" is a user pin that
-   * suppresses automatic settlement; it is inert until auto-settle exists, so
-   * do not remove it as dead code.
+   * suppresses automatic settlement, which is why reopening a thread a merge
+   * settled keeps it open.
    */
   settledOverride: Schema.optionalKey(Schema.NullOr(Schema.Literals(["settled", "active"]))),
   settledAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),

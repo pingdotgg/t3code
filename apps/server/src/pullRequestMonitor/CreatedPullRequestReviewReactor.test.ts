@@ -183,17 +183,114 @@ describe("created pull-request review reconciliation", () => {
 
   it("ignores closed pull requests", async () => {
     let submitted = 0;
+    let settled = 0;
     const current = thread([link("agent")]);
 
     await Effect.runPromise(
       reconcileCreatedPullRequestReview(current, {
         refresh: () => Effect.succeed(observation("head-1", "closed")),
         readCurrentThread: () => Effect.succeed(current),
+        settleMergedCreator: () => Effect.sync(() => settled++),
         submit: () => Effect.sync(() => submitted++),
       }),
     );
 
     assert.strictEqual(submitted, 0);
+    assert.strictEqual(settled, 0);
+  });
+
+  it("settles the creating thread once its pull request merges", async () => {
+    let submitted = 0;
+    const settledThreadIds: string[] = [];
+    const current = thread([link("created")]);
+
+    await Effect.runPromise(
+      reconcileCreatedPullRequestReview(current, {
+        refresh: () => Effect.succeed(observation("head-9", "merged")),
+        readCurrentThread: () => Effect.succeed(current),
+        settleMergedCreator: ({ thread: latestThread }) =>
+          Effect.sync(() => {
+            settledThreadIds.push(latestThread.id);
+          }),
+        submit: () => Effect.sync(() => submitted++),
+      }),
+    );
+
+    assert.deepStrictEqual(settledThreadIds, [threadId]);
+    assert.strictEqual(submitted, 0);
+  });
+
+  it("leaves a reopened thread open, because the user pin suppresses auto-settle", async () => {
+    let settled = 0;
+    const reopened = thread([link("created")], { settledOverride: "active" } as never);
+
+    await Effect.runPromise(
+      reconcileCreatedPullRequestReview(reopened, {
+        refresh: () => Effect.succeed(observation("head-9", "merged")),
+        readCurrentThread: () => Effect.succeed(reopened),
+        settleMergedCreator: () => Effect.sync(() => settled++),
+        submit: () => Effect.void,
+      }),
+    );
+
+    assert.strictEqual(settled, 0);
+  });
+
+  it("does not settle an already settled thread again", async () => {
+    let settled = 0;
+    const alreadySettled = thread([link("created")], {
+      settledOverride: "settled",
+      settledAt: "2026-09-23T00:00:00.000Z",
+    } as never);
+
+    await Effect.runPromise(
+      reconcileCreatedPullRequestReview(alreadySettled, {
+        refresh: () => Effect.succeed(observation("head-9", "merged")),
+        readCurrentThread: () => Effect.succeed(alreadySettled),
+        settleMergedCreator: () => Effect.sync(() => settled++),
+        submit: () => Effect.void,
+      }),
+    );
+
+    assert.strictEqual(settled, 0);
+  });
+
+  // The decider refuses these, so dispatching anyway would fail every sweep.
+  it("does not settle a thread whose session needs attention", async () => {
+    let settled = 0;
+    const errored = thread([link("created")], {
+      session: { status: "error" } as never,
+    } as Partial<OrchestrationThread>);
+
+    await Effect.runPromise(
+      reconcileCreatedPullRequestReview(errored, {
+        refresh: () => Effect.succeed(observation("head-9", "merged")),
+        readCurrentThread: () => Effect.succeed(errored),
+        settleMergedCreator: () => Effect.sync(() => settled++),
+        submit: () => Effect.void,
+      }),
+    );
+
+    assert.strictEqual(settled, 0);
+  });
+
+  it("does not settle a thread that became active while the merge was read", async () => {
+    let settled = 0;
+    const initial = thread([link("created")]);
+    const busyAfterRefresh = thread([link("created")], {
+      latestTurn: { state: "running" },
+    } as Partial<OrchestrationThread>);
+
+    await Effect.runPromise(
+      reconcileCreatedPullRequestReview(initial, {
+        refresh: () => Effect.succeed(observation("head-9", "merged")),
+        readCurrentThread: () => Effect.succeed(busyAfterRefresh),
+        settleMergedCreator: () => Effect.sync(() => settled++),
+        submit: () => Effect.void,
+      }),
+    );
+
+    assert.strictEqual(settled, 0);
   });
 
   it("re-checks durable thread state after refresh", async () => {

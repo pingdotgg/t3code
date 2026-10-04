@@ -36,6 +36,7 @@ import {
   requireThreadWithInFlightTurn,
   threadHasPendingInteraction,
   threadHasQueuedTurnStart,
+  threadBlocksSettlement,
   threadHasSettlementOverride,
   threadIsSnoozed,
   CHILD_DECISION_BLOCKED_DETAIL,
@@ -1879,15 +1880,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // original settledAt and updatedAt so a duplicate command neither rewinds
       // the settlement nor churns sidebar ordering.
       const alreadySettled = thread.settledOverride === "settled";
-      const hasActiveTurn =
-        thread.latestTurn?.state === "running" ||
-        (thread.session?.status === "running" && thread.session.activeTurnId !== null);
-      if (
-        hasActiveTurn ||
-        threadHasQueuedTurnStart(thread, { now: occurredAt }) ||
-        threadHasPendingInteraction(thread) ||
-        thread.session?.status === "error"
-      ) {
+      if (threadBlocksSettlement(thread, { now: occurredAt })) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Thread '${command.threadId}' has active work or a pending interaction and cannot settle.`,
