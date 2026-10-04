@@ -81,6 +81,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
+import { MarkdownImageAssetScopeContext } from "./ThreadMarkdownImage";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -497,7 +498,11 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return (
       <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
         {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+          <View key={row.id}>
+            <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+              {props.renderReasoning(row.workEntry.detail ?? "")}
+            </MarkdownImageAssetScopeContext>
+          </View>
         ))}
       </ScrollView>
     );
@@ -1011,32 +1016,37 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
-          {row.workEntry.questionAnswer ? (
-            <QuestionAnswerHistory
-              environmentId={props.environmentId}
-              answer={row.workEntry.questionAnswer}
-            />
-          ) : null}
-          {viewedImagePath ? (
-            <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
-            </View>
-          ) : null}
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-60"
-            contentContainerStyle={{ paddingRight: 8 }}
-          >
-            {reasoning ? (
-              props.renderReasoning(reasoning.text)
-            ) : (
-              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-                {fullDetail}
-              </Text>
-            )}
-          </ScrollView>
+          <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+            {row.workEntry.questionAnswer ? (
+              <QuestionAnswerHistory
+                environmentId={props.environmentId}
+                answer={row.workEntry.questionAnswer}
+              />
+            ) : null}
+            {viewedImagePath ? (
+              <View className="pb-1.5">
+                {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+              </View>
+            ) : null}
+            <ScrollView
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsVerticalScrollIndicator
+              className="max-h-60"
+              contentContainerStyle={{ paddingRight: 8 }}
+            >
+              {reasoning ? (
+                props.renderReasoning(reasoning.text)
+              ) : (
+                <Text
+                  selectable
+                  className="font-mono text-2xs leading-normal text-foreground-muted"
+                >
+                  {fullDetail}
+                </Text>
+              )}
+            </ScrollView>
+          </MarkdownImageAssetScopeContext>
         </Animated.View>
       ) : null}
     </Animated.View>

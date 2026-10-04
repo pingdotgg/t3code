@@ -31,6 +31,13 @@ import {
  */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
+/**
+ * The message or work-log row that shows these images. Each one signs its own
+ * URL, so an agent that rewrites a file and shows it again shows the new file,
+ * not the cached one.
+ */
+export const MarkdownImageAssetScopeContext = createContext<string | undefined>(undefined);
+
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
@@ -184,7 +191,11 @@ export function ThreadMarkdownImage(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    props.resource,
+    useContext(MarkdownImageAssetScopeContext),
+  );
 
   return (
     <ThreadMarkdownImageView

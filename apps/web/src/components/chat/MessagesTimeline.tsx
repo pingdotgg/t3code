@@ -2492,6 +2492,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             text={messageText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            assetScope={row.message.id}
             isStreaming={Boolean(row.message.streaming)}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
@@ -4933,6 +4934,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
           text={entry.detail ?? ""}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
+          assetScope={entry.id}
           skills={ctx.skills}
           isStreaming={
             isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress"
@@ -5275,6 +5277,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <ChatMarkdownAssetImage
             environmentId={threadRef.environmentId}
             resource={viewedImage.resource}
+            assetScope={workEntry.id}
             alt={viewedImage.alt}
             srcFragment={viewedImage.srcFragment}
             workspaceRoot={workspaceRoot}

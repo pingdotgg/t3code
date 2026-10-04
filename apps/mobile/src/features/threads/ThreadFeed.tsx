@@ -208,6 +208,7 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
+  MarkdownImageAssetScopeContext,
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
   ThreadMarkdownImageUnavailable,
@@ -1838,14 +1839,16 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <MarkdownImageAssetScopeContext value={message.id}>
+              <AssistantMarkdownContent
+                markdown={renderedText}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </MarkdownImageAssetScopeContext>
           </MarkdownImageAvailableWidthContext>
         ) : null}
         {attachments.map((attachment) => {
