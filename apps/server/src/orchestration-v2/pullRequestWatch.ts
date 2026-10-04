@@ -71,18 +71,20 @@ export function evaluatePullRequestWatch(
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
+  // An edit counts as new activity, so bots that rewrite one summary comment still wake the agent.
+  const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
   // GitHub times are per second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
-    const at = Date.parse(remark.createdAt);
+    const at = Date.parse(activeAt(remark));
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
       remark.author?.login.toLowerCase() !== own
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
-  const latest = Math.max(through, ...fresh.map((remark) => Date.parse(remark.createdAt)));
-  const atLatest = fresh.filter((remark) => Date.parse(remark.createdAt) === latest);
-  const remarksThrough = latest === through ? watch.remarksThrough : atLatest[0]!.createdAt;
+  const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
+  const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
+  const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
   const remarkIds = [
     ...(latest === through ? watch.remarkIds : []),
     ...atLatest.map((remark) => remark.id),
