@@ -306,6 +306,15 @@ describe("AgentAwarenessRelay", () => {
     }
   });
 
+  it("publishes subagent interrupts with a node ID payload", () => {
+    assert.isTrue(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        type: "subagent.interrupt-requested",
+        payload: NodeId.make("native-subagent"),
+      }),
+    );
+  });
+
   it("does not publish imported thread creation as new agent activity", () => {
     assert.isFalse(
       AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({

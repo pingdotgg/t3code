@@ -105,6 +105,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "runtime-request.updated":
     case "subagent.updated":
     case "provider-thread.updated":
+    case "subagent.interrupt-requested":
       return true;
     case "thread.settled":
     case "thread.unsettled":
@@ -123,7 +124,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "run-attempt.created":
     case "run-attempt.updated":
     case "node.updated":
-    case "subagent.interrupt-requested":
     case "provider-session.attached":
     case "provider-session.updated":
     case "provider-session.detached":
