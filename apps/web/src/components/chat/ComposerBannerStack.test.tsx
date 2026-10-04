@@ -3,6 +3,8 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { ComposerBannerStack } from "./ComposerBannerStack";
+import { claudeContextBannerItem } from "./ComposerClaudeContext";
+import { parseClaudeContextReport } from "@t3tools/shared/claudeContextReport";
 
 vi.mock("../ui/popover", () => ({
   Popover: "popover",
@@ -17,6 +19,47 @@ let renderer: ReactTestRenderer;
 afterEach(async () => {
   if (renderer) await act(() => renderer.unmount());
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+it("shows a replacement context report and dismisses it from the composer", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.useFakeTimers();
+  const report = parseClaudeContextReport(`## Context Usage
+**Model:** claude-sonnet-5
+**Tokens:** 79.5k / 200k (40%)
+### MCP Tools
+| Tool | Server | Tokens |
+|---|---|---|
+| mcp__fixture__tool | fixture | 81 |
+`)!;
+  const onDismiss = () => renderer.update(<ComposerBannerStack items={[]} />);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack items={[claudeContextBannerItem("report-1", report, onDismiss)]} />,
+    );
+  });
+  expect(JSON.stringify(renderer.toJSON())).toContain("79.5k / 200k (40%)");
+  expect(JSON.stringify(renderer.toJSON())).not.toContain("mcp__fixture__tool");
+  await act(() => renderer.root.findByProps({ "aria-expanded": false }).props.onClick());
+  expect(JSON.stringify(renderer.toJSON())).toContain("mcp__fixture__tool");
+  await act(() =>
+    renderer.update(
+      <ComposerBannerStack
+        items={[claudeContextBannerItem("report-2", { ...report, usedTokens: "90k" }, onDismiss)]}
+      />,
+    ),
+  );
+  expect(JSON.stringify(renderer.toJSON())).toContain("90k / 200k (40%)");
+  expect(JSON.stringify(renderer.toJSON())).not.toContain("79.5k / 200k (40%)");
+  expect(JSON.stringify(renderer.toJSON())).not.toContain("mcp__fixture__tool");
+  await act(() =>
+    renderer.root.findByProps({ "aria-label": "Dismiss context window" }).props.onClick(),
+  );
+  await act(() => {
+    vi.runAllTimers();
+  });
+  expect(renderer.toJSON()).toBeNull();
 });
 
 it("only offers notice details when the description cannot fit", async () => {

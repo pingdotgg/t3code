@@ -36,6 +36,8 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
+import { latestClaudeContextReport } from "@t3tools/shared/claudeContextReport";
+import { claudeContextBannerItem } from "./chat/ComposerClaudeContext";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
@@ -7349,6 +7351,29 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const latestContextReport = useMemo(
+    () => latestClaudeContextReport(serverProjection?.messages ?? []),
+    [serverProjection?.messages],
+  );
+  const [dismissedContextReportIds, setDismissedContextReportIds] = useState<
+    Record<string, string>
+  >({});
+  const claudeContextBanner = useMemo(
+    () =>
+      latestContextReport !== null &&
+      latestContextReport.id !== dismissedContextReportIds[routeThreadKey]
+        ? claudeContextBannerItem(
+            `claude-context:${latestContextReport.id}`,
+            latestContextReport.report,
+            () =>
+              setDismissedContextReportIds((current) => ({
+                ...current,
+                [routeThreadKey]: latestContextReport.id,
+              })),
+          )
+        : null,
+    [dismissedContextReportIds, latestContextReport, routeThreadKey],
+  );
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -7369,6 +7394,7 @@ export default function ChatView(props: ChatViewProps) {
         })
       : null;
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const claudeContextItems = claudeContextBanner === null ? [] : [claudeContextBanner];
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const backgroundWorkItems = backgroundWorkBannerItem === null ? [] : [backgroundWorkBannerItem];
     const resumeCompactionItems =
@@ -7383,6 +7409,7 @@ export default function ChatView(props: ChatViewProps) {
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
+        ...claudeContextItems,
         ...projectCloneItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
@@ -7395,6 +7422,7 @@ export default function ChatView(props: ChatViewProps) {
       ...feedbackBannerItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
+      ...claudeContextItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
@@ -7443,6 +7471,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     activeThreadShell,
+    claudeContextBanner,
     serverRuntime?.usageLimitResetAt,
     feedbackBannerItems,
     limitRecoveryBanner,
