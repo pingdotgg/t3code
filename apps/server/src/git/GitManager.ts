@@ -843,6 +843,21 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // An unqualified `gh repo view owner/repo` resolves against gh's default host,
+  // so pin GitHub lookups to the pull request's host to avoid same-named forks elsewhere.
+  const getPullRequestHeadCloneUrls = Effect.fn("getPullRequestHeadCloneUrls")(function* (
+    cwd: string,
+    pullRequestUrl: string,
+    repository: string,
+  ) {
+    const provider = yield* sourceControlProvider(cwd);
+    const host = provider.kind === "github" ? URL.parse(pullRequestUrl)?.host : undefined;
+    return yield* provider.getRepositoryCloneUrls({
+      cwd,
+      repository: host ? `${host}/${repository}` : repository,
+    });
+  });
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
@@ -870,10 +885,11 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const cloneUrls = yield* getPullRequestHeadCloneUrls(
         cwd,
-        repository: repositoryNameWithOwner,
-      });
+        pullRequest.url,
+        repositoryNameWithOwner,
+      );
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
@@ -933,10 +949,11 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const cloneUrls = yield* getPullRequestHeadCloneUrls(
         cwd,
-        repository: repositoryNameWithOwner,
-      });
+        pullRequest.url,
+        repositoryNameWithOwner,
+      );
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
