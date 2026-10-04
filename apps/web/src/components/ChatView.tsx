@@ -4996,6 +4996,11 @@ export default function ChatView(props: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand | null;
     }): Promise<AtomCommandResult<void, unknown>> => {
+      if (isCloudThread) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("Local project scripts are unavailable for cloud threads.")),
+        );
+      }
       const updateResult = mapAtomCommandResult(
         await updateProjectScriptSettings({
           environmentId,
@@ -5082,6 +5087,7 @@ export default function ChatView(props: ChatViewProps) {
         : updateResult;
     },
     [
+      isCloudThread,
       allProjects,
       environmentById,
       environmentId,
@@ -10770,13 +10776,13 @@ export default function ChatView(props: ChatViewProps) {
     threadId: activeThread.id,
     ...(draftId ? { draftId } : {}),
     activeProjectName: activeProject?.title,
-    activeProjectScripts: activeProject ? activeProjectScripts : undefined,
+    activeProjectScripts: !isCloudThread && activeProject ? activeProjectScripts : undefined,
     preferredScriptId: activeProject
       ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
       : null,
     keybindings,
     availableEditors,
-    showOpenInPicker,
+    showOpenInPicker: !isCloudThread && showOpenInPicker,
     gitCwd,
     isGitRepo,
     envLocked,
