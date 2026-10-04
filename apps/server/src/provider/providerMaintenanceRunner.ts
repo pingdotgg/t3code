@@ -7,6 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -420,6 +421,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
+            // An installer that reports its own target (mise, Homebrew) must
+            // be seen to reach it. Its metadata can vanish after the command,
+            // and a missing "latest" would otherwise read as current.
+            const installerTarget =
+              targetVersion === undefined && fresh.latestVersion !== undefined
+                ? fresh.latestVersion
+                : null;
             const result = yield* runMaintenanceCommand(command);
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
@@ -448,18 +456,26 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // "Succeeded" needs the provider to still be installed: an
             // installer that exits 0 and leaves the binary missing is not a
             // success. A missing version alone is not held against it, since
-            // Cursor's `about` probe can fail transiently on a healthy binary.
+            // Cursor's `about` probe can fail transiently on a healthy binary,
+            // unless a known installer target has to be proven.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
               verifiedProviders.some(
                 (verifiedProvider) =>
                   !isStillInstalled(verifiedProvider) ||
                   (targetVersion !== undefined &&
-                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
+                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion) ||
+                  (installerTarget !== null && !verifiedProvider.version),
               );
             const stillOutdated =
               targetVersion === undefined &&
-              verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+              verifiedProviders.some(
+                (verifiedProvider) =>
+                  isOutdatedProvider(verifiedProvider) ||
+                  (installerTarget !== null &&
+                    verifiedProvider.version !== null &&
+                    compareSemverVersions(verifiedProvider.version, installerTarget) < 0),
+              );
             return yield* finish(
               makeUpdateState({
                 status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",

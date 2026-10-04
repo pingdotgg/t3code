@@ -85,9 +85,22 @@ it. Homebrew and npm are proven by the real path (symlinks followed): a versione
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
 the resolved path or its real target, since those installers place real files or their own symlinks
-there. Cursor and Grok are the exception: their only updater is the CLI itself, which detects its
-own installer, so any resolved executable runs `<binary> update`. Anything unproven stays
-manual-only but still reports the version gap. npm updates pin
+there. Mise is proven by mise itself: a shim, an `installs/` path, or a launcher script leads to
+`mise which` and `mise ls --json`, and the install containing the real binary names the tool. A
+launcher (Omarchy's `~/.local/bin` wrappers) counts only through its unconditional top-level
+`exec`; probes and the upgrade run with the environment it exports, and a launcher that changes
+directory or changes mise's environment on only some runs stays manual-only. The update is
+`mise upgrade --no-prune <tool>`: no `--bump`, so it stays within the configured version request,
+and no pruning, so a running provider keeps its install. `mise outdated` supplies the newest
+version that request reaches, so an exact pin reads as current. A launcher's `mise x <tool>@latest`
+is its own selection: it is resolved with `mise which --tool` and upgraded as `<tool>@latest`,
+leaving the config's request alone; other explicit requests must match the config's. A launch path that reaches a fixed
+version directory instead of a selector link such as `latest` stays manual-only, since an upgrade
+installs beside it. A path inside this environment's mise installs that mise cannot attribute stays
+manual-only rather than falling to npm, except globals under mise's Node.
+Grok's only updater is the CLI itself, which detects its own installer, so any resolved executable
+that mise does not own runs `<binary> update`. Anything unproven stays manual-only but still
+reports the version gap. npm updates pin
 `--prefix` because the `npm` on `PATH` can belong to a different Node than the one that owns the
 provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
@@ -97,7 +110,9 @@ See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
 changed since the advisory, and reports success only when the refreshed provider is still installed
-with a readable, current version.
+with a readable, current version. When the installer reported its own target (mise, Homebrew), the
+refreshed version must reach the target read just before the command; installer metadata that
+drops out afterwards cannot turn an unchanged version into success.
 
 ## Protocol traps
 

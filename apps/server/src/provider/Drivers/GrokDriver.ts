@@ -37,6 +37,8 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
+  type ProviderMaintenanceResolutionContext,
+  resolveMiseProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -51,27 +53,38 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // by default, so the registry stays the source for "latest".
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` finds the installer that owns the binary itself, so the
-// resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. No executable means nothing to update,
-// not "whatever is on PATH".
+// resolved executable is its own updater, unless mise owns it: mise pins the
+// version, so only `mise upgrade` moves it. It installs under `GROK_HOME`, so
+// it runs with the instance's environment. No executable means nothing to
+// update, not "whatever is on PATH".
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (context) =>
-    Effect.succeed(
-      context
-        ? makeProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["update"],
-            updateLockKey: "grok",
-            platform: context.platform,
-            env: context.env,
-          })
-        : makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-          }),
-    ),
+  resolve: Effect.fn("resolveGrokMaintenance")(function* (
+    context: ProviderMaintenanceResolutionContext | null,
+  ) {
+    if (!context) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: GROK_NPM_PACKAGE,
+      });
+    }
+    const mise = yield* resolveMiseProviderMaintenance({
+      provider: DRIVER_KIND,
+      packageName: GROK_NPM_PACKAGE,
+      context,
+    });
+    if (mise.kind === "decided") {
+      return mise.capabilities;
+    }
+    return makeProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: GROK_NPM_PACKAGE,
+      updateExecutable: context.resolvedCommandPath,
+      updateArgs: ["update"],
+      updateLockKey: "grok",
+      platform: context.platform,
+      env: context.env,
+    });
+  }),
 };
 
 export type GrokDriverEnv =

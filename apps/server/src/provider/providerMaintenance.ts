@@ -5,7 +5,6 @@ import {
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -16,15 +15,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { runInstallerProbe } from "./installerProbe.ts";
+import { resolveMiseOwnership } from "./miseOwnership.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
-const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
+const HOMEBREW_INFO_TIMEOUT = Duration.seconds(10);
 const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
@@ -259,6 +258,8 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
   packageName: string,
+  /** A Node install mise itself identified, which may carry an alias like `node-lts`. */
+  provenNodePrefix: string | null = null,
 ): string | null {
   const slashPath = realCommandPath.replaceAll("\\", "/");
   const normalized = slashPath.toLowerCase();
@@ -269,11 +270,15 @@ export function npmGlobalPrefixFromCommandPath(
   }
   // Mise's npm backend uses a global-looking layout inside a tool version.
   // Globals under its Node installation still belong to npm.
+  const prefix = packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
   const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(normalized.slice(0, packageIndex))?.[1];
-  if (miseTool && miseTool !== "node") {
+  const isProvenNode =
+    provenNodePrefix !== null &&
+    normalizeCommandPath(provenNodePrefix) === normalizeCommandPath(prefix);
+  if (miseTool && miseTool !== "node" && !isProvenNode) {
     return null;
   }
-  return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
+  return prefix;
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
@@ -335,40 +340,6 @@ export function parseHomebrewLatestVersion(
   return nonEmptyString(raw);
 }
 
-/** Run `brew <args>` and return stdout, or null on failure, timeout, or oversized output. */
-const runHomebrew = Effect.fn("runHomebrew")(function* (
-  brewPath: string,
-  args: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv,
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const collect = Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(brewPath, args, { env, extendEnv: true }));
-    yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
-    // stderr is drained so a chatty brew cannot block on a full pipe.
-    const [stdout, exitCode] = yield* Effect.all(
-      [
-        collectUint8StreamText({ stream: child.stdout, maxBytes: HOMEBREW_INFO_MAX_BYTES }),
-        child.exitCode,
-        Stream.runDrain(child.stderr),
-      ],
-      { concurrency: "unbounded" },
-    );
-    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
-  });
-  return yield* collect.pipe(
-    Effect.scoped,
-    Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
-    Effect.map(Option.getOrNull),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew probe failed", {
-        subcommand: args[0],
-        errorTag: causeErrorTag(cause),
-      }).pipe(Effect.as(null)),
-    ),
-  );
-});
-
 /**
  * Derive update capabilities from where the executable actually lives. Every
  * branch that yields a one-click command has evidence that the named tool
@@ -403,7 +374,18 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
     });
   }
-  if (commandPaths.some(isVitePlusGlobalCommandPath)) {
+
+  const mise = yield* resolveMiseProviderMaintenance({
+    provider: definition.provider,
+    packageName,
+    context,
+  });
+  if (mise.kind === "decided") {
+    return mise.capabilities;
+  }
+  const installerContext = mise.context;
+  const installerPaths = [installerContext.resolvedCommandPath, installerContext.realCommandPath];
+  if (installerPaths.some(isVitePlusGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -412,7 +394,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateLockKey: "vite-plus-global",
     });
   }
-  if (commandPaths.some(isBunGlobalCommandPath)) {
+  if (installerPaths.some(isBunGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -421,7 +403,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateLockKey: "bun-global",
     });
   }
-  if (commandPaths.some(isPnpmGlobalCommandPath)) {
+  if (installerPaths.some(isPnpmGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -434,7 +416,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // npm proof names the package, so it outranks a keg the path merely passes
   // through: a Homebrew-installed Node keeps its globals under
   // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
-  const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
+  const npmPrefix = yield* resolveNpmGlobalPrefix(
+    installerContext,
+    packageName,
+    mise.provenNodePrefix,
+  );
   if (npmPrefix) {
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
@@ -457,12 +443,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
 
-  const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+  const homebrew = homebrewOwnershipFromCommandPath(installerContext.realCommandPath);
   if (homebrew) {
-    // Mise shims resolve to the version manager, not the provider.
-    if (homebrew.kind === "formula" && homebrew.name.toLowerCase() === "mise") {
-      return manual;
-    }
     const brewPath = yield* resolveCommandPath("brew", { env: context.env }).pipe(
       Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
     );
@@ -472,7 +454,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // A keg-shaped path is only Homebrew's if it sits under the prefix of the
     // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
     const fileSystem = yield* FileSystem.FileSystem;
-    const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
+    const brewPrefix = nonEmptyString(
+      yield* runInstallerProbe({
+        executable: brewPath,
+        args: ["--prefix"],
+        env: context.env,
+        timeout: HOMEBREW_INFO_TIMEOUT,
+        maxBytes: HOMEBREW_INFO_MAX_BYTES,
+      }),
+    );
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
       : null;
@@ -486,7 +476,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
-    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const info = yield* runInstallerProbe({
+      executable: brewPath,
+      args: ["info", "--json=v2", homebrew.name],
+      env: context.env,
+      timeout: HOMEBREW_INFO_TIMEOUT,
+      maxBytes: HOMEBREW_INFO_MAX_BYTES,
+    });
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -502,6 +498,66 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 });
 
 /**
+ * Mise's verdict on an executable: an upgrade of the tool that owns it,
+ * manual-only when mise is involved but cannot be shown to reach it, or the
+ * context the remaining installers should judge. A package that npm installed
+ * under mise's Node is judged from the package path mise resolved.
+ */
+export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMaintenance")(
+  function* (input: {
+    readonly provider: ProviderDriverKind;
+    readonly packageName: string | null;
+    readonly context: ProviderMaintenanceResolutionContext;
+  }) {
+    const ownership = yield* resolveMiseOwnership(input.context);
+    switch (ownership.kind) {
+      case "unrelated":
+        return { kind: "undecided", context: input.context, provenNodePrefix: null } as const;
+      case "npm-global":
+        return {
+          kind: "undecided",
+          context: {
+            ...input.context,
+            resolvedCommandPath: ownership.resolvedCommandPath,
+            realCommandPath: ownership.realCommandPath,
+          },
+          provenNodePrefix: ownership.provenNodePrefix,
+        } as const;
+      case "uncertain":
+        yield* Effect.logInfo("Provider update is manual-only: mise ownership is uncertain", {
+          provider: input.provider,
+          reason: ownership.reason,
+        });
+        return {
+          kind: "decided",
+          capabilities: makeManualOnlyProviderMaintenanceCapabilities({
+            provider: input.provider,
+            packageName: input.packageName,
+          }),
+        } as const;
+      case "tool":
+        return {
+          kind: "decided",
+          capabilities: makeProviderMaintenanceCapabilities({
+            provider: input.provider,
+            packageName: input.packageName,
+            updateExecutable: ownership.executable,
+            // No `--bump`: mise stays within the version the user's config
+            // requests and never rewrites a project or global pin.
+            // `--no-prune`: a running provider or another link may still use
+            // the old install, so it must not be removed or scheduled for it.
+            updateArgs: ["upgrade", "--no-prune", ownership.selection],
+            updateLockKey: "mise",
+            platform: input.context.platform,
+            env: ownership.env,
+            latestVersion: ownership.latestVersion,
+          }),
+        } as const;
+    }
+  },
+);
+
+/**
  * POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is
  * proof. Windows npm writes `.cmd` shims beside `node_modules`, so the proof
  * is the package manifest next to the shim.
@@ -509,8 +565,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
+  provenNodePrefix: string | null,
 ) {
-  const fromRealPath = npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName);
+  const fromRealPath = npmGlobalPrefixFromCommandPath(
+    context.realCommandPath,
+    packageName,
+    provenNodePrefix,
+  );
   if (fromRealPath) {
     return fromRealPath;
   }

@@ -2662,7 +2662,10 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 if (command._tag !== "StandardCommand") return spawner.spawn(command);
-                spawnedCommands.push(command.command);
+                // Other providers may probe their installers (mise, brew) on the host.
+                if (command.command === firstMissing || command.command === secondMissing) {
+                  spawnedCommands.push(command.command);
+                }
                 const beforeSpawn =
                   command.command === secondMissing
                     ? Deferred.succeed(secondProbeStarted, undefined).pipe(

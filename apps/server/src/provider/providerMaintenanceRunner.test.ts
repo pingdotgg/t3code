@@ -330,6 +330,84 @@ describe("providerMaintenanceRunner", () => {
     },
   );
 
+  it.effect.each([
+    {
+      name: "stays on the old version once mise's latest is unavailable",
+      versionAfter: "1.0.0",
+      latestAfter: null,
+      status: "unchanged",
+    },
+    {
+      name: "stays on the old version once mise stops reporting the target",
+      versionAfter: "1.0.0",
+      latestAfter: "1.0.0",
+      status: "unchanged",
+    },
+    {
+      name: "reaches the target though mise's latest is then unavailable",
+      versionAfter: "1.1.0",
+      latestAfter: null,
+      status: "succeeded",
+    },
+    {
+      name: "cannot read its version to prove the target",
+      versionAfter: null,
+      latestAfter: "1.1.0",
+      status: "unchanged",
+    },
+  ] as const)(
+    "judges a mise update that $name as $status",
+    ({ versionAfter, latestAfter, status }) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry({
+          ...baseProvider,
+          version: "1.0.0",
+        });
+        // Cached and fresh pre-update reads know the target; the post-update read may not.
+        const latestReads = ["1.1.0", "1.1.0", latestAfter];
+        let read = 0;
+        const updater = yield* makeTestRunner({
+          ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, version: versionAfter })),
+            ),
+          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+            Effect.succeed(
+              makeProviderMaintenanceCapabilities({
+                provider,
+                packageName: "@openai/codex",
+                updateExecutable: "/usr/bin/mise",
+                updateArgs: ["upgrade", "--no-prune", "codex"],
+                updateLockKey: "mise",
+                latestVersion: latestReads[Math.min(read++, latestReads.length - 1)] ?? null,
+              }),
+            ),
+        });
+
+        const result = yield* updater.updateProvider(CODEX_DRIVER);
+        assert.deepStrictEqual(calls, [["upgrade", "--no-prune", "codex"]]);
+        assert.strictEqual(result.providers[0]?.updateState?.status, status);
+        if (status === "unchanged") {
+          assert.notStrictEqual(result.providers[0]?.updateState?.message, "Provider updated.");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            // mise reports its own target, so the npm registry must not decide.
+            latestVersionHttpClient("9.9.9"),
+            mockSpawnerLayer((_command, args) => {
+              calls.push(args);
+              return { stdout: "" };
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("spawns the updater with the environment its capabilities declare", () => {
     const seen: Array<NodeJS.ProcessEnv | undefined> = [];
     return Effect.gen(function* () {

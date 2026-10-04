@@ -326,12 +326,12 @@ it.layer(testLayer)("CodexDriver", (it) => {
 
   for (const fixture of [
     {
-      name: "leaves mise npm-backend installations manual-only",
+      name: "leaves mise npm-backend installations manual-only without a mise to confirm them",
       installSegments: ["mise", "installs", "npm-openai-codex", "0.110.0"],
       npmOwned: false,
     },
     {
-      name: "leaves mise tool aliases backed by npm manual-only",
+      name: "leaves mise tool aliases backed by npm manual-only without a mise to confirm them",
       installSegments: ["mise", "installs", "codex", "0.110.0"],
       npmOwned: false,
     },
@@ -373,7 +373,8 @@ it.layer(testLayer)("CodexDriver", (it) => {
           instanceId: ProviderInstanceId.make("codex-installer"),
           displayName: "Codex installer test",
           enabled: false,
-          environment: [],
+          // No mise on PATH: these cases exercise the path rules alone.
+          environment: [{ name: "PATH", value: "", sensitive: false }],
           config: {
             ...CodexDriver.defaultConfig(),
             binaryPath,
@@ -405,42 +406,44 @@ it.layer(testLayer)("CodexDriver", (it) => {
   }
 
   for (const layout of ["direct", "wrapper"] as const) {
-    it.effect.skipIf(windowsHost)(`leaves a mise ${layout} installation manual-only`, () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: `t3-codex-mise-${layout}-` })
-          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const binaryPath =
-          layout === "direct"
-            ? NodePath.join(tempDir, "mise", "installs", "codex", "0.110.0", "codex")
-            : NodePath.join(tempDir, "omarchy", "bin", "codex");
-        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
-        yield* fs.writeFileString(
-          binaryPath,
-          layout === "direct"
-            ? "#!/bin/sh\n"
-            : '#!/bin/sh\nmise use -g --quiet "codex" || exit 1\nexec mise x "codex" -- "codex" "$@"\n',
-        );
-        yield* fs.chmod(binaryPath, 0o755);
-
-        const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make(`codex-mise-${layout}`),
-          displayName: "Codex mise test",
-          enabled: false,
-          environment: [],
-          config: {
-            ...CodexDriver.defaultConfig(),
+    it.effect.skipIf(windowsHost)(
+      `leaves a mise ${layout} installation manual-only without a mise to confirm it`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const tempDir = yield* fs
+            .makeTempDirectoryScoped({ prefix: `t3-codex-mise-${layout}-` })
+            .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+          const binaryPath =
+            layout === "direct"
+              ? NodePath.join(tempDir, "mise", "installs", "codex", "0.110.0", "codex")
+              : NodePath.join(tempDir, "omarchy", "bin", "codex");
+          yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+          yield* fs.writeFileString(
             binaryPath,
-            homePath: NodePath.join(tempDir, "codex-home"),
-          },
-        });
+            layout === "direct"
+              ? "#!/bin/sh\n"
+              : '#!/bin/sh\nmise use -g --quiet "codex" || exit 1\nexec mise x "codex" -- "codex" "$@"\n',
+          );
+          yield* fs.chmod(binaryPath, 0o755);
 
-        expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+          const instance = yield* CodexDriver.create({
+            instanceId: ProviderInstanceId.make(`codex-mise-${layout}`),
+            displayName: "Codex mise test",
+            enabled: false,
+            environment: [{ name: "PATH", value: "", sensitive: false }],
+            config: {
+              ...CodexDriver.defaultConfig(),
+              binaryPath,
+              homePath: NodePath.join(tempDir, "codex-home"),
+            },
+          });
+
+          expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          Effect.scoped,
+        ),
     );
   }
 
@@ -517,19 +520,26 @@ it.layer(testLayer)("CodexDriver", (it) => {
           NodePath.dirname(brewPath),
         ].join(NodePath.delimiter);
         const probes: Array<ReadonlyArray<string>> = [];
+        const miseProbes: Array<ReadonlyArray<string>> = [];
         const metadataSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
+          if (
+            !ChildProcess.isStandardCommand(command) ||
+            (command.command !== brewPath && command.command !== misePath)
+          ) {
             return Effect.die("Provider resolution must not execute a provider or updater");
           }
-          probes.push(command.args);
-          const stdout =
-            command.args[0] === "--prefix"
+          // This mise has no tool behind the shim, so it cannot own Codex.
+          const isMise = command.command === misePath;
+          (isMise ? miseProbes : probes).push(command.args);
+          const stdout = isMise
+            ? ""
+            : command.args[0] === "--prefix"
               ? brewPrefix
               : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
           return Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isMise ? 1 : 0)),
               isRunning: Effect.succeed(false),
               kill: () => Effect.void,
               unref: Effect.succeed(Effect.void),
@@ -563,6 +573,7 @@ it.layer(testLayer)("CodexDriver", (it) => {
           ),
         );
         expect(probes).toEqual([]);
+        expect(miseProbes).toEqual(fixture.nodeFirst ? [] : [["which", fixture.commandName]]);
         expect(latestVersion).toBe("0.153.4");
         expect(
           createProviderVersionAdvisory({

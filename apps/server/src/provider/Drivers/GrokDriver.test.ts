@@ -13,6 +13,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import { installFakeMise } from "../testUtils/fakeMise.ts";
 import { GrokDriver } from "./GrokDriver.ts";
 
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -82,6 +83,47 @@ it.layer(testLayer)("GrokDriver", (it) => {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
       Effect.scoped,
     ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "upgrades a mise-managed Grok through mise, not `grok update`",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-grok-mise-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const toolDir = path.join(tempDir, "mise", "installs", "npm-xai-official-grok");
+        const installPath = path.join(toolDir, "1.0.0");
+        yield* fs.makeDirectory(path.join(installPath, "bin"), { recursive: true });
+        yield* fs.writeFileString(path.join(installPath, "bin", "grok"), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(installPath, "bin", "grok"), 0o755);
+        yield* fs.symlink("1.0.0", path.join(toolDir, "latest"));
+        const binaryPath = path.join(toolDir, "latest", "bin", "grok");
+        const tool = "npm:@xai-official/grok";
+        const fake = installFakeMise(path.join(tempDir, "bin", "mise"), {
+          ls: {
+            [tool]: [{ version: "1.0.0", install_path: installPath, active: true }],
+          },
+          outdated: { [tool]: { latest: "1.1.0" } },
+        });
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-mise"),
+          displayName: "Grok test",
+          enabled: false,
+          environment: [{ name: "PATH", value: path.dirname(fake.misePath), sensitive: false }],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        });
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.update).toMatchObject({
+          executable: fake.misePath,
+          args: ["upgrade", "--no-prune", tool],
+        });
+        expect(capabilities.latestVersion).toBe("1.1.0");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
