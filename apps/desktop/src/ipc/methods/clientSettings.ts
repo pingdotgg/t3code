@@ -25,7 +25,14 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
-    yield* clientSettings.set(settings);
-    yield* snapShot.configure(settings);
+    // Executables are selected through a native picker in the main process.
+    // Generic renderer settings cannot grant permission to run a new path.
+    const current = yield* clientSettings.get;
+    const trusted = {
+      ...settings,
+      dictationExecutablePath: Option.isSome(current) ? current.value.dictationExecutablePath : "",
+    };
+    yield* clientSettings.set(trusted);
+    yield* snapShot.configure(trusted);
   }),
 });

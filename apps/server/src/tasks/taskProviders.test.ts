@@ -17,6 +17,44 @@ const github: TaskSource = {
 const linear: TaskSource = { provider: "linear", baseUrl: "https://linear.app", scope: "team-id" };
 const projectId = ProjectId.make("project");
 describe("task provider boundary", () => {
+  it.effect(
+    "keeps usable GitHub project items and pagination when a page also contains PRs or inaccessible items",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* runTaskProvider(
+          github,
+          { projectId, action: "items", id: "project-id" },
+          () =>
+            Effect.succeed({
+              data: {
+                node: {
+                  url: "https://github.com/orgs/team/projects/1",
+                  items: {
+                    nodes: [
+                      { id: "pr", content: {} },
+                      { id: "private", content: null },
+                      {
+                        id: "issue",
+                        content: {
+                          number: 1,
+                          title: "Fix bug",
+                          body: "Details",
+                          url: "https://github.com/team/repo/issues/1",
+                          state: "OPEN",
+                        },
+                      },
+                      { id: "draft", content: { title: "Explore solution", body: "Draft" } },
+                    ],
+                    pageInfo: { hasNextPage: true, endCursor: "next-page" },
+                  },
+                },
+              },
+            }),
+        );
+        expect(result.tasks.map((task) => task.title)).toEqual(["Fix bug", "Explore solution"]);
+        expect(result.nextCursor).toBe("next-page");
+      }),
+  );
   it("resolves configured issue URLs, rejecting cross-origin or cross-repository URLs", () => {
     expect(resolveTaskReference(github, "https://github.com/team/repo/issues/42")).toBe("42");
     expect(resolveTaskReference(linear, "https://linear.app/team/issue/ABC-42/title")).toBe(

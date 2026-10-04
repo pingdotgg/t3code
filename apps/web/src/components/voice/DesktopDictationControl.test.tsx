@@ -3,6 +3,7 @@ import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { DesktopDictationInput, DesktopDictationResult } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DesktopDictationControl } from "./DesktopDictationControl";
 import { useDictationSubmission } from "./useDictationSubmission";
 
@@ -79,7 +80,7 @@ function Composer({ owner = "environment:thread-a" }: { owner?: string }) {
         key={owner}
         ownerKey={owner}
         disabled={false}
-        keybindings={[]}
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
         onStateChange={submission.onStateChange}
         readDraft={() => ({ text: draft.current, cursor: 8 })}
         insertDraft={(text) => {
@@ -194,16 +195,56 @@ it("unblocks submission after denied microphone permission without changing the 
   expect(bridge).not.toHaveBeenCalledWith(expect.objectContaining({ action: "transcribe" }));
 });
 
-it.each([false, true])(
-  "hydrates the executable setting without overwriting a user edit (%s)",
-  async (edited) => {
-    await click("Dictation settings and status");
-    if (edited) await act(async () => edit(container.querySelector("input")!, "/my/whisper-cli"));
-    settings.dictationExecutablePath = "/opt/homebrew/bin/whisper-cli";
-    await render();
-    const expected = edited ? "/my/whisper-cli" : settings.dictationExecutablePath;
-    expect(container.querySelector("input")!.value).toBe(expected);
-    await click("Save executable path and check");
-    expect(updateSettings).toHaveBeenCalledExactlyOnceWith({ dictationExecutablePath: expected });
+it("shows a hydrated executable without writing it back, and saves only a native picker selection", async () => {
+  await click("Dictation settings and status");
+  settings.dictationExecutablePath = "/opt/homebrew/bin/whisper-cli";
+  await render();
+  expect(container.querySelector("input")!.value).toBe(settings.dictationExecutablePath);
+  expect(container.querySelector("input")!.readOnly).toBe(true);
+  expect(updateSettings).not.toHaveBeenCalled();
+  bridge.mockResolvedValueOnce({ ...ready, executablePath: "/chosen/whisper-cli" });
+  await click("Choose whisper-cli executable…");
+  expect(bridge).toHaveBeenLastCalledWith({ action: "choose-executable" });
+  expect(updateSettings).toHaveBeenCalledExactlyOnceWith({
+    dictationExecutablePath: "/chosen/whisper-cli",
+  });
+});
+
+it.each(["Meta", "Control", "Shift", "Alt"])(
+  "stops hold-to-talk when %s is released without a Space key-up",
+  async (key) => {
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          metaKey: true,
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(button("Stop dictation and transcribe locally")).toBeDefined();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { key, code: key + "Left", bubbles: true }));
+    });
+    expect(bridge).toHaveBeenCalledWith(expect.objectContaining({ action: "transcribe" }));
+    await act(async () =>
+      transcript.resolve({ ...ready, state: "completed", transcript: "spoken" }),
+    );
   },
 );
+
+it("keeps the shared model download alive across a thread switch and still allows explicit cancellation", async () => {
+  const download = deferredTranscript();
+  await click("Dictation settings and status");
+  bridge.mockImplementationOnce(() => download.promise);
+  await click("Install local model (75 MiB)");
+  await render("environment:thread-b");
+  expect(bridge).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
+  bridge.mockResolvedValueOnce({ ...ready, state: "downloading", message: "Downloading" });
+  await click("Dictation settings and status");
+  await click("Cancel download");
+  expect(bridge).toHaveBeenCalledWith({ action: "cancel" });
+  await act(async () => download.resolve({ ...ready, state: "cancelled" }));
+});

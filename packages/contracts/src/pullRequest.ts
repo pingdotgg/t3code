@@ -916,6 +916,8 @@ export const PullRequestActivity = Schema.Struct({
    * however long it is.
    */
   commentsTruncated: Schema.Boolean,
+  /** Whether the thread listing itself is incomplete, apart from pages within a thread. */
+  reviewThreadsTruncated: Schema.optional(Schema.Boolean),
   reviewThreads: Schema.Array(PullRequestReviewThread),
   commits: Schema.Array(PullRequestCommit),
   /**

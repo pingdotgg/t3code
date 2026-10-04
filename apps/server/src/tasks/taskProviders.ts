@@ -149,31 +149,36 @@ export const runTaskProvider = Effect.fn("runTaskProvider")(function* (
         input.action === "projects"
           ? at(result, "data", "repositoryOwner", "projectsV2")
           : at(result, "data", "node", "items");
-      tasks = nodes(connection).map((value) => {
-        const item = object(value),
-          content = object(item.content);
-        return input.action === "projects"
-          ? {
-              ...emptyTask,
-              id: string(item.id),
-              key: `Project ${string(item.number)}`,
-              title: string(item.title),
-              description: string(item.shortDescription),
-              url: string(item.url),
-              status: "",
-            }
-          : {
-              ...emptyTask,
-              id: string(content.number) || string(item.id),
-              key: string(content.number) ? `#${string(content.number)}` : "Draft item",
-              title: string(content.title),
-              description: string(content.body),
-              url:
-                string(content.url) ||
-                `${string(at(result, "data", "node", "url"))}?pane=issue&itemId=${encodeURIComponent(string(item.id))}`,
-              status: string(content.state),
-            };
-      });
+      tasks = nodes(connection)
+        .filter(
+          (value) =>
+            input.action === "projects" || string(at(value, "content", "title")).trim() !== "",
+        )
+        .map((value) => {
+          const item = object(value),
+            content = object(item.content);
+          return input.action === "projects"
+            ? {
+                ...emptyTask,
+                id: string(item.id),
+                key: `Project ${string(item.number)}`,
+                title: string(item.title),
+                description: string(item.shortDescription),
+                url: string(item.url),
+                status: "",
+              }
+            : {
+                ...emptyTask,
+                id: string(content.number) || string(item.id),
+                key: string(content.number) ? `#${string(content.number)}` : "Draft item",
+                title: string(content.title),
+                description: string(content.body),
+                url:
+                  string(content.url) ||
+                  `${string(at(result, "data", "node", "url"))}?pane=issue&itemId=${encodeURIComponent(string(item.id))}`,
+                status: string(content.state),
+              };
+        });
       if (at(connection, "pageInfo", "hasNextPage"))
         nextCursor = string(at(connection, "pageInfo", "endCursor"));
     } else if (input.action === "list") {

@@ -1030,6 +1030,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.strictEqual(older.projection.turnItems[0]?.ordinal, 850);
       assert.strictEqual(older.projection.turnItems.at(-1)?.ordinal, 925);
 
+      // A single item reads back with its full output, scoped to its thread.
+      const itemId = TurnItemId.make("turn-item:bounded-sql-history:925");
+      const stored = yield* projectionStore.getTurnItem({ threadId, itemId });
+      assert.strictEqual(stored?.type === "command_execution" ? stored.output : undefined, "ok");
+      assert.isNull(
+        yield* projectionStore.getTurnItem({ threadId: ThreadId.make("thread:other"), itemId }),
+      );
+
       const sqlPageLimit = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
       const initialSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: sqlPageLimit,

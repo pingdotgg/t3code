@@ -7,8 +7,33 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { useRightPanelStore } from "~/rightPanelStore";
 import { defaultWorkspaceLayout, moveWorkspaceSurface } from "~/rightPanelLayout";
 import { SplitWorkspace } from "./SplitWorkspace";
+import type { RightPanelTabsProps } from "./RightPanelTabs";
 
-vi.mock("./RightPanelTabs", () => ({ RightPanelTabs: () => null }));
+vi.mock("./RightPanelTabs", () => ({
+  RightPanelTabs: (props: RightPanelTabsProps) => (
+    <div>
+      {props.surfaces.map((surface) => (
+        <div key={surface.id}>
+          <button
+            aria-label={`${surface.id}:others`}
+            onClick={() => props.onCloseOtherSurfaces(surface)}
+          >
+            Close others
+          </button>
+          <button
+            aria-label={`${surface.id}:right`}
+            onClick={() => props.onCloseSurfacesToRight(surface)}
+          >
+            Close to right
+          </button>
+          <button aria-label={`${surface.id}:all`} onClick={() => props.onCloseAllSurfaces()}>
+            Close all
+          </button>
+        </div>
+      ))}
+    </div>
+  ),
+}));
 it("keeps mounted resource identity and draft DOM state when moved, maximized and reset", async () => {
   const container = document.createElement("div");
   document.body.append(container);
@@ -30,34 +55,7 @@ it("keeps mounted resource identity and draft DOM state when moved, maximized an
   useRightPanelStore.getState().openTerminal(ref, "persistent-pty");
   const state = useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]!;
   const terminalId = state.surfaces[0]!.id;
-  const tabs: ComponentProps<typeof SplitWorkspace>["tabs"] = {
-    environmentId: ref.environmentId,
-    pendingSurfaceIds: new Set(),
-    previewSessions: {},
-    desktopByTabId: {},
-    terminalLabelsById: new Map(),
-    onActivate: vi.fn(),
-    onCloseSurface: vi.fn(),
-    onCloseOtherSurfaces: vi.fn(),
-    onCloseSurfacesToRight: vi.fn(),
-    onCloseAllSurfaces: vi.fn(),
-    onCopyFilePath: vi.fn(),
-    onAddBrowser: vi.fn(),
-    onAddBrowserInProfile: vi.fn(),
-    onAddTerminal: vi.fn(),
-    onAddDiff: vi.fn(),
-    onAddFiles: vi.fn(),
-    onAddPullRequest: vi.fn(),
-    onAddPullRequests: vi.fn(),
-    onAddDevice: vi.fn(),
-    browserAvailable: true,
-    terminalAvailable: true,
-    diffAvailable: true,
-    filesAvailable: true,
-    pullRequestAvailable: true,
-    pullRequestsAvailable: true,
-    deviceAvailable: false,
-  };
+  const tabs = makeTabs(ref.environmentId);
   const render = async (
     workspaceLayout = defaultWorkspaceLayout([terminalId]),
     maximizedPaneId: string | null = null,
@@ -106,3 +104,111 @@ it("keeps mounted resource identity and draft DOM state when moved, maximized an
   }
   expect(stops).toBe(1);
 });
+
+function makeTabs(environmentId: EnvironmentId): ComponentProps<typeof SplitWorkspace>["tabs"] {
+  return {
+    environmentId: environmentId,
+    pendingSurfaceIds: new Set(),
+    previewSessions: {},
+    desktopByTabId: {},
+    terminalLabelsById: new Map(),
+    onActivate: vi.fn(),
+    onCloseSurface: vi.fn(),
+    onCloseOtherSurfaces: vi.fn(),
+    onCloseSurfacesToRight: vi.fn(),
+    onCloseAllSurfaces: vi.fn(),
+    onCopyFilePath: vi.fn(),
+    onAddBrowser: vi.fn(),
+    onAddBrowserInProfile: vi.fn(),
+    onAddTerminal: vi.fn(),
+    onAddDiff: vi.fn(),
+    onAddFiles: vi.fn(),
+    onAddPullRequest: vi.fn(),
+    onAddPullRequests: vi.fn(),
+    onAddDevice: vi.fn(),
+    browserAvailable: true,
+    terminalAvailable: true,
+    diffAvailable: true,
+    filesAvailable: true,
+    pullRequestAvailable: true,
+    pullRequestsAvailable: true,
+    deviceAvailable: false,
+  };
+}
+
+it.each(["others", "right", "all"])(
+  "scopes %s to the pane's own tab order without disturbing another pane",
+  async (action) => {
+    const initial = useRightPanelStore.getState();
+    const ref = scopeThreadRef(EnvironmentId.make("desktop"), ThreadId.make("close-menu"));
+    useRightPanelStore.setState({ byThreadKey: {} });
+    for (const id of ["a", "b", "c"]) useRightPanelStore.getState().openTerminal(ref, id);
+    useRightPanelStore.getState().setWorkspaceLayout(ref, {
+      type: "split",
+      id: "root",
+      axis: "horizontal",
+      ratio: 0.5,
+      first: {
+        type: "group",
+        id: "left",
+        tabs: ["terminal:c", "terminal:a"],
+        active: "terminal:c",
+      },
+      second: {
+        type: "group",
+        id: "right",
+        tabs: ["conversation", "terminal:b"],
+        active: "terminal:b",
+      },
+    });
+    const closed: string[] = [];
+    const tabs = {
+      ...makeTabs(ref.environmentId),
+      onCloseSurface: (surface: RightPanelTabsProps["surfaces"][number]) => {
+        closed.push(surface.id);
+        useRightPanelStore.getState().closeSurface(ref, surface.id);
+      },
+    };
+    function Workspace() {
+      const state = useRightPanelStore((store) => store.byThreadKey[scopedThreadKey(ref)]!);
+      return (
+        <SplitWorkspace
+          threadRef={ref}
+          state={state}
+          tabs={tabs}
+          conversation={<div>Conversation</div>}
+          renderSurface={(surface) => (
+            <textarea aria-label={surface.id} defaultValue="Unsaved input" />
+          )}
+        />
+      );
+    }
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Workspace />));
+      const unaffected = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="terminal:b"]',
+      )!;
+      unaffected.value = "Still working";
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(`button[aria-label="terminal:c:${action}"]`)!
+          .click(),
+      );
+      expect(closed).toEqual(action === "all" ? ["terminal:c", "terminal:a"] : ["terminal:a"]);
+      expect(container.querySelector('textarea[aria-label="terminal:b"]')).toBe(unaffected);
+      expect(unaffected.value).toBe("Still working");
+      expect(
+        useRightPanelStore
+          .getState()
+          .byThreadKey[scopedThreadKey(ref)]!.surfaces.map((surface) => surface.id),
+      ).toEqual(action === "all" ? ["terminal:b"] : ["terminal:b", "terminal:c"]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      useRightPanelStore.setState(initial, true);
+    }
+  },
+);

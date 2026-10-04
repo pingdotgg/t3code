@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { DesktopVoiceRecorder } from "./desktopVoiceCapture";
+import { DesktopVoiceRecorder, encodeDictationWav } from "./desktopVoiceCapture";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -11,6 +11,11 @@ function microphone() {
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   return { track, stream };
 }
+it("caps a recording whose stop timer fires late at five minutes of valid audio", () => {
+  const wav = encodeDictationWav([new Float32Array(16_000 * 301)], 16_000);
+  expect(wav.byteLength).toBe(16_000 * 2 * 300 + 44);
+  expect(new DataView(wav.buffer).getUint32(40, true)).toBe(16_000 * 2 * 300);
+});
 it("releases a microphone granted after cancellation without starting an audio context", async () => {
   let grantPermission!: (stream: MediaStream) => void;
   const permission = new Promise<MediaStream>((resolve) => {

@@ -508,6 +508,29 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("root"),
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+    startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+/** Failure code on the error item a failed workspace preparation leaves. */
+export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -549,6 +572,8 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
+  /** How a launch prepares this run's workspace; prepared-run.retry repeats it. */
+  workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1332,6 +1357,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Set on the wire when output was withheld; fetch it with getTurnItem. */
+    outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -1458,6 +1485,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Set on the wire when output was withheld; fetch it with getTurnItem. */
+    outputOmitted: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -1724,6 +1753,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Bounded list preview; full message bodies remain in thread detail. */
   recentMessagePreview: Schema.optional(Schema.String.check(Schema.isMaxLength(240))),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
+  /**
+   * The last message the user wrote. Wakes and agent messages also use the
+   * user role, so they move latestUserMessageAt but not this.
+   */
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
   // Normalized post-settlement background work for sidebar Waiting pills.
   // Empty when the latest root run is still active or no pending work remains.
@@ -2061,6 +2095,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Set on the wire when output was withheld; fetch it with getTurnItem. */
+    outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -2184,6 +2220,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Set on the wire when output was withheld; fetch it with getTurnItem. */
+    outputOmitted: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
@@ -2246,6 +2284,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2693,7 +2732,10 @@ export const OrchestrationV2Command = Schema.Union([
       }),
     ),
     dispatchMode: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("defer_start") }),
+      Schema.Struct({
+        type: Schema.Literal("defer_start"),
+        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+      }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("queue_after_active") }),
@@ -2726,6 +2768,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     failure: OrchestrationV2ProviderFailure,
+  }),
+  /** Puts a run whose workspace preparation failed back into preparation. */
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.retry"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
@@ -2930,6 +2979,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -2962,26 +3012,6 @@ export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
 ]);
 export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
-
-export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
-]);
-export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
-  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   commandId: CommandId,
@@ -3236,6 +3266,20 @@ export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
 export type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
+export const OrchestrationV2GetTurnItemInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: TurnItemId,
+  /** The item updatedAt the client last saw. Only keys the client cache. */
+  revision: Schema.optional(Schema.String),
+});
+export type OrchestrationV2GetTurnItemInput = typeof OrchestrationV2GetTurnItemInput.Type;
+
+/** One persisted turn item with its full, size-bounded input and output. */
+export const OrchestrationV2GetTurnItemResult = Schema.Struct({
+  item: Schema.NullOr(OrchestrationV2TurnItem),
+});
+export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -3293,6 +3337,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
+  },
+  getTurnItem: {
+    input: OrchestrationV2GetTurnItemInput,
+    output: OrchestrationV2GetTurnItemResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

@@ -37,8 +37,6 @@ export function DesktopDictationControl(props: {
   const [message, setMessage] = useState("");
   const [transcript, setTranscript] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [executableEdit, setExecutable] = useState<string | null>(null);
-  const executable = executableEdit ?? settings.dictationExecutablePath;
   const latest = useRef({ props, settings });
   useLayoutEffect(() => {
     latest.current = { props, settings };
@@ -71,6 +69,20 @@ export function DesktopDictationControl(props: {
         setMessage("Microphones are unavailable. Check operating-system permissions.");
     }
   }, []);
+  async function selectExecutable(action: "choose-executable" | "reset-executable") {
+    if (!bridge) return;
+    try {
+      const result = await bridge({ action });
+      if (result.executablePath !== undefined)
+        await updateSettings({ dictationExecutablePath: result.executablePath });
+      if (mounted.current) {
+        setModel(result);
+        setMessage(result.message);
+      }
+    } catch {
+      if (mounted.current) setMessage("Could not select the executable. Try again.");
+    }
+  }
   useEffect(() => {
     mounted.current = true;
     if (!bridge)
@@ -223,8 +235,6 @@ export function DesktopDictationControl(props: {
         errorAction: null,
       });
       void recorder.release();
-      if (modelOperation.current)
-        void bridge({ action: "cancel", operationId: modelOperation.current });
       controller.current = null;
       window.removeEventListener("beforeunload", close);
       navigator.mediaDevices?.removeEventListener("devicechange", refreshDevices);
@@ -277,7 +287,11 @@ export function DesktopDictationControl(props: {
     void toggle(command === "composer.dictationHold" ? event.code : undefined);
   });
   const onDictationKeyUp = useEffectEvent((event: KeyboardEvent) => {
-    if (event.code !== held.current) return;
+    if (!held.current) return;
+    // macOS may omit Space key-up while Cmd is held; modifier release must
+    // also stop the hold so recording cannot continue unnoticed.
+    const modifierReleased = ["Meta", "Control", "Shift", "Alt"].includes(event.key);
+    if (event.code !== held.current && !modifierReleased) return;
     held.current = null;
     if (controller.current?.currentState.phase === "recording") void controller.current.stop();
     else if (controller.current?.currentState.phase === "preparing") cancel();
@@ -444,23 +458,23 @@ export function DesktopDictationControl(props: {
               </label>
               <label>
                 whisper-cli executable (blank uses the platform default)
-                <Input
-                  value={executable}
-                  onChange={(e) => setExecutable(e.target.value)}
-                  disabled={active}
-                />
+                <Input value={settings.dictationExecutablePath} readOnly />
               </label>
               <Button
                 type="button"
                 variant="outline"
                 disabled={active}
-                onClick={() => {
-                  void updateSettings({ dictationExecutablePath: executable }).then(() =>
-                    checkModel(),
-                  );
-                }}
+                onClick={() => void selectExecutable("choose-executable")}
               >
-                Save executable path and check
+                Choose whisper-cli executable…
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={active || !settings.dictationExecutablePath}
+                onClick={() => void selectExecutable("reset-executable")}
+              >
+                Use platform default
               </Button>
               <p>
                 Whisper tiny, multilingual, 75 MiB. Downloaded from Hugging Face only when you

@@ -103,6 +103,8 @@ export interface EnvironmentThreadShell {
   readonly runtime: ThreadRuntimeSummary | null;
   readonly latestUserMessageAt: string | null;
   readonly recentMessage?: string;
+  /** The last message the user wrote. `undefined` means the server predates it. */
+  readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly hasActionableProposedPlan: boolean;
@@ -244,6 +246,9 @@ export function presentThreadShell(
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     recentMessage:
       thread.recentMessagePreview ?? thread.latestVisibleMessage?.text.slice(0, 240) ?? "",
+    ...(thread.latestUserAuthoredMessageAt === undefined
+      ? {}
+      : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&

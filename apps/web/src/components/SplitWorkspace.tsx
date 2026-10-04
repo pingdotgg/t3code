@@ -217,9 +217,29 @@ export function SplitWorkspace({
               {...tabs}
               mode="embedded"
               tabDragScope={scope}
-              surfaces={state.surfaces.filter((s) => node.tabs.includes(s.id))}
+              surfaces={node.tabs.flatMap((id) => state.surfaces.filter((s) => s.id === id))}
               activeSurfaceId={node.active}
               onActivate={(surface) => activate(surface.id)}
+              onCloseOtherSurfaces={(surface) => {
+                for (const id of node.tabs) {
+                  const candidate = state.surfaces.find((s) => s.id === id);
+                  if (candidate && id !== surface.id) tabs.onCloseSurface(candidate);
+                }
+              }}
+              onCloseSurfacesToRight={(surface) => {
+                const index = node.tabs.indexOf(surface.id);
+                if (index < 0) return;
+                for (const id of node.tabs.slice(index + 1)) {
+                  const candidate = state.surfaces.find((s) => s.id === id);
+                  if (candidate) tabs.onCloseSurface(candidate);
+                }
+              }}
+              onCloseAllSurfaces={() => {
+                for (const id of node.tabs) {
+                  const candidate = state.surfaces.find((s) => s.id === id);
+                  if (candidate) tabs.onCloseSurface(candidate);
+                }
+              }}
               layoutControls={
                 <div className="flex items-center gap-1">
                   {node.tabs.includes(CONVERSATION_SURFACE) ? (

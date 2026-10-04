@@ -1,5 +1,8 @@
 import captureWorkletUrl from "./dictationCapture.worklet.js?url&no-inline";
-import type { VoiceRecorder } from "@t3tools/client-runtime/voice-input";
+import {
+  VOICE_RECORDING_LIMIT_SECONDS,
+  type VoiceRecorder,
+} from "@t3tools/client-runtime/voice-input";
 import { randomUUID } from "~/lib/utils";
 
 export function encodeDictationWav(
@@ -13,7 +16,10 @@ export function encodeDictationWav(
     input.set(chunk, offset);
     offset += chunk.length;
   }
-  const count = Math.floor((length * 16000) / sampleRate);
+  const count = Math.min(
+    Math.floor((length * 16000) / sampleRate),
+    16000 * VOICE_RECORDING_LIMIT_SECONDS,
+  );
   const result = new Uint8Array(44 + count * 2);
   const view = new DataView(result.buffer);
   const ascii = (at: number, text: string) => {

@@ -306,7 +306,7 @@ The microphone beside the composer records locally and inserts editable text int
 your draft. It never sends the prompt. **Voice** selects a microphone and manages the
 local transcription setup. On macOS, install [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 with `brew install whisper-cpp`; Windows and Linux need a compatible `whisper-cli`
-build. Set the executable path in Voice if T3 cannot find it.
+build. Choose the executable with the native file picker in Voice if T3 cannot find it.
 
 Choose **Install local model** to download the multilingual Whisper tiny model
 (about 75 MiB) from Hugging Face. T3 checks the upstream checksum. You can cancel a
