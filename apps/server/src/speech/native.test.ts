@@ -1,9 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
+import * as NodeSea from "node:sea";
+import * as NodeURL from "node:url";
 import { expect, it, vi } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+
+vi.mock("node:sea", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeSea>();
+  return { ...actual, isSea: vi.fn(actual.isSea) };
+});
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
@@ -386,3 +393,64 @@ it("serves HTTP requests while the child corrects a large streaming transcript",
     );
   }
 }, 10000);
+
+it("discovers devices through the executable worker subcommand", async () => {
+  const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
+  const sea = vi.mocked(NodeSea.isSea).mockReturnValue(true);
+  const worker = vi
+    .spyOn(NodeChildProcess, "spawn")
+    .mockImplementation((command, args, options) => {
+      expect(args?.slice(0, 2)).toEqual(["__speech-worker", "discover"]);
+      return spawn(
+        command,
+        [NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)), ...args!],
+        options,
+      );
+    });
+  try {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent('export const getAvailableBackends = () => [{ kind: "vulkan", deviceType: "gpu", deviceId: "gpu", name: "Test GPU" }];')}`;
+    await expect(listNativeSpeechGpuDevices(moduleUrl)).resolves.toEqual([
+      { id: '["vulkan","gpu"]', name: "Test GPU" },
+    ]);
+  } finally {
+    worker.mockRestore();
+    sea.mockReturnValue(false);
+  }
+});
+
+it("transcribes through the executable worker subcommand", async () => {
+  const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
+  const sea = vi.mocked(NodeSea.isSea).mockReturnValue(true);
+  const worker = vi
+    .spyOn(NodeChildProcess, "spawn")
+    .mockImplementation((command, args, options) => {
+      expect(args).toEqual(["__speech-worker", "model"]);
+      return spawn(
+        command,
+        [NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)), ...args!],
+        options,
+      );
+    });
+  try {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      fixture("async (pcm) => ({ text: String(pcm[0]) })"),
+    );
+    try {
+      await expect(
+        model.transcribe(new Float32Array([0.25]), { timestamps: "none" }),
+      ).resolves.toEqual({ text: "0.25" });
+    } finally {
+      await model.dispose();
+    }
+  } finally {
+    worker.mockRestore();
+    sea.mockReturnValue(false);
+  }
+});
+
+it("loads the installed native package for device discovery without an ESM resolver", async () => {
+  const devices = await listNativeSpeechGpuDevices();
+  expect(Array.isArray(devices)).toBe(true);
+});

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference and IPC cleanup need killable Promise boundaries outside the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeSea from "node:sea";
 import { makeSpeechTextCorrector } from "./customWords.ts";
 import type { SpeechCustomWords, SpeechStreamText } from "@t3tools/contracts";
 
@@ -13,7 +14,7 @@ let stream;
 process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
-      const { TranscribeModel, getAvailableBackends } = await import(message.moduleUrl);
+      const { TranscribeModel, getAvailableBackends } = await loadSpeechModule(message.moduleUrl);
       const device = message.acceleration.startsWith("gpu:")
         ? getAvailableBackends().find((item) =>
             (item.deviceType === "gpu" || item.deviceType === "igpu") &&
@@ -113,23 +114,56 @@ type Reply = {
   readonly preview?: SpeechStreamText | null;
 };
 
-export async function listNativeSpeechGpuDevices(
-  moduleUrl = import.meta.resolve("transcribe-cpp"),
-) {
-  const script = `const { getAvailableBackends } = await import(process.argv[1]);
-    process.send(getAvailableBackends().filter((device) =>
-      device.deviceType === "gpu" || device.deviceType === "igpu").map((device) => ({
-        id: JSON.stringify([device.kind, device.deviceId ?? device.name]),
-        name: device.description || device.name,
-      })));`;
-  const child = NodeChildProcess.spawn(
-    process.execPath,
-    ["--input-type=module", "-e", script, moduleUrl],
-    {
-      stdio: ["ignore", "ignore", "inherit", "ipc"],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-    },
-  );
+// transcribe-cpp has an import-only export. Load its disk entry with require so
+// Node SEA can reach it, including its native dependencies.
+const loaderEntry = `
+  const { createRequire, findPackageJSON } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const loadSpeechModule = async (moduleUrl) => {
+    if (moduleUrl) return await import(moduleUrl);
+    const packagePath = findPackageJSON("transcribe-cpp", baseUrl);
+    if (!packagePath) throw new Error("The native speech package is unavailable.");
+    return createRequire(packagePath)(join(dirname(packagePath), "dist/index.js"));
+  };
+`;
+
+const discoveryEntry = `
+  const { getAvailableBackends } = await loadSpeechModule(moduleUrl);
+  process.send(getAvailableBackends().filter((device) =>
+    device.deviceType === "gpu" || device.deviceType === "igpu").map((device) => ({
+      id: JSON.stringify([device.kind, device.deviceId ?? device.name]),
+      name: device.description || device.name,
+    })));
+`;
+
+export async function runNativeSpeechWorker(mode: "discover" | "model", moduleUrl?: string) {
+  if (!process.send) throw new Error("Speech workers require an IPC channel.");
+  const run = new Function(
+    "baseUrl",
+    "moduleUrl",
+    `return (async () => {${loaderEntry}${mode === "discover" ? discoveryEntry : entry}})();`,
+  ) as (baseUrl: string, moduleUrl?: string) => Promise<void>;
+  await run(import.meta.url, moduleUrl);
+}
+
+function speechWorkerArgs(mode: "discover" | "model", moduleUrl?: string) {
+  if (NodeSea.isSea()) return ["__speech-worker", mode, ...(moduleUrl ? [moduleUrl] : [])];
+  // Normal Node and Electron hosts can evaluate the same entry without a sibling artifact.
+  const loader = `const baseUrl = ${JSON.stringify(import.meta.url)};
+    const moduleUrl = process.argv[1];${loaderEntry}`;
+  return [
+    "--input-type=module",
+    "-e",
+    loader + (mode === "discover" ? discoveryEntry : entry),
+    ...(moduleUrl ? [moduleUrl] : []),
+  ];
+}
+
+export async function listNativeSpeechGpuDevices(moduleUrl?: string) {
+  const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("discover", moduleUrl), {
+    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
   return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill();
@@ -168,11 +202,11 @@ export async function listNativeSpeechGpuDevices(
 export async function loadNativeSpeechModel(
   path: string,
   signal: AbortSignal,
-  moduleUrl = import.meta.resolve("transcribe-cpp"),
+  moduleUrl?: string,
   acceleration = "auto",
 ) {
   signal.throwIfAborted();
-  const child = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "-e", entry], {
+  const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("model"), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: "advanced",
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
