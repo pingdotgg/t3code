@@ -63,7 +63,24 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     if (entry === undefined) {
       return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
     }
+    // Discovery still holds the old relay descriptor and would re-block the
+    // environment from it, so replace that before clearing the block.
+    const switchBackOn = Effect.gen(function* () {
+      if (entry.target._tag === "RelayConnectionTarget") {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* discovery.refresh;
+      }
+      yield* registry.setCompatibility(environmentId, null);
+      yield* registry.setEnabled(environmentId, true);
+    });
+
     const { prepared, descriptor } = yield* resolver.prepareForUpdate(entry);
+    // The host was updated some other way since it was blocked. A compatible
+    // host refuses the bare socket, so only the block is left to clear.
+    if (isCompatibleDescriptor(descriptor)) {
+      yield* switchBackOn;
+      return { targetVersion: descriptor.serverVersion };
+    }
     const capabilities = descriptor.capabilities;
     if (
       capabilities.serverSelfUpdate === undefined ||
@@ -173,14 +190,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       });
     }
 
-    // Discovery still holds the old relay descriptor and would re-block the
-    // environment from it, so replace that before clearing the block.
-    if (entry.target._tag === "RelayConnectionTarget") {
-      const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-      yield* discovery.refresh;
-    }
-    yield* registry.setCompatibility(environmentId, null);
-    yield* registry.setEnabled(environmentId, true);
+    yield* switchBackOn;
     return { ...result, targetVersion: resumed.value.serverVersion };
   },
 );

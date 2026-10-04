@@ -111,6 +111,41 @@ class OutdatedHostSocket {
   }
 }
 
+/** Fails the handshake the way a browser reports an HTTP 426 upgrade response. */
+class RejectedSocket {
+  readyState = 0;
+  private readonly listeners = new Map<string, Set<Listener>>();
+
+  readonly url: string;
+
+  constructor(url: string) {
+    this.url = url;
+    queueMicrotask(() => {
+      this.readyState = 3;
+      this.emit({ type: "error" });
+      this.emit({ type: "close" });
+    });
+  }
+
+  addEventListener(type: string, listener: Listener) {
+    const listeners = this.listeners.get(type) ?? new Set<Listener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: Listener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  send() {}
+
+  close() {}
+
+  private emit(event: { readonly type: string; readonly data?: unknown }) {
+    for (const listener of this.listeners.get(event.type) ?? []) listener(event);
+  }
+}
+
 describe("updateOutdatedHost", () => {
   it.effect("updates a protocol-1 host over a bare socket, then switches it back on", () =>
     Effect.gen(function* () {
@@ -201,6 +236,92 @@ describe("updateOutdatedHost", () => {
       expect(sockets[0]?.requests.map((request) => request.tag)).toEqual([
         WS_METHODS.serverUpdateServer,
       ]);
+      expect(result.targetVersion).toBe("0.0.46");
+      expect(calls).toEqual(["compatibility:clear", "enabled:true"]);
+    }),
+  );
+
+  it.effect("switches a host that is already compatible back on without opening a socket", () =>
+    Effect.gen(function* () {
+      // The host was blocked on protocol 1, then updated on its own machine.
+      const blocked = orchestrationProtocolCompatibilityError(descriptor(undefined, "0.0.45"));
+      const served = descriptor(ORCHESTRATION_PROTOCOL_VERSION, "0.0.46");
+      const calls: Array<string> = [];
+      let opened = false;
+      const result = yield* updateOutdatedHost(
+        TARGET.environmentId,
+        { targetVersion: "0.0.46" },
+        () => Effect.void,
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                entries: yield* SubscriptionRef.make<
+                  ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
+                >(
+                  new Map([
+                    [
+                      TARGET.environmentId,
+                      {
+                        target: TARGET,
+                        profile: Option.none(),
+                        enabled: false,
+                        unsupportedReason: blocked?.message ?? "",
+                        serverUpdateRequired: true,
+                      },
+                    ],
+                  ]),
+                ),
+                setCompatibility: (_environmentId: EnvironmentId, error: unknown) =>
+                  Effect.sync(() =>
+                    calls.push(`compatibility:${error === null ? "clear" : "block"}`),
+                  ),
+                setEnabled: (_environmentId: EnvironmentId, enabled: boolean) =>
+                  Effect.sync(() => calls.push(`enabled:${enabled}`)),
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(
+              ConnectionResolver.ConnectionResolver,
+              ConnectionResolver.ConnectionResolver.of({
+                prepare: () => Effect.die(new Error("unused")),
+                prepareForUpdate: () =>
+                  Effect.succeed({
+                    descriptor: served,
+                    prepared: {
+                      environmentId: TARGET.environmentId,
+                      label: TARGET.label,
+                      httpBaseUrl: TARGET.httpBaseUrl,
+                      socketUrl: "wss://build.example.test/ws?wsTicket=ticket",
+                      httpAuthorization: null,
+                      target: TARGET,
+                    },
+                  }),
+              }),
+            ),
+            Layer.succeed(
+              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+                state: yield* SubscriptionRef.make(
+                  RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+                ),
+                refresh: Effect.void,
+              }),
+            ),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die(new Error("unused"))),
+            ),
+            // A protocol-2 host rejects the bare update socket with 426.
+            Layer.succeed(Socket.WebSocketConstructor, (url) => {
+              opened = true;
+              return new RejectedSocket(url) as unknown as globalThis.WebSocket;
+            }),
+          ),
+        ),
+      );
+      expect(opened).toBe(false);
       expect(result.targetVersion).toBe("0.0.46");
       expect(calls).toEqual(["compatibility:clear", "enabled:true"]);
     }),
