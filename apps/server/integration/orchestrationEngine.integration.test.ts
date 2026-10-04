@@ -196,6 +196,34 @@ it.live("loads thread detail snapshots with persisted reordered queued follow-up
         threadId: THREAD_ID,
         heldAt: createdAt,
       });
+      // Crash recovery also sees already-held queues. Its no-op must be
+      // accepted; otherwise the reactor retains its recovery barrier forever.
+      const repeatedHold = {
+        type: "thread.queue.hold" as const,
+        commandId: CommandId.make("cmd-repeat-hold-queue"),
+        threadId: THREAD_ID,
+        heldAt: createdAt,
+      };
+      yield* harness.engine.dispatch(repeatedHold);
+      yield* harness.engine.dispatch({
+        type: "thread.queue.release",
+        commandId: CommandId.make("cmd-release-queue"),
+        threadId: THREAD_ID,
+        releasedAt: createdAt,
+      });
+      // Replaying the accepted no-op may not re-hold a subsequently released
+      // queue, and another release is independently idempotent.
+      yield* harness.engine.dispatch(repeatedHold);
+      yield* harness.engine.dispatch({
+        type: "thread.queue.release",
+        commandId: CommandId.make("cmd-repeat-release-queue"),
+        threadId: THREAD_ID,
+        releasedAt: createdAt,
+      });
+      assert.isNull(
+        (yield* harness.engine.getReadModel()).threads.find((thread) => thread.id === THREAD_ID)
+          ?.queueHeldAt,
+      );
 
       const readQueue = () =>
         harness.snapshotQuery

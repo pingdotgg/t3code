@@ -506,6 +506,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             if (
               eventBases.length === 0 &&
               (admittedCommand.type === "thread.delegation.settle" ||
+                admittedCommand.type === "thread.queue.hold" ||
+                admittedCommand.type === "thread.queue.release" ||
                 admittedCommand.type === "thread.child.wait.prune" ||
                 (admittedCommand.type === "thread.meta.update" &&
                   (admittedCommand.expectedUpdatedAt !== undefined ||
