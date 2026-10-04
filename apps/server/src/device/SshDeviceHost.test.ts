@@ -11,9 +11,83 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { ServerSettingsError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
+
+it.effect("refuses to bootstrap when the configured capture source cannot be read", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-source-" });
+    // Starting on a default the stored setting does not name would leave the
+    // panel reporting a source the remote hub is not running.
+    const unreadableSettings = Layer.effect(
+      ServerSettingsService,
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsService;
+        return ServerSettingsService.of({
+          ...service,
+          getSettings: Effect.fail(
+            new ServerSettingsError({ settingsPath: "settings.json", operation: "read-file" }),
+          ),
+        });
+      }),
+    ).pipe(Layer.provide(ServerSettingsService.layerTest()));
+    const spawned: string[] = [];
+    const host = yield* SshDeviceHost.make(
+      { id: "test", label: "Test", target: "test.example" },
+      () => Effect.void,
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer, unreadableSettings),
+      ),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            if (command._tag === "StandardCommand") spawned.push(command.args.join(" "));
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(321),
+              stdout: Stream.make(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    nodePath: "/node",
+                    platforms: [{ platform: "android", available: true }],
+                    hubPort: 1234,
+                    helpers: { serveSimAxSettings: null, serveSimCli: null },
+                  }),
+                ),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        ),
+      ),
+    );
+    const failure = yield* host.ensureReady(() => Effect.void).pipe(Effect.flip);
+    expect(failure).toMatchObject({
+      _tag: "DeviceHostError",
+      step: "reading the configured device video source",
+    });
+    expect(spawned.some((args) => args.includes("device-hub"))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("preserves installed status after probes and cleans failed agent activation", () =>
   Effect.gen(function* () {
@@ -102,7 +176,13 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             )
           : Effect.void,
     ).pipe(
-      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(home, home),
+          Net.layer,
+          ServerSettingsService.layerTest(),
+        ),
+      ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(
         HttpClient.HttpClient,

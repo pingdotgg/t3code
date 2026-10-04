@@ -127,6 +127,18 @@ export const DeviceSession = Schema.Struct({
 });
 export type DeviceSession = typeof DeviceSession.Type;
 
+/**
+ * Where the device hub reads Android frames from. `grpc-screenshot` is the
+ * hub's own default and only works on emulators, and streams nothing at all on
+ * some of them; `scrcpy` works on emulators and physical devices alike. The
+ * hub takes it as a start argument, so changing it only affects hubs started
+ * afterwards.
+ */
+export const DeviceStreamSource = Schema.Literals(["scrcpy", "grpc-screenshot"]);
+export type DeviceStreamSource = typeof DeviceStreamSource.Type;
+
+export const DEFAULT_DEVICE_STREAM_SOURCE = "grpc-screenshot" as DeviceStreamSource;
+
 export const DeviceServiceState = Schema.Struct({
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
@@ -148,6 +160,7 @@ export const DeviceServiceState = Schema.Struct({
   ),
   onboardingCompleted: Schema.Boolean,
   agentAccessEnabled: Schema.Boolean,
+  streamSource: DeviceStreamSource,
   /** Origin-relative path the client prefixes to hub routes. */
   hubBasePath: Schema.String,
   revision: Schema.Int,
@@ -168,6 +181,8 @@ export const DeviceConfigureInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
   agentAccessEnabled: Schema.optional(Schema.Boolean),
   onboardingCompleted: Schema.optional(Schema.Boolean),
+  /** Restarts every device host so hubs respawn on the new source. */
+  streamSource: Schema.optional(DeviceStreamSource),
 });
 export type DeviceConfigureInput = typeof DeviceConfigureInput.Type;
 

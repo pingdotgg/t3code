@@ -126,6 +126,7 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
+  streamSource: "grpc-screenshot",
   hubBasePath: "/api/device-hub",
   revision: 0,
   ...overrides,

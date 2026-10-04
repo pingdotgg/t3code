@@ -67,6 +67,7 @@ const state = {
   sessions: [],
   onboardingCompleted: true,
   agentAccessEnabled: true,
+  streamSource: "grpc-screenshot" as const,
   hubBasePath: "/api/device-hub",
   revision: 1,
 };

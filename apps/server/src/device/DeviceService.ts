@@ -192,6 +192,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
+      streamSource: value.deviceStreamSource,
     })),
     Effect.mapError(
       (cause) =>
@@ -216,6 +217,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       sessions: [],
       onboardingCompleted: initialSettings.onboardingCompleted,
       agentAccessEnabled: initialSettings.agentAccessEnabled,
+      streamSource: initialSettings.streamSource,
       hubBasePath: DEVICE_HUB_ROUTE_PREFIX,
       revision: 0,
     },
@@ -524,11 +526,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
     function* (input) {
-      const currentSettings = yield* readDeviceSettings;
-      const nextEnabled = input.enabled ?? currentSettings.enabled;
-      const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
-      yield* lifecycleLock.withPermit(
+      const agentHostIds: DeviceHostId[] = [];
+      // Everything a concurrent configure could change is read, written, and
+      // published under one permit; a snapshot taken before the lock lets the
+      // later call republish the values the earlier one just moved.
+      const { nextEnabled, nextAgentAccess, restartedForSource } = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
+          const currentSettings = yield* readDeviceSettings;
+          const nextEnabled = input.enabled ?? currentSettings.enabled;
+          const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
+          const nextStreamSource = input.streamSource ?? currentSettings.streamSource;
           yield* settings
             .updateSettings({
               ...(input.enabled === undefined ? {} : { enableDeviceSupport: input.enabled }),
@@ -538,6 +545,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ...(input.onboardingCompleted === undefined
                 ? {}
                 : { deviceOnboardingCompleted: input.onboardingCompleted }),
+              ...(input.streamSource === undefined
+                ? {}
+                : { deviceStreamSource: input.streamSource }),
             })
             .pipe(
               Effect.mapError(
@@ -549,7 +559,22 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   }),
               ),
             );
-          if (!nextEnabled) {
+          // The capture source is a hub start argument, so a running hub keeps
+          // the old one until it is restarted. Open panels reconnect through
+          // `list`. Any asked-for source restarts, even one that matches what
+          // is stored: settings can also be written directly, and then the
+          // running hubs are already on a source the setting no longer names.
+          if (!nextEnabled || input.streamSource !== undefined) {
+            // Remote hosts are the ones `list` cannot speak for: it restores
+            // their hubs but not the agent daemons the stop takes with them.
+            // Note who is running one before stopping, so only those come back.
+            if (nextEnabled && input.streamSource !== undefined) {
+              for (const host of hosts.values()) {
+                if (host.id === LOCAL_DEVICE_HOST_ID) continue;
+                const running = yield* host.current;
+                if (running && "agentDevice" in running) agentHostIds.push(host.id);
+              }
+            }
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
@@ -563,11 +588,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             sessions: nextEnabled ? state.sessions : [],
             bootingDevices: nextEnabled ? state.bootingDevices : [],
             agentAccessEnabled: nextAgentAccess,
+            streamSource: nextStreamSource,
             onboardingCompleted: input.onboardingCompleted ?? state.onboardingCompleted,
           }));
+          return {
+            nextEnabled,
+            nextAgentAccess,
+            restartedForSource: nextEnabled && input.streamSource !== undefined,
+          };
         }),
       );
-      if (nextEnabled && nextAgentAccess && input.agentAccessEnabled === true) {
+      // Stopping a host for a new capture source takes its agent daemon with
+      // it, and `list` only brings hubs back, so the agent has to be asked for
+      // again or device automation stays down until the next `device_open`.
+      if (
+        nextEnabled &&
+        nextAgentAccess &&
+        (input.agentAccessEnabled === true || restartedForSource)
+      ) {
+        // Remote agents come back first: a local readiness failure leaves this
+        // effect, and nothing else restarts a remote daemon. One unreachable
+        // remote must not fail the switch either, and its failure is already on
+        // that host's status.
+        yield* Effect.forEach(
+          agentHostIds,
+          (hostId) => Effect.ignore(agentReadinessIfSupported(hostId)),
+          { discard: true },
+        );
         yield* agentReadinessIfSupported();
       }
       return yield* list;

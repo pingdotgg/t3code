@@ -44,10 +44,12 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import {
   agentDeviceStateDir,
+  deviceHubArgs,
   type DeviceToolPaths,
   ensureAgentDevice,
   ensureDeviceHub,
@@ -202,6 +204,7 @@ const deviceHostEnvironment = (
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const net = yield* NetService.NetService;
@@ -343,6 +346,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     nodePath: string,
   ): Effect.fn.Return<HubProcess, DeviceHost.DeviceHostError> {
     yield* reapStaleHub;
+    // The hub takes the source at spawn and device state reports the stored
+    // one, so falling back to a default here would start a hub the panel then
+    // describes wrongly. Fail the start instead.
+    const streamSource = yield* settings.getSettings.pipe(
+      Effect.map((value) => value.deviceStreamSource),
+      Effect.mapError(
+        (cause) =>
+          new DeviceHost.DeviceHostError({
+            hostId,
+            step: "reading the configured device video source",
+            cause,
+          }),
+      ),
+    );
     yield* fs
       .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
       .pipe(Effect.ignore);
@@ -368,8 +385,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             String(port),
             "--host",
             "127.0.0.1",
-            "--hide-sidebar",
-            "--hide-boot-device",
+            ...deviceHubArgs(streamSource),
           ],
           {
             detached: false,

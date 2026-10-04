@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DeviceId,
+  DeviceHostId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
@@ -32,6 +33,7 @@ const baseState: DeviceServiceState = {
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
+  streamSource: "grpc-screenshot",
   hubBasePath: "/api/device-hub",
   revision: 0,
 };
@@ -68,6 +70,7 @@ const fixture = Effect.fn("fixture")(function* (
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
+  extraHosts: ReadonlyArray<DeviceHost.DeviceHost["Service"]> = [],
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -130,7 +133,7 @@ const fixture = Effect.fn("fixture")(function* (
     }),
   };
   const service = yield* DeviceService.makeWithHosts(
-    new Map([[host.id, host]]),
+    new Map([host, ...extraHosts].map((entry) => [entry.id, entry])),
     undefined,
     undefined,
     installTool,
@@ -152,6 +155,7 @@ const fixture = Effect.fn("fixture")(function* (
               patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
             deviceOnboardingCompleted:
               patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
+            deviceStreamSource: patch.deviceStreamSource ?? current.deviceStreamSource,
           })),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
@@ -213,6 +217,40 @@ const fixture = Effect.fn("fixture")(function* (
   );
   return { service, starts, agentStarts, agentStops, requests, settings };
 });
+
+// An SSH host already running its agent daemon, which a capture-source restart
+// stops along with the hub.
+const remoteAgentHost = (agentStarts: string[]): DeviceHost.DeviceHost["Service"] => {
+  const id = DeviceHostId.make("ssh-1");
+  const ready = {
+    nodePath: process.execPath,
+    hub: { origin: "http://remote.device.test" },
+    helpers: { serveSimAxSettings: null, serveSimCli: null },
+    run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+    agentDevice: { baseUrl: "http://remote.agent.test", token: "test", entryPath: "/agent" },
+  };
+  return {
+    id,
+    summary: Effect.succeed({
+      id,
+      kind: "ssh",
+      label: "Remote",
+      platforms: [{ platform: "android", available: true }],
+      hubInstalled: true,
+      agentDeviceInstalled: true,
+    }),
+    platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+    ensureReady: () => Effect.succeed(ready),
+    ensureAgentReady: () =>
+      Effect.sync(() => {
+        agentStarts.push("start");
+        return ready;
+      }),
+    current: Effect.succeed(ready),
+    stopAgent: Effect.void,
+    stop: Effect.void,
+  };
+};
 
 describe("device setup consent", () => {
   it.effect(
@@ -282,6 +320,80 @@ describe("device setup consent", () => {
         expect(yield* service.readinessIfSupported()).toBeNull();
         expect(starts).toEqual(["start", "stop"]);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("switching the capture source persists it and restarts hosts", () =>
+    Effect.gen(function* () {
+      const { service, starts, agentStarts, settings } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      expect(starts).toEqual(["start"]);
+      expect(agentStarts).toHaveLength(1);
+
+      const switched = yield* service.configure({ streamSource: "scrcpy" });
+      expect(switched.streamSource).toBe("scrcpy");
+      expect((yield* Ref.get(settings)).deviceStreamSource).toBe("scrcpy");
+      // The hub takes the source at spawn, so the running one has to go.
+      expect(starts.filter((event) => event === "stop")).toHaveLength(1);
+      // Stopping the host stopped its agent daemon too; device automation has
+      // to come back without waiting for the next `device_open`.
+      expect(agentStarts).toHaveLength(2);
+
+      // Settings can also be written straight through `settings.update`, which
+      // leaves the hubs on the old source. Asking for the stored source again
+      // has to restart them rather than read the value and decide nothing
+      // changed.
+      yield* service.configure({ streamSource: "grpc-screenshot" });
+      expect(starts.filter((event) => event === "stop")).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switching the capture source brings remote agent daemons back", () =>
+    Effect.gen(function* () {
+      const remoteAgentStarts: string[] = [];
+      const remote = remoteAgentHost(remoteAgentStarts);
+      const { service } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        [remote],
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      remoteAgentStarts.length = 0;
+
+      yield* service.configure({ streamSource: "scrcpy" });
+      // The stop took the remote daemon with it, and `list` only restores hubs.
+      expect(remoteAgentStarts).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("restores remote agents even when the local host cannot start one", () =>
+    Effect.gen(function* () {
+      const remoteAgentStarts: string[] = [];
+      const remote = remoteAgentHost(remoteAgentStarts);
+      const { service, settings } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        new NodeRuntimeUnavailableError({ feature: "Local device support" }),
+        false,
+        undefined,
+        [remote],
+      );
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        enableAgentDeviceAccess: true,
+      }));
+
+      // The local failure still surfaces, but it must not strand the remote
+      // daemon the source restart stopped.
+      const error = yield* service.configure({ streamSource: "scrcpy" }).pipe(Effect.flip);
+      expect(error._tag).toBe("DeviceHostUnavailableError");
+      expect(remoteAgentStarts).toHaveLength(1);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
