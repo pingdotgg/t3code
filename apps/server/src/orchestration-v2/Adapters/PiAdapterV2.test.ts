@@ -1597,6 +1597,37 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("starts a turn while an extension run is already streaming", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      const prompt = yield* fake.takeRequest("prompt");
+      // An extension continuation resumed with the session and is streaming.
+      // Pi rejects a prompt without streamingBehavior while it streams.
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(
+        prompt["streamingBehavior"] === undefined
+          ? {
+              type: "response",
+              command: "prompt",
+              success: false,
+              error:
+                "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+            }
+          : { type: "response", command: "prompt", success: true },
+      );
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("shows compaction progress and completes the same activity row", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
