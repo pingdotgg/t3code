@@ -13,7 +13,7 @@ try {
 } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
 const token = (await readFile(tokenPath, "utf8")).trim();
 const port = Number(process.env.T3MOBILE_PORT ?? 8787);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid T3MOBILE_PORT");
+if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid T3MOBILE_PORT");
 const server = await startServer({ directory, token, port, command: process.env.T3MOBILE_CODEX_BIN ?? "codex" });
 console.log(`T3 Mobile backend: ws://127.0.0.1:${server.port}`);
 console.log(`Pairing credential: copy the contents of ${tokenPath} into the app. Keep this file private.`);

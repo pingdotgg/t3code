@@ -1,0 +1,13 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+  namespace 'expo.modules.t3runtime'
+  compileSdk rootProject.ext.compileSdkVersion
+  defaultConfig { minSdkVersion 29 }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'androidx.core:core-ktx:1.16.0'
+}

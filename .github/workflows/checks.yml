@@ -23,3 +23,43 @@ jobs:
       - run: npm run typecheck:mobile
       - run: npm test
       - run: npm run export:android --workspace @t3mobile/mobile
+
+  apk:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@v4
+        with:
+          path: .runtime-cache
+          key: android-runtime-${{ hashFiles('scripts/android-runtime.lock.json') }}
+      - run: npm ci
+      - run: npm run prepare:runtime
+      - run: python3 scripts/prepare-runtime-sources.py
+      - run: npx expo prebuild --platform android --no-install
+        working-directory: apps/mobile
+      - run: ./gradlew assembleRelease --no-daemon --max-workers=2
+        working-directory: apps/mobile/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3mobile-runtime-sources
+          path: artifacts/t3mobile-runtime-sources.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3mobile-arm64-preview
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14

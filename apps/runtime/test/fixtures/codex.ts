@@ -3,6 +3,9 @@ import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+if (process.argv.includes("--version")) { console.log("codex-cli 0.155.0"); process.exit(0); }
+if (process.argv.includes("login")) { console.error("Not logged in"); process.exit(1); }
+
 const home = process.env.FAKE_CODEX_HOME!;
 const threadsFile = join(home, "threads.json");
 let persisted: string[] = [];

@@ -25,11 +25,15 @@ export class Runtime {
   private codex: CodexProcess;
   private store: SessionStore;
   private command: string;
+  private commandPrefix: string[];
+  private env: NodeJS.ProcessEnv;
   private emit: (message: ServerMessage) => void;
   private closing = false;
 
   constructor(options: { directory: string; command: string; args?: string[]; env?: NodeJS.ProcessEnv; emit: (message: ServerMessage) => void }) {
     this.command = options.command;
+    this.commandPrefix = options.args ?? [];
+    this.env = options.env ?? process.env;
     this.emit = options.emit;
     this.store = new SessionStore(options.directory);
     this.codex = new CodexProcess({ command: options.command, args: options.args, env: options.env,
@@ -111,10 +115,15 @@ export class Runtime {
 
   async status(): Promise<RuntimeStatus> {
     try {
-      const { stdout } = await promisify(execFile)(this.command, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-      return { codexAvailable: true, version: stdout.trim(), error: null };
+      const { stdout } = await promisify(execFile)(this.command, [...this.commandPrefix, "--version"], { env: this.env, timeout: 5000, maxBuffer: 4096 });
+      let codexAuthenticated = false;
+      try {
+        await promisify(execFile)(this.command, [...this.commandPrefix, "login", "status"], { env: this.env, timeout: 5000, maxBuffer: 4096 });
+        codexAuthenticated = true;
+      } catch { /* Installation is usable; onboarding still needs sign-in. */ }
+      return { codexAvailable: true, codexAuthenticated, version: stdout.trim(), error: null };
     } catch (error) {
-      return { codexAvailable: false, version: null, error: `Codex is unavailable. Install it and log in from Termux. ${error instanceof Error ? error.message : String(error)}` };
+      return { codexAvailable: false, codexAuthenticated: false, version: null, error: `Codex is unavailable. Restart the app's runtime setup. ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 

@@ -11,7 +11,7 @@ export interface Session {
   messages: Message[]; tools: ToolItem[]; approvals: Approval[]; questions: UserInputRequest[];
   diff: string; error: string | null; fullAccess: boolean;
 }
-export interface RuntimeStatus { codexAvailable: boolean; version: string | null; error: string | null }
+export interface RuntimeStatus { codexAvailable: boolean; codexAuthenticated: boolean; version: string | null; error: string | null }
 export type ClientRequest =
   | { id: string; method: "status" | "sessions/list" }
   | { id: string; method: "session/create"; params: { cwd: string; fullAccess: boolean } }

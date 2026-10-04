@@ -1,75 +1,72 @@
 # T3 Mobile
 
-An Android interface for coding agents running on your phone through Termux.
-This fork reuses T3 Code's mobile presentation components, selectable Markdown, diff rendering, typography, palettes
-and Android Ghostty terminal renderer. It replaces T3's server and client runtime with
-our own local backend. Codex is the first integrated agent. This is an experimental first build; physical
-Android/Termux validation is still pending.
+An Android app for coding agents running on your phone. It reuses T3 Code's
+mobile presentation, Markdown, diffs, themes and terminal renderer, with our own
+backend and a bundled Termux-derived environment. Codex is installed by default.
+Users do not need Termux, a computer, npm commands or a pairing credential.
 
-## Run the backend in Termux
+This is an experimental ARM64 Android 10+ build. Native compilation and physical
+phone execution are separate checks; device validation is still pending.
 
-Use an Android ARM64 phone with Android 10 or later and a current Termux installation.
+## Use the app
+
+1. Install the preview APK. GitHub Actions builds upload it as
+   `t3mobile-arm64-preview` under the successful
+   [Mobile and runtime checks](https://github.com/screen-gd/t3mobile/actions/workflows/checks.yml)
+   run for `feat/mobile-termux-codex`. Download the artifact zip and install its APK.
+2. Open T3 Mobile. First launch verifies and installs the environment and Codex
+   from the APK. It starts the local backend and connects automatically.
+3. Tap **Get sign-in code**, then **Open sign-in page**. Complete Codex sign-in in
+   your browser using the displayed code. Return to the app.
+4. Create a session in the default private projects directory and send a prompt.
+   Responses, command output, changes, approvals and questions appear in the app.
+
+The app uses a notification to keep its local runtime available in the background.
+**Stop** in a conversation interrupts that turn. **Stop local runtime**, or Stop
+in the notification, shuts down the local backend. Reopen/start it to continue.
+Android can still stop background work; reconnect restores history and never
+silently replays an uncertain prompt.
+
+Projects, Codex credentials and session history live in the app's private home,
+outside runtime version folders. Restarting or upgrading the runtime preserves
+them. Uninstalling the app clears its private data.
+
+Sessions default to read-only. Full access is an explicit choice that lets Codex
+write files and execute commands without OS sandboxing; approval policy remains
+`untrusted`. Android sandbox support depends on the Codex build. The app never
+automatically escalates access after a sandbox error.
+
+## Build a preview APK
+
+Developer prerequisites: Node 22.18+, Python 3, `dpkg-deb`, Java 21 and an Android
+SDK. The preparation script downloads checksum-pinned inputs on the build machine.
+The resulting APK contains them; first launch needs no runtime download.
 
 ```sh
-pkg update
-pkg install nodejs-lts git
-npm install -g @mmmbuto/codex-cli-termux
-codex login
 git clone --branch feat/mobile-termux-codex https://github.com/screen-gd/t3mobile.git
-cd t3mobile/apps/runtime
-npm install --workspaces=false --omit=dev
-npm start
+cd t3mobile
+npm ci
+npm run prepare:runtime
+cd apps/mobile
+npx expo prebuild --platform android --no-install
+cd android
+./gradlew assembleRelease --no-daemon --max-workers=2
 ```
 
-Node 22.18 or newer is required. The backend runs `codex app-server` as a subprocess;
-there are no native Node addons, desktop SDKs or cloud relay dependencies.
-If your Codex binary has another name/path, set `T3MOBILE_CODEX_BIN` before starting.
-The community Termux Codex package is maintained at
-[DioNanos/codex-termux](https://github.com/DioNanos/codex-termux).
+The APK is at `apps/mobile/android/app/build/outputs/apk/release/app-release.apk`.
+When distributing it, also run `python3 scripts/prepare-runtime-sources.py` and
+provide the resulting `artifacts/t3mobile-runtime-sources.tar.gz` alongside the APK.
+CI publishes this as `t3mobile-runtime-sources` in the same run. It contains the
+bundled copyleft packages’ upstream sources, patches and pinned Termux recipes.
+Local/CI previews use the generated development signing configuration; configure
+your own release signing before store distribution. The `preview` EAS profile is
+also available; its post-install hook prepares the bundled environment.
 
-The backend listens on `127.0.0.1:8787`. On first start it creates a local pairing
-credential below `~/.t3mobile` with private file permissions. Follow the terminal's
-instructions to copy the credential into the app. Never share it: it grants control
-of Codex and its projects. `T3MOBILE_HOME` can select another data directory, and
-`T3MOBILE_PORT` can select another port.
-
-Keep project repositories in Termux's home directory, where git and executable
-permissions work normally. Android shared storage can behave differently.
-
-## Build the mobile app
-
-On a development computer:
-
-```sh
-npm install
-npm run dev:mobile
-# In another terminal, with an Android emulator/device and Android SDK configured:
-npm run android --workspace @t3mobile/mobile
-```
-
-A native development build is required; Expo Go does not contain the local terminal
-module. For a self-contained APK, use the `preview` profile in `apps/mobile/eas.json`
-with your own EAS account, or build a release locally with the Android SDK.
-
-In the app, connect to `ws://127.0.0.1:8787` and enter the backend's pairing credential.
-On an emulator connected to a backend on your development computer, use
-`adb reverse tcp:8787 tcp:8787` first. Select a project by its **Termux path**, then
-create a Codex session and send a prompt. Codex credentials stay in Termux.
-
-Sessions are read-only by default. The explicit full-access setting lets Codex write
-files and execute commands without OS sandboxing; command approval policy remains
-`untrusted`. Android sandbox capabilities vary by Codex build. Full access is never
-enabled automatically after a sandbox failure. Approval requests and agent questions
-appear in the conversation. Stop interrupts the active turn.
-
-The backend keeps conversations and diffs across restarts. A restarted backend marks
-unfinished turns interrupted; it does not silently rerun them. Keep Termux running
-while working. Android may stop background processes; reconnect restores stored
-history but cannot guarantee that an interrupted process continued.
+For UI development, use `npm run dev:mobile` with a native development build.
+Expo Go lacks the local native modules. `npm run android --workspace @t3mobile/mobile`
+prepares the runtime assets before building the development app.
 
 ## Development checks
-
-Run only the checks for the scope you changed:
 
 ```sh
 npm test
@@ -78,18 +75,29 @@ npm run typecheck:mobile
 npm run export:android --workspace @t3mobile/mobile
 ```
 
-The test suite runs the real mobile connection client against the real WebSocket
-backend with a fake external Codex process. It covers pairing, streamed responses,
-approvals, questions, Stop, crashes, reconnect/restart, and storage failures.
-It needs no Codex login. Android native/device behavior still needs phone validation.
+Behavior tests use the real mobile connection client and real WebSocket backend,
+temporary files and a fake external Codex process. They cover pairing, streaming,
+sign-in status, approvals, questions, Stop, crashes, reconnect/restart and storage
+failures. They do not require a Codex login or replace phone validation.
 
-Backend protocol: `packages/protocol`. Backend and Codex adapter: `apps/runtime`.
-Mobile interface and connection module: `apps/mobile`. Other agents are not enabled
-in this first implementation.
+The native runtime is `apps/mobile/modules/t3-runtime`; its installation assets
+are generated by `scripts/prepare-android-runtime.py` using
+`scripts/android-runtime.lock.json`. The backend is `apps/runtime` and the shared
+interface is `packages/protocol`. Other coding agents are not enabled yet.
+
+To update pinned inputs, run `python3 scripts/prepare-android-runtime.py --update-lock`
+then `python3 scripts/prepare-runtime-sources.py --update-lock`; source preparation
+checks that recipe versions match the bundled binaries.
+
+The backend can also run on a development machine with Codex installed using
+`npm run dev:runtime`. That is a developer tool, not required app onboarding.
 
 ## Attribution
 
-T3 Code's retained UI is MIT licensed; see `LICENSE`. The Android terminal renderer
-retains its upstream notices in `apps/mobile/modules/t3-terminal/THIRD_PARTY_NOTICES.md`.
-Matt Pocock's installed skills and source revisions are recorded in `.agents/skills`
-and `skills-lock.json`.
+T3 Code's retained UI is MIT licensed; see `LICENSE`. The terminal renderer's
+notices remain in `apps/mobile/modules/t3-terminal/THIRD_PARTY_NOTICES.md`.
+Embedded environment inputs and source references are recorded in
+`apps/mobile/modules/t3-runtime/THIRD_PARTY_NOTICES.md` and the runtime lock file.
+The bundled Codex is the Apache-2.0 Android port from
+[DioNanos/codex-termux](https://github.com/DioNanos/codex-termux).
+Matt Pocock's installed workflow skills are in `.agents/skills` and `skills-lock.json`.

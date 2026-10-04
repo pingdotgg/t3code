@@ -1,0 +1,1 @@
+{ "platforms": ["android"], "android": { "modules": ["expo.modules.t3runtime.T3RuntimeModule"] } }

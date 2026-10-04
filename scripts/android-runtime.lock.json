@@ -1,0 +1,713 @@
+{
+  "architecture": "aarch64",
+  "termuxSourceRevision": "69f6aa24fb080ac98df053d84b1da934a4c0d629",
+  "licenses": [
+    {
+      "name": "Node-LICENSE",
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.18.0/LICENSE",
+      "sha256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5"
+    },
+    {
+      "name": "GPL-2.0",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/GPL-2.0-only.txt",
+      "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3"
+    },
+    {
+      "name": "GPL-3.0",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/GPL-3.0-only.txt",
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0"
+    },
+    {
+      "name": "LGPL-2.0",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/LGPL-2.0-only.txt",
+      "sha256": "86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8"
+    },
+    {
+      "name": "Termux-exec-MIT",
+      "url": "https://raw.githubusercontent.com/termux/termux-exec-package/v2.5.0/licenses/termux__termux-exec-package__MIT.md",
+      "sha256": "b93c76156ee9f6d7085bb2645360b10db46f6e624be2a28d2c39957f8b724766"
+    },
+    {
+      "name": "LGPL-2.1",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/LGPL-2.1-only.txt",
+      "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2"
+    },
+    {
+      "name": "LGPL-3.0",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/LGPL-3.0-only.txt",
+      "sha256": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1"
+    },
+    {
+      "name": "Termux-exec-Apache-2.0",
+      "url": "https://raw.githubusercontent.com/termux/termux-exec-package/v2.5.0/licenses/termux__termux-exec-package__Apache-2.0.md",
+      "sha256": "427d58e4a192087e1c38450d4fe696dfccc24363e4252337a0189d142779d3a9"
+    },
+    {
+      "name": "Termux-core-MIT",
+      "url": "https://raw.githubusercontent.com/termux/termux-core-package/v0.4.0/LICENSE",
+      "sha256": "7f9cda92a6799e88ce9af9d90da63e66c15c6af0032a4ab67ef66ae88e21178a"
+    }
+  ],
+  "packages": [
+    {
+      "name": "attr",
+      "version": "2.6.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/a/attr/attr_2.6.0_aarch64.deb",
+      "sha256": "50a4d1238564a49985d398061ef61a0020348ddc84bd296e6450c5f0bdca2435",
+      "homepage": "http://savannah.nongnu.org/projects/attr/"
+    },
+    {
+      "name": "bash",
+      "version": "5.3.20",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/b/bash/bash_5.3.20_aarch64.deb",
+      "sha256": "26b5b3ab5b0ac0e3b372ac1e7ddd89270519c1eb25b88fe4175485c2de8086b2",
+      "homepage": "https://www.gnu.org/software/bash/"
+    },
+    {
+      "name": "bzip2",
+      "version": "1.0.8-8",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/b/bzip2/bzip2_1.0.8-8_aarch64.deb",
+      "sha256": "7b904d820c34b6c043067ca3c8cb67465413ea5eae3f529a0e05a9ae0df2b89a",
+      "homepage": "http://www.bzip.org/"
+    },
+    {
+      "name": "c-ares",
+      "version": "1.34.8",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/c/c-ares/c-ares_1.34.8_aarch64.deb",
+      "sha256": "7681fc23e822d7988ba8b2adf3468f93ae68f724dda365cff1385096a9fa87e6",
+      "homepage": "https://c-ares.org/"
+    },
+    {
+      "name": "ca-certificates",
+      "version": "1:2026.09.25",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/c/ca-certificates/ca-certificates_1:2026.09.25_all.deb",
+      "sha256": "57fab24bf4561bfdd35afe71bc1929914e51c35458cfd1fca2b15e54bc8df7af",
+      "homepage": "https://curl.se/docs/caextract.html"
+    },
+    {
+      "name": "coreutils",
+      "version": "9.11-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/c/coreutils/coreutils_9.11-1_aarch64.deb",
+      "sha256": "5fe326e19256ac2f0a2b278e780e26a848746a43ff37105cbdeddd4c527ccf57",
+      "homepage": "https://www.gnu.org/software/coreutils/"
+    },
+    {
+      "name": "curl",
+      "version": "8.22.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/c/curl/curl_8.22.0_aarch64.deb",
+      "sha256": "19d2aedca5456cecfd3202d48dee7bd2f44584ffc036aa9fde4174c31d0b4af6",
+      "homepage": "https://curl.se/"
+    },
+    {
+      "name": "dash",
+      "version": "0.5.12-2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/d/dash/dash_0.5.12-2_aarch64.deb",
+      "sha256": "47d1ffce6c74fd7b3201162f26e7449f69c96bbd0aee4bf60e80ea2ba6708839",
+      "homepage": "http://gondor.apana.org.au/~herbert/dash/"
+    },
+    {
+      "name": "dialog",
+      "version": "1.3-20260721-0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/d/dialog/dialog_1.3-20260721-0_aarch64.deb",
+      "sha256": "f7c96ea214b33652b8e2b3e2f2797dbc0371be5cac5dfe341c57c0a4927bdd78",
+      "homepage": "https://invisible-island.net/dialog/"
+    },
+    {
+      "name": "diffutils",
+      "version": "3.12-2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/d/diffutils/diffutils_3.12-2_aarch64.deb",
+      "sha256": "ab039ac163550ebb73a601f104da2dfb8bbd26f028086821c48edaa2384e68d2",
+      "homepage": "https://www.gnu.org/software/diffutils/"
+    },
+    {
+      "name": "findutils",
+      "version": "4.11.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/f/findutils/findutils_4.11.0_aarch64.deb",
+      "sha256": "6922198895b41394aad417b9793c3bc9b336a4d83bae310346fc1a2ca97abbd3",
+      "homepage": "https://www.gnu.org/software/findutils/"
+    },
+    {
+      "name": "gawk",
+      "version": "5.3.2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/g/gawk/gawk_5.3.2_aarch64.deb",
+      "sha256": "4e5c3163cf0e845434f25560db21920bf7970a7d7fb4462bd73360258c879717",
+      "homepage": "https://www.gnu.org/software/gawk/"
+    },
+    {
+      "name": "git",
+      "version": "2.56.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/g/git/git_2.56.0_aarch64.deb",
+      "sha256": "dcdd22c5fdf7bdb5b825a03a17441d43858ed8515fea57fbb37eb42e733ca82f",
+      "homepage": "https://git-scm.com/"
+    },
+    {
+      "name": "grep",
+      "version": "3.12-3",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/g/grep/grep_3.12-3_aarch64.deb",
+      "sha256": "a2819b49c621b61567e39c5c647d5ed6fe9d51eab71ed73eebf18be76719457d",
+      "homepage": "https://www.gnu.org/software/grep/"
+    },
+    {
+      "name": "gzip",
+      "version": "1.15",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/g/gzip/gzip_1.15_aarch64.deb",
+      "sha256": "0c9806c03dedf51a753f1dc7d93e016fb9e6c8d522d0b1418fd2209244985c84",
+      "homepage": "https://www.gnu.org/software/gzip/"
+    },
+    {
+      "name": "less",
+      "version": "710",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/l/less/less_710_aarch64.deb",
+      "sha256": "bff261b48553bcde3a93e0d7c2a51dbb1b7e5025767a1ee9a1cb4459a3789499",
+      "homepage": "https://www.greenwoodsoftware.com/less/"
+    },
+    {
+      "name": "libacl",
+      "version": "2.4.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libacl/libacl_2.4.0_aarch64.deb",
+      "sha256": "cb620e33405e74b566cb05740dca488705cf0c475ec7f795fa333412211b6d92",
+      "homepage": "http://savannah.nongnu.org/projects/acl"
+    },
+    {
+      "name": "libandroid-glob",
+      "version": "0.6-3",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-glob/libandroid-glob_0.6-3_aarch64.deb",
+      "sha256": "2276ae8adedf0db76c2f4ffc94cc4cceb2f4f5d78e021b54e2e046d1233e7826",
+      "homepage": "https://man7.org/linux/man-pages/man3/glob.3.html"
+    },
+    {
+      "name": "libandroid-posix-semaphore",
+      "version": "0.1-4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-posix-semaphore/libandroid-posix-semaphore_0.1-4_aarch64.deb",
+      "sha256": "0efa8677a0166315ba4e685863712eba0ca0a1732827492f38226e2723730c7a",
+      "homepage": "https://man7.org/linux/man-pages/man7/sem_overview.7.html"
+    },
+    {
+      "name": "libandroid-selinux",
+      "version": "14.0.0.11-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-selinux/libandroid-selinux_14.0.0.11-1_aarch64.deb",
+      "sha256": "00afd8c34087c2864737b51fd9d104dc5e955f6ec3c0f50c0c7ef5b4a56866b9",
+      "homepage": "https://selinuxproject.org"
+    },
+    {
+      "name": "libandroid-support",
+      "version": "29-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-support/libandroid-support_29-1_aarch64.deb",
+      "sha256": "f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517",
+      "homepage": "https://github.com/termux/libandroid-support"
+    },
+    {
+      "name": "libbz2",
+      "version": "1.0.8-8",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libb/libbz2/libbz2_1.0.8-8_aarch64.deb",
+      "sha256": "4335d7f060650b0aabef545d1334c2f9f280223d5962e13c24a00ec934b794ba",
+      "homepage": "http://www.bzip.org/"
+    },
+    {
+      "name": "libc++",
+      "version": "30",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libc/libc++/libc++_30_aarch64.deb",
+      "sha256": "53d0b84a7ba7459024257cb94d5b136fe13ef858567f65a8064b35950799f2ca",
+      "homepage": "https://libcxx.llvm.org/"
+    },
+    {
+      "name": "libcap-ng",
+      "version": "2:0.9.6",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libc/libcap-ng/libcap-ng_2:0.9.6_aarch64.deb",
+      "sha256": "68e8e2a95e5ac061e40717654fe2014042d88bfa2b85455713ed992eb694f89d",
+      "homepage": "https://people.redhat.com/sgrubb/libcap-ng/"
+    },
+    {
+      "name": "libcurl",
+      "version": "8.22.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libc/libcurl/libcurl_8.22.0_aarch64.deb",
+      "sha256": "e780d925d977c32a3cfe6a2c7d340f0726618786deee98b0cb8b601efb93a8c9",
+      "homepage": "https://curl.se/"
+    },
+    {
+      "name": "libexpat",
+      "version": "2.8.5",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libe/libexpat/libexpat_2.8.5_aarch64.deb",
+      "sha256": "3b2c9b061fa890b69b88d2f5dd993efba902d678fe8e1990268892d1faf15e5e",
+      "homepage": "https://libexpat.github.io/"
+    },
+    {
+      "name": "libgmp",
+      "version": "6.3.0-2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libg/libgmp/libgmp_6.3.0-2_aarch64.deb",
+      "sha256": "5a3c1325638946ca212ddcb89bffb2c4459b4c90757d6e69f820e176534037fa",
+      "homepage": "https://gmplib.org/"
+    },
+    {
+      "name": "libiconv",
+      "version": "1.19",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libi/libiconv/libiconv_1.19_aarch64.deb",
+      "sha256": "fe9481b1dc101c6c3552943f25435109fd522aecc615ae49594f9fbee863bb37",
+      "homepage": "https://www.gnu.org/software/libiconv/"
+    },
+    {
+      "name": "libicu",
+      "version": "78.3",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libi/libicu/libicu_78.3_aarch64.deb",
+      "sha256": "f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276",
+      "homepage": "http://site.icu-project.org/home"
+    },
+    {
+      "name": "liblzma",
+      "version": "5.8.4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libl/liblzma/liblzma_5.8.4_aarch64.deb",
+      "sha256": "44e95e6e60dddb3705e60a344a4f009a1085a210797342b721eaff41b44033c0",
+      "homepage": "https://tukaani.org/xz/"
+    },
+    {
+      "name": "libmpfr",
+      "version": "4.2.1-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libm/libmpfr/libmpfr_4.2.1-1_aarch64.deb",
+      "sha256": "5edf5a36e6f4773dc827d37ea515db27c242d3631f3030188a3324be2e00e4c6",
+      "homepage": "https://www.mpfr.org/"
+    },
+    {
+      "name": "libnghttp2",
+      "version": "1.70.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libn/libnghttp2/libnghttp2_1.70.0_aarch64.deb",
+      "sha256": "ab2e0a3408fe4934ffdf774bd5049a265db2e6db62dcb651baecbecfb81e3f0b",
+      "homepage": "https://nghttp2.org/"
+    },
+    {
+      "name": "libnghttp3",
+      "version": "1.18.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libn/libnghttp3/libnghttp3_1.18.0_aarch64.deb",
+      "sha256": "0be2ee96def3608afaf24eb0b4b55f3484a37c95ea21bb1d6d85c7d543467603",
+      "homepage": "https://nghttp2.org/nghttp3/"
+    },
+    {
+      "name": "libngtcp2",
+      "version": "1.25.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libn/libngtcp2/libngtcp2_1.25.0_aarch64.deb",
+      "sha256": "f471bad7f4329b6b0b4aedf124e0a23a35f6ac99bfbae73304136f8bfd570fc3",
+      "homepage": "https://github.com/ngtcp2/ngtcp2"
+    },
+    {
+      "name": "libsmartcols",
+      "version": "2.42.4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libs/libsmartcols/libsmartcols_2.42.4_aarch64.deb",
+      "sha256": "ee0bed102b2262e443d7f54c78f672b8c11cb0f78b982ed093dd92e73a683e84",
+      "homepage": "https://en.wikipedia.org/wiki/Util-linux"
+    },
+    {
+      "name": "libsqlite",
+      "version": "3.53.4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libs/libsqlite/libsqlite_3.53.4_aarch64.deb",
+      "sha256": "0e909ce0d50fe123305446cd22e0c5edf535d40344b9b065fbdcdee52f53198d",
+      "homepage": "https://www.sqlite.org"
+    },
+    {
+      "name": "libssh2",
+      "version": "1.11.1-2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/libs/libssh2/libssh2_1.11.1-2_aarch64.deb",
+      "sha256": "1add4e0a926b848814e7e2f1817ea28b123c54cabd5bbc4e5cfd65291cbad84e",
+      "homepage": "https://www.libssh2.org"
+    },
+    {
+      "name": "ncurses",
+      "version": "6.6.20260307+really6.5.20250830",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/n/ncurses/ncurses_6.6.20260307+really6.5.20250830_aarch64.deb",
+      "sha256": "f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99",
+      "homepage": "https://invisible-island.net/ncurses/"
+    },
+    {
+      "name": "nodejs-lts",
+      "version": "24.18.0-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/n/nodejs-lts/nodejs-lts_24.18.0-1_aarch64.deb",
+      "sha256": "490f4d08c45b25a7ea7db6ee466ebb3ee61f07083260b85332704ed018f59a87",
+      "homepage": "https://nodejs.org/"
+    },
+    {
+      "name": "npm",
+      "version": "11.20.0",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/n/npm/npm_11.20.0_all.deb",
+      "sha256": "a2775653a0626749138ccd6e37a7b63239f36a9e3c62a9e6740818ca4b2d088b",
+      "homepage": "https://docs.npmjs.com/cli/"
+    },
+    {
+      "name": "openssl",
+      "version": "1:3.6.5",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/o/openssl/openssl_1:3.6.5_aarch64.deb",
+      "sha256": "a2fb7856875e63ef6b90442752e05974813372c3ca86d2513a78ea43c67a0f8b",
+      "homepage": "https://www.openssl.org/"
+    },
+    {
+      "name": "pcre2",
+      "version": "10.49",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/p/pcre2/pcre2_10.49_aarch64.deb",
+      "sha256": "c27995e5f52b8ecc9b8b3e662eb08e49f82a18bfd3f34343936acc7b23964724",
+      "homepage": "https://pcre2project.github.io/pcre2/"
+    },
+    {
+      "name": "procps",
+      "version": "4.0.7-2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/p/procps/procps_4.0.7-2_aarch64.deb",
+      "sha256": "4dbc101282481bba10499c1f449bcf8d6ae2986872155dc09b643a70326fa1ad",
+      "homepage": "https://gitlab.com/procps-ng/procps"
+    },
+    {
+      "name": "psmisc",
+      "version": "23.7-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/p/psmisc/psmisc_23.7-1_aarch64.deb",
+      "sha256": "99d0db5ba934e7fa38e33bebbda82c78be59b90e4ba85a74a6dabc3d5b5939b0",
+      "homepage": "https://gitlab.com/psmisc/psmisc"
+    },
+    {
+      "name": "readline",
+      "version": "8.3.6",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/r/readline/readline_8.3.6_aarch64.deb",
+      "sha256": "616cc73009bc0223f61caed8dd09455714455aa5ea5e180126e2f69c4c775136",
+      "homepage": "https://tiswww.case.edu/php/chet/readline/rltop.html"
+    },
+    {
+      "name": "resolv-conf",
+      "version": "1.3",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/r/resolv-conf/resolv-conf_1.3_aarch64.deb",
+      "sha256": "ab541abac8e0c81709cd7ca4a02bcfa0d60ba1f4bfe7fd6dce4a694a4a9dfffa",
+      "homepage": "https://man7.org/linux/man-pages/man5/resolv.conf.5.html"
+    },
+    {
+      "name": "sed",
+      "version": "4.10",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/s/sed/sed_4.10_aarch64.deb",
+      "sha256": "9c514efdb527b5daef2d754fdbddd783f4c1e89382f1b56781120d1da99cee80",
+      "homepage": "https://www.gnu.org/software/sed/"
+    },
+    {
+      "name": "tar",
+      "version": "1.35-3",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/tar/tar_1.35-3_aarch64.deb",
+      "sha256": "a3847bc259b8654f621d36fa6345b1d6e93932e60e315e526eac2e3ecc5549ec",
+      "homepage": "https://www.gnu.org/software/tar/"
+    },
+    {
+      "name": "termux-am",
+      "version": "0.8.1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/termux-am/termux-am_0.8.1_all.deb",
+      "sha256": "ee7eed85ec45fbccc6f462578f0d40f5899422fe202d1d68942334a018364cba",
+      "homepage": "https://github.com/termux/TermuxAm"
+    },
+    {
+      "name": "termux-am-socket",
+      "version": "1.5.0-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/termux-am-socket/termux-am-socket_1.5.0-1_aarch64.deb",
+      "sha256": "dcf53ccb7e1ac46d50e1de9d5e182b748157ba53fbaf47e7a2d50d78447c550b",
+      "homepage": "https://github.com/termux/termux-am-socket"
+    },
+    {
+      "name": "termux-core",
+      "version": "0.4.0-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/termux-core/termux-core_0.4.0-1_aarch64.deb",
+      "sha256": "4f809d70eff0afa8c1beccbf4b5f65e0f59207867462a3a2f66b3e2fcd64b057",
+      "homepage": "https://github.com/termux/termux-core-package"
+    },
+    {
+      "name": "termux-exec",
+      "version": "1:2.5.0-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/termux-exec/termux-exec_1:2.5.0-1_aarch64.deb",
+      "sha256": "fd6a06a6a74c6fba2d1cec56dc8b5726e6488918322b06fd19fe5cff34b28a5d",
+      "homepage": "https://github.com/termux/termux-exec-package"
+    },
+    {
+      "name": "termux-tools",
+      "version": "1.46.0+really1.45.0-1",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/t/termux-tools/termux-tools_1.46.0+really1.45.0-1_aarch64.deb",
+      "sha256": "970fb05a835169f218ea73479eda0f2574f5f70c2af54119f42f77e97cee98e1",
+      "homepage": "https://termux.dev/"
+    },
+    {
+      "name": "util-linux",
+      "version": "2.42.4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/u/util-linux/util-linux_2.42.4_aarch64.deb",
+      "sha256": "c670b2ef280c2be220c720faff335da2e91de95deddaeffecd482392e4d781a1",
+      "homepage": "https://en.wikipedia.org/wiki/Util-linux"
+    },
+    {
+      "name": "xz-utils",
+      "version": "5.8.4",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/x/xz-utils/xz-utils_5.8.4_aarch64.deb",
+      "sha256": "c26e35d5393d4ad59d7bfbac93570d418996e69bc160458bee0e165844ae56e8",
+      "homepage": "https://tukaani.org/xz/"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "url": "https://packages.termux.dev/apt/termux-main/pool/main/z/zlib/zlib_1.3.2_aarch64.deb",
+      "sha256": "75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9",
+      "homepage": "https://www.zlib.net/"
+    }
+  ],
+  "codex": {
+    "version": "0.155.0",
+    "url": "https://registry.npmjs.org/@mmmbuto/codex-cli-termux/-/codex-cli-termux-0.155.0.tgz",
+    "integrity": "sha512-Xxvve7ZBCLwQyQURHcz/+/Zj52tTFs+XeEbtELBm8Uf4pEMdYdm6zEC8RPiDIK436tp4ZXv7U7C+na3UmtK3nw==",
+    "source": "https://github.com/DioNanos/codex-termux/tree/v0.155.0"
+  },
+  "sourceInputs": [
+    {
+      "name": "termux-build-recipes.tar.gz",
+      "url": "https://codeload.github.com/termux/termux-packages/tar.gz/69f6aa24fb080ac98df053d84b1da934a4c0d629",
+      "sha256": "7516b5a031e61ac86ba769c7e34a9f4dd385bb7e59c9dffc9b26dcfd70d9190b"
+    },
+    {
+      "name": "attr-source.gz",
+      "url": "https://download.savannah.gnu.org/releases/attr/attr-2.6.0.tar.gz",
+      "sha256": "d42fa374513180bb48cb11a46696f488240e5124ff1e6ad88b0abff706985612"
+    },
+    {
+      "name": "bash-source.gz",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3.tar.gz",
+      "sha256": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
+    },
+    {
+      "name": "bash53-001.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-001",
+      "sha256": "1f608434364af86b9b45c8b0ea3fb3b165fb830d27697e6cdfc7ac17dee3287f"
+    },
+    {
+      "name": "bash53-002.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-002",
+      "sha256": "e385548a00130765ec7938a56fbdca52447ab41fabc95a25f19ade527e282001"
+    },
+    {
+      "name": "bash53-003.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-003",
+      "sha256": "f245d9c7dc3f5a20d84b53d249334747940936f09dc97e1dcb89fc3ab37d60ed"
+    },
+    {
+      "name": "bash53-004.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-004",
+      "sha256": "9591d245045529f32f0812f94180b9d9ce9023f5a765c039b852e5dfc99747d0"
+    },
+    {
+      "name": "bash53-005.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-005",
+      "sha256": "cca1ef52dbbf433bc98e33269b64b2c814028efe2538be1e2c9a377da90bc99d"
+    },
+    {
+      "name": "bash53-006.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-006",
+      "sha256": "29119addefed8eff91ae37fd51822c31780ee30d4a28376e96002706c995ff10"
+    },
+    {
+      "name": "bash53-007.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-007",
+      "sha256": "c0976bbfffa1453c7cfdd62058f206a318568ff2d690f5d4fa048793fa3eb299"
+    },
+    {
+      "name": "bash53-008.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-008",
+      "sha256": "097cd723cbfb8907674ac32214063a3fd85282657ec5b4e544d2c0f719653fb4"
+    },
+    {
+      "name": "bash53-009.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-009",
+      "sha256": "eee30fe78a4b0cb2fe20e010e00308899cfc613e0774ebb3c8557a1552f24f8c"
+    },
+    {
+      "name": "bash53-010.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-010",
+      "sha256": "cf76f1cce2ea300c18bff9f002d21f280cc931acd17c28518110b93fe6e72569"
+    },
+    {
+      "name": "bash53-011.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-011",
+      "sha256": "0298df8f5ea2a31d3be43ed7d269c5b3c7c342dd5b570bea7f64d66dcbbe7531"
+    },
+    {
+      "name": "bash53-012.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-012",
+      "sha256": "d71379b39bebaedaf123414414e77fb458a0a43b9ad3116594c6df7ca6754573"
+    },
+    {
+      "name": "bash53-013.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-013",
+      "sha256": "042f9cda967e24bf4211944697441e93d06ff42b4b998629a98a1b249279f200"
+    },
+    {
+      "name": "bash53-014.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-014",
+      "sha256": "bd4360b401d38507e358783dcad8536a99c6789f0d3a5bd0cfb8c4a34144696c"
+    },
+    {
+      "name": "bash53-015.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-015",
+      "sha256": "55b79ceee2fc27f6767eed697e939a7eb2fe2a28c01556bd75f18d581014f46e"
+    },
+    {
+      "name": "bash53-016.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-016",
+      "sha256": "9ea29b266b7d24cb34d0ff3f1c4631e4d527bfe2d1ef15d17cdb924bf31ef767"
+    },
+    {
+      "name": "bash53-017.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-017",
+      "sha256": "443b927b45c1558ca72052410f8b8f6e5152b617ed707061a2781d4375b0d1c3"
+    },
+    {
+      "name": "bash53-018.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-018",
+      "sha256": "ae715d76c50341d7d7095e9a8d2eeed1ca9546152c2ac7289206f90cf30ac697"
+    },
+    {
+      "name": "bash53-019.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-019",
+      "sha256": "a25c581e4d0057dea3833918438a930e2e86ee4c6dc17fe15267b7f04cbc4e3d"
+    },
+    {
+      "name": "bash53-020.patch",
+      "url": "https://mirrors.kernel.org/gnu/bash/bash-5.3-patches/bash53-020",
+      "sha256": "df217ed3a9122aa2286d9b67bbe348661b6a9db262b580c29150dae55d532896"
+    },
+    {
+      "name": "coreutils-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/coreutils/coreutils-9.11.tar.xz",
+      "sha256": "394024eda0a5955217ceda9cd1201e65dc8fa3aa29c2951135a49521d57c3cc3"
+    },
+    {
+      "name": "dialog-source.tgz",
+      "url": "https://invisible-island.net/archives/dialog/dialog-1.3-20260721.tgz",
+      "sha256": "62bdf59057d4f760a1cc2217827f07887b4a3eebf694c25eacd4803d2171cdc6"
+    },
+    {
+      "name": "diffutils-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/diffutils/diffutils-3.12.tar.xz",
+      "sha256": "7c8b7f9fc8609141fdea9cece85249d308624391ff61dedaf528fcb337727dfd"
+    },
+    {
+      "name": "findutils-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/findutils/findutils-4.11.0.tar.xz",
+      "sha256": "bfd19cb06cc71f3352d567e90284d8cdac02ac89774bbeadf0b533b0c11432fd"
+    },
+    {
+      "name": "gawk-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/gawk/gawk-5.3.2.tar.xz",
+      "sha256": "f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc"
+    },
+    {
+      "name": "git-source.xz",
+      "url": "https://mirrors.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz",
+      "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
+    },
+    {
+      "name": "grep-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/grep/grep-3.12.tar.xz",
+      "sha256": "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
+    },
+    {
+      "name": "gzip-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/gzip/gzip-1.15.tar.xz",
+      "sha256": "9aa0cc780dec156b8282844833b342ab7cb08c25d2cd9a1869cdd0df31deff48"
+    },
+    {
+      "name": "less-source.gz",
+      "url": "https://www.greenwoodsoftware.com/less/less-710.tar.gz",
+      "sha256": "d1008fb78dcae1323ddab664bcb352a61f022b1b131bd8018548e021d975ec7a"
+    },
+    {
+      "name": "libacl-source.gz",
+      "url": "https://download.savannah.gnu.org/releases/acl/acl-2.4.0.tar.gz",
+      "sha256": "73c853c3d44e1f693e5a96a986f1bd19d3d0dac2c7d453e796177774bc4e5f6a"
+    },
+    {
+      "name": "libcap-ng-source.gz",
+      "url": "https://github.com/stevegrubb/libcap-ng/archive/refs/tags/v0.9.6.tar.gz",
+      "sha256": "399040138e0ca62fa2bcabd63da9af4431a246ef7a654561a0ca3cb00010a539"
+    },
+    {
+      "name": "libgmp-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
+    },
+    {
+      "name": "libiconv-source.gz",
+      "url": "https://mirrors.kernel.org/gnu/libiconv/libiconv-1.19.tar.gz",
+      "sha256": "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6"
+    },
+    {
+      "name": "liblzma-source.xz",
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.xz",
+      "sha256": "4ce24038fd4221e0d13bc1a2de7a4db56e90b92b3bf75321f6c14be73f65de4b"
+    },
+    {
+      "name": "libmpfr-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/mpfr/mpfr-4.2.1.tar.xz",
+      "sha256": "277807353a6726978996945af13e52829e3abd7a9a5b7fb2793894e18f1fcbb2"
+    },
+    {
+      "name": "util-linux-source.xz",
+      "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.4.tar.xz",
+      "sha256": "fbd62a100ab7bb8746ba0661255c3c48185b1e9021507c624da01fbc696330ec"
+    },
+    {
+      "name": "procps-source.xz",
+      "url": "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.7.tar.xz",
+      "sha256": "9d2021f47a4501c667862c9942a92d1953694b21d11bcd1702e83eb594e3d67d"
+    },
+    {
+      "name": "psmisc-source.xz",
+      "url": "https://downloads.sourceforge.net/project/psmisc/psmisc/psmisc-23.7.tar.xz",
+      "sha256": "58c55d9c1402474065adae669511c191de374b0871eec781239ab400b907c327"
+    },
+    {
+      "name": "readline-source.gz",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3.tar.gz",
+      "sha256": "fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc"
+    },
+    {
+      "name": "readline83-001.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-001",
+      "sha256": "21f0a03106dbe697337cd25c70eb0edbaa2bdb6d595b45f83285cdd35bac84de"
+    },
+    {
+      "name": "readline83-002.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-002",
+      "sha256": "e27364396ba9f6debf7cbaaf1a669e2b2854241ae07f7eca74ca8a8ba0c97472"
+    },
+    {
+      "name": "readline83-003.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-003",
+      "sha256": "72dee13601ce38f6746eb15239999a7c56f8e1ff5eb1ec8153a1f213e4acdb29"
+    },
+    {
+      "name": "readline83-004.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-004",
+      "sha256": "1f189c4566aa35950964647b9ec3be1a821e42b86048129c63eb7f9d4d2f5a74"
+    },
+    {
+      "name": "readline83-005.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-005",
+      "sha256": "5481adbe161c9f6ba972c74db9e18c7aa351d3df3035cc4a673a1aa06247d1c6"
+    },
+    {
+      "name": "readline83-006.patch",
+      "url": "https://mirrors.kernel.org/gnu/readline/readline-8.3-patches/readline83-006",
+      "sha256": "4ebd261a608287796e171af0ea9af5a1e3122e46672accda2484b6698c47c1a4"
+    },
+    {
+      "name": "sed-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/sed/sed-4.10.tar.xz",
+      "sha256": "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
+    },
+    {
+      "name": "tar-source.xz",
+      "url": "https://mirrors.kernel.org/gnu/tar/tar-1.35.tar.xz",
+      "sha256": "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16"
+    },
+    {
+      "name": "termux-am-socket-source.gz",
+      "url": "https://github.com/termux/termux-am-socket/archive/refs/tags/1.5.0.tar.gz",
+      "sha256": "5175023c7fd675492451a72d06b75c772f257685b69fe117227bae5a5e6f5494"
+    },
+    {
+      "name": "termux-tools-source.gz",
+      "url": "https://github.com/termux/termux-tools/archive/refs/tags/v1.45.0.tar.gz",
+      "sha256": "1ae29b1b875d95cc626dae323b45a2ace759969862d96094b2fa6d13bffe20d2"
+    }
+  ]
+}

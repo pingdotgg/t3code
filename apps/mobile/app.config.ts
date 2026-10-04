@@ -9,7 +9,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-dev-client", "expo-secure-store",
     "expo-font",
-    ["expo-build-properties", { android: { minSdkVersion: 29 } }],
+    ["expo-build-properties", { android: { minSdkVersion: 29, buildArchs: ["arm64-v8a"] } }],
     "./plugins/withAndroidCleartextTraffic.cjs",
   ],
 };

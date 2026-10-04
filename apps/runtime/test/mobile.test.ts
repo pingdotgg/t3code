@@ -5,6 +5,14 @@ import { rename, rm, writeFile } from "node:fs/promises";
 import type { Session } from "../../../packages/protocol/src/index.ts";
 import { app, TOKEN } from "./app.ts";
 
+test("an installed Codex without credentials shows that sign-in is needed", async (t) => {
+  const mobile = await app(t);
+  const status = await mobile.client.request({ method: "status" }) as { codexAvailable: boolean; codexAuthenticated: boolean; version: string };
+  assert.equal(status.codexAvailable, true);
+  assert.equal(status.version, "codex-cli 0.155.0");
+  assert.equal(status.codexAuthenticated, false);
+});
+
 test("Android pairing accepts its loopback origin and rejects a wrong credential or unrelated origin", async (t) => {
   const mobile = await app(t);
   assert.deepEqual(await mobile.client.request({ method: "sessions/list" }), []);

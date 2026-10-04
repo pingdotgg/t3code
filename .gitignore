@@ -47,3 +47,7 @@ node_modules/
 .pnpm-store/
 apps/mobile/android/
 apps/mobile/ios/
+.runtime-cache/
+apps/mobile/modules/t3-runtime/android/src/main/assets/t3-runtime/
+
+artifacts/t3mobile-runtime-sources.tar.gz

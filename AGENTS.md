@@ -1,6 +1,6 @@
 # T3 Mobile
 
-This fork ships an Android interface and its own Termux backend. Only the mobile
+This fork ships an Android interface and its own bundled Termux-derived runtime. Only the mobile
 presentation is retained from T3 Code; do not reintroduce T3's server, client runtime,
 web, desktop, relay, authentication or provider SDKs.
 
@@ -9,7 +9,12 @@ web, desktop, relay, authentication or provider SDKs.
 - Backend: `apps/runtime`, Node 22.18+, TypeScript executed by Node, `ws` only.
 - Shared mobile/backend interface: `packages/protocol`.
 - UI: `apps/mobile`, Expo/React Native, retained T3 components and theme tokens.
-- Keep credentials in Termux; the mobile pairing credential goes in SecureStore.
+- Keep credentials and pairing files in the app's private home directory. Pair
+  the mobile UI automatically; users must not install a separate terminal app.
+- Embedded runtime: `apps/mobile/modules/t3-runtime`. Its public interface owns
+  installation, startup, sign-in and stopping. Keep projects outside version folders.
+- Runtime inputs are pinned in `scripts/android-runtime.lock.json`; build APK
+  assets with `npm run prepare:runtime`. Do not commit downloaded binaries.
 - Bind the backend to loopback. Spawn CLIs with argument arrays, never shell strings.
 - Do not write to `~/.t3/userdata` or any other existing application's state.
 - Never kill processes by pattern. Stop only processes started and tracked by this task.

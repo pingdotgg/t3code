@@ -13,6 +13,7 @@
     "typecheck:runtime": "npm run typecheck --workspace @t3mobile/runtime",
     "typecheck:mobile": "npm run typecheck --workspace @t3mobile/mobile",
     "test": "npm run test --workspace @t3mobile/runtime",
+    "prepare:runtime": "python3 scripts/prepare-android-runtime.py",
     "postinstall": "patch-package"
   },
   "engines": {
