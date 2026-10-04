@@ -89,6 +89,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerTasksBadge } from "./ComposerTasksBadge";
+import { handleComposerPaste } from "./composerClipboard";
 import {
   COPILOT_COMPLETION_TOAST_DESCRIPTION,
   COPILOT_COMPLETION_TOAST_TITLE,
@@ -2272,18 +2273,10 @@ export const ChatComposer = memo(
       return true;
     };
     const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-      if (event.defaultPrevented) return;
-      const files = Array.from(event.clipboardData.files);
-      if (files.length === 0) return;
-      // Queued edits keep normal text paste, but cannot import files into the separate draft.
-      if (editingQueuedTurn) {
-        event.preventDefault();
-        return;
-      }
-      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-      if (imageFiles.length === 0) return;
-      event.preventDefault();
-      addComposerImages(imageFiles);
+      handleComposerPaste(event, {
+        editingQueuedTurn: Boolean(editingQueuedTurn),
+        addImages: addComposerImages,
+      });
     };
 
     const onComposerAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
