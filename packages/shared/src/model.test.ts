@@ -10,6 +10,7 @@ import {
   formatCodexModelName,
   formatModelSlugName,
   getProviderOptionCurrentLabel,
+  isProviderOptionValueStated,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -361,5 +362,20 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+
+  it("tells a stated option from a catalog guess", () => {
+    expect(isProviderOptionValueStated("variant", selection)).toBe(false);
+    expect(isProviderOptionValueStated("variant", selection, reported)).toBe(true);
+    expect(
+      isProviderOptionValueStated("variant", {
+        ...selection,
+        options: [{ id: "variant", value: "none" }],
+      }),
+    ).toBe(true);
+    expect(isProviderOptionValueStated("variant", { ...selection, model: "other" }, reported)).toBe(
+      false,
+    );
+    expect(isProviderOptionValueStated("effort", selection, reported)).toBe(false);
   });
 });

@@ -218,6 +218,21 @@ function getReportedOptionValue(
   return getRawSelectionValueById(reportedSelection.options, id);
 }
 
+/**
+ * Whether the selection carries this option, or the provider reported one for
+ * the same model and instance. A catalog default or current value is neither.
+ */
+export function isProviderOptionValueStated(
+  id: string,
+  selection?: ModelSelection | null,
+  reportedSelection?: ModelSelection | null,
+): boolean {
+  return (
+    selection?.options?.some((option) => option.id === id) === true ||
+    getReportedOptionValue(id, selection, reportedSelection) !== undefined
+  );
+}
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,

@@ -20,7 +20,12 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
+import {
+  getProviderOptionCurrentLabel,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
+  isProviderOptionValueStated,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -161,11 +166,12 @@ export function deriveReportedModelSelection(
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 
 /**
- * The reasoning effort a thread's model runs at, resolved and named the way
- * the composer's effort picker does: the stored choice when valid, else the
- * descriptor's current value, else the model's default. Null when the
- * provider catalog has no effort option for this model (a subagent on a
- * model the catalog does not describe), rather than guessing.
+ * The reasoning effort a provider-native subagent's thread states, named the
+ * way the composer's effort picker does. Only a value the selection carries,
+ * or the provider reported for it, counts: the adapter writes that selection
+ * from what the provider told it, so a missing option means the effort is
+ * unknown, not that the model's catalog default applies. Null when nothing is
+ * stated or the catalog does not describe the model, rather than guessing.
  */
 export function formatModelSelectionEffort(
   selection: ModelSelection,
@@ -178,6 +184,14 @@ export function formatModelSelectionEffort(
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = descriptors.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
+    // An unstated value is the catalog's pick, not this subagent's. No value
+    // at all is the resolver's own "unknown", which may still be named.
+    if (
+      !isProviderOptionValueStated(id, selection, reportedSelection) &&
+      getProviderOptionCurrentValue(descriptor, selection, reportedSelection) !== undefined
+    ) {
+      continue;
+    }
     const label = getProviderOptionCurrentLabel(descriptor, selection, reportedSelection);
     if (label) return label;
   }
