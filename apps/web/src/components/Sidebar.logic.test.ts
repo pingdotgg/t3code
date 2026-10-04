@@ -2,11 +2,9 @@ import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
-  animateSidebarLayoutChanges,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -100,32 +98,6 @@ describe("resolveSidebarRowAccessibility", () => {
   ])("leads with the title without folding row actions into its name: %j", (input) => {
     const { expected, ...state } = input;
     expect(resolveSidebarRowAccessibility(state)).toEqual(expected);
-  });
-});
-
-describe("animateSidebarLayoutChanges", () => {
-  const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
-    active: null,
-    containerId: "pinned-threads",
-    isDragging: false,
-    isSorting: false,
-    id: "thread-a",
-    index: 1,
-    items: ["thread-b", "thread-a"],
-    newIndex: 0,
-    previousItems: ["thread-a", "thread-b"],
-    previousContainerId: "pinned-threads",
-    transition: { duration: 200, easing: "ease" },
-    wasDragging: true,
-  };
-
-  it("does not replay layout movement after the pointer is released", () => {
-    expect(defaultAnimateLayoutChanges(baseArgs)).toBe(true);
-    expect(animateSidebarLayoutChanges(baseArgs)).toBe(false);
-  });
-
-  it("keeps layout movement while the user is sorting", () => {
-    expect(animateSidebarLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
   });
 });
 
