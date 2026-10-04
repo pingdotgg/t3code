@@ -170,3 +170,4 @@ If completion is uncertain, keep the environment alive and mention that it is re
   proxy; if `/api/auth/session` targets the backend URL directly and fails CORS, inspect this
   environment wiring instead of loosening CORS or disabling credentials.
 - If ports move because another instance is running, trust the current dev-runner output rather than assuming ports `13773` and `5733`.
+- If the first browser action times out after ~15s on a fresh environment, retry it once before diagnosing: cold Vite re-optimization is the usual cause, not a hung browser or broker bug. Alternatively wait for the `warmup ... answered` dev-runner log line before the first navigation. Investigate further only if the retry also stalls.

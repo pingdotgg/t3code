@@ -130,6 +130,10 @@ export default defineConfig({
     port,
     strictPort: true,
     allowedHosts,
+    // Pre-transform the app entry (and its imports) at startup so the first
+    // browser navigation does not pay the cold transform cost. The dev-runner
+    // warmup ping covers liveness; this covers transform depth.
+    warmup: { clientFiles: ["./src/main.tsx"] },
     ...(devProxyConfig ? { proxy: devProxyConfig } : {}),
     // Pin Electron's HMR endpoint, but let browser dev derive it from the page
     // origin so remote clients don't try to connect to their own localhost.

@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import {
+  Clock,
   Config,
   Data,
   Effect,
@@ -18,6 +19,7 @@ import {
   Logger,
   Option,
   Path,
+  Schedule,
   Schema,
 } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
@@ -1081,6 +1083,81 @@ interface DevRunnerCliInput {
   readonly runnerArgs: ReadonlyArray<string>;
 }
 
+export interface DevWebWarmupInput {
+  readonly url: string;
+  /** Warmed once after `url` answers, to pre-transform the app entry. */
+  readonly entryUrl?: string;
+  readonly fetchImpl?: (
+    url: string,
+    init?: { signal: AbortSignal },
+  ) => Promise<{ arrayBuffer(): Promise<unknown> }>;
+  readonly pollIntervalMs?: number;
+  readonly attemptTimeoutMs?: number;
+  readonly timeoutMs?: number;
+}
+
+/**
+ * Poll a Vite dev origin until it answers, so the cold dependency
+ * re-optimization happens on this background fiber instead of on the agent's
+ * first real navigation. Any HTTP response counts — even an error status
+ * proves the server is up. Never fails: gives up quietly after the timeout.
+ * Every attempt is abortable and bounded, so fiber interruption cancels the
+ * in-flight request.
+ */
+export function warmupDevWebServer(input: DevWebWarmupInput) {
+  return Effect.gen(function* () {
+    const fetchImpl =
+      input.fetchImpl ?? ((url: string, init?: { signal: AbortSignal }) => fetch(url, init));
+    const pollIntervalMs = input.pollIntervalMs ?? 250;
+    const attemptTimeoutMs = input.attemptTimeoutMs ?? 10_000;
+    const timeoutMs = input.timeoutMs ?? 180_000;
+    const startedAt = yield* Clock.currentTimeMillis;
+    const fetchOnce = (url: string) =>
+      Effect.tryPromise({
+        try: (signal) =>
+          Promise.resolve()
+            .then(() => fetchImpl(url, { signal }))
+            .then(
+              // Any settlement (even a body-read failure) proves the server
+              // is up; draining frees the connection.
+              (response) =>
+                response
+                  .arrayBuffer()
+                  .then(() => true)
+                  .catch(() => true),
+              () => false,
+            ),
+        catch: (cause) =>
+          new DevRunnerError({ message: `dev web warmup fetch failed: ${url}`, cause }),
+      }).pipe(
+        Effect.flatMap((up) =>
+          up
+            ? Effect.succeed(true as const)
+            : Effect.fail(new DevRunnerError({ message: `dev web not up yet: ${url}` })),
+        ),
+        Effect.timeout(attemptTimeoutMs),
+      );
+    const finished = yield* fetchOnce(input.url).pipe(
+      Effect.retry(Schedule.spaced(pollIntervalMs)),
+      Effect.tap(() =>
+        input.entryUrl === undefined ? Effect.void : fetchOnce(input.entryUrl).pipe(Effect.ignore),
+      ),
+      Effect.timeoutOption(timeoutMs),
+    );
+    const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+    if (Option.isSome(finished)) {
+      yield* Effect.logInfo(`[dev-runner] warmup ${input.url} answered in ${String(elapsed)}ms.`);
+    } else {
+      yield* Effect.logWarning(
+        `[dev-runner] warmup ${input.url} never answered within ${String(timeoutMs)}ms; continuing without it.`,
+      );
+    }
+  });
+}
+
+/** Runner modes that serve the Vite web origin on `env.PORT`. */
+const WEB_SERVING_MODES: ReadonlySet<DevMode> = new Set(["dev", "dev:web", "dev:desktop"]);
+
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
     if (input.mode === "stop") {
@@ -1297,6 +1374,19 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
         }
       }
+    }
+
+    // Warm the Vite origin on a background fiber while the task runner boots:
+    // the first request pays the cold dependency re-optimization, so the
+    // agent's first real navigation does not. `env.PORT` is the Vite port in
+    // every allowlisted mode (`dev:server` runs no web server, so it is out).
+    // The entry fetch mirrors apps/web/index.html to pre-transform the app
+    // entry through the same path a browser would use.
+    if (WEB_SERVING_MODES.has(input.mode)) {
+      yield* warmupDevWebServer({
+        url: `http://${DEV_LOOPBACK_HOST}:${String(env.PORT)}/`,
+        entryUrl: `http://${DEV_LOOPBACK_HOST}:${String(env.PORT)}/src/main.tsx`,
+      }).pipe(Effect.forkScoped);
     }
 
     const child = yield* ChildProcess.make("vp", buildDevRunnerArgs(input.mode, input.runnerArgs), {

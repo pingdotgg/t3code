@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Path } from "effect";
+import { Effect, Fiber, Path } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   buildDevRunnerArgs,
@@ -23,6 +24,7 @@ import {
   resolveOffset,
   stopAllDevEnvironments,
   stopDevEnvironment,
+  warmupDevWebServer,
   writeDevRunnerPidFile,
 } from "./dev-runner.ts";
 
@@ -1153,4 +1155,118 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       assert.throws(() => buildDevRunnerArgs("stop", []), /stop/);
     });
   });
+});
+
+describe("warmupDevWebServer", () => {
+  const okResponse = () => ({ arrayBuffer: async () => new ArrayBuffer(0) });
+
+  it.effect("returns after the first successful response and warms the entry", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      let entryCalls = 0;
+      yield* warmupDevWebServer({
+        url: "http://127.0.0.1:9/",
+        entryUrl: "http://127.0.0.1:9/src/main.tsx",
+        fetchImpl: async (url) => {
+          if (url.endsWith("main.tsx")) entryCalls += 1;
+          else calls += 1;
+          return okResponse();
+        },
+        pollIntervalMs: 5,
+        timeoutMs: 1000,
+      });
+      assert.strictEqual(calls, 1);
+      assert.strictEqual(entryCalls, 1);
+    }),
+  );
+
+  it.effect("keeps polling through connection refusals until the server answers", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const fiber = yield* Effect.forkChild(
+        warmupDevWebServer({
+          url: "http://127.0.0.1:9/",
+          fetchImpl: async () => {
+            calls += 1;
+            if (calls < 3) throw new Error("ECONNREFUSED");
+            return okResponse();
+          },
+          pollIntervalMs: 5,
+          timeoutMs: 1000,
+        }),
+      );
+      yield* TestClock.adjust(5000);
+      yield* Fiber.join(fiber);
+      assert.strictEqual(calls, 3);
+    }),
+  );
+
+  it.effect("gives up quietly when the server never answers", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const fiber = yield* Effect.forkChild(
+        warmupDevWebServer({
+          url: "http://127.0.0.1:9/",
+          fetchImpl: async () => {
+            calls += 1;
+            throw new Error("ECONNREFUSED");
+          },
+          pollIntervalMs: 5,
+          timeoutMs: 30,
+        }),
+      );
+      yield* TestClock.adjust(5000);
+      yield* Fiber.join(fiber);
+      assert.isTrue(calls > 1);
+    }),
+  );
+
+  it.effect("bounds a hanging request with the per-attempt timeout", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const fiber = yield* Effect.forkChild(
+        warmupDevWebServer({
+          url: "http://127.0.0.1:9/",
+          fetchImpl: () => {
+            calls += 1;
+            return new Promise<never>(() => {});
+          },
+          pollIntervalMs: 5,
+          attemptTimeoutMs: 10,
+          timeoutMs: 30,
+        }),
+      );
+      yield* TestClock.adjust(5000);
+      yield* Fiber.join(fiber);
+      assert.isTrue(calls > 1);
+    }),
+  );
+
+  it.effect("aborts the in-flight request when interrupted", () =>
+    Effect.gen(function* () {
+      let aborted = false;
+      const fiber = yield* Effect.forkChild(
+        warmupDevWebServer({
+          url: "http://127.0.0.1:9/",
+          fetchImpl: (_url, init) =>
+            new Promise<never>((_resolve, reject) => {
+              init?.signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                  reject(new Error("aborted"));
+                },
+                { once: true },
+              );
+            }),
+          pollIntervalMs: 5,
+          attemptTimeoutMs: 60_000,
+          timeoutMs: 60_000,
+        }),
+      );
+      yield* TestClock.adjust(20);
+      yield* Fiber.interrupt(fiber);
+      assert.isTrue(aborted);
+    }),
+  );
 });
