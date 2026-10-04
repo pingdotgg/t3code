@@ -530,6 +530,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerThreadSettlementWorker,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
   ),
   layerThreadPullRequestWorker,
   Layer.effectDiscard(

@@ -68,4 +68,12 @@ describe("T3ProjectFile", () => {
     expect(decode({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe("top-level");
     expect(() => decode({ worktreeSubmodules: "shallow" })).toThrow();
   });
+
+  it("trims worktreeDisposablePaths and rejects empty paths", () => {
+    expect(
+      decode({ worktreeDisposablePaths: [" vendor ", ".env"] }).worktreeDisposablePaths,
+    ).toEqual(["vendor", ".env"]);
+    expect(() => decode({ worktreeDisposablePaths: ["  "] })).toThrow();
+    expect(() => decode({ worktreeDisposablePaths: "vendor" })).toThrow();
+  });
 });

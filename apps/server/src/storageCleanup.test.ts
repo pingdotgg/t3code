@@ -10,6 +10,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import {
   storageCleanupActivityAt,
+  storageCleanupIgnoredDisposable,
   storageCleanupPullRequestMerged,
   storageCleanupThreadIdle,
 } from "./storageCleanup.ts";
@@ -194,5 +195,38 @@ describe("merged pull request cleanup", () => {
     expect(storageCleanupPullRequestMerged(null, squashed)).toBe(false);
     expect(storageCleanupPullRequestMerged(null, integrated)).toBe(false);
     expect(storageCleanupPullRequestMerged(pullRequest({ state: "open" }), integrated)).toBe(false);
+  });
+});
+
+describe("V2 storage cleanup ignored files", () => {
+  const listing = (...entries: ReadonlyArray<string>) => ({
+    stdout: entries.map((entry) => `${entry}\0`).join(""),
+    stdoutTruncated: false,
+  });
+  const declared = ["storage", ".env", "public/build/", "vendor"];
+
+  it.each([
+    ["no ignored files", listing()],
+    ["node_modules at any depth", listing("node_modules/", "apps/web/node_modules/")],
+    ["a file beneath a declared directory", listing("storage/framework/views/x.php")],
+    ["a declared file", listing(".env")],
+    ["a declared directory with a trailing slash", listing("vendor/", "public/build/")],
+    ["a declared directory without one", listing("public/build")],
+  ])("removes a worktree whose ignored files are %s", (_, ignored) => {
+    expect(storageCleanupIgnoredDisposable(ignored, declared)).toBe(true);
+  });
+
+  it.each([
+    ["an undeclared file", listing("vendor/", ".env.local")],
+    ["a sibling sharing a declared prefix", listing("storage-backup/")],
+    ["a parent of a declared directory", listing("public/")],
+    ["a truncated listing", { ...listing("vendor/"), stdoutTruncated: true }],
+  ])("keeps a worktree with %s", (_, ignored) => {
+    expect(storageCleanupIgnoredDisposable(ignored, declared)).toBe(false);
+  });
+
+  it("allows only node_modules when t3.json declares nothing", () => {
+    expect(storageCleanupIgnoredDisposable(listing("node_modules/"), [])).toBe(true);
+    expect(storageCleanupIgnoredDisposable(listing("vendor/"), [])).toBe(false);
   });
 });

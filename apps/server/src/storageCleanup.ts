@@ -32,6 +32,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
+import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -98,6 +99,29 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
   );
 }
 
+/**
+ * Ignored files can contain secrets or local datasets. Dependency installs and
+ * the paths a repository's t3.json declares disposable are reproducible; every
+ * other ignored path, or a listing too long to read in full, prevents removal.
+ */
+export function storageCleanupIgnoredDisposable(
+  ignored: { readonly stdout: string; readonly stdoutTruncated: boolean },
+  disposablePaths: ReadonlyArray<string>,
+): boolean {
+  const roots = disposablePaths.map((listed) => listed.replace(/\/+$/, ""));
+  return (
+    !ignored.stdoutTruncated &&
+    ignored.stdout.split("\0").every((entry) => {
+      const path = entry.replace(/\/+$/, "");
+      return (
+        entry === "" ||
+        /(^|\/)node_modules\/$/.test(entry) ||
+        roots.some((root) => path === root || path.startsWith(`${root}/`))
+      );
+    })
+  );
+}
+
 /** PR metadata refreshes must not reset the inactivity clock. */
 export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
   return Math.max(
@@ -147,6 +171,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
+  const projectFiles = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
@@ -280,21 +305,16 @@ export const make = Effect.gen(function* () {
         if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
           return;
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
+        const disposablePaths =
+          Option.getOrUndefined(yield* projectFiles.load(worktreePath))?.worktreeDisposablePaths ??
+          [];
         const ignored = yield* git.execute({
           operation: "StorageCleanup.ignoredFiles",
           cwd: worktreePath,
           args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
           maxOutputBytes: 64 * 1024,
         });
-        // Ignored files can contain secrets or local datasets. Dependency installs
-        // are reproducible; every other ignored path prevents automatic removal.
-        if (
-          ignored.stdoutTruncated ||
-          ignored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        if (!storageCleanupIgnoredDisposable(ignored, disposablePaths)) return;
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
@@ -405,13 +425,7 @@ export const make = Effect.gen(function* () {
           args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
           maxOutputBytes: 64 * 1024,
         });
-        if (
-          finalIgnored.stdoutTruncated ||
-          finalIgnored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        if (!storageCleanupIgnoredDisposable(finalIgnored, disposablePaths)) return;
         const current = resolveWorktreeCleanup(
           yield* settingsService.getSettings,
           thread.projectId,

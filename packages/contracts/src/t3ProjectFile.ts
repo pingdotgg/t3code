@@ -13,6 +13,7 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+const T3_PROJECT_FILE_MAX_WORKTREE_DISPOSABLE_PATHS = 100;
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
@@ -98,6 +99,22 @@ export const T3ProjectFile = Schema.Struct({
       description:
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
     }),
+  ),
+  worktreeDisposablePaths: Schema.optionalKey(
+    Schema.Array(
+      trimmedNonEmpty(
+        {
+          description:
+            'Workspace-relative ignored path (e.g. "vendor" or ".env") that the setup recreates. A directory covers everything beneath it.',
+        },
+        T3_PROJECT_FILE_PATH_MAX_LENGTH,
+      ),
+    )
+      .annotate({
+        description:
+          "Ignored paths that automatic worktree cleanup may delete with the worktree. Other ignored files, except node_modules, keep a worktree from being removed.",
+      })
+      .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_WORKTREE_DISPOSABLE_PATHS)),
   ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
