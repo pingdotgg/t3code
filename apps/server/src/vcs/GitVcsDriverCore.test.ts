@@ -2159,6 +2159,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("skips Changes totals instead of indexing thousands of untracked files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* Effect.forEach(
+          Array.from({ length: 5_001 }, (_, index) => `bulk/${index}.txt`),
+          (file) => writeTextFile(cwd, file, "x\n"),
+          { concurrency: 32, discard: true },
+        );
+        yield* writeTextFile(cwd, "README.md", "changed\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.isTrue(status.hasWorkingTreeChanges);
+        assert.isUndefined(status.branchChanges);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        assert.isTrue(preview.sources.every((source) => source.truncated));
+      }),
+    );
+
     it.effect("Changes does not show newer base commits as deletions", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
