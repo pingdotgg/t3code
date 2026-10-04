@@ -1,3 +1,4 @@
+import { TaskRequest, TaskResult, TaskConfigureInput, TaskIntegrationError } from "./tasks.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -337,6 +338,8 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  tasksExecute: "tasks.execute",
+  tasksConfigure: "tasks.configure",
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -1693,7 +1696,20 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsTasksExecuteRpc = Rpc.make(WS_METHODS.tasksExecute, {
+  payload: TaskRequest,
+  success: TaskResult,
+  error: Schema.Union([TaskIntegrationError, EnvironmentAuthorizationError]),
+});
+const WsTasksConfigureRpc = Rpc.make(WS_METHODS.tasksConfigure, {
+  payload: TaskConfigureInput,
+  success: Schema.Void,
+  error: Schema.Union([TaskIntegrationError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsTasksExecuteRpc,
+  WsTasksConfigureRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

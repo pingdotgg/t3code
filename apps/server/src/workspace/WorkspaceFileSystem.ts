@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -82,6 +83,15 @@ export class WorkspacePathNotFileError extends Schema.TaggedError<WorkspacePathN
   }
 }
 
+export class WorkspaceFileConflictError extends Schema.TaggedError<WorkspaceFileConflictError>()(
+  "WorkspaceFileConflictError",
+  { relativePath: Schema.String },
+) {
+  override get message() {
+    return `File '${this.relativePath}' changed on disk; reload and reconcile before saving.`;
+  }
+}
+
 export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinaryFileError>()(
   "WorkspaceBinaryFileError",
   {
@@ -100,6 +110,7 @@ export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceFileConflictError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -138,6 +149,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const writeLock = yield* Semaphore.make(1);
 
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
@@ -323,6 +335,17 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (input.expectedContents !== undefined) {
+      const current = yield* fileSystem
+        .readFileString(target.absolutePath)
+        .pipe(
+          Effect.mapError(
+            () => new WorkspaceFileConflictError({ relativePath: input.relativePath }),
+          ),
+        );
+      if (current !== input.expectedContents)
+        return yield* new WorkspaceFileConflictError({ relativePath: input.relativePath });
+    }
     yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
       Effect.mapError(
         (cause) =>
@@ -338,7 +361,7 @@ export const make = Effect.gen(function* () {
     );
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
-  });
+  }, writeLock.withPermit);
 
   return WorkspaceFileSystem.of({ readFile, writeFile });
 });

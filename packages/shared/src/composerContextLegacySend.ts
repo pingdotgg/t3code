@@ -145,6 +145,10 @@ function renderReviewComment(record: ComposerContextRecord): string {
     `sectionTitle="${escapeAttribute(record.sectionTitle)}"`,
     `filePath="${escapeAttribute(record.filePath)}"`,
     `rangeLabel="${escapeAttribute(record.rangeLabel)}"`,
+    ...(record.sourceRevision
+      ? [`sourceRevision="${escapeAttribute(record.sourceRevision)}"`]
+      : []),
+    ...(record.sourceStale ? ['sourceStale="true"'] : []),
     `startIndex="${record.startIndex}"`,
     `endIndex="${record.endIndex}"`,
   ].join(" ");

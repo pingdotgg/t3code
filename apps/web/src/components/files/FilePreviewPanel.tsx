@@ -1,3 +1,13 @@
+import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
+import {
+  markdownSourceRevision,
+  renderedMarkdownSelection,
+  staleMarkdownNotes,
+} from "./markdownReviewMapping";
+import { RichMarkdownSurface } from "./RichMarkdownSurface";
+import { parseRichMarkdown } from "./richMarkdownDocument";
+import { FileSaveNotice } from "./FileSaveNotice";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
@@ -46,6 +56,7 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { useServerConfigs } from "~/state/entities";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -842,17 +853,13 @@ function RenderedMarkdownSurface({
   cwd,
   relativePath,
   contents,
+  composerDraftTarget,
   threadRef,
   readOnly,
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
-  | "resolvedTheme"
-  | "composerDraftTarget"
-  | "revealLine"
-  | "revealRequestId"
-  | "wordWrap"
-  | "onPostRender"
+  "resolvedTheme" | "revealLine" | "revealRequestId" | "wordWrap" | "onPostRender"
 > & {
   threadRef: ScopedThreadRef;
   readOnly: boolean;
@@ -864,28 +871,104 @@ function RenderedMarkdownSurface({
     onPendingChange,
   });
 
+  const [note, setNote] = useState<{ source: string; startLine: number; endLine: number } | null>(
+    null,
+  );
+  const [noteText, setNoteText] = useState("");
+  const [writingNote, setWritingNote] = useState(false);
+  const surface = useRef<HTMLDivElement>(null);
+  const captureSelection = () => {
+    const range = surface.current ? renderedMarkdownSelection(surface.current) : null;
+    if (range && !writingNote) setNote({ ...range, source: contents });
+  };
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
-              }
-        }
-      />
-    </ScrollArea>
+    <div
+      ref={surface}
+      className="flex min-h-0 flex-1 flex-col"
+      onMouseUp={captureSelection}
+      onKeyUp={captureSelection}
+    >
+      {note ? (
+        <div className="border-b p-2 text-sm">
+          {note.source !== contents ? (
+            <p role="status">Outdated selection: select the text again before adding a note.</p>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setWritingNote(true)}>
+              Review selected text (lines {note.startLine}–{note.endLine})
+            </Button>
+          )}
+          {writingNote ? (
+            <form
+              className="grid gap-2 py-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (note.source !== contents) return;
+                useComposerDraftStore.getState().addReviewComment(composerDraftTarget, {
+                  ...buildFileReviewComment({
+                    id: nextFileCommentId(),
+                    filePath: relativePath,
+                    startLine: note.startLine,
+                    endLine: note.endLine,
+                    text: noteText,
+                    contents: note.source,
+                  }),
+                  sourceRevision: markdownSourceRevision(note.source),
+                });
+                setNote(null);
+                setNoteText("");
+                setWritingNote(false);
+              }}
+            >
+              <Textarea
+                aria-label="Review note for agent"
+                value={noteText}
+                onChange={(event) => setNoteText(event.target.value)}
+              />
+              <div className="flex gap-2">
+                <Button type="submit" disabled={!noteText.trim() || note.source !== contents}>
+                  Attach to agent draft
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setNote(null);
+                    setWritingNote(false);
+                  }}
+                >
+                  Cancel note
+                </Button>
+              </div>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
+      <ScrollArea className="min-h-0 flex-1">
+        <FileMarkdownPreview
+          text={contents}
+          cwd={cwd}
+          relativePath={relativePath}
+          threadRef={threadRef}
+          onTaskListChange={
+            readOnly
+              ? undefined
+              : ({ markerOffset, checked }) => {
+                  const currentContents =
+                    getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                    contents;
+                  const nextContents = setMarkdownTaskChecked(
+                    currentContents,
+                    markerOffset,
+                    checked,
+                  );
+                  if (nextContents === currentContents) return;
+                  setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                  saveCoordinator.change(nextContents);
+                }
+          }
+        />
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -928,6 +1011,8 @@ export default function FilePreviewPanel({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const conditionalFileWrites =
+    useServerConfigs().get(environmentId)?.environment.capabilities.conditionalFileWrites === true;
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -959,6 +1044,16 @@ export default function FilePreviewPanel({
   // pane, and let the tree fill the surface with the folder revealed. Mutation
   // refresh stays on so the surface notices if the path becomes a file. A host
   // path cannot be revealed in the workspace tree, so it keeps the read error.
+  useEffect(() => {
+    if (!relativePath || !file.data) return;
+    const store = useComposerDraftStore.getState();
+    for (const comment of staleMarkdownNotes(
+      store.getComposerDraft(composerDraftTarget)?.reviewComments ?? [],
+      relativePath,
+      file.data.contents,
+    ))
+      store.addReviewComment(composerDraftTarget, comment);
+  }, [composerDraftTarget, relativePath, file.data?.contents]);
   const isDirectory = file.isNotFile && !isHostFile;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isDirectory ? null : relativePath;
@@ -999,7 +1094,29 @@ export default function FilePreviewPanel({
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
-  const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
+  const [markdownMode, setMarkdownMode] = useLocalStorage(
+    "t3code.markdownMode",
+    renderMarkdownPreferred ? "preview" : "source",
+    Schema.Literals(["rich", "source", "preview"]),
+  );
+  const richDocument = useMemo(
+    () => (isMarkdown && file.data ? parseRichMarkdown(file.data.contents) : null),
+    [isMarkdown, file.data?.contents],
+  );
+  const richUnavailable = !conditionalFileWrites
+    ? "Update this environment's server to enable conflict-safe rich editing."
+    : richDocument && "reason" in richDocument
+      ? richDocument.reason
+      : null;
+  const renderRich =
+    isMarkdown &&
+    markdownMode === "rich" &&
+    !richUnavailable &&
+    revealHandled &&
+    !isHostFile &&
+    !file.data?.truncated;
+  const renderMarkdown = isMarkdown && markdownMode === "preview" && revealHandled;
+  const effectiveMarkdownMode = renderRich ? "rich" : renderMarkdown ? "preview" : "source";
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
   const renderedMode = isMarkdown
@@ -1126,7 +1243,31 @@ export default function FilePreviewPanel({
               compact
             />
           ) : null}
-          {canToggleRendered && renderedMode ? (
+          {isMarkdown ? (
+            <div className="flex gap-1" role="group" aria-label="Markdown mode">
+              {(["source", "preview", "rich"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className="rounded px-2 py-1 text-xs aria-pressed:bg-accent"
+                  aria-pressed={mode === effectiveMarkdownMode}
+                  disabled={
+                    mode === "rich" && (!!richUnavailable || isHostFile || !!file.data?.truncated)
+                  }
+                  aria-description={mode === "rich" ? (richUnavailable ?? undefined) : undefined}
+                  onClick={() => {
+                    setMarkdownMode(mode);
+                    setHandledReveal(
+                      relativePath ? { path: relativePath, requestId: revealRequestId } : null,
+                    );
+                  }}
+                >
+                  {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {canToggleRendered && renderedMode && !isMarkdown ? (
             <FileSurfaceAction
               label={renderedToggleLabel(renderedMode, rendered)}
               pressed={rendered}
@@ -1182,6 +1323,19 @@ export default function FilePreviewPanel({
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
+      ) : null}
+      {relativePath ? (
+        <FileSaveNotice
+          key={relativePath}
+          environmentId={environmentId}
+          cwd={cwd}
+          relativePath={relativePath}
+        />
+      ) : null}
+      {isMarkdown && richUnavailable ? (
+        <p className="border-b px-3 py-1 text-xs text-muted-foreground">
+          Rich editing unavailable: {richUnavailable}
+        </p>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
@@ -1243,11 +1397,23 @@ export default function FilePreviewPanel({
               <Spinner size="lg" />
             </div>
           ) : relativePath && file.data ? (
-            isMarkdown && renderMarkdown ? (
+            renderRich ? (
+              <RichMarkdownSurface
+                key={relativePath}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                threadRef={threadRef}
+                composerDraftTarget={composerDraftTarget}
+                contents={file.data.contents}
+                onPendingChange={onPendingChange}
+              />
+            ) : isMarkdown && renderMarkdown ? (
               // Markdown reconciles in place across text updates, so a file
               // switch needs a new key or the previous file's disclosure and
               // wrap state carries into the next document.
               <RenderedMarkdownSurface
+                composerDraftTarget={composerDraftTarget}
                 key={relativePath}
                 environmentId={environmentId}
                 cwd={cwd}

@@ -23,6 +23,7 @@ export function FileMarkdownPreview(props: {
 
   return (
     <ChatMarkdown
+      sourceLineMarkers
       text={props.text}
       cwd={props.cwd}
       imageBaseDir={imageBaseDir}

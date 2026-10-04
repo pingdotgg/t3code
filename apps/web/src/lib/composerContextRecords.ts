@@ -209,6 +209,8 @@ export function reviewCommentContextRecord(
     rangeLabel: comment.rangeLabel,
     text: clampContextText(comment.text, COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
     diff: clampContextText(comment.diff, COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS),
+    ...(comment.sourceRevision ? { sourceRevision: comment.sourceRevision } : {}),
+    ...(comment.sourceStale ? { sourceStale: true } : {}),
     ...(comment.fenceLanguage !== undefined ? { fenceLanguage: comment.fenceLanguage } : {}),
     ...(comment.pullRequest !== undefined ? { pullRequest: comment.pullRequest } : {}),
   };
@@ -447,6 +449,8 @@ export function reviewCommentFromRecord(record: ReviewCommentContextRecord): Rev
     rangeLabel: record.rangeLabel,
     text: record.text,
     diff: record.diff,
+    ...(record.sourceRevision ? { sourceRevision: record.sourceRevision } : {}),
+    ...(record.sourceStale ? { sourceStale: true } : {}),
     ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
     ...(record.pullRequest !== undefined ? { pullRequest: record.pullRequest } : {}),
   };

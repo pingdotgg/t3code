@@ -603,7 +603,37 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
-    window.webContents.setWindowOpenHandler(({ url }) => {
+    window.webContents.on("did-create-window", (child, details) => {
+      if (details.frameName !== "t3-agent-dashboard") return;
+      child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      child.webContents.on("will-navigate", (event) => event.preventDefault());
+      const closeDashboard = () => {
+        if (!child.isDestroyed()) child.close();
+      };
+      window.once("closed", closeDashboard);
+      child.once("closed", () => window.removeListener("closed", closeDashboard));
+    });
+    window.webContents.setWindowOpenHandler(({ url, frameName }) => {
+      // A same-renderer React portal shares the existing shell subscriptions. It
+      // gets no preload, server bootstrap, arbitrary URL, or agent execution context.
+      if (url === "about:blank" && frameName === "t3-agent-dashboard")
+        return {
+          action: "allow",
+          outlivesOpener: false,
+          overrideBrowserWindowOptions: {
+            title: "Agent Dashboard",
+            width: 1120,
+            height: 760,
+            minWidth: 740,
+            minHeight: 400,
+            webPreferences: {
+              preload: "",
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false,
+            },
+          },
+        };
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }

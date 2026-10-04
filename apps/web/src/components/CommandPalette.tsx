@@ -2233,6 +2233,28 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:tasks",
+    searchTerms: ["tasks", "issues", "linear", "jira", "github", "gitlab"],
+    title: "Open tasks",
+    icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/tasks" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:agents",
+    searchTerms: ["agents", "dashboard", "attention", "working", "done"],
+    title: "Open agent dashboard",
+    icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/agents" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",

@@ -18,7 +18,12 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
-import type { ThreadPanelPresentation } from "./rightPanelLayout";
+import {
+  activateWorkspaceSurface,
+  restoreWorkspaceLayout,
+  type WorkspacePane,
+  type ThreadPanelPresentation,
+} from "./rightPanelLayout";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -92,7 +97,7 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
 // v14 removes the agents surface; lineage lives in the thread title bar.
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -111,6 +116,8 @@ export interface ThreadRightPanelState {
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
+  workspaceLayout?: WorkspacePane;
+  maximizedPaneId?: string | null;
 }
 
 export interface ThreadPanelVisibility {
@@ -119,6 +126,11 @@ export interface ThreadPanelVisibility {
 }
 
 interface RightPanelStoreState {
+  setWorkspaceLayout: (
+    ref: ScopedThreadRef,
+    layout: WorkspacePane,
+    maximizedPaneId?: string | null,
+  ) => void;
   byThreadKey: Record<string, ThreadRightPanelState>;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
@@ -301,7 +313,23 @@ const updateThreadStateMap = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const next = updater(current);
+  const updated = updater(current);
+  if (updated === current) return byThreadKey;
+  const next = updated.workspaceLayout
+    ? {
+        ...updated,
+        workspaceLayout: activateWorkspaceSurface(
+          restoreWorkspaceLayout(
+            updated.workspaceLayout,
+            updated.surfaces.map((s) => s.id),
+            updated.activeSurfaceId,
+          ),
+          updated.activeSurfaceId !== current.activeSurfaceId
+            ? (updated.activeSurfaceId ?? "")
+            : "",
+        ),
+      }
+    : updated;
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
@@ -436,6 +464,13 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
+                    if (
+                      !surface ||
+                      typeof surface !== "object" ||
+                      typeof surface.id !== "string" ||
+                      !RIGHT_PANEL_KINDS.includes(surface.kind)
+                    )
+                      return [];
                     // Removed surfaces: plans render inline, agents in thread lineage.
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
@@ -534,6 +569,15 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   isOpen,
                   surfaces,
                   activeSurfaceId,
+                  ...(validThreadState?.workspaceLayout
+                    ? {
+                        workspaceLayout: restoreWorkspaceLayout(
+                          validThreadState.workspaceLayout,
+                          surfaces.map((s) => s.id),
+                          activeSurfaceId,
+                        ),
+                      }
+                    : {}),
                   ...(Array.isArray(validThreadState?.dismissedDeviceSurfaceIds)
                     ? {
                         dismissedDeviceSurfaceIds:
@@ -571,6 +615,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       byThreadKey: {},
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
+      setWorkspaceLayout: (ref, workspaceLayout, maximizedPaneId = null) =>
+        set((state) => ({
+          byThreadKey: updateThreadStateMap(state.byThreadKey, scopedThreadKey(ref), (current) => ({
+            ...current,
+            workspaceLayout,
+            maximizedPaneId,
+          })),
+        })),
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {

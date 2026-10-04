@@ -1,3 +1,4 @@
+import type { DesktopDictationInput, DesktopDictationResult } from "./desktopDictation.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -1122,6 +1123,7 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  dictation?: (input: DesktopDictationInput) => Promise<DesktopDictationResult>;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

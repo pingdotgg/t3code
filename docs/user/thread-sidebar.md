@@ -214,3 +214,29 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Agent Dashboard
+
+Open **Agents** in the desktop sidebar or **Agent Dashboard** in the command palette
+to see agents across connected environments. **Needs You** includes permissions,
+unanswered questions, failures, interruptions, and disconnected sessions. Open a card
+to respond in its existing conversation. Delegated agents expand under their parent.
+Use the project, environment, provider, status, workspace, and pull-request filters to
+narrow the board. Filters and **Show Idle** are saved on this computer.
+
+In the desktop app, **Pop out** opens the same board in a separate window. It shares
+live state with the main window; closing it does not stop agents.
+
+## Arrange a desktop workspace
+
+Open the files, terminals, diffs, pull requests, and browser previews you need, then
+drag their tabs into another pane or onto a pane edge to split horizontally or
+vertically. You can nest splits. The **Pane** menu also moves and splits the active
+tab, maximizes or restores a pane, and resets the layout. Reset keeps your open views
+and their underlying resources.
+
+Drag a divider to resize it, or focus it and use the arrow keys. **F6** and
+**Shift+F6** move focus between panes. Layouts are saved separately for each thread
+and environment. Moving a terminal or browser view preserves its session; closing
+it follows the existing close and stop behavior. Narrow windows retain the panel
+sheet; widen the window to arrange multiple panes.

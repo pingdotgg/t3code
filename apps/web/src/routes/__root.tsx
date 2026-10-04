@@ -1,3 +1,4 @@
+import { AgentDashboardWindow } from "../components/dashboard/AgentDashboardWindow";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -202,6 +203,7 @@ function RootRouteView() {
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>
+        <AgentDashboardWindow />
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>

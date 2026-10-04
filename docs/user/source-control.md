@@ -202,3 +202,32 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## Start work from GitHub or Linear
+
+Open **Tasks** from the desktop sidebar or command palette and choose the project
+and environment. In **Task source settings**, connect one source for that project:
+
+- **GitHub:** enter the repository as `owner/name`. Tasks use the existing `gh`
+  login on that environment. Enterprise hosts can use their HTTPS site URL.
+- **Linear:** enter the team's ID and a personal API key with the access you need.
+  The credential is stored on the selected environment alongside its other secrets;
+  it is not included in the agent's context. Disconnect removes the saved credential.
+
+Search, filter by status, load further pages, or paste an issue URL from that source.
+Open an issue to read its description and comments, edit supported fields, or publish
+an explicit comment. GitHub Projects can also be browsed with `read:project` access;
+edit project-specific fields at the source. Comments and Linear choice lists currently
+show up to 100 entries.
+
+**Start thread** and **Start in worktree** open an ordinary T3 draft containing issue
+context. Choose the agent, model, base branch, or an existing worktree in the composer
+before sending. A suggested Linear branch name respects your naming settings; custom
+naming continues to use your configured instructions. Starting the same linked issue
+again reopens its work. The thread retains a link to the source, while its usual
+worktree and pull-request links continue to work.
+
+Issue status changes are manual: an agent finishing never completes the issue. If a
+write cannot be confirmed, check the source before allowing another change. T3 does
+not automatically repeat an ambiguous external write. Under **Linked development
+work**, remove a stale link to start new work without deleting its earlier thread.

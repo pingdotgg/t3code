@@ -1,3 +1,4 @@
+import * as TaskService from "./tasks/TaskService.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -592,6 +593,13 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(
     OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layer)),
+  ),
+  Layer.provideMerge(
+    TaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(GitHubCli.layer, ServerSecretStore.layer, ProjectServiceLayerLive),
+      ),
+    ),
   ),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectEnrichmentService.layer),

@@ -1,11 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { createRef, useEffect, useMemo } from "react";
 
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
-import { confirmProjectFileQueryData } from "./projectFilesQueryState";
+import { confirmProjectFileQueryData, optimisticFileAtom } from "./projectFilesQueryState";
 
 const FILE_SAVE_DEBOUNCE_MS = 500;
 
@@ -31,11 +34,34 @@ export function useFileSaveCoordinator({
         const coordinator = new FileSaveCoordinator({
           debounceMs: FILE_SAVE_DEBOUNCE_MS,
           onPendingChange: (pending) => onPendingChange(relativePath, pending),
-          persist: (nextContents) =>
-            writeFile({
+          persist: async (nextContents) => {
+            const atom = optimisticFileAtom(environmentId, cwd, relativePath);
+            const pendingDraft = appAtomRegistry.get(atom);
+            if (!pendingDraft) return AsyncResult.success({ relativePath });
+            const expectedContents = pendingDraft.expectedContents;
+            const result = await writeFile({
               environmentId,
-              input: { cwd, relativePath, contents: nextContents },
-            }),
+              input: {
+                cwd,
+                relativePath,
+                contents: nextContents,
+                ...(expectedContents !== undefined ? { expectedContents } : {}),
+              },
+            });
+            if (result._tag !== "Success") {
+              const pending = appAtomRegistry.get(atom);
+              const cause = squashAtomCommandFailure(result);
+              if (pending)
+                appAtomRegistry.set(atom, {
+                  ...pending,
+                  saveError:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Saving failed. Your edits are retained.",
+                });
+            }
+            return result;
+          },
           onConfirmed: (confirmedContents) => {
             confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
           },

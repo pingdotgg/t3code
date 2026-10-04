@@ -219,6 +219,8 @@ export const make = Effect.gen(function* () {
       attachmentUploads: true,
       questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
+      externalTasks: true,
+      conditionalFileWrites: true,
       pullRequests: true,
       pullRequestChecks: true,
       inlineMessageContext: true,

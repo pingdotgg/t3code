@@ -200,6 +200,8 @@ export const ReviewCommentContextRecord = Schema.Struct({
   text: BoundedString(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
   diff: BoundedString(COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS),
   fenceLanguage: Schema.optional(BoundedString(64)),
+  sourceRevision: Schema.optional(BoundedString(64)),
+  sourceStale: Schema.optional(Schema.Boolean),
   pullRequest: Schema.optional(PullRequestContextMetadata),
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;

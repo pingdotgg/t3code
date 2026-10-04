@@ -1,3 +1,4 @@
+import { DesktopDictationControl } from "../voice/DesktopDictationControl";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -7464,6 +7465,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {window.desktopBridge?.dictation ? (
+                    <DesktopDictationControl
+                      key={composerDraftTargetKey}
+                      ownerKey={composerDraftTargetKey}
+                      disabled={
+                        isComposerApprovalState ||
+                        !!activePendingProgress ||
+                        isSendBusy ||
+                        isRevertingCheckpoint
+                      }
+                      keybindings={keybindings}
+                      composerFocused={() =>
+                        !!composerFormRef.current?.contains(document.activeElement) &&
+                        getTerminalFocusOwner() === null
+                      }
+                      readDraft={() => ({
+                        text: promptRef.current,
+                        cursor:
+                          composerEditorRef.current?.readSnapshot().expandedCursor ??
+                          promptRef.current.length,
+                      })}
+                      insertDraft={(text, cursor) => {
+                        promptRef.current = text;
+                        setComposerDraftPrompt(composerDraftTarget, text);
+                        setComposerCursor(collapseExpandedComposerCursor(text, cursor));
+                        setComposerTrigger(detectComposerTrigger(text, cursor));
+                        scheduleComposerFocus();
+                      }}
+                    />
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

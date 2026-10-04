@@ -1893,6 +1893,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(entitlements, "<key>com.apple.security.device.audio-input</key>");
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
@@ -1991,6 +1992,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("enables microphone access for macOS builds without passkey configuration", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false);
+      const mac = config.mac as Record<string, unknown>;
+      const fs = yield* FileSystem.FileSystem;
+      assert.equal(mac.entitlements, mac.entitlementsInherit);
+      const entitlements = yield* fs.readFileString(String(mac.entitlements));
+      assert.include(entitlements, "<key>com.apple.security.device.audio-input</key>");
+      assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+      assert.include(
+        String((mac.extendInfo as Record<string, unknown>).NSMicrophoneUsageDescription),
+        "dictation",
+      );
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 

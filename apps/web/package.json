@@ -57,7 +57,9 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "tailwind-merge": "^3.4.0",
+    "unified": "^11.0.5",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
@@ -80,7 +82,6 @@
     "jsdom": "^30.0.1",
     "react-test-renderer": "19.2.6",
     "tailwindcss": "^4.0.0",
-    "unified": "^11.0.5",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

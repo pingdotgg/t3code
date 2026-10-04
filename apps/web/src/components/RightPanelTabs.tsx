@@ -79,7 +79,8 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
-interface RightPanelTabsProps {
+export interface RightPanelTabsProps {
+  tabDragScope?: string;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -1101,6 +1102,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               return (
                 <div
                   key={surface.id}
+                  draggable={props.tabDragScope !== undefined}
+                  onDragStart={(event) => {
+                    if (!props.tabDragScope) return;
+                    event.dataTransfer.setData(
+                      "application/x-t3-workspace-tab",
+                      JSON.stringify({ scope: props.tabDragScope, surfaceId: surface.id }),
+                    );
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
                   data-active-tab={active}
                   onMouseDown={handleTabMouseDown}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}

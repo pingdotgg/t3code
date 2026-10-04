@@ -69,8 +69,15 @@ export function setProjectFileQueryData(
   relativePath: string,
   contents: string,
 ): void {
-  appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), {
+  const atom = optimisticFileAtom(environmentId, cwd, relativePath);
+  const previous = appAtomRegistry.get(atom);
+  const disk = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+  const expectedContents =
+    previous?.expectedContents ?? (disk._tag === "Success" ? disk.value.contents : undefined);
+  appAtomRegistry.set(atom, {
     confirmedAgainst: undefined,
+    ...(expectedContents !== undefined ? { expectedContents } : {}),
+    ...(previous?.saveError ? { saveError: previous.saveError } : {}),
     data: {
       relativePath,
       contents,
@@ -96,11 +103,21 @@ export function confirmProjectFileQueryData(
 ): boolean {
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   const optimisticFile = appAtomRegistry.get(atom);
-  if (optimisticFile?.data.contents !== contents) return false;
+  if (!optimisticFile) return false;
+  if (optimisticFile.data.contents !== contents) {
+    appAtomRegistry.set(atom, {
+      ...optimisticFile,
+      expectedContents: contents,
+      saveError: undefined,
+    });
+    return false;
+  }
 
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   const confirmed = {
     ...optimisticFile,
+    expectedContents: contents,
+    saveError: undefined,
     confirmedAgainst: appAtomRegistry.get(queryAtom),
   };
   appAtomRegistry.set(atom, confirmed);

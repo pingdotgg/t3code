@@ -151,6 +151,23 @@ describe("resolveTranscriptCommit", () => {
 
 describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+  it("can retain the desktop insertion point while a permission prompt is open", async () => {
+    const permission = deferred<{ granted: boolean; canAskAgain: boolean }>();
+    const resolveCommit = vi.fn(resolveTranscriptCommit);
+    const captured = draft({ selection: { start: 5, end: 5 } });
+    const harness = createHarness(
+      { captureDraftAtStart: true, resolveCommit, requestPermission: () => permission.promise },
+      captured,
+    );
+    const starting = harness.controller.start();
+    harness.setDraft({ ...captured, selection: { start: 11, end: 11 } });
+    permission.resolve({ granted: true, canAskAgain: true });
+    await starting;
+    await harness.controller.stop();
+    expect(resolveCommit.mock.calls[0]?.[0].selection).toEqual({ start: 5, end: 5 });
+    expect(harness.commits[0]?.text).toBe("hello new text world");
+    harness.controller.dispose();
+  });
 
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });

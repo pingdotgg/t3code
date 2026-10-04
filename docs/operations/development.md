@@ -199,3 +199,33 @@ passed as `--wsl-runtime`; see the
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+
+### Desktop dictation verification
+
+Use an isolated development home and disposable drafts. Check a packaged macOS app as well as
+development mode: microphone permission prompts and hardened-runtime entitlements depend on
+the app bundle. Record the OS, architecture, microphone, and `whisper-cli` version used.
+
+- With no executable or model installed, open **Voice** and verify the unavailable/setup message.
+  Opening Voice must not request microphone access or start a model download.
+- Configure a compatible [whisper.cpp](https://github.com/ggml-org/whisper.cpp) executable. Start
+  the model download explicitly, cancel it, and retry. Check progress, successful verification,
+  removal, and recovery from a disconnected network. No partial model should be usable.
+- Deny microphone permission on the first recording attempt. Verify the recovery message and
+  unchanged draft. Grant permission in system settings and retry; select a second microphone.
+- With the model installed, disconnect the network. Dictate using both the toggle and hold
+  shortcuts, stop, and verify editable text appears at the original caret. Nothing should send.
+  Repeat with a remote coding environment; capture and inference must stay on the desktop.
+- Type elsewhere in the draft while transcription runs. Verify both edits survive. Edit across
+  the original insertion point and verify the transcript is offered for manual insertion rather
+  than replacing the draft. Check that attachments remain present.
+- Cancel during permission, recording, and transcription. Repeat by switching threads, closing
+  the window, and quitting. The other draft must remain untouched, the microphone indicator must
+  turn off, and the owned inference process must exit. After cleanup, no `recording-*` or
+  `download-*` directory should remain under this test desktop's `dictation` state directory.
+- Unplug the selected microphone during capture and try an invalid executable path. Verify a
+  visible error and usable retry without losing the draft. Check keyboard focus and accessible
+  Stop/Cancel controls. Repeat the supported setup on Windows and Linux before release.
+
+Adapter and recording tests use fixtures; they do not establish live microphone, speech accuracy,
+native permission, or packaged-platform behavior.

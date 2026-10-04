@@ -44,6 +44,10 @@ export interface VoiceRecorder {
 }
 
 export type VoiceInputControllerDependencies = {
+  /** Desktop may safely rebase an insertion while the user continues typing. */
+  readonly resolveCommit?: typeof resolveTranscriptCommit;
+  /** Preserve the desktop caret from the explicit record action, including permission prompts. */
+  readonly captureDraftAtStart?: boolean;
   readonly recorder: VoiceRecorder;
   readonly getTranscriber: () => VoiceTranscriber | null;
   readonly requestPermission: () => Promise<{
@@ -253,7 +257,7 @@ export class VoiceInputController {
         this.setError("This draft is no longer available.", "retry");
         return;
       }
-      this.capturedDraft = capturedDraft;
+      this.capturedDraft = this.dependencies.captureDraftAtStart ? initiatingDraft : capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {
@@ -387,7 +391,7 @@ export class VoiceInputController {
       }
       if (!this.isCurrent(operationToken)) return;
 
-      const result = resolveTranscriptCommit(
+      const result = (this.dependencies.resolveCommit ?? resolveTranscriptCommit)(
         capturedDraft,
         this.dependencies.readDraft(),
         transcript,

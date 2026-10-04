@@ -194,6 +194,50 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
+  it("pins task workspace choices and waits for its durable link before navigation", async () => {
+    testState.reset(draft);
+    let finishPreparation!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    const prepareDraft = vi.fn(() => ready);
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const opening = useNewThreadHandler()(projectRef, {
+      envMode: "worktree",
+      environmentSelection: "manual",
+      branch: "main",
+      worktreeBranch: "team/eng-42",
+      prepareDraft,
+    });
+    expect(prepareDraft).toHaveBeenCalledOnce();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      expect.any(String),
+      expect.objectContaining({
+        environmentSelection: "manual",
+        branch: "main",
+        worktreeBranch: "team/eng-42",
+      }),
+    );
+    finishPreparation();
+    await opening;
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+  it("does not open an unlinked draft after task preparation fails", async () => {
+    testState.reset(draft);
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    await expect(
+      useNewThreadHandler()(projectRef, {
+        envMode: "worktree",
+        prepareDraft: async () => {
+          throw new Error("Disconnected");
+        },
+      }),
+    ).rejects.toThrow("Disconnected");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+  });
   it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
     "uses the target environment's %s permissions for new threads",
     async (runtimeMode) => {

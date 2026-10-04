@@ -21,6 +21,8 @@ export const ReviewCommentContextSchema = Schema.Struct({
   text: Schema.String,
   diff: Schema.String,
   fenceLanguage: Schema.optional(Schema.String),
+  sourceRevision: Schema.optional(Schema.String),
+  sourceStale: Schema.optional(Schema.Boolean),
   selection: Schema.optional(ReviewCommentSelectionSchema),
   pullRequest: Schema.optional(PullRequestContextMetadata),
 });
@@ -36,6 +38,8 @@ export interface ReviewCommentContext {
   readonly text: string;
   readonly diff: string;
   readonly fenceLanguage?: string | undefined;
+  readonly sourceRevision?: string | undefined;
+  readonly sourceStale?: boolean | undefined;
   readonly selection?: ReviewCommentSelection | undefined;
   readonly pullRequest?: PullRequestContextMetadata | undefined;
 }

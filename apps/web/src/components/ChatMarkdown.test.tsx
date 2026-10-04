@@ -947,3 +947,20 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+it("maps sanitized Markdown to source without trusting forged annotation attributes", () => {
+  const html = renderToStaticMarkup(
+    <ChatMarkdown
+      text={
+        '# Title\n\n<p data-t3-source-start="999" onclick="alert(1)">Review me</p>\n\n<script>alert(1)</script>'
+      }
+      cwd="/repo"
+      sourceLineMarkers
+    />,
+  );
+  expect(html).not.toContain("<script");
+  expect(html).not.toContain("onclick");
+  expect(html).not.toContain('data-t3-source-start="999"');
+  expect(html).toContain('data-t3-source-start="1"');
+  expect(html).toContain('data-t3-source-start="3"');
+});

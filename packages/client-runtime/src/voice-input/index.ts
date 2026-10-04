@@ -1,5 +1,6 @@
 export {
   VoiceInputController,
+  resolveTranscriptCommit,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,

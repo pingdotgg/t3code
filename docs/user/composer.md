@@ -279,3 +279,50 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Edit Markdown documents
+
+Open a workspace Markdown file and choose **Rich**, **Source**, or **Preview**. Rich
+mode supports formatted text, lists, task lists, quotes, code, links, images, and
+tables. Use the formatting toolbar or type `/` to insert a block. The outline jumps
+to headings; table controls add or remove rows and columns, and Tab moves between
+cells. Front matter remains visible and can be edited in Source mode.
+
+Edits use the file editor's existing autosave. Opening a document does not rewrite
+it, and unchanged blocks keep their original Markdown. Documents with unsupported
+syntax, code-fence metadata, or more than 300 KB remain in Source mode with an
+explanation. Relative image paths use the file's folder in its own environment.
+Rich editing requires an updated server with conflict-aware file writes.
+
+Select text in Rich or Preview mode to attach a source-linked review note to the
+agent draft. Nothing is sent until you send the draft. Notes whose document changes
+are marked outdated and keep the original excerpt. If an agent or another editor
+changes a file before your save, T3 retains your unsaved text and offers a comparison;
+copy any edits you need before discarding them and using the disk version.
+
+## Dictate on desktop
+
+The microphone beside the composer records locally and inserts editable text into
+your draft. It never sends the prompt. **Voice** selects a microphone and manages the
+local transcription setup. On macOS, install [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+with `brew install whisper-cpp`; Windows and Linux need a compatible `whisper-cli`
+build. Set the executable path in Voice if T3 cannot find it.
+
+Choose **Install local model** to download the multilingual Whisper tiny model
+(about 75 MiB) from Hugging Face. T3 checks the upstream checksum. You can cancel a
+download or remove the model there. Once installed, transcription runs offline on
+this desktop even when the coding agent is remote. Audio is never sent to a cloud
+transcription service. An unavailable executable, model, or microphone is reported
+before recording can continue.
+
+Click the microphone again to stop and transcribe, or use Cancel or Escape to discard
+the recording. Review the transcript before sending. Typing elsewhere in the draft
+is preserved; if the original insertion point cannot be recovered safely, T3 offers
+the transcript for explicit insertion. Switching threads cancels that composer's
+recording rather than inserting into another conversation.
+
+Configure `composer.dictationToggle` (default `mod+shift+d`) and
+`composer.dictationHold` (default `mod+shift+space`) in **Settings → Keybindings**.
+Hold mode stops on key release. Grant T3 microphone access in operating-system
+privacy settings if permission was denied. Recordings are limited to five minutes;
+the small model favors speed, so check names and technical terms carefully.

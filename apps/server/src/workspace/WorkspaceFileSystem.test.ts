@@ -249,6 +249,34 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("rejects a stale save without changing newer disk contents", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "README.md", "Agent edit");
+        const error = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "README.md",
+            contents: "My edit",
+            expectedContents: "Original",
+          })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkspaceFileConflictError");
+        const current = yield* service.readFile({ cwd, relativePath: "README.md" });
+        expect(current.contents).toBe("Agent edit");
+        yield* service.writeFile({
+          cwd,
+          relativePath: "README.md",
+          contents: "Merged",
+          expectedContents: "Agent edit",
+        });
+        expect((yield* service.readFile({ cwd, relativePath: "README.md" })).contents).toBe(
+          "Merged",
+        );
+      }),
+    );
+
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

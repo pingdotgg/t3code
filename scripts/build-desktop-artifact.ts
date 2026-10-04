@@ -1307,6 +1307,8 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -2719,7 +2721,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      entitlements: path.join(repoRoot, "apps/desktop/resources/entitlements.mac.plist"),
+      entitlementsInherit: path.join(repoRoot, "apps/desktop/resources/entitlements.mac.plist"),
       extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code records your microphone only when you start dictation, then transcribes locally on this computer.",
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
       },

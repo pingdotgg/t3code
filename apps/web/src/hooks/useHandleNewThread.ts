@@ -40,6 +40,8 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  environmentSelection?: "auto" | "manual";
+  worktreeBranch?: string | null;
 }
 
 // The workspace options the caller passed explicitly, shaped for the draft
@@ -51,6 +53,10 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.environmentSelection !== undefined
+      ? { environmentSelection: options.environmentSelection }
+      : {}),
+    ...(options?.worktreeBranch !== undefined ? { worktreeBranch: options.worktreeBranch } : {}),
   };
 }
 
@@ -71,6 +77,10 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        environmentSelection?: "auto" | "manual";
+        worktreeBranch?: string | null;
+        /** Prepare linked task context before opening an editable draft. False keeps navigation with the caller. */
+        prepareDraft?: (draft: { draftId: DraftId; threadId: ThreadId }) => Promise<boolean | void>;
         replace?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
@@ -168,6 +178,8 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const hasTaskWorkspaceOption =
+        options?.environmentSelection !== undefined || options?.worktreeBranch !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -207,7 +219,8 @@ export function useNewThreadHandler() {
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
-            hasStartFromOriginOption;
+            hasStartFromOriginOption ||
+            hasTaskWorkspaceOption;
           // Resurrecting an empty stored draft must not resurrect its stale
           // context: explicit workspace options win outright; otherwise the
           // env context resets to the configured defaults so drafts seeded
@@ -307,6 +320,11 @@ export function useNewThreadHandler() {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
           };
+          if (
+            options?.prepareDraft &&
+            ((await options.prepareDraft(opened)) === false || routeChangedSinceRequest())
+          )
+            return null;
           // Re-read the route: the snapshot from before the await is stale
           // once a concurrent invocation's navigation lands, and navigating
           // again would push a duplicate history entry.
@@ -339,7 +357,8 @@ export function useNewThreadHandler() {
           hasBranchOption ||
           hasWorktreePathOption ||
           hasEnvModeOption ||
-          hasStartFromOriginOption
+          hasStartFromOriginOption ||
+          hasTaskWorkspaceOption
         ) {
           setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
         }
@@ -350,10 +369,15 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
-        return Promise.resolve({
+        const opened = {
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
-        });
+        };
+        return options?.prepareDraft
+          ? options
+              .prepareDraft(opened)
+              .then((ready) => (ready === false || routeChangedSinceRequest() ? null : opened))
+          : Promise.resolve(opened);
       }
 
       const draftId = newDraftId();
@@ -393,6 +417,15 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
+          if (
+            options?.prepareDraft &&
+            ((await options.prepareDraft({
+              draftId: racedDraft.draftId,
+              threadId: racedDraft.threadId,
+            })) === false ||
+              routeChangedSinceRequest())
+          )
+            return null;
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
@@ -413,6 +446,7 @@ export function useNewThreadHandler() {
               newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
             }),
           runtimeMode: defaultRuntimeMode,
+          ...pickExplicitWorkspaceOptions(options),
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
@@ -422,6 +456,12 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        if (
+          options?.prepareDraft &&
+          ((await options.prepareDraft({ draftId, threadId })) === false ||
+            routeChangedSinceRequest())
+        )
+          return null;
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },
