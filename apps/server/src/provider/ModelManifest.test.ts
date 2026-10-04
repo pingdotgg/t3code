@@ -556,7 +556,7 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("does not fetch when provider update checks are disabled", () =>
+  it.live("still fetches when provider update checks are disabled", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
       const service = yield* ModelManifest.make.pipe(
@@ -567,9 +567,9 @@ describe("ModelManifest service", () => {
           }),
         ),
       );
-      assert.deepStrictEqual(yield* service.refresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
-      assert.deepStrictEqual(yield* service.forceRefresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
-      assert.strictEqual(fetchCount, 0);
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 2);
     }).pipe(
       Effect.scoped,
       Effect.provide(
