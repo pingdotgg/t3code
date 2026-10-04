@@ -1,7 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
   type RuntimeMode,
@@ -246,7 +245,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".conf",
 ]);
 const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
-const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 /**
  * Sends supported uploads as native ACP content. Other files, and native

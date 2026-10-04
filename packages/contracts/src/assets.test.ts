@@ -43,6 +43,20 @@ describe("AttachmentCreateUploadUrlInput", () => {
     ).toBe(true);
   });
 
+  it.each([100_000_000, 100_000_001])(
+    "enforces the 100 MB file boundary at %s bytes",
+    (sizeBytes) => {
+      expect(
+        isUploadInput({
+          type: "file",
+          name: "archive.zip",
+          mimeType: "application/zip",
+          sizeBytes,
+        }),
+      ).toBe(sizeBytes <= 100_000_000);
+    },
+  );
+
   it("rejects empty and oversized uploads", () => {
     expect(isUploadInput({ ...uploadInput, sizeBytes: 0 })).toBe(false);
     expect(
