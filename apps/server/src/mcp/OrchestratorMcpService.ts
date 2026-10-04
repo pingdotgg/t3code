@@ -799,10 +799,11 @@ const make = Effect.gen(function* () {
   const loadProjectThread = (
     projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
     threadId: ThreadId,
+    launcherThreadId?: ThreadId,
   ) =>
     threadManagement
       .getProjectThreadRecords(
-        { projectId, threadId },
+        { projectId, threadId, ...(launcherThreadId === undefined ? {} : { launcherThreadId }) },
         [
           "runs",
           "messages",
@@ -817,21 +818,34 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
+  /**
+   * Threads are managed inside the calling project. `followLaunched` also admits a thread the
+   * caller launched into another project, for the tools that follow or stop a launched run.
+   */
+  const loadScopedThread = (
+    scope: McpInvocationScope,
+    threadId: ThreadId,
+    options?: { readonly followLaunched: boolean },
+  ) =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
       const parent = yield* loadProjection(scope.threadId);
       const target =
         threadId === scope.threadId
           ? parent
-          : yield* loadProjectThread(parent.thread.projectId, threadId);
+          : yield* loadProjectThread(
+              parent.thread.projectId,
+              threadId,
+              options?.followLaunched === true ? scope.threadId : undefined,
+            );
       return { parent, target } as const;
     });
 
   /**
    * A thread the user attached as context (a `thread` record on one of their own messages)
    * is readable even outside the calling project. Only records the user authored count:
-   * an agent cannot widen its own reach by writing a record.
+   * an agent cannot widen its own reach by writing a record. A thread the caller launched
+   * into another project is readable as well.
    */
   const userAttachedThreadIds = (
     parent: Pick<OrchestrationV2ThreadProjection, "messages">,
@@ -856,11 +870,10 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(threadManagementFailure));
       if (threadId === scope.threadId) return { parent, target: yield* loadTarget() } as const;
       const target = yield* threadManagement
-        .getProjectThreadRecords({ projectId: parent.thread.projectId, threadId }, [
-          "runs",
-          "runtimeRequests",
-          "contextTransfers",
-        ])
+        .getProjectThreadRecords(
+          { projectId: parent.thread.projectId, threadId, launcherThreadId: scope.threadId },
+          ["runs", "runtimeRequests", "contextTransfers"],
+        )
         .pipe(
           Effect.mapError(threadManagementFailure),
           Effect.catchIf(
@@ -1893,11 +1906,14 @@ const make = Effect.gen(function* () {
       }),
     waitForThread: (scope, input) =>
       Effect.gen(function* () {
-        const { parent } = yield* loadScopedThread(scope, input.threadId);
+        const { parent } = yield* loadScopedThread(scope, input.threadId, {
+          followLaunched: true,
+        });
         const result = yield* threadManagement
           .waitForThread({
             projectId: parent.thread.projectId,
             threadId: input.threadId,
+            launcherThreadId: scope.threadId,
             ...(input.runId === undefined ? {} : { runId: input.runId }),
             timeoutMs: Math.min(
               MAX_WAIT_TIMEOUT_MS,
@@ -1914,11 +1930,14 @@ const make = Effect.gen(function* () {
       }),
     interruptThread: (scope, input) =>
       Effect.gen(function* () {
-        const { parent } = yield* loadScopedThread(scope, input.threadId);
+        const { parent } = yield* loadScopedThread(scope, input.threadId, {
+          followLaunched: true,
+        });
         const key = yield* requestKey(input.clientRequestId);
         const result = yield* threadManagement
           .interruptThread({
             projectId: parent.thread.projectId,
+            launcherThreadId: scope.threadId,
             commandId: stableCommandId({
               scope,
               requestKey: key,

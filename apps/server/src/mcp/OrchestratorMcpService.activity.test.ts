@@ -456,3 +456,120 @@ it("readThread reaches a thread the user attached as context, but not one an age
     expect(write.code).toBe("thread_not_found");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("follows a thread the caller launched into another project without letting it be sent to", async () => {
+  const launchedProjectId = ProjectId.make("project-mcp-orchestrator-launched");
+  const launchedThreadId = ThreadId.make("thread-mcp-orchestrator-launched");
+  const launchedRunId = RunId.make("run-mcp-launched");
+  const parentProjection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const launchedRun = makeRun({ id: launchedRunId, ordinal: 1, status: "running" });
+  const launchedProjection = {
+    thread: {
+      ...baseThread({
+        threadId: launchedThreadId,
+        title: "Launched",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      projectId: launchedProjectId,
+      createdBy: "agent",
+    },
+    runs: [launchedRun],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    providerThreads: [],
+    providerTurns: [],
+    turnItems: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  // Stands in for the service rule: only the launching thread is admitted across projects.
+  type Scoped = {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly launcherThreadId?: ThreadId;
+  };
+  const admitLauncher = (input: Scoped) =>
+    input.threadId === launchedThreadId && input.launcherThreadId === parentThreadId
+      ? Effect.succeed(launchedProjection)
+      : Effect.fail(
+          new ThreadManagementService.ThreadManagementThreadNotFoundError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+          }),
+        );
+
+  const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId: ThreadId) =>
+            threadId === parentThreadId
+              ? Effect.succeed(parentProjection)
+              : Effect.die(`unexpected thread ${threadId}`),
+          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getProjectThreadRecords: (input: Scoped) => admitLauncher(input),
+          waitForThread: (input: Scoped) =>
+            admitLauncher(input).pipe(
+              Effect.as({ threadId: input.threadId, run: launchedRun, timedOut: true }),
+            ),
+          interruptThread: (input: Scoped) =>
+            admitLauncher(input).pipe(
+              Effect.as({ type: "interrupt_requested", run: launchedRun, dispatch: {} }),
+            ),
+          sendToThread: (input: Scoped) =>
+            admitLauncher(input).pipe(Effect.andThen(Effect.die("sent"))),
+        } as unknown as Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+
+    const read = yield* service.readThread(makeScope(), { threadId: launchedThreadId });
+    expect(read.thread.threadId).toBe(launchedThreadId);
+
+    const waited = yield* service.waitForThread(makeScope(), {
+      threadId: launchedThreadId,
+      timeoutMs: 1,
+    });
+    expect(waited).toMatchObject({ runId: launchedRunId, status: "running", timedOut: true });
+
+    const interrupted = yield* service.interruptThread(makeScope(), {
+      threadId: launchedThreadId,
+    });
+    expect(interrupted).toMatchObject({ runId: launchedRunId, status: "interrupt_requested" });
+
+    const sent = yield* service
+      .sendToThread(makeScope(), { threadId: launchedThreadId, message: "hi" })
+      .pipe(Effect.flip);
+    expect(sent.code).toBe("thread_not_found");
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});

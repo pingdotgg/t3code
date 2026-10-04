@@ -1,6 +1,7 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import { ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -48,7 +49,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         });
       const commandId = yield* newCommandId();
       const threadId = ThreadId.make(commandId);
-      const messageId = MessageId.make(commandId);
+      const messageId = ThreadManagement.launchMessageId(threadId);
       const attachments = input.attachments ?? [];
       if (attachments.some((attachment) => !Claims.attachmentIsPendingUpload(attachment)))
         return yield* new OrchestratorMcpFailure({

@@ -419,3 +419,150 @@ it.effect.each([
     }
   }),
 );
+
+const launchedThreadFixture = () => {
+  const projectId = ProjectId.make("project:thread-management:launcher");
+  const otherProjectId = ProjectId.make("project:thread-management:launched-into");
+  const launcherThreadId = ThreadId.make("thread:thread-management:launcher");
+  const threadId = ThreadId.make("thread:thread-management:launched");
+  const runId = RunId.make("run:thread-management:launched");
+  const makeLayer = (input: {
+    readonly sender?: ThreadId;
+    readonly createdBy?: "agent" | "user";
+    readonly deleted?: boolean;
+    readonly runStatus?: OrchestrationV2Run["status"];
+    readonly dispatch?: Orchestrator.OrchestratorV2["Service"]["dispatch"];
+  }) =>
+    ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: (_threadId, fields) =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: otherProjectId,
+                deletedAt: input.deleted === true ? "2026-08-04T12:00:00.000Z" : null,
+              },
+              runs: [{ id: runId, ordinal: 1, status: input.runStatus ?? "completed" }],
+              providerTurns: [],
+              messages: (fields as ReadonlyArray<string>).includes("messages")
+                ? [
+                    {
+                      id: ThreadManagementService.launchMessageId(threadId),
+                      createdBy: input.createdBy ?? "agent",
+                      ...(input.sender === undefined ? {} : { senderThreadId: input.sender }),
+                    },
+                  ]
+                : [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          ...(input.dispatch === undefined ? {} : { dispatch: input.dispatch }),
+        }),
+      ),
+    );
+  return { projectId, otherProjectId, launcherThreadId, threadId, runId, makeLayer };
+};
+
+it.effect("admits a thread in another project only for the thread that launched it", () =>
+  Effect.gen(function* () {
+    const { projectId, otherProjectId, launcherThreadId, threadId, makeLayer } =
+      launchedThreadFixture();
+    const strangerThreadId = ThreadId.make("thread:thread-management:stranger");
+    const load = (
+      layer: ReturnType<typeof makeLayer>,
+      scope: { readonly launcherThreadId?: ThreadId },
+    ) =>
+      ThreadManagementService.ThreadManagementService.pipe(
+        Effect.flatMap((service) =>
+          service.getProjectThreadRecords({ projectId, threadId, ...scope }, ["runs"]),
+        ),
+        Effect.provide(layer),
+        Effect.result,
+      );
+    const launched = makeLayer({ sender: launcherThreadId });
+
+    const admitted = yield* load(launched, { launcherThreadId });
+    expect(admitted).toMatchObject({
+      _tag: "Success",
+      success: { thread: { id: threadId, projectId: otherProjectId } },
+    });
+
+    const notFound = {
+      _tag: "Failure",
+      failure: expect.any(ThreadManagementService.ThreadManagementThreadNotFoundError),
+    };
+    // Project-scoped callers and every other thread keep the project boundary.
+    expect(yield* load(launched, {})).toMatchObject(notFound);
+    expect(yield* load(launched, { launcherThreadId: strangerThreadId })).toMatchObject(notFound);
+    // A user-authored first message is not a launch record, whatever sender it names.
+    expect(
+      yield* load(makeLayer({ sender: launcherThreadId, createdBy: "user" }), { launcherThreadId }),
+    ).toMatchObject(notFound);
+    expect(yield* load(makeLayer({}), { launcherThreadId })).toMatchObject(notFound);
+    expect(
+      yield* load(makeLayer({ sender: launcherThreadId, deleted: true }), { launcherThreadId }),
+    ).toMatchObject(notFound);
+  }),
+);
+
+it.effect("lets the launching thread wait on a run it launched into another project", () =>
+  Effect.gen(function* () {
+    const { projectId, launcherThreadId, threadId, runId, makeLayer } = launchedThreadFixture();
+    const wait = (scope: { readonly launcherThreadId?: ThreadId }) =>
+      ThreadManagementService.ThreadManagementService.pipe(
+        Effect.flatMap((service) =>
+          service.waitForThread({ projectId, threadId, timeoutMs: 1, ...scope }),
+        ),
+        Effect.provide(makeLayer({ sender: launcherThreadId, runStatus: "failed" })),
+        Effect.result,
+      );
+
+    expect(yield* wait({ launcherThreadId })).toMatchObject({
+      _tag: "Success",
+      success: { threadId, timedOut: false, run: { id: runId, status: "failed" } },
+    });
+    expect(yield* wait({})).toMatchObject({
+      _tag: "Failure",
+      failure: expect.any(ThreadManagementService.ThreadManagementThreadNotFoundError),
+    });
+  }),
+);
+
+it.effect("lets the launching thread interrupt a run it launched into another project", () =>
+  Effect.gen(function* () {
+    const { projectId, launcherThreadId, threadId, runId, makeLayer } = launchedThreadFixture();
+    const dispatched: Array<OrchestrationV2Command> = [];
+    const layer = makeLayer({
+      sender: launcherThreadId,
+      runStatus: "running",
+      dispatch: (command) => {
+        dispatched.push(command as OrchestrationV2Command);
+        return Effect.succeed({} as Orchestrator.OrchestratorV2DispatchResult);
+      },
+    });
+    const interrupt = (scope: { readonly launcherThreadId?: ThreadId }) =>
+      ThreadManagementService.ThreadManagementService.pipe(
+        Effect.flatMap((service) =>
+          service.interruptThread({
+            projectId,
+            commandId: CommandId.make("command:thread-management:interrupt-launched"),
+            threadId,
+            ...scope,
+          }),
+        ),
+        Effect.provide(layer),
+        Effect.result,
+      );
+
+    expect(yield* interrupt({})).toMatchObject({
+      _tag: "Failure",
+      failure: expect.any(ThreadManagementService.ThreadManagementThreadNotFoundError),
+    });
+    expect(dispatched).toEqual([]);
+
+    expect(yield* interrupt({ launcherThreadId })).toMatchObject({
+      _tag: "Success",
+      success: { type: "interrupt_requested", run: { id: runId } },
+    });
+    expect(dispatched).toMatchObject([{ type: "run.interrupt", threadId, runId }]);
+  }),
+);

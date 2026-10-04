@@ -126,6 +126,7 @@ export interface ThreadManagementSendResult {
 export interface ThreadManagementWaitInput {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
+  readonly launcherThreadId?: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
   readonly pollIntervalMs?: number;
@@ -141,6 +142,7 @@ export interface ThreadManagementInterruptInput {
   readonly projectId: ProjectId;
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
+  readonly launcherThreadId?: ThreadId;
   readonly runId?: RunId;
   readonly reason?: string;
 }
@@ -283,8 +285,16 @@ export interface ThreadManagementServiceShape {
   readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
   readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
   readonly getThreadSnapshotWindow: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshotWindow"];
+  /**
+   * Loads a thread that belongs to `projectId`. With `launcherThreadId`, a thread that thread
+   * launched into another project is admitted too, so a launcher can follow what it started.
+   */
   readonly getProjectThreadRecords: <K extends ProjectionRecordField>(
-    input: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+    input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly launcherThreadId?: ThreadId;
+    },
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<
@@ -324,6 +334,12 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementService,
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
+
+/**
+ * An agent launch gives the new thread's first message the thread's own id, with the launching
+ * thread as its sender. That message is the durable record of who launched the thread.
+ */
+export const launchMessageId = (threadId: ThreadId): MessageId => MessageId.make(threadId);
 
 export function isActiveRun(run: OrchestrationV2Run): boolean {
   return (
@@ -469,33 +485,51 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const wasLaunchedBy = (threadId: ThreadId, launcherThreadId: ThreadId) =>
+    orchestrator
+      .getThreadRecords(threadId, ["messages"], { messageIds: [launchMessageId(threadId)] })
+      .pipe(
+        Effect.map((records) =>
+          records.messages.some(
+            (message) =>
+              message.id === launchMessageId(threadId) &&
+              message.createdBy === "agent" &&
+              message.senderThreadId === launcherThreadId,
+          ),
+        ),
+      );
+
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,
     fields,
     filter,
-  ) =>
-    ensureProjectionTranscript(input.threadId)
-      .pipe(Effect.andThen(orchestrator.getThreadRecords(input.threadId, fields, filter)))
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadManagementProjectionLoadError({
-              projectId: input.projectId,
-              threadId: input.threadId,
-              cause,
-            }),
-        ),
-        Effect.flatMap((projection) =>
-          projection.thread.projectId === input.projectId && projection.thread.deletedAt === null
-            ? Effect.succeed(projection)
-            : Effect.fail(
-                new ThreadManagementThreadNotFoundError({
-                  projectId: input.projectId,
-                  threadId: input.threadId,
-                }),
-              ),
-        ),
-      );
+  ) => {
+    const loadError = (cause: Orchestrator.OrchestratorV2Error) =>
+      new ThreadManagementProjectionLoadError({
+        projectId: input.projectId,
+        threadId: input.threadId,
+        cause,
+      });
+    const notFound = Effect.fail(
+      new ThreadManagementThreadNotFoundError({
+        projectId: input.projectId,
+        threadId: input.threadId,
+      }),
+    );
+    return ensureProjectionTranscript(input.threadId).pipe(
+      Effect.andThen(orchestrator.getThreadRecords(input.threadId, fields, filter)),
+      Effect.mapError(loadError),
+      Effect.flatMap((projection) => {
+        if (projection.thread.deletedAt !== null) return notFound;
+        if (projection.thread.projectId === input.projectId) return Effect.succeed(projection);
+        if (input.launcherThreadId === undefined) return notFound;
+        return wasLaunchedBy(input.threadId, input.launcherThreadId).pipe(
+          Effect.mapError(loadError),
+          Effect.flatMap((launched) => (launched ? Effect.succeed(projection) : notFound)),
+        );
+      }),
+    );
+  };
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
     orchestrator.getShellSnapshot().pipe(
@@ -629,9 +663,11 @@ const make = Effect.gen(function* () {
         return { threadId: input.threadId, run: selectedRun, timedOut: false };
       }
 
+      // Access was decided above; later reads only need to notice the thread being deleted.
+      const admitted = { projectId: target.thread.projectId, threadId: input.threadId };
       const wait = Effect.gen(function* () {
         while (true) {
-          const current = yield* getProjectThreadRecords(input, ["runs"], {
+          const current = yield* getProjectThreadRecords(admitted, ["runs"], {
             runIds: [selectedRun.id],
           });
           const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
@@ -649,7 +685,9 @@ const make = Effect.gen(function* () {
       if (Option.isSome(waited)) {
         return { threadId: input.threadId, run: waited.value, timedOut: false };
       }
-      const current = yield* getProjectThreadRecords(input, ["runs"], { runIds: [selectedRun.id] });
+      const current = yield* getProjectThreadRecords(admitted, ["runs"], {
+        runIds: [selectedRun.id],
+      });
       const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
       if (run === undefined) {
         return yield* new ThreadManagementRunNotFoundError({

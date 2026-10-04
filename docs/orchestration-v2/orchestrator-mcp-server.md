@@ -329,6 +329,13 @@ its own under the environment's Scratch project. For stacked PRs, use the parent
 no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
+A thread launched with a message into another project, or into scratch, stays
+reachable from the launching thread through `t3_thread_read`, `t3_thread_wait`,
+and `t3_thread_interrupt`. The launch message records the launching thread as its
+sender, and only that thread gets this access. Listing, search, and send stay
+scoped to the calling project, so `t3_thread_list` cannot recover a lost
+response for a launch into another project.
+
 ### `t3_thread_list`
 
 Lists durable thread shells in the calling thread's project, newest first.
