@@ -80,16 +80,17 @@ See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGen
 
 ## Provider updates run only through the owning installer
 
-A one-click update is offered only when the resolved executable's path proves which installer owns
-it. Homebrew and npm are proven by the real path (symlinks followed): a versioned keg or cask under
+A package manager runs only when the resolved executable's path proves it owns the install. Homebrew
+and npm are proven by the real path (symlinks followed): a versioned keg or cask under
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
-Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
-the resolved path or its real target, since those installers place real files or their own symlinks
-there. Cursor and Grok are the exception: their only updater is the CLI itself, which detects its
-own installer, so any resolved executable runs `<binary> update`. Anything unproven stays
-manual-only but still reports the version gap. npm updates pin
-`--prefix` because the `npm` on `PATH` can belong to a different Node than the one that owns the
-provider. Homebrew
+Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
+either the resolved path or its real target, since those installers place real files or their own
+symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
+nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
+`pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
+the runner's version check catches an updater that exits 0 without updating. Mise installs stay
+manual-only because their version is pinned in mise's config. npm updates pin `--prefix` because the
+`npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.
 See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
