@@ -141,6 +141,15 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
+   * Deletes every pending-start placeholder across all threads. Only valid at
+   * startup: a placeholder means a start was accepted but never acknowledged, and
+   * after a restart nothing is working on one.
+   */
+  readonly deleteAllPendingTurnStarts: (
+    input: void,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
    * Lists all projection rows for a thread, including pending placeholders, with checkpoint rows ordered before non-checkpoint rows.
    */
   readonly listByThreadId: (

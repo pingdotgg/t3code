@@ -1965,6 +1965,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }),
         ),
       );
+
+      // After a restart no provider request is working on any pending start, so
+      // every surviving placeholder is orphaned. Left in place it reports the
+      // thread busy forever and every send is rejected as a duplicate, since no
+      // further event will arrive to retire it. Runs after replay so a start
+      // accepted just before shutdown still cleans up.
+      yield* projectionTurnRepository.deleteAllPendingTurnStarts();
     }).pipe(
       Effect.asVoid,
       Effect.tap(() =>
