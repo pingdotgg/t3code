@@ -41,7 +41,17 @@ import {
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import type { EnvironmentId, ToolActivityIcon } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  type EnvironmentId,
+  type RunId,
+  type ThreadId,
+  type ToolActivityIcon,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 
 import { AppText as Text } from "../../components/AppText";
@@ -770,6 +780,44 @@ function workLogRowKey(row: ThreadFeedActivity): string {
   return row.id;
 }
 
+/** Shown while the thread's run still ends in this failed preparation. */
+function WorkspacePreparationRetryButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+}) {
+  const retryable = useAtomValue(
+    environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
+    (thread) => {
+      const run = thread?.projection.runs.find((candidate) => candidate.id === props.runId);
+      return run?.status === "failed" && run.workspacePreparation !== undefined;
+    },
+  );
+  const retry = useAtomCommand(threadEnvironment.retryWorkspacePreparation, "retry setup");
+  const [busy, setBusy] = useState(false);
+  if (!retryable) return null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Retry workspace preparation"
+      disabled={busy}
+      onPress={() => {
+        setBusy(true);
+        void Haptics.selectionAsync();
+        void retry({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, runId: props.runId },
+        }).finally(() => setBusy(false));
+      }}
+      className="ml-7 mt-2 min-h-11 flex-row items-center gap-1.5 self-start rounded-full border border-border px-4"
+      style={{ opacity: busy ? 0.5 : 1 }}
+    >
+      <SymbolView name="arrow.clockwise" size={13} tintColorClassName="accent-icon" />
+      <Text className="font-t3-medium text-sm text-foreground">Retry</Text>
+    </Pressable>
+  );
+}
+
 const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -849,6 +897,14 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
             <Text selectable className="ml-7 text-sm text-foreground">
               {failureItem.failure.message}
             </Text>
+          ) : null}
+          {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
+          failureItem.runId !== null ? (
+            <WorkspacePreparationRetryButton
+              environmentId={props.environmentId}
+              threadId={failureItem.threadId}
+              runId={failureItem.runId}
+            />
           ) : null}
         </View>
       </WorkLogPressable>
@@ -1009,7 +1065,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "ml-7 border-l border-border pb-1 pl-3 pt-0.5"}
+          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -1368,6 +1424,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "link-pr":
     case "unlink-pr":
     case "list-prs":
+    case "watch-pr":
+    case "unwatch-pr":
       return "arrow.triangle.pull";
     case "read":
       return { ios: "eye", android: "visibility" };

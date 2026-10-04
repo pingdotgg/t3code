@@ -92,6 +92,30 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/**
+ * Present while the server watches the pull request for its thread. The server wakes the
+ * thread's agent when checks finish on the head commit, someone else comments, or the branch
+ * starts to conflict. The other fields record what the agent was last told, so each change is
+ * reported once.
+ */
+export const ThreadPullRequestWatch = Schema.Struct({
+  startedAt: IsoDateTime,
+  /** Head commit at the last pass; null where the host does not report one. */
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+  /** Failed checks on that commit the agent was told about; a rerun that fails again is news. */
+  failedChecks: Schema.Array(TrimmedNonEmptyString),
+  /** The agent was told the required checks on that commit passed. */
+  passed: Schema.Boolean,
+  /** Remarks from others created up to this host time were reported. */
+  remarksThrough: IsoDateTime,
+  /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
+  remarkIds: Schema.Array(TrimmedNonEmptyString),
+  conflicting: Schema.Boolean,
+  /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
+  wakes: NonNegativeInt,
+});
+export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
+
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
@@ -99,5 +123,6 @@ export const ThreadPullRequestLink = Schema.Struct({
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
+  watch: Schema.optional(ThreadPullRequestWatch),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;

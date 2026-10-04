@@ -28,6 +28,7 @@ import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -47,6 +48,7 @@ import type {
 } from "./ProviderAdapter.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
@@ -511,8 +513,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
-  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
-  readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -557,7 +559,7 @@ export const layer: Layer.Layer<
       readonly checkpointScope: OrchestrationV2CheckpointScope;
       readonly providerThread: OrchestrationV2ProviderThread;
       readonly attempt: OrchestrationV2RunAttempt;
-      readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
+      readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
@@ -1286,15 +1288,12 @@ export const layer: Layer.Layer<
                                         checkpointScope: input.checkpointScope,
                                         providerThread,
                                         attempt: input.attempt,
-                                        ...(input.shouldFinalizeRun === undefined
-                                          ? {}
-                                          : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                                        ...(input.hasUnpairedRunInterruptRequest === undefined
-                                          ? {}
-                                          : {
-                                              hasUnpairedRunInterruptRequest:
-                                                input.hasUnpairedRunInterruptRequest,
-                                            }),
+                                        // The failure may be the ownership
+                                        // read itself, so check in the write.
+                                        writeIfRunCurrent: {
+                                          activeAttemptId: input.attempt.id,
+                                          expectedStatus: "running",
+                                        },
                                         openRunOwnedSubagents: openSubagents,
                                         terminal: makeFailedTerminalEvent(
                                           makeProviderFailure({
@@ -1328,10 +1327,13 @@ export const layer: Layer.Layer<
             Effect.forkDetach,
           );
 
-          if (
-            input.shouldStartProviderTurn !== undefined &&
-            !(yield* input.shouldStartProviderTurn())
-          ) {
+          // A failed read fails the start below, so the run is recorded as
+          // failed instead of staying active with no provider turn.
+          const shouldStart =
+            input.shouldStartProviderTurn === undefined
+              ? Exit.succeed(true)
+              : yield* Effect.exit(input.shouldStartProviderTurn());
+          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
             yield* Fiber.interrupt(providerEventFiber);
             return;
           }
@@ -1373,7 +1375,7 @@ export const layer: Layer.Layer<
                 }),
               ))
             : input.session.startTurn(turnInput);
-          yield* startTurn.pipe(
+          yield* Effect.andThen(shouldStart, startTurn).pipe(
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {
                 runId: input.run.id,
@@ -1392,20 +1394,18 @@ export const layer: Layer.Layer<
                             checkpointScope: input.checkpointScope,
                             providerThread,
                             attempt: input.attempt,
-                            ...(input.shouldFinalizeRun === undefined
-                              ? {}
-                              : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                            ...(input.hasUnpairedRunInterruptRequest === undefined
-                              ? {}
-                              : {
-                                  hasUnpairedRunInterruptRequest:
-                                    input.hasUnpairedRunInterruptRequest,
-                                }),
+                            // Checked in the write transaction, not by another
+                            // read that can fail like the one before the start.
+                            writeIfRunCurrent: {
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running",
+                            },
                             openRunOwnedSubagents: openSubagents,
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),
-                                class: "provider_error",
+                                // A failed ownership read is not the provider's fault.
+                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
                               }),
                               latestItemOrdinal + 1,
                             ),

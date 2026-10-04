@@ -11,10 +11,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -52,7 +54,22 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
         thread: { id: childThreadId },
-        runs: [{ id: childRunId, ordinal: 1, status: "completed" }],
+        runs: [
+          {
+            id: childRunId,
+            ordinal: 1,
+            status: "completed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:10:00Z"),
+          },
+          {
+            id: RunId.make("run:mcp-ack-continuation"),
+            ordinal: 2,
+            status: "failed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+          },
+        ],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -126,9 +143,92 @@ describe("OrchestratorMcpService", () => {
         const result = yield* service.taskStatus(scope, taskId);
         assert.equal(result.status, "completed");
         assert.equal(result.summary, "terminal result");
+        assert.equal(result.latestTerminalRunId, childRunId);
+        assert.equal(result.latestTerminalStatus, "completed");
         const commandIds = yield* Ref.get(acknowledgementCommandIds);
         assert.equal(commandIds.length, 2);
         assert.notEqual(commandIds[0], commandIds[1]);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect("reports a restart-cut child as working until its continuation settles", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-restart-parent");
+      const childThreadId = ThreadId.make("thread:mcp-restart-child");
+      const taskId = NodeId.make("node:mcp-restart-task");
+      const dispatched = yield* Ref.make(0);
+      let awaitsRestart = true;
+      let readFails = true;
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "running",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const childProjection = {
+        thread: { id: childThreadId },
+        runs: [{ id: RunId.make("run:mcp-restart-child"), ordinal: 1, status: "cancelled" }],
+        contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+          delegatedTaskResultPending: () =>
+            readFails
+              ? Effect.fail(new OrchestratorProjectionError({ threadId: childThreadId }))
+              : Effect.succeed(awaitsRestart),
+          dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-restart"),
+        threadId: parentThreadId,
+        providerSessionId: "provider-session:mcp-restart",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const failed = yield* service.taskStatus(scope, taskId).pipe(Effect.flip);
+        assert.equal(failed.code, "orchestration_error");
+        assert.equal(yield* Ref.get(dispatched), 0);
+        readFails = false;
+        const held = yield* service.taskStatus(scope, taskId);
+        assert.equal(held.status, "running");
+        assert.equal(held.workState, "working");
+        assert.isNull(held.summary);
+        // Acknowledging the cut run would suppress the real result's wake.
+        assert.equal(yield* Ref.get(dispatched), 0);
+        awaitsRestart = false;
+        const settled = yield* service.taskStatus(scope, taskId);
+        assert.equal(settled.status, "cancelled");
+        assert.equal(yield* Ref.get(dispatched), 1);
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );

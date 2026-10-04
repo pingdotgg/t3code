@@ -385,16 +385,18 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
-  if (props.status.kind === "waiting") {
+  if (props.status.kind === "background") {
     return (
       <StatusLabelRow
-        key="waiting"
+        key="background"
         accessibilityLabel={props.status.accessibilityLabel}
         className="gap-2"
         onLayout={props.onLayout}
       >
+        {/* A dev server can run for hours after the agent is done, so only work
+            that will wake the agent gets the bolt. */}
         <SymbolView
-          name={{ ios: "bolt", android: "bolt" }}
+          name={props.status.waiting ? { ios: "bolt", android: "bolt" } : "terminal"}
           size={13}
           tintColorClassName="foreground"
           type="monochrome"

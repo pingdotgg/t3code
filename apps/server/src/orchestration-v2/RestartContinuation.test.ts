@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,6 +12,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
@@ -201,6 +203,7 @@ it.effect("prompts a settled thread's continuation with the note of its lost wor
         Layer.merge(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
             dispatch: (command) => {
               commands.push(command);
               return Effect.succeed({} as never);
@@ -246,6 +249,7 @@ it.effect("does not continue a failed run that lost background work", () =>
         Layer.merge(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
             dispatch: (command) => {
               commands.push(command);
               return Effect.succeed({} as never);
@@ -328,6 +332,7 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
     >[0][] = [];
     const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadRecords: () => Effect.succeed(projection),
+      recoverDelegatedTask: () => Effect.void,
       dispatch: (command) => {
         commands.push(command);
         if (command.type === "message.dispatch")
@@ -499,6 +504,7 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
           ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
             dispatch: () =>
               Effect.sync(() => {
                 dispatched = true;
@@ -509,5 +515,216 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       ),
     );
     assert.isFalse(dispatched);
+  }),
+);
+
+const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
+  Effect.gen(function* () {
+    const texts: Array<string> = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              if (command.type === "message.dispatch") texts.push(command.text);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    return texts;
+  });
+
+const cutMidTurn = (extra: Record<string, unknown> = {}) => {
+  const base = makeProjection();
+  return {
+    ...base,
+    runs: [
+      {
+        ...base.runs[0]!,
+        status: "cancelled",
+        userMessageId: MessageId.make("message:user"),
+        ...extra,
+      },
+    ],
+    providerTurns: [{ ...base.providerTurns[0]!, status: "cancelled" }],
+  } as unknown as OrchestrationV2ThreadProjection;
+};
+
+const queuedFollowUp = {
+  id: RunId.make("run:queued"),
+  ordinal: 2,
+  providerInstanceId: instanceId,
+  providerThreadId,
+  status: "queued",
+  queueHeld: true,
+};
+
+it.effect("continues a cut run past queued follow-ups, which stay held", () =>
+  Effect.gen(function* () {
+    const live = makeProjection();
+    assert.equal(
+      restartContinuationRun({
+        ...live,
+        runs: [...live.runs, queuedFollowUp],
+      } as unknown as OrchestrationV2ThreadProjection)?.id,
+      runId,
+    );
+    const cut = cutMidTurn();
+    const texts = yield* continuationTexts({
+      ...cut,
+      runs: [...cut.runs, queuedFollowUp],
+    } as unknown as OrchestrationV2ThreadProjection);
+    assert.deepEqual(texts, ["Continue where you left off."]);
+  }),
+);
+
+it.effect("continues a resumed queued run that ran after an earlier continuation", () =>
+  Effect.gen(function* () {
+    // The continuation (ordinal 3) ran ahead of the held queue, then the user
+    // resumed the queued run (ordinal 1 here) and the server restarted again.
+    const finishedContinuation = {
+      id: RunId.make("run:earlier-continuation"),
+      ordinal: 3,
+      providerInstanceId: instanceId,
+      providerThreadId,
+      status: "completed",
+      completedAt: DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"),
+    };
+    const live = makeProjection();
+    assert.equal(
+      restartContinuationRun({
+        ...live,
+        runs: [...live.runs, finishedContinuation],
+      } as unknown as OrchestrationV2ThreadProjection)?.id,
+      runId,
+    );
+    const cut = cutMidTurn({ completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00.000Z") });
+    const texts = yield* continuationTexts({
+      ...cut,
+      runs: [...cut.runs, finishedContinuation],
+    } as unknown as OrchestrationV2ThreadProjection);
+    assert.deepEqual(texts, ["Continue where you left off."]);
+  }),
+);
+
+it.effect("does not continue a run the user asked to stop before the restart", () =>
+  Effect.gen(function* () {
+    const texts = yield* continuationTexts({
+      ...cutMidTurn(),
+      turnItems: [{ id: "turn-item:interrupt", runId, type: "run_interrupt_request" }],
+    } as unknown as OrchestrationV2ThreadProjection);
+    assert.deepEqual(texts, []);
+  }),
+);
+
+it.effect("does not continue a cut /compact or /logout turn", () =>
+  Effect.gen(function* () {
+    for (const text of ["/compact", " /LOGOUT "]) {
+      const texts = yield* continuationTexts({
+        ...cutMidTurn(),
+        messages: [{ id: MessageId.make("message:user"), text, attachments: [] }],
+      } as unknown as OrchestrationV2ThreadProjection);
+      assert.deepEqual(texts, [], text);
+    }
+    const texts = yield* continuationTexts({
+      ...cutMidTurn(),
+      messages: [{ id: MessageId.make("message:user"), text: "/compact later", attachments: [] }],
+    } as unknown as OrchestrationV2ThreadProjection);
+    assert.lengthOf(texts, 1);
+  }),
+);
+
+it.effect("tells a turn cut mid-way about the background work it lost", () =>
+  Effect.gen(function* () {
+    const texts = yield* continuationTexts(
+      cutMidTurn({
+        restartCancelledBackgroundWork: [{ kind: "subagent", label: "Background reviewer" }],
+      }),
+    );
+    assert.lengthOf(texts, 1);
+    assert.include(texts[0]!, "Background reviewer");
+    assert.isTrue(texts[0]!.endsWith("Continue where you left off."));
+  }),
+);
+
+it.effect(
+  "carries the note forward when its continuation was cut before reaching the provider",
+  () =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const original = {
+        ...base.runs[0]!,
+        id: RunId.make("run:original"),
+        status: "completed",
+        activeAttemptId: RunAttemptId.make("attempt:original"),
+        restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25 && echo DONE" }],
+      };
+      const projection = {
+        ...base,
+        runs: [
+          original,
+          {
+            ...base.runs[0]!,
+            ordinal: 2,
+            status: "cancelled",
+            restartContinuationOfRunId: original.id,
+          },
+        ],
+        // The original turn settled; the continuation's attempt never started one.
+        providerTurns: [
+          {
+            ...base.providerTurns[0]!,
+            runAttemptId: original.activeAttemptId,
+            status: "completed",
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const texts = yield* continuationTexts(projection);
+      assert.lengthOf(texts, 1);
+      assert.include(texts[0]!, "sleep 25 && echo DONE");
+      assert.notInclude(texts[0]!, "Continue where");
+    }),
+);
+
+it.effect("prepares later threads' continuations when one thread fails", () =>
+  Effect.gen(function* () {
+    const brokenThreadId = ThreadId.make("thread:broken");
+    const writes: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([brokenThreadId, threadId]),
+            getRuntimeRecoveryProjection: (id) =>
+              id === brokenThreadId
+                ? Effect.fail(
+                    new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId: id }),
+                  )
+                : Effect.succeed(makeProjection()),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                writes.push(input);
+                return [];
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    yield* recovery.prepareForShutdown;
+    assert.deepEqual(
+      writes.map((write) => write.effects[0]?.request),
+      [{ type: "provider-runtime.continue", sourceRunId: runId }],
+    );
   }),
 );
