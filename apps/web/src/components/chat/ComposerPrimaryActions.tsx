@@ -188,6 +188,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={
             !canOperateThread ||
             isEnvironmentUnavailable ||
+            isSendDisabled ||
             pendingAction.isResponding ||
             (!voiceInputActive &&
               (pendingAction.isLastQuestion

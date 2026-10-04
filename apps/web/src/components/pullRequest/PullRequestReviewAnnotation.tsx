@@ -362,7 +362,9 @@ export function ReviewThreadCard({
                       <Button
                         size="xs"
                         disabled={
-                          pending || (!speech.blocksSubmission && reply.trim().length === 0)
+                          speech.preparing ||
+                          pending ||
+                          (!speech.blocksSubmission && reply.trim().length === 0)
                         }
                         onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >

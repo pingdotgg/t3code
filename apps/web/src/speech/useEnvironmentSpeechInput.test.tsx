@@ -197,6 +197,10 @@ it("queues a recording while the environment is transcribing and starts when it 
       for (let i = 0; i < 10; i++) await Promise.resolve();
     });
     expect(voice.state.phase).toBe("preparing");
+    expect(voice.preparing).toBe(true);
+    const submitted = vi.fn();
+    await act(() => voice.submitAfterDictation(submitted));
+    expect(submitted).not.toHaveBeenCalled();
     expect(mocks.microphoneRequests).toBe(0);
     mocks.busy = false;
     await act(async () => {
@@ -204,6 +208,8 @@ it("queues a recording while the environment is transcribing and starts when it 
       await starting;
     });
     expect(voice.state.phase).toBe("recording");
+    expect(voice.preparing).toBe(false);
+    expect(submitted).not.toHaveBeenCalled();
     expect(mocks.microphoneRequests).toBe(1);
   } finally {
     vi.useRealTimers();

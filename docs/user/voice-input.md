@@ -36,7 +36,7 @@ Start voice input with the microphone control, then finish to insert the transcr
 Cancel to discard the recording and preserve your draft. Recordings can be up to
 five minutes long. In the composer, text is inserted at the cursor or replaces the
 selection captured when recording starts. Editing is disabled while voice input
-is running. Press Send to finish recording and send the completed draft, including
+is running. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
 any existing text, after transcription and optional post-processing. You can also
 press Send while those steps are finishing. In other supported editors, the
 submit or save action works the same way. Cancelling dictation cancels the queued

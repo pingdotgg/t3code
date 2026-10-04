@@ -157,7 +157,9 @@ export function DiffCommentAnnotation({
             size="xs"
             variant="outline"
             disabled={
-              pending || (!speech?.blocksSubmission && !secondaryAction.allowEmpty && !trimmedText)
+              speech?.preparing ||
+              pending ||
+              (!speech?.blocksSubmission && !secondaryAction.allowEmpty && !trimmedText)
             }
             onClick={() => submit(speech, secondaryAction.onAction, secondaryAction.allowEmpty)}
           >
@@ -167,7 +169,7 @@ export function DiffCommentAnnotation({
         ) : null}
         <Button
           size="xs"
-          disabled={pending || (!speech?.blocksSubmission && !trimmedText)}
+          disabled={speech?.preparing || pending || (!speech?.blocksSubmission && !trimmedText)}
           onClick={() => submit(speech, onComment)}
         >
           {submitLabel}

@@ -319,10 +319,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   useEffect(() => {
     const pending = pendingSubmissionRef.current;
-    if (state.phase === "recording" && pending) {
-      void controllerRef.current?.stop();
-      return;
-    }
     if (state.phase !== "idle" || !pending) return;
     pendingSubmissionRef.current = null;
     if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
@@ -331,7 +327,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const submitAfterDictation = useCallback(
     (submit: (text: string) => void) => {
-      if (latestInputRef.current.disabled) return;
+      if (latestInputRef.current.disabled || state.phase === "preparing") return;
       const controller = controllerRef.current;
       if (!controller || !voiceInputBlocksSubmission(state)) {
         submit(latestInputRef.current.readDraft().text);
@@ -459,6 +455,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     progress: null,
     preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
     level,
+    preparing: state.phase === "preparing",
     blocksSubmission: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
     start,

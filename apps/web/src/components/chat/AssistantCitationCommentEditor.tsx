@@ -124,7 +124,7 @@ export function AssistantCitationCommentEditor({
         </Button>
         <Button
           size="xs"
-          disabled={commentTooLong && !speech.blocksSubmission}
+          disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >

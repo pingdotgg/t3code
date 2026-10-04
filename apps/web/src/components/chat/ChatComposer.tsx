@@ -1870,6 +1870,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const voiceSendDisabledReason =
+    sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
   const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
   const dictationDisabled =
     isConnecting ||
@@ -3523,7 +3525,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={voiceSendDisabledReason}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
                         noProviderAvailable ||
@@ -3617,70 +3619,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onCancelDownload={() => void speechInput.setup.cancelDownload()}
                     onStartRecording={() => void speechInput.setup.startRecording()}
                   />
-                  <div
-                    className={cn("contents", speechPresentation.showsConfirm && "[&>*]:-order-1")}
-                  >
-                  <ComposerFooterPrimaryActions
-                    showActions={speechPresentation.showsSend || phase === "running"}
-                    compact={isComposerPrimaryActionsCompact}
-                    canOperateThread={canOperateThread}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
-                    reserveContextWindowMeter={reserveContextWindowMeter}
-                    activeThreadModelDisplayName={activeThreadModelDisplayName}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    canInterrupt={canInterrupt}
-                    followUpBehavior={followUpBehavior}
-                    canSteer={!isCompacting}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
-                    showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
-                    }
-                    promptHasText={prompt.trim().length > 0 || speechInput.blocksSubmission}
-                    voiceInputActive={voiceInputActive}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent || speechInput.blocksSubmission}
-                    canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport}
-                    isEditingQueuedMessage={isEditingQueuedMessage}
-                    onSubmitMessage={handleSubmitMessageStable}
-                    onResume={onResume}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryActionStable}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                    compactBeforeSendTokens={props.resumeCompactionTokens}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                    compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
-                    compactDisabledReason={resolvedCompactDisabledReason}
-                    {...(compactCommandAvailable
-                      ? { onCompactContext: compactThreadContextStable }
-                      : {})}
-                  />
-                  </div>
                   {speechInput.available ? (
                     <ComposerSpeechRecordingPill
                       state={speechInput.state}
@@ -3693,6 +3631,69 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onSkipPostProcessing={() => speechInput.skipPostProcessing()}
                     />
                   ) : null}
+                  <div className="contents">
+                    <ComposerFooterPrimaryActions
+                      showActions={speechPresentation.showsSend || phase === "running"}
+                      compact={isComposerResting || isComposerPrimaryActionsCompact}
+                      canOperateThread={canOperateThread}
+                      activeContextWindow={
+                        settings.contextWindowMeterEnabled ? activeContextWindow : null
+                      }
+                      reserveContextWindowMeter={reserveContextWindowMeter}
+                      activeThreadModelDisplayName={activeThreadModelDisplayName}
+                      pendingAction={pendingPrimaryAction}
+                      isRunning={phase === "running"}
+                      canInterrupt={canInterrupt}
+                      followUpBehavior={settings.followUpBehavior}
+                      canSteer={!isCompacting}
+                      alternateShortcutLabel={shortcutLabelForCommand(
+                        keybindings,
+                        "composer.sendAlternate",
+                        {
+                          context: {
+                            composerFocus: true,
+                            draftThreadRoute: routeKind === "draft",
+                            turnRunning: true,
+                          },
+                        },
+                      )}
+                      showPlanFollowUpPrompt={
+                        pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                      }
+                      promptHasText={prompt.trim().length > 0 || speechInput.blocksSubmission}
+                      voiceInputActive={voiceInputActive}
+                      isSendBusy={isSendBusy}
+                      sendDisabledReason={voiceSendDisabledReason}
+                      isConnecting={isConnecting}
+                      isEnvironmentUnavailable={
+                        environmentUnavailable !== null ||
+                        noProviderAvailable ||
+                        projectSelectionRequired
+                      }
+                      isPreparingWorktree={isPreparingWorktree}
+                      hasSendableContent={
+                        composerSendState.hasSendableContent || speechInput.blocksSubmission
+                      }
+                      canResume={showResumeAction}
+                      preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
+                      isEditingQueuedMessage={isEditingQueuedMessage}
+                      onSubmitMessage={handleSubmitMessageStable}
+                      onResume={onResume}
+                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                      onInterrupt={handleInterruptPrimaryActionStable}
+                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
+                      compactBeforeSendTokens={props.resumeCompactionTokens}
+                      keepFullHistory={props.keepFullHistory}
+                      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+                      compactDisabled={
+                        compactDisabled || noProviderAvailable || isSendBusy || isConnecting
+                      }
+                      compactDisabledReason={resolvedCompactDisabledReason}
+                      {...(compactCommandAvailable
+                        ? { onCompactContext: compactThreadContext }
+                        : {})}
+                    />
+                  </div>
                 </div>
               </div>
             )}

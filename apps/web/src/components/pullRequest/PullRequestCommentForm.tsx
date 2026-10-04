@@ -140,6 +140,7 @@ export function PullRequestCommentForm({
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
             disabled={
+              speech.preparing ||
               (body.trim().length === 0 && !speech.blocksSubmission) ||
               submitting !== null ||
               actionPending
@@ -178,6 +179,7 @@ export function PullRequestCommentForm({
           size="xs"
           variant="outline"
           disabled={
+            speech.preparing ||
             (body.trim().length === 0 && !speech.blocksSubmission) ||
             submitting !== null ||
             actionPending
