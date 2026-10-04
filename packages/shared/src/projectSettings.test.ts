@@ -326,6 +326,7 @@ describe("resolveWorktreeCleanup", () => {
       worktreeOnDelete: false,
       worktreeOnMerge: false,
       worktreeUnchanged: false,
+      worktreeDisposablePaths: ["node_modules/"],
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
     const custom = applyServerSettingsPatch(off, {
@@ -346,7 +347,11 @@ describe("resolveWorktreeCleanup", () => {
   });
   it("completes partial machine custom rules and preserves them across edits", () => {
     const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true },
+      storageCleanup: {
+        worktreeAfterDays: 8,
+        worktreeOnDelete: true,
+        worktreeDisposablePaths: ["node_modules/", "build/"],
+      },
     });
     const custom = applyServerSettingsPatch(initial, {
       worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
@@ -359,11 +364,35 @@ describe("resolveWorktreeCleanup", () => {
       worktreeOnDelete: true,
       worktreeOnMerge: true,
       worktreeUnchanged: false,
+      worktreeDisposablePaths: ["node_modules/", "build/"],
     });
     expect(
       resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)
         .worktreeAfterDays,
     ).toBe(8);
+  });
+  it("uses the machine's disposable paths for custom rules saved without them", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeDisposablePaths: ["node_modules/", "build/"] },
+      // Rules written by a client that predates disposable paths.
+      projectSettingsOverrides: {
+        [projectId]: {
+          worktreeCleanup: {
+            mode: "custom",
+            rules: {
+              worktreeAfterDays: 3,
+              worktreeOnDelete: false,
+              worktreeOnMerge: false,
+              worktreeUnchanged: false,
+            },
+          },
+        },
+      },
+    });
+    expect(resolveWorktreeCleanup(settings, projectId).worktreeDisposablePaths).toEqual([
+      "node_modules/",
+      "build/",
+    ]);
   });
 });
 

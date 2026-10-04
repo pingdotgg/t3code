@@ -105,6 +105,66 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
   );
 }
 
+// Untracked and ignored files can contain secrets or local datasets, so each one
+// keeps the worktree unless it is ignored and matches a disposable gitignore
+// pattern or is a symlink or junction. Removal unlinks a link and never touches
+// its target.
+export const storageCleanupKeepsUntrackedFiles = Effect.fn("StorageCleanup.keepsUntrackedFiles")(
+  function* (worktreePath: string, disposablePaths: ReadonlyArray<string>) {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const listUntracked = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "StorageCleanup.untrackedFiles",
+          cwd: worktreePath,
+          args: ["ls-files", "--others", "--directory", "-z", ...args],
+          maxOutputBytes: 64 * 1024,
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.stdoutTruncated ? null : result.stdout.split("\0").filter(Boolean),
+          ),
+        );
+    const listIgnored = (excludes: ReadonlyArray<string>) =>
+      listUntracked(["--ignored", ...excludes]);
+    // `status.showUntrackedFiles=no` hides these from the status check, and
+    // `git worktree remove` deletes them anyway.
+    const untracked = yield* listUntracked(["--exclude-standard", "--no-empty-directory"]);
+    if (untracked === null || untracked.length > 0) return true;
+    const ignored = yield* listIgnored(["--exclude-standard"]);
+    if (ignored === null) return true;
+    if (ignored.length === 0) return false;
+    // Git matches the patterns, so they mean exactly what they mean in .gitignore.
+    const disposable =
+      disposablePaths.length === 0
+        ? []
+        : yield* listIgnored(disposablePaths.map((pattern) => `--exclude=${pattern}`));
+    if (disposable === null) return true;
+    for (const entry of ignored) {
+      // Git also lists an untracked directory that holds only ignored files.
+      // Its contents are listed separately and decide on their own.
+      if (
+        entry.endsWith("/") &&
+        ignored.some((other) => other !== entry && other.startsWith(entry))
+      )
+        continue;
+      if (
+        disposable.some(
+          (match) => entry === match || (match.endsWith("/") && entry.startsWith(match)),
+        )
+      )
+        continue;
+      const link = yield* fs
+        .readLink(path.join(worktreePath, entry.replace(/\/$/, "")))
+        .pipe(Effect.option);
+      if (Option.isNone(link)) return true;
+    }
+    return false;
+  },
+);
+
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
@@ -171,6 +231,14 @@ export const make = Effect.gen(function* () {
     return false;
   });
 
+  const untrackedFilesContext = yield* Effect.context<
+    GitVcsDriver.GitVcsDriver | FileSystem.FileSystem | Path.Path
+  >();
+  const keepsUntrackedFiles = (worktreePath: string, disposablePaths: ReadonlyArray<string>) =>
+    storageCleanupKeepsUntrackedFiles(worktreePath, disposablePaths).pipe(
+      Effect.provideContext(untrackedFilesContext),
+    );
+
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
@@ -231,21 +299,7 @@ export const make = Effect.gen(function* () {
         if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
           return;
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const ignored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        // Ignored files can contain secrets or local datasets. Dependency installs
-        // are reproducible; every other ignored path prevents automatic removal.
-        if (
-          ignored.stdoutTruncated ||
-          ignored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        if (yield* keepsUntrackedFiles(worktreePath, settings.worktreeDisposablePaths)) return;
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
@@ -345,30 +399,12 @@ export const make = Effect.gen(function* () {
           head.commitSha
         )
           return;
-        const finalIgnored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        if (
-          finalIgnored.stdoutTruncated ||
-          finalIgnored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        if (yield* keepsUntrackedFiles(worktreePath, settings.worktreeDisposablePaths)) return;
         const current = resolveWorktreeCleanup(
           yield* settingsService.getSettings,
           thread.projectId,
         );
-        if (
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          )
-        )
-          return;
+        if (!Equal.equals(current, settings)) return;
         yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout

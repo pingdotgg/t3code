@@ -2895,6 +2895,44 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("unlinks ignored directory links without deleting their targets", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, ".gitignore", "linked\n");
+        yield* git(cwd, ["add", ".gitignore"]);
+        yield* git(cwd, ["commit", "-m", "ignore links"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const outside = yield* makeTmpDir("git-worktree-link-target-");
+        yield* writeTextFile(outside, "keep.txt", "keep\n");
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/linked",
+        });
+        // A junction on Windows, which Git for Windows leaves behind; a symlink elsewhere.
+        NodeFS.symlinkSync(outside, pathService.join(worktreePath, "linked"), "junction");
+        NodeFS.mkdirSync(pathService.join(worktreePath, "linked-parent"));
+        NodeFS.symlinkSync(
+          outside,
+          pathService.join(worktreePath, "linked-parent", "linked"),
+          "junction",
+        );
+
+        yield* driver.removeWorktree({ cwd, path: worktreePath });
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
+          "keep\n",
+        );
+      }),
+    );
+
     it.effect("allows worktree removal to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;

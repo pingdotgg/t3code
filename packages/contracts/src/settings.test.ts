@@ -56,8 +56,33 @@ describe("storage cleanup settings", () => {
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeDisposablePaths: ["node_modules/"],
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+    });
+  });
+
+  it("keeps stored custom worktree rules without disposable paths", () => {
+    expect(
+      decodeServerSettings({
+        worktreeCleanup: {
+          mode: "custom",
+          rules: {
+            worktreeAfterDays: 3,
+            worktreeOnMerge: false,
+            worktreeOnDelete: true,
+            worktreeUnchanged: false,
+          },
+        },
+      }).worktreeCleanup,
+    ).toEqual({
+      mode: "custom",
+      rules: {
+        worktreeAfterDays: 3,
+        worktreeOnMerge: false,
+        worktreeOnDelete: true,
+        worktreeUnchanged: false,
+      },
     });
   });
 

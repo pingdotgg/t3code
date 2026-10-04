@@ -215,17 +215,34 @@ export function clearProjectSettingsOverrides(
 export function resolveWorktreeCleanup(
   settings: ServerSettings,
   projectId: ProjectId | null,
-): WorktreeCleanupRules {
+): Required<WorktreeCleanupRules> {
   const policy = resolveProjectSettings(settings, projectId).settings.worktreeCleanup;
-  if (policy?.mode === "custom") return policy.rules;
+  if (policy?.mode === "custom")
+    return {
+      ...policy.rules,
+      worktreeDisposablePaths:
+        policy.rules.worktreeDisposablePaths ?? settings.storageCleanup.worktreeDisposablePaths,
+    };
   if (policy?.mode === "off")
     return {
       worktreeAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeDisposablePaths: settings.storageCleanup.worktreeDisposablePaths,
     };
-  const { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged } =
-    settings.storageCleanup;
-  return { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged };
+  const {
+    worktreeAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+    worktreeDisposablePaths,
+  } = settings.storageCleanup;
+  return {
+    worktreeAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+    worktreeDisposablePaths,
+  };
 }

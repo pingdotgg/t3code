@@ -1090,11 +1090,20 @@ const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 
+/**
+ * Gitignore patterns for ignored paths that cleanup may delete with a worktree.
+ * Any other ignored file, except a symlink or junction, keeps the worktree.
+ */
+const WorktreeDisposablePaths = Schema.Array(TrimmedNonEmptyString);
+const DEFAULT_WORKTREE_DISPOSABLE_PATHS: ReadonlyArray<string> = ["node_modules/"];
+
 export const WorktreeCleanupRules = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays,
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
+  /** Absent in rules saved before this key existed; the machine's list applies. */
+  worktreeDisposablePaths: Schema.optionalKey(WorktreeDisposablePaths),
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
 
@@ -1186,6 +1195,9 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  worktreeDisposablePaths: WorktreeDisposablePaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_DISPOSABLE_PATHS)),
+  ),
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1585,6 +1597,7 @@ export const ServerSettingsPatch = Schema.Struct({
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
             worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+            worktreeDisposablePaths: Schema.optionalKey(WorktreeDisposablePaths),
           }),
         }),
       ]),
@@ -1596,6 +1609,7 @@ export const ServerSettingsPatch = Schema.Struct({
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+      worktreeDisposablePaths: Schema.optionalKey(WorktreeDisposablePaths),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
     }),

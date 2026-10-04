@@ -26,17 +26,23 @@ const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFold
 describe("serverSettings helpers", () => {
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
+      storageCleanup: {
+        worktreeAfterDays: 8,
+        worktreeOnMerge: true,
+        worktreeDisposablePaths: ["build/", ".dart_tool/"],
+        logsAfterDays: 30,
+      },
     });
     expect(
       applyServerSettingsPatch(enabled, {
-        storageCleanup: { worktreeAfterDays: null },
+        storageCleanup: { worktreeAfterDays: null, worktreeDisposablePaths: ["build/"] },
       }).storageCleanup,
     ).toEqual({
       worktreeAfterDays: null,
       worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeDisposablePaths: ["build/"],
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });

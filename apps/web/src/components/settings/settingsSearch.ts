@@ -137,7 +137,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/storage",
     scope: "project-defaults",
     searchTerms: [
-      "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
+      "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom ignored gitignore disposable paths node_modules build",
     ],
   },
   {
