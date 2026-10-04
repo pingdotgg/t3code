@@ -83,7 +83,10 @@ import {
   waitForNavigationReadiness,
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
-import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import {
+  createPreviewAutomationClientId,
+  registerPreviewAutomationClientId,
+} from "./previewAutomationClientId";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -322,6 +325,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const lastFocusReportRef = useRef<string | null>(null);
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
+  useEffect(
+    () => registerPreviewAutomationClientId(environmentId, automationClientId),
+    [automationClientId, environmentId],
+  );
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
     () => ({
       clientId: automationClientId,

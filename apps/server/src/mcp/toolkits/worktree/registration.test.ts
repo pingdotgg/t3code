@@ -17,6 +17,14 @@ import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdap
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
+import * as ReviewService from "../../../review/ReviewService.ts";
+import * as TerminalManager from "../../../terminal/Manager.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as Keybindings from "../../../keybindings.ts";
+import * as UsageService from "../../../usage/UsageService.ts";
+import * as UsageLimitSources from "../../../usage/UsageLimitSources.ts";
+import * as ClientIntents from "../../../clientIntents.ts";
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -38,6 +46,14 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(ReviewService.ReviewService)({}),
+  Layer.mock(TerminalManager.TerminalManager)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(Keybindings.Keybindings)({}),
+  Layer.mock(UsageService.UsageService)({}),
+  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+  Layer.mock(ClientIntents.ClientIntents)({}),
+  Layer.mock(ProjectStore.ProjectStoreV2)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

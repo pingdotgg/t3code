@@ -3,14 +3,25 @@ import {
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  type ProviderApprovalDecision,
+  ProviderRequestKind,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
+import {
+  planPinnedReorder,
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/shared/threadOrderKeys";
 
 import {
+  assertTargetWithinLimits,
   newCommandId,
   readCaller,
   readFullAccessCaller,
@@ -49,7 +60,19 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   return { sequence: result.sequence };
 });
 
-const readQuestion = Effect.fn("mcp.readQuestion")(function* (
+const isApprovalKind = Schema.is(ProviderRequestKind);
+// The composer's choices when a provider advertises none.
+const defaultApprovalDecisions: ReadonlyArray<ProviderApprovalDecision> = [
+  "cancel",
+  "decline",
+  "acceptForSession",
+  "accept",
+];
+/** Pending requests a caller can act on: user questions and approvals. */
+const isPendingRequest = (request: OrchestrationV2ThreadProjection["runtimeRequests"][number]) =>
+  request.status === "pending" && (request.kind === "user_input" || isApprovalKind(request.kind));
+
+const readPendingRequest = Effect.fn("mcp.readPendingRequest")(function* (
   input: {
     threadId?: ThreadId | undefined;
     requestId: RuntimeRequestId;
@@ -60,21 +83,68 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
     ? readWritableThread(input.threadId, ["runtimeRequests", "turnItems"])
     : readThread(input.threadId, ["runtimeRequests", "turnItems"]);
   const request = context.projection.runtimeRequests.find(
-    (request) =>
-      request.id === input.requestId &&
-      request.kind === "user_input" &&
-      request.status === "pending",
+    (request) => request.id === input.requestId && isPendingRequest(request),
   );
   const item = context.projection.turnItems.find(
-    (item) => item.type === "user_input_request" && item.requestId === input.requestId,
+    (item) =>
+      (item.type === "user_input_request" || item.type === "approval_request") &&
+      item.requestId === input.requestId,
   );
-  if (request === undefined || item?.type !== "user_input_request")
+  if (
+    request === undefined ||
+    (request.kind === "user_input" && item?.type !== "user_input_request")
+  )
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
-      message: "The pending user-input request was not found.",
+      message: "The pending request was not found.",
     });
   return { ...context, request, item };
 });
+
+/** Mirrors the client's early wake: a pending request, or a fresh completion or failure after the snooze. */
+function raisedHandWhileSnoozed(shell: OrchestrationV2ThreadShell) {
+  if (shell.pendingRuntimeRequest !== null) return true;
+  const completedAt = shell.latestRunCompletedAt ?? null;
+  const snoozedAt = shell.snoozedAt ?? null;
+  if (snoozedAt === null) return shell.status === "failed";
+  return (
+    (shell.status === "completed" || shell.status === "failed") &&
+    completedAt !== null &&
+    DateTime.isGreaterThan(completedAt, snoozedAt)
+  );
+}
+
+/** Why a thread needs attention, if it does. unread mirrors the client's hasUnseenCompletion. */
+function inboxReason(shell: OrchestrationV2ThreadShell, now: DateTime.Utc) {
+  if (shell.pendingRuntimeRequest !== null) return "pending_request" as const;
+  if (shell.settledOverride === "settled") return null;
+  if (
+    shell.snoozedUntil != null &&
+    DateTime.isGreaterThan(shell.snoozedUntil, now) &&
+    !raisedHandWhileSnoozed(shell)
+  )
+    return null;
+  if (shell.status === "failed") return "error" as const;
+  const completedAt = shell.latestRunCompletedAt ?? null;
+  const visitedAt = shell.lastVisitedAt ?? null;
+  return completedAt !== null &&
+    visitedAt !== null &&
+    DateTime.isGreaterThan(completedAt, visitedAt)
+    ? ("unread" as const)
+    : null;
+}
+const inboxReasonOrder = ["pending_request", "error", "unread"] as const;
+/** The sidebar list a thread shows in, with the client's precedence. */
+function sidebarList(shell: OrchestrationV2ThreadShell, now: DateTime.Utc) {
+  if (
+    shell.snoozedUntil != null &&
+    DateTime.isGreaterThan(shell.snoozedUntil, now) &&
+    !raisedHandWhileSnoozed(shell)
+  )
+    return "snoozed";
+  if (shell.settledOverride === "settled") return "settled";
+  return shell.pinnedAt != null ? "pinned" : "active";
+}
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
@@ -197,30 +267,133 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   t3_pending_request_list: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
+      const requests = projection.runtimeRequests
+        .filter(isPendingRequest)
+        .map((request) => ({ requestId: request.id, kind: request.kind }));
       return {
-        requestIds: projection.runtimeRequests
-          .filter((request) => request.kind === "user_input" && request.status === "pending")
-          .map((request) => request.id),
+        // The original output: user questions only.
+        requestIds: requests
+          .filter((request) => request.kind === "user_input")
+          .map((request) => request.requestId),
+        requests,
       };
     }),
   t3_pending_request_read: (input) =>
     Effect.gen(function* () {
-      const { item } = yield* readQuestion(input);
-      return { requestId: input.requestId, questions: item.questions };
+      const { request, item } = yield* readPendingRequest(input);
+      const approval = item?.type === "approval_request" ? item : undefined;
+      return {
+        requestId: input.requestId,
+        kind: request.kind,
+        ...(item?.type === "user_input_request" ? { questions: item.questions } : {}),
+        ...(approval?.prompt === undefined
+          ? {}
+          : { prompt: Array.from(approval.prompt).slice(0, 4000).join("") }),
+        ...(approval?.options === undefined ? {} : { options: approval.options }),
+      };
     }),
   t3_pending_request_respond: (input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readQuestion(input, true);
+      const { threads, projection, request, item } = yield* readPendingRequest(input, true);
+      const approval = request.kind !== "user_input";
+      const response = approval
+        ? input.decision === undefined
+          ? undefined
+          : { decision: input.decision }
+        : input.answers === undefined
+          ? undefined
+          : { answers: input.answers };
+      if (response === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: approval ? "Approvals need a decision." : "User questions need answers.",
+        });
+      // Like the composer, offer only the provider's options, else the same defaults.
+      const offered = item?.type === "approval_request" ? item.options : undefined;
+      if (
+        approval &&
+        input.decision !== undefined &&
+        !(offered?.map((option) => option.decision) ?? defaultApprovalDecisions).includes(
+          input.decision,
+        )
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "That decision was not offered for this approval.",
+        });
+      // Approving lets the caller run commands in the target thread; declining or cancelling
+      // only stops one, which any caller that can reach the thread may do.
+      if (approval && input.decision !== "decline" && input.decision !== "cancel")
+        yield* readFullAccessCaller(
+          "Approving requires a live full-access/default thread or a full-access client.",
+        );
       const result = yield* threads
         .dispatch({
           type: "runtime-request.respond",
           threadId: projection.thread.id,
           commandId: yield* newCommandId(),
           requestId: input.requestId,
-          answers: input.answers,
+          ...response,
         })
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
+    }),
+  t3_pending_request_dismiss: (input) =>
+    Effect.gen(function* () {
+      const { threads, projection, request } = yield* readPendingRequest(input, true);
+      if (request.kind !== "user_input")
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Only user questions can be dismissed. Decline an approval with a decision.",
+        });
+      const result = yield* threads
+        .dispatch({
+          type: "thread.user-input.dismiss",
+          threadId: projection.thread.id,
+          commandId: yield* newCommandId(),
+          requestId: input.requestId,
+        })
+        .pipe(Effect.mapError(unavailable));
+      return { sequence: result.sequence };
+    }),
+  t3_inbox: (input) =>
+    Effect.gen(function* () {
+      const { threads, caller } = yield* readCaller();
+      // Like t3_thread_search, an omitted project means the caller's own; a client outside
+      // a thread sees every project.
+      const projectId = input.projectId ?? caller?.projectId;
+      const snapshot = yield* threads.getShellSnapshot().pipe(Effect.mapError(unavailable));
+      const now = yield* DateTime.now;
+      const items = snapshot.threads
+        .flatMap((shell) => {
+          if (shell.archivedAt !== null || shell.deletedAt !== null) return [];
+          if (projectId !== undefined && shell.projectId !== projectId) return [];
+          const reason = inboxReason(shell, now);
+          return reason === null ? [] : [{ shell, reason }];
+        })
+        .toSorted(
+          (left, right) =>
+            inboxReasonOrder.indexOf(left.reason) - inboxReasonOrder.indexOf(right.reason) ||
+            DateTime.toEpochMillis(right.shell.updatedAt) -
+              DateTime.toEpochMillis(left.shell.updatedAt),
+        );
+      return {
+        items: items.slice(0, input.limit ?? 50).map(({ shell, reason }) => ({
+          threadId: shell.id,
+          projectId: shell.projectId,
+          title: shell.title,
+          updatedAt: DateTime.formatIso(shell.updatedAt),
+          reason,
+          ...(shell.pendingRuntimeRequest === null
+            ? {}
+            : {
+                pendingRequest: {
+                  requestId: shell.pendingRuntimeRequest.id,
+                  kind: shell.pendingRuntimeRequest.kind,
+                },
+              }),
+        })),
+      };
     }),
   t3_queue_list: (input) =>
     Effect.gen(function* () {
@@ -277,10 +450,103 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
     })),
   t3_thread_organize: (input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readWritableThread(input.threadId);
+      const { threads, projection, limits } = yield* readWritableThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       let command: OrchestrationV2Command;
       switch (input.action) {
+        case "move_pinned":
+        case "move_active": {
+          const list = input.action === "move_pinned" ? "pinned" : "active";
+          if (input.beforeThreadId === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${input.action} requires beforeThreadId (null moves to the end).`,
+            });
+          }
+          const snapshot = yield* threads.getShellSnapshot().pipe(Effect.mapError(unavailable));
+          const now = yield* DateTime.now;
+          // The sidebar's view: this project's visible threads in the list, in client order.
+          const rows = snapshot.threads
+            .filter(
+              (shell) =>
+                shell.projectId === projection.thread.projectId &&
+                shell.archivedAt === null &&
+                shell.deletedAt === null &&
+                shell.lineage.relationshipToParent !== "subagent" &&
+                sidebarList(shell, now) === list,
+            )
+            .map((shell) => ({
+              id: shell.id,
+              createdAt: DateTime.formatIso(shell.createdAt),
+              unsettledAt: shell.unsettledAt == null ? null : DateTime.formatIso(shell.unsettledAt),
+              pinOrderKey: shell.pinOrderKey,
+              activeOrderKey: shell.activeOrderKey,
+            }));
+          const ordered = (
+            list === "pinned"
+              ? sortPinnedThreadsByOrderKey(rows)
+              : sortActiveThreadsByOrderKey(rows)
+          ).map((row) => row.id);
+          const movedId = projection.thread.id;
+          if (!ordered.includes(movedId)) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                list === "pinned"
+                  ? "The thread is not in the pinned list. Pin it first."
+                  : "The thread is not in the active list. Unpin, unsettle, or unsnooze it first.",
+            });
+          }
+          const others = ordered.filter((id) => id !== movedId);
+          const at =
+            input.beforeThreadId === null ? others.length : others.indexOf(input.beforeThreadId);
+          if (at === -1) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `beforeThreadId must be another thread in this project's ${list} list.`,
+            });
+          }
+          const orderedIds = others.toSpliced(at, 0, movedId);
+          if (orderedIds.every((id, index) => id === ordered[index])) {
+            return { sequence: snapshot.snapshotSequence };
+          }
+          // Usually one key for the moved thread. Keyless or corrupt neighbors rewrite the
+          // list once, as a client drag does; keys on rows outside the list stay reserved.
+          const shells = new Map(snapshot.threads.map((shell) => [shell.id, shell]));
+          const assignments = planPinnedReorder({
+            orderedIds,
+            keysById: new Map(
+              snapshot.threads.map((shell) => [
+                shell.id,
+                list === "pinned" ? shell.pinOrderKey : shell.activeOrderKey,
+              ]),
+            ),
+            movedId,
+          });
+          // A rewrite touches neighbors, so each needs to be within the caller's limits too.
+          for (const { id } of assignments) {
+            const shell = shells.get(ThreadId.make(id));
+            if (shell !== undefined && shell.id !== movedId)
+              yield* assertTargetWithinLimits(limits, shell);
+          }
+          let sequence = snapshot.snapshotSequence;
+          for (const { id, orderKey } of assignments) {
+            const reorder = {
+              commandId: yield* newCommandId(),
+              threadId: ThreadId.make(id),
+              orderKey,
+            };
+            const result = yield* threads
+              .dispatch(
+                list === "pinned"
+                  ? { ...reorder, type: "thread.pin.reorder" }
+                  : { ...reorder, type: "thread.active.reorder" },
+              )
+              .pipe(Effect.mapError(unavailable));
+            sequence = result.sequence;
+          }
+          return { sequence };
+        }
         case "snooze":
           if (input.snoozedUntil === undefined) {
             return yield* new OrchestratorMcpFailure({
@@ -296,6 +562,34 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
+          break;
+        case "mark_read": {
+          // The reverse of mark_unread: visit up to the thread's current state, as a client does.
+          const shell = yield* threads
+            .getThreadShell(projection.thread.id)
+            .pipe(Effect.mapError(unavailable));
+          if (shell === null) return yield* unavailable();
+          command = {
+            ...common,
+            type: "thread.visit",
+            visitedAt: DateTime.formatIso(shell.updatedAt),
+          };
+          break;
+        }
+        case "auto_settle_on":
+        case "auto_settle_off":
+          command = {
+            ...common,
+            type: "thread.auto-settle.set",
+            enabled: input.action === "auto_settle_on",
+          };
+          break;
+        case "delete":
+          // Deleting cannot be undone, so it needs full access on top of reaching the thread.
+          yield* readFullAccessCaller(
+            "Deleting a thread requires a live full-access/default thread or a full-access client.",
+          );
+          command = { ...common, type: "thread.delete" };
           break;
         default:
           command = { ...common, type: `thread.${input.action}` };

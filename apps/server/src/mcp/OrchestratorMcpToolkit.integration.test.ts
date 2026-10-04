@@ -716,6 +716,14 @@ describe("orchestrator MCP toolkit", () => {
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
             yield* invoke("t3_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
+            yield* invoke("t3_thread_organize", { action: "auto_settle_off" });
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.autoSettleDisabledAt,
+            ).not.toBeNull();
+            yield* invoke("t3_thread_organize", { action: "auto_settle_on" });
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.autoSettleDisabledAt,
+            ).toBeNull();
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));

@@ -65,6 +65,10 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
+    /** The connected desktop host focused most recently, or connected most recently if none was. */
+    readonly lastFocusedClientId: (
+      environmentId: PreviewAutomationHost["environmentId"],
+    ) => Effect.Effect<string | undefined>;
   }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
@@ -655,7 +659,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  const lastFocusedClientId: PreviewAutomationBroker["Service"]["lastFocusedClientId"] = (
+    environmentId,
+  ) =>
+    SynchronizedRef.get(state).pipe(
+      Effect.map(
+        (current) =>
+          Array.from(current.clients.values())
+            .filter((host) => host.environmentId === environmentId)
+            .sort((left, right) => right.focusOrder - left.focusOrder)[0]?.clientId,
+      ),
+    );
+
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke, lastFocusedClientId });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

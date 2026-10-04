@@ -4,6 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -31,6 +32,11 @@ import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
+import { ReviewToolkit } from "./review/tools.ts";
+import { GitToolkit } from "./git/tools.ts";
+import { TerminalToolkit } from "./terminal/tools.ts";
+import { ProviderToolkit } from "./provider/tools.ts";
+import { ClientToolkit } from "./client/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
 import { PullRequestsToolkit } from "./pullRequests/tools.ts";
 import {
@@ -47,6 +53,11 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     OrchestratorToolkit,
     PreviewToolkit,
     WorktreeToolkit,
+    ReviewToolkit,
+    GitToolkit,
+    TerminalToolkit,
+    ProviderToolkit,
+    ClientToolkit,
     ThreadToolkit,
     AttachmentToolkit,
     ProjectToolkit,
@@ -447,4 +458,29 @@ it.effect("a caller cannot interrupt a thread that runs above its own modes", ()
       ),
     ),
   ),
+);
+
+it.effect("redacts every credential from MCP settings", () =>
+  Effect.gen(function* () {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        antigravity: { ...DEFAULT_SERVER_SETTINGS.providers.antigravity, apiKey: "secret-api-key" },
+      },
+      providerInstances: {
+        [ProviderInstanceId.make("opencode_2")]: {
+          driver: ProviderDriverKind.make("opencode"),
+          config: { serverPassword: "secret-password" },
+          environment: [{ name: "TOKEN", value: "secret-env", sensitive: true }],
+        },
+      },
+      bitbucket: { email: "", accessToken: "secret-token", apiToken: "" },
+    } as typeof DEFAULT_SERVER_SETTINGS;
+    const text = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+      yield* EnvironmentHandlers.mcpSettings(settings),
+    );
+    for (const secret of ["secret-api-key", "secret-password", "secret-env", "secret-token"])
+      expect(text).not.toContain(secret);
+  }),
 );

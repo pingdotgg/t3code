@@ -48,6 +48,7 @@ import {
   mergeWithDefaultKeybindings,
   compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
+  parseKeybindingWhenExpression,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -96,11 +97,22 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
   ),
 );
 
+// `when` text compares by meaning, so "a&&!b" and "a && !b" name the same rule.
+function isSameWhen(left: string | undefined, right: string | undefined): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  const leftAst = parseKeybindingWhenExpression(left);
+  const rightAst = parseKeybindingWhenExpression(right);
+  return (
+    leftAst !== null && rightAst !== null && encodeWhenAst(leftAst) === encodeWhenAst(rightAst)
+  );
+}
+
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
   return (
     left.command === right.command &&
     left.key === right.key &&
-    (left.when ?? undefined) === (right.when ?? undefined)
+    isSameWhen(left.when ?? undefined, right.when ?? undefined)
   );
 }
 

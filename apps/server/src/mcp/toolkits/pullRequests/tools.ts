@@ -1,6 +1,13 @@
 import {
   McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
   PositiveInt,
+  PullRequestBaseComparison,
+  PullRequestCheck,
+  PullRequestCommentKind,
+  PullRequestDiffSide,
+  PullRequestMergeability,
+  PullRequestReviewerKind,
   PullRequestState,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
@@ -12,7 +19,9 @@ import * as Toolkit from "effect/unstable/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -315,10 +324,152 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const hostDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  ProjectService.ProjectService,
+  PullRequestService.PullRequestService,
+];
+
+const MAX_PULL_REQUEST_CHARACTERS = 100_000;
+
+const ThreadComment = Schema.Struct({
+  id: Schema.String,
+  author: Schema.NullOr(Schema.String),
+  body: Schema.String,
+  createdAt: Schema.String,
+  url: Schema.NullOr(Schema.String),
+});
+
+const ReadPullRequestTool = Tool.make("t3_pull_request_read", {
+  description:
+    "Read a pull request from its host (pass url, or repository plus number; threadId picks the project whose credentials are used, default this thread). section: overview (default: title, body, state, branches, mergeability, reviewers, labels, checks), checks (current check runs), conversation (comments and line review threads with resolution state; spend the text budget on unresolved threads and the newest comments first), or review_thread (more comments of one review thread: pass reviewThreadId and the cursor from its nextCommentsCursor). Text is cut to maxCharacters in total (default 20,000, max 100,000) with truncated set when cut. Check logs are not available; follow a check's url.",
+  parameters: Schema.Struct({
+    ...PullRequestTargetInput.fields,
+    section: Schema.optional(
+      Schema.Literals(["overview", "checks", "conversation", "review_thread"]),
+    ),
+    reviewThreadId: Schema.optional(TrimmedNonEmptyString),
+    cursor: Schema.optional(TrimmedNonEmptyString),
+    maxCharacters: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_PULL_REQUEST_CHARACTERS })),
+    ),
+  }),
+  success: Schema.Struct({
+    ...PullRequestIdentity,
+    overview: Schema.NullOr(
+      Schema.Struct({
+        title: Schema.String,
+        body: Schema.String,
+        state: PullRequestState,
+        isDraft: Schema.Boolean,
+        author: Schema.NullOr(Schema.String),
+        headBranch: Schema.String,
+        baseBranch: Schema.String,
+        mergeability: PullRequestMergeability,
+        baseComparison: Schema.NullOr(PullRequestBaseComparison),
+        autoMergeEnabled: Schema.NullOr(Schema.Boolean),
+        additions: Schema.Int,
+        deletions: Schema.Int,
+        changedFiles: Schema.Int,
+        createdAt: Schema.String,
+        updatedAt: Schema.String,
+        reviewers: Schema.Array(Schema.String),
+        labels: Schema.Array(Schema.String),
+        checks: Schema.Array(PullRequestCheck),
+      }),
+    ),
+    checks: Schema.NullOr(Schema.Array(PullRequestCheck)),
+    conversation: Schema.NullOr(
+      Schema.Struct({
+        /** The host's own count, which can exceed what was read. */
+        commentCount: Schema.Int,
+        comments: Schema.Array(
+          Schema.Struct({
+            ...ThreadComment.fields,
+            kind: PullRequestCommentKind,
+            path: Schema.NullOr(Schema.String),
+            reviewState: Schema.NullOr(Schema.String),
+          }),
+        ),
+        reviewThreads: Schema.Array(
+          Schema.Struct({
+            id: Schema.String,
+            path: Schema.String,
+            line: Schema.NullOr(Schema.Int),
+            side: PullRequestDiffSide,
+            isResolved: Schema.Boolean,
+            isOutdated: Schema.Boolean,
+            comments: Schema.Array(ThreadComment),
+            nextCommentsCursor: Schema.NullOr(Schema.String),
+          }),
+        ),
+      }),
+    ),
+    reviewThread: Schema.NullOr(
+      Schema.Struct({
+        comments: Schema.Array(ThreadComment),
+        nextCursor: Schema.NullOr(Schema.String),
+      }),
+    ),
+    truncated: Schema.Boolean,
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: hostDependencies,
+})
+  .annotate(Tool.Title, "Read pull request")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const UpdatePullRequestTool = Tool.make("t3_pull_request_update", {
+  description:
+    "Act on a pull request on its host (pass url, or repository plus number). comment posts body on the conversation; reply posts body to a line review thread (reviewThreadId from t3_pull_request_read section conversation); resolve and unresolve that thread; request_reviewers and unrequest_reviewers take reviewers (logins, or team slugs with kind team); add_labels and remove_labels take label names. Posts appear under the host account this environment is signed in with. Merging, closing, approving, and editing the title or body are not available here. Needs a full-access/default caller.",
+  parameters: Schema.Struct({
+    ...PullRequestTargetInput.fields,
+    action: Schema.Literals([
+      "comment",
+      "reply",
+      "resolve",
+      "unresolve",
+      "request_reviewers",
+      "unrequest_reviewers",
+      "add_labels",
+      "remove_labels",
+    ]),
+    body: Schema.optional(Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(65_536))),
+    reviewThreadId: Schema.optional(TrimmedNonEmptyString),
+    reviewers: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          id: TrimmedNonEmptyString,
+          kind: Schema.optional(PullRequestReviewerKind),
+        }),
+      ).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+    ),
+    labels: Schema.optional(
+      Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+    ),
+  }),
+  success: Schema.Struct({ ...PullRequestIdentity, action: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: hostDependencies,
+})
+  .annotate(Tool.Title, "Comment on or update pull request")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   UnlinkPullRequestTool,
   ListThreadPullRequestsTool,
   WatchPullRequestTool,
   UnwatchPullRequestTool,
+  ReadPullRequestTool,
+  UpdatePullRequestTool,
 );

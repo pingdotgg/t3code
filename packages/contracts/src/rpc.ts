@@ -130,6 +130,7 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
+import { ClientIntent } from "./clientIntent.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   OrchestrationSearchThreadsError,
@@ -529,6 +530,7 @@ export const WS_METHODS = {
   subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeClientIntents: "subscribeClientIntents",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -1623,6 +1625,14 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+/** Requests for connected clients to show something, such as a thread an agent was asked to open. */
+const WsSubscribeClientIntentsRpc = Rpc.make(WS_METHODS.subscribeClientIntents, {
+  payload: Schema.Struct({}),
+  success: ClientIntent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1842,6 +1852,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsSubscribeClientIntentsRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,

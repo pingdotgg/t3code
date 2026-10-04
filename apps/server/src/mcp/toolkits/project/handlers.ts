@@ -6,6 +6,9 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as WorkspaceEntries from "../../../workspace/WorkspaceEntries.ts";
+import * as AgentSessionScanner from "../../../project/AgentSessionScanner.ts";
+import * as AgentSessionImporter from "../../../project/AgentSessionImporter.ts";
 import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import {
   newCommandId,
@@ -38,6 +41,17 @@ const mutation = Effect.gen(function* () {
   );
   return yield* Project.ProjectService;
 });
+const hostPathAccess = readFullAccessCaller(
+  "Host folders and agent sessions require a live full-access/default calling thread or a full-access client.",
+);
+function paginate<T>(
+  rows: ReadonlyArray<T>,
+  input: { readonly cursor?: number | undefined; readonly limit?: number | undefined },
+) {
+  const start = input.cursor ?? 0,
+    end = start + (input.limit ?? 20);
+  return { rows: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+}
 export const ProjectHandlersLive = ProjectToolkit.toLayer({
   t3_thread_launch: (input) =>
     Effect.gen(function* () {
@@ -147,9 +161,8 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
       const rows = snapshot.projects.filter((project) => project.deletedAt === null);
-      const start = input.cursor ?? 0,
-        end = start + (input.limit ?? 20);
-      return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+      const { rows: page, nextCursor } = paginate(rows, input);
+      return { projects: page, nextCursor };
     }),
   t3_project_read: (input) =>
     Effect.gen(function* () {
@@ -232,5 +245,55 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
             }),
         ),
       );
+    }),
+  t3_folder_browse: (input) =>
+    Effect.gen(function* () {
+      yield* hostPathAccess;
+      const entries = yield* WorkspaceEntries.WorkspaceEntries;
+      const path = input.path ?? "~";
+      // A trailing separator makes the browse service list the folder itself, not filter its parent.
+      const result = yield* entries
+        .browse({ partialPath: path === "~" || /[\\/]$/.test(path) ? path : `${path}/` })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message:
+                  error._tag === "WorkspaceEntriesCurrentProjectRequiredError"
+                    ? "Pass an absolute or ~ path."
+                    : error.message,
+              }),
+          ),
+        );
+      const { rows, nextCursor } = paginate(result.entries, input);
+      return { path: result.parentPath, folders: rows, nextCursor };
+    }),
+  t3_agent_session_scan: (input) =>
+    Effect.gen(function* () {
+      yield* hostPathAccess;
+      const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const result = yield* scanner.scan.pipe(Effect.mapError(unavailable));
+      const { rows, nextCursor } = paginate(result.candidates, input);
+      return {
+        candidates: rows,
+        nextCursor,
+        scannedAt: result.scannedAt,
+        truncated: result.truncated ?? false,
+      };
+    }),
+  t3_agent_session_import: (input) =>
+    Effect.gen(function* () {
+      yield* hostPathAccess;
+      const importer = yield* AgentSessionImporter.AgentSessionImporter;
+      return yield* importer
+        .importRecentAgentThreads(input)
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "AgentSessionScanError"
+              ? unavailable()
+              : new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
     }),
 });

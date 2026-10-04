@@ -16,6 +16,10 @@ import {
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  FilesystemBrowseEntry,
+  AgentSessionProjectCandidate,
+  AgentSessionImportInput,
+  AgentSessionImportResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
@@ -27,6 +31,9 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as WorkspaceEntries from "../../../workspace/WorkspaceEntries.ts";
+import * as AgentSessionScanner from "../../../project/AgentSessionScanner.ts";
+import * as AgentSessionImporter from "../../../project/AgentSessionImporter.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -99,6 +106,56 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+const page = {
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+};
+const FolderBrowseTool = Tool.make("t3_folder_browse", {
+  ...shared,
+  description:
+    "List the child folders of a directory on this environment's host, to find a workspaceRoot for t3_project_create. Omit path to start at the home directory. Hidden folders are included. Requires full access because it reveals host paths.",
+  parameters: Schema.Struct({
+    path: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(511)).annotate({
+        description: "Absolute or ~-relative directory path. Defaults to ~.",
+      }),
+    ),
+    ...page,
+  }),
+  success: Schema.Struct({
+    path: TrimmedNonEmptyString,
+    folders: Schema.Array(FilesystemBrowseEntry),
+    nextCursor: Schema.NullOr(NonNegativeInt),
+  }),
+  dependencies: [...shared.dependencies, WorkspaceEntries.WorkspaceEntries],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const AgentSessionScanTool = Tool.make("t3_agent_session_scan", {
+  ...shared,
+  description:
+    "Scan the host's Claude Code and Codex history for directories those agents ran in, most recent first. A candidate with projectId is already a project; otherwise register its path with t3_project_create, then import its sessions with t3_agent_session_import. Each page rescans. Requires full access because it reveals host paths.",
+  parameters: Schema.Struct(page),
+  success: Schema.Struct({
+    candidates: Schema.Array(AgentSessionProjectCandidate),
+    nextCursor: Schema.NullOr(NonNegativeInt),
+    scannedAt: Schema.String,
+    truncated: Schema.Boolean,
+  }),
+  dependencies: [...shared.dependencies, AgentSessionScanner.AgentSessionScanner],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const AgentSessionImportTool = Tool.make("t3_agent_session_import", {
+  ...shared,
+  description:
+    "Import recent Claude Code and Codex sessions that ran in a project's directory as threads in that project, the same import the welcome wizard runs. Sessions already imported and unchanged are skipped, so retrying is safe. Pass expectedWorkspaceRoot (the scanned path) to fail if the project moved since the scan.",
+  parameters: AgentSessionImportInput,
+  success: AgentSessionImportResult,
+  dependencies: [...shared.dependencies, AgentSessionImporter.AgentSessionImporter],
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
@@ -155,4 +212,7 @@ export const ProjectToolkit = Toolkit.make(
   ProjectUpdateTool,
   ProjectDeleteTool,
   ProjectCloneTool,
+  FolderBrowseTool,
+  AgentSessionScanTool,
+  AgentSessionImportTool,
 );
