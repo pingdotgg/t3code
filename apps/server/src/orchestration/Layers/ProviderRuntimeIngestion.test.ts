@@ -5531,4 +5531,64 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+  it("keeps a pending turn start across a graceful session exit but not a crash", async () => {
+    // `ensureSessionForThread` restarts the provider session before the turn is
+    // dispatched, and the old session exits gracefully first. Applying that exit
+    // retired the pending start mid-flight, so admission reopened and a second
+    // `thread.turn.start` could be accepted for the same message.
+    const runCase = async (exitKind: "graceful" | "error") => {
+      const harness = await createHarness();
+      const now = new Date().toISOString();
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status: "ready",
+        runtimeMode: "approval-required",
+        threadId: asThreadId("thread-1"),
+        cwd: harness.workspaceRoot,
+        createdAt: now,
+        updatedAt: now,
+      });
+      // Establish an accepted-but-unacknowledged start.
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-pending-${exitKind}`),
+          threadId: asThreadId("thread-1"),
+          message: {
+            messageId: asMessageId(`message-pending-${exitKind}`),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      const beforeExit = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+        (thread) => thread.id === asThreadId("thread-1"),
+      );
+      expect(beforeExit?.pendingTurnStart?.messageId).toBe(`message-pending-${exitKind}`);
+
+      harness.emit({
+        type: "session.exited",
+        eventId: asEventId(`evt-exit-${exitKind}`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        payload: { exitKind, recoverable: true },
+      });
+      await harness.drain();
+
+      const afterExit = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+        (thread) => thread.id === asThreadId("thread-1"),
+      );
+      return afterExit?.pendingTurnStart ?? null;
+    };
+
+    // Graceful = deliberate replacement: the start is still owed to a provider.
+    expect(await runCase("graceful")).not.toBeNull();
+    // A crash abandons the start, so the thread must not stay wedged busy.
+    expect(await runCase("error")).toBeNull();
+  });
 });

@@ -1,6 +1,6 @@
 import "../index.css";
 
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, PreviewSessionSnapshot, ProjectId } from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -83,14 +83,37 @@ describe("RightPanelTabs", () => {
     try {
       await expect.element(page.getByTitle("Files")).toBeInTheDocument();
       await expect.element(page.getByTitle("Insights")).toBeInTheDocument();
-      await expect.element(page.getByTitle("index.ts")).toBeInTheDocument();
+      await expect.element(page.getByTitle("src/index.ts")).toBeInTheDocument();
       await expect.element(page.getByTitle("Terminal 2")).toBeInTheDocument();
       const browserTab = page.getByTitle("Local dashboard");
       await expect.element(browserTab).toBeInTheDocument();
       const browserTabElement = await browserTab.element();
-      expect(browserTabElement.querySelector("img")?.src).toBe(
+      expect(browserTabElement.parentElement!.querySelector("img")?.src).toBe(
         `${globalThis.location.origin}/favicon.ico`,
       );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("labels pull request tabs with only the pull request number", async () => {
+    const pullRequest: RightPanelSurface = {
+      id: "pull-request:environment-a:project-a:owner/repo:626",
+      kind: "pull-request",
+      environmentId: "environment-a" as EnvironmentId,
+      reference: {
+        projectId: "project-a" as ProjectId,
+        repository: "owner/repo",
+        number: 626,
+      },
+      title: "A descriptive pull request title",
+    };
+    const { screen } = await mountTabs([pullRequest], pullRequest.id);
+    try {
+      const tab = page.getByRole("button", { name: "#626", exact: true });
+      await expect.element(tab).toBeInTheDocument();
+      expect(await tab.element()).toHaveTextContent("#626");
+      await expect.element(page.getByLabelText("Close #626")).toBeInTheDocument();
     } finally {
       await screen.unmount();
     }
@@ -100,7 +123,51 @@ describe("RightPanelTabs", () => {
     const { screen } = await mountTabs();
     try {
       const tabBar = document.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
-      expect(tabBar.getBoundingClientRect().height).toBe(32);
+      expect(tabBar.getBoundingClientRect().height).toBe(44);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("scrolls overflowing tabs with buttons and disables them at the edges", async () => {
+    const tabs: RightPanelSurface[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `file:src/long-file-name-${index}.ts`,
+      kind: "file",
+      relativePath: `src/long-file-name-${index}.ts`,
+      revealLine: null,
+    }));
+    const { screen } = await mountTabs(tabs, tabs[0]!.id);
+    try {
+      const viewport = document.querySelector<HTMLElement>(
+        "[data-right-panel-tab-list] [data-slot='scroll-area-viewport']",
+      )!;
+      const left = page.getByRole("button", { name: "Scroll tabs left", exact: true });
+      const right = page.getByRole("button", { name: "Scroll tabs right", exact: true });
+      await expect.element(left).toBeDisabled();
+      await expect.element(right).toBeEnabled();
+      for (
+        let index = 0;
+        index < 20 && !(await right.element()).hasAttribute("disabled");
+        index++
+      ) {
+        const target = Math.min(
+          viewport.scrollWidth - viewport.clientWidth,
+          viewport.scrollLeft + Math.max(120, viewport.clientWidth * 0.75),
+        );
+        await right.click();
+        await vi.waitFor(() =>
+          expect(Math.abs(viewport.scrollLeft - target)).toBeLessThanOrEqual(2),
+        );
+      }
+      await expect.element(right).toBeDisabled();
+      await expect.element(left).toBeEnabled();
+      const lastTab = await page.getByTitle("src/long-file-name-11.ts", { exact: true }).element();
+      expect(lastTab.getBoundingClientRect().right).toBeLessThanOrEqual(
+        viewport.getBoundingClientRect().right + 1,
+      );
+      const end = viewport.scrollLeft;
+      await left.click();
+      await vi.waitFor(() => expect(viewport.scrollLeft).toBeLessThan(end - 50));
     } finally {
       await screen.unmount();
     }
@@ -112,11 +179,18 @@ describe("RightPanelTabs", () => {
       const tabBar = document.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
       const closeButton = await page.getByLabelText("Close browser panel").element();
       const browserTab = await page.getByTitle("Local dashboard").element();
-      const fileTab = await page.getByTitle("index.ts").element();
+      const fileTab = await page.getByTitle("src/index.ts").element();
 
       expect(closeButton.parentElement).toBe(tabBar);
-      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("10px");
-      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("11px");
+      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("13px");
+      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("13px");
+      expect(fileTab.parentElement!.getBoundingClientRect().height).toBe(28);
+      expect(getComputedStyle(fileTab.parentElement!.parentElement!).columnGap).toBe("4px");
+      const closeFile = await page.getByLabelText("Close index.ts").element();
+      expect(closeFile.getBoundingClientRect().right).toBeLessThanOrEqual(
+        fileTab.getBoundingClientRect().left,
+      );
+      expect(getComputedStyle(fileTab.parentElement!).borderWidth).toBe("0px");
 
       await page.getByLabelText("Close browser panel").click();
       expect(callbacks.onClosePanel).toHaveBeenCalledOnce();
@@ -161,6 +235,7 @@ describe("RightPanelTabs", () => {
       const lastTab = (await page.getByTitle("index.ts").element()).parentElement!;
       const tabList = document.querySelector("[data-right-panel-tab-list]");
       expect(tabList?.contains(addButton)).toBe(true);
+      expect(document.querySelector('[aria-label="Scroll panel tabs"]')).toBeNull();
 
       const addRect = addButton.getBoundingClientRect();
       const lastTabRect = lastTab.getBoundingClientRect();
@@ -213,6 +288,17 @@ describe("RightPanelTabs", () => {
       await vi.waitFor(() => {
         expect(panel.getBoundingClientRect().width).toBeCloseTo(startWidth + 120, 0);
       });
+
+      const resizedHandle = handle.getBoundingClientRect();
+      const resizedStartX = resizedHandle.left + resizedHandle.width / 2;
+      dispatch("pointerdown", resizedStartX);
+      dispatch("pointermove", resizedStartX + 1_000);
+      dispatch("pointerup", resizedStartX + 1_000);
+
+      await vi.waitFor(() => {
+        expect(panel.getBoundingClientRect().width).toBe(280);
+      });
+      expect(localStorage.getItem("t3code:preview-panel-width")).toBe("280");
     } finally {
       await screen.unmount();
     }
@@ -228,19 +314,19 @@ describe("RightPanelTabs", () => {
         .element(page.getByRole("menuitem", { name: "Copy path" }))
         .not.toBeInTheDocument();
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Copy path" }).click();
       expect(callbacks.onCopyPath).toHaveBeenCalledWith("src/index.ts");
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close others" }).click();
       expect(callbacks.onCloseOthers).toHaveBeenCalledWith(surfaces[1]);
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close to the right" }).click();
       expect(callbacks.onCloseToRight).toHaveBeenCalledWith(surfaces[1]);
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close all" }).click();
       expect(callbacks.onCloseAll).toHaveBeenCalledOnce();
 

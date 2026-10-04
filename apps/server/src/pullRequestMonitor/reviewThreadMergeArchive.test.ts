@@ -1,7 +1,9 @@
 import type { OrchestrationReadModel, OrchestrationThread, ProjectId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  canAutoArchiveThreadNow,
   liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
@@ -417,5 +419,105 @@ describe("liveReviewThreadPullRequests", () => {
       reviewThread({ id: "settled", settledOverride: "settled" }),
     ];
     expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([]);
+  });
+});
+
+/**
+ * A review worker as `reviewChangesWorkflow.ts` actually builds one since
+ * 8ba0d1103e: `pullRequest: null` keeps `CreatedPullRequestReviewReactor` from
+ * reviewing the pull request it is reviewing, so the worker keeps no link and its
+ * immutable review snapshot is the only remaining PR provenance.
+ */
+const REVIEW_WORKER_ID = ThreadId.make("workflow:run-1:node:review-changes:worker");
+const REVIEWED_PULL_REQUEST_URL = "https://github.com/ronak-guliani/t3code/pull/590";
+
+const snapshotOnlyReviewWorker = (
+  overrides: { readonly id?: string } & Record<string, unknown> = {},
+): OrchestrationThread =>
+  ({
+    projectId: projectId("project-1"),
+    title: "Review PR #590",
+    parentThreadId: "parent-thread",
+    reviewSnapshot: {
+      scope: {
+        kind: "pull-request",
+        number: 590,
+        title: "Parallelize shell-summary reconciliation",
+        url: REVIEWED_PULL_REQUEST_URL,
+        baseBranch: "main",
+        headBranch: "feature",
+      },
+    },
+    reviewResult: { status: "parsed" },
+    pullRequests: [],
+    pullRequest: null,
+    archivedAt: null,
+    deletedAt: null,
+    settledOverride: null,
+    latestTurn: { turnId: "turn-1", state: "completed", completedAt: "2026-01-02T00:00:00.000Z" },
+    id: REVIEW_WORKER_ID,
+    ...overrides,
+  }) as unknown as OrchestrationThread;
+
+const mergedPullRequest590 = new Set(["github.com/ronak-guliani/t3code#590"]);
+
+describe("review workers that carry only snapshot provenance", () => {
+  it("asks about the reviewed pull request, which has no link to iterate", () => {
+    expect(liveReviewThreadPullRequests(readModel([snapshotOnlyReviewWorker()]))).toEqual([
+      {
+        ref: { projectId: projectId("project-1"), repository: "ronak-guliani/t3code", number: 590 },
+        pullRequestKeys: ["github.com/ronak-guliani/t3code#590"],
+        recordedState: "unmerged",
+      },
+    ] satisfies ReadonlyArray<ReviewThreadPullRequest>);
+  });
+
+  it("archives the worker once the reviewed pull request merges", () => {
+    expect(
+      planReviewThreadAutoArchive(readModel([snapshotOnlyReviewWorker()]), mergedPullRequest590),
+    ).toEqual([
+      { threadId: REVIEW_WORKER_ID, pullRequestKey: "github.com/ronak-guliani/t3code#590" },
+    ]);
+  });
+
+  // The guard shares `reviewThreadPullRequests` with the planner, so it would
+  // refuse the dispatch above and silently archive nothing.
+  it("accepts the worker at admission, so the archive dispatch is not refused", () => {
+    expect(canAutoArchiveThreadNow(readModel([snapshotOnlyReviewWorker()]), REVIEW_WORKER_ID)).toBe(
+      true,
+    );
+  });
+
+  // The snapshot's `state: null` must not read as unmerged once a link records
+  // the merge, or the sweep would re-ask forever.
+  it("does not re-ask the provider when a link already names the same pull request", () => {
+    const worker = snapshotOnlyReviewWorker({
+      pullRequests: [
+        {
+          pullRequest: {
+            url: REVIEWED_PULL_REQUEST_URL,
+            number: 590,
+            title: "Parallelize shell-summary reconciliation",
+            state: "merged",
+            baseBranch: "main",
+            headBranch: "feature",
+          },
+          source: "agent",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(liveReviewThreadPullRequests(readModel([worker]))).toEqual([
+      {
+        ref: { projectId: projectId("project-1"), repository: "ronak-guliani/t3code", number: 590 },
+        pullRequestKeys: ["github.com/ronak-guliani/t3code#590"],
+        recordedState: "merged",
+      },
+    ] satisfies ReadonlyArray<ReviewThreadPullRequest>);
+  });
+
+  it("ignores a snapshot whose scope is not a pull request", () => {
+    const worker = snapshotOnlyReviewWorker({ reviewSnapshot: { scope: { kind: "uncommitted" } } });
+    expect(liveReviewThreadPullRequests(readModel([worker]))).toEqual([]);
   });
 });

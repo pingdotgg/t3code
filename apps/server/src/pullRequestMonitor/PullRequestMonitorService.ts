@@ -120,6 +120,9 @@ export function associatedOwnerCandidates(
     readonly projectId: PullRequestRef["projectId"];
     readonly title: string;
     readonly pullRequest?: { readonly number: number; readonly url: string } | null;
+    readonly pullRequests?: ReadonlyArray<{
+      readonly pullRequest: { readonly number: number; readonly url: string };
+    }>;
     readonly archivedAt: string | null;
     readonly deletedAt: string | null;
   }>,
@@ -128,18 +131,32 @@ export function associatedOwnerCandidates(
   const referenceRepository = normalizeRepositoryIdentity(reference.repository);
   return threads
     .filter((thread) => {
-      const repository = repositoryFromPullRequestUrl(thread.pullRequest?.url);
+      const associations = [
+        ...(thread.pullRequest ? [thread.pullRequest] : []),
+        ...(thread.pullRequests ?? []).map(({ pullRequest }) => pullRequest),
+      ];
       return (
         thread.projectId === reference.projectId &&
         thread.archivedAt === null &&
         thread.deletedAt === null &&
-        thread.pullRequest?.number === reference.number &&
-        repository !== null &&
-        normalizeRepositoryIdentity(repository) === referenceRepository
+        associations.some((pullRequest) => {
+          const repository = repositoryFromPullRequestUrl(pullRequest.url);
+          return (
+            pullRequest.number === reference.number &&
+            repository !== null &&
+            normalizeRepositoryIdentity(repository) === referenceRepository
+          );
+        })
       );
     })
     .map((thread) => ({ threadId: thread.id, title: thread.title }));
 }
+
+export type PullRequestMonitorAutomationDeliveryState =
+  | "eligible"
+  | "blocked"
+  | "terminal"
+  | "owner-changed";
 
 export class PullRequestMonitorService extends Context.Service<
   PullRequestMonitorService,
@@ -153,6 +170,11 @@ export class PullRequestMonitorService extends Context.Service<
     readonly status: (
       input: PullRequestMonitorStatusInput,
     ) => Effect.Effect<PullRequestMonitorStatusResult, PullRequestMonitorError>;
+    /** Cheap dispatch-boundary state check for durable feedback queued to an owner thread. */
+    readonly automationDeliveryState: (input: {
+      readonly reference: PullRequestRef;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<PullRequestMonitorAutomationDeliveryState, PullRequestMonitorError>;
     readonly list: (
       input: PullRequestMonitorListInput,
     ) => Effect.Effect<PullRequestMonitorListResult, PullRequestMonitorError>;
@@ -358,6 +380,28 @@ export const layer = Layer.effect(
           recentReports,
         };
       });
+
+    const automationDeliveryState: PullRequestMonitorService["Service"]["automationDeliveryState"] =
+      (input) =>
+        Effect.gen(function* () {
+          const monitor = yield* store.getByProjectRef(input.reference);
+          if (monitor?.status === "terminal") return "terminal";
+          if (
+            monitor === null ||
+            !monitor.enabled ||
+            monitor.status === "stopped" ||
+            monitor.ownerThreadId === null
+          ) {
+            return "blocked";
+          }
+          if (monitor.ownerThreadId !== input.threadId) return "owner-changed";
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((cause) =>
+              monitorError("Could not resolve automatic PR feedback policy.", { cause }),
+            ),
+          );
+          return settings.autoMonitorPullRequestsOnCreate ? "eligible" : "blocked";
+        });
 
     const start = (input: PullRequestMonitorStartInput) =>
       Effect.gen(function* () {
@@ -871,8 +915,11 @@ export const layer = Layer.effect(
             monitorError("Invalid review findings submission.", { cause }),
           ),
         );
+        yield* requireProjectThread({
+          projectId: input.reference.projectId,
+          threadId: input.reviewThreadId,
+        });
         const startMonitoring = input.startMonitoring !== false;
-        // Start without mutating ownership so handoff audit sees the true previous owner.
         let monitorRecord: PullRequestMonitorRecord;
         if (startMonitoring) {
           const started = yield* start({
@@ -882,7 +929,60 @@ export const layer = Layer.effect(
           });
           monitorRecord = started.monitor;
         } else {
-          monitorRecord = yield* resolveMonitor({ reference: input.reference });
+          const existing = yield* store.getByProjectRef(input.reference);
+          if (existing !== null) {
+            monitorRecord = existing;
+          } else {
+            // Findings still need a durable PR ledger when automatic monitoring is
+            // disabled. Create a stopped record without polling or waking an agent.
+            const detail = yield* pullRequests
+              .detail(input.reference)
+              .pipe(
+                Effect.mapError((cause) =>
+                  monitorError("Could not resolve pull request for review findings.", { cause }),
+                ),
+              );
+            const host = (() => {
+              try {
+                return new URL(detail.url).host;
+              } catch {
+                return detail.provider === "github" ? "github.com" : detail.provider;
+              }
+            })();
+            const canonicalKey = formatPullRequestMonitorCanonicalKey({
+              provider: detail.provider,
+              host,
+              repository: detail.repository,
+              number: detail.number,
+            });
+            const now = yield* isoNow();
+            const record: PullRequestMonitorRecord = {
+              id: PullRequestMonitorId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+              canonicalKey,
+              provider: detail.provider,
+              host,
+              repository: detail.repository,
+              number: detail.number,
+              projectId: input.reference.projectId,
+              ownerThreadId: null,
+              linkedReviewThreadId: null,
+              status: "stopped",
+              enabled: false,
+              readiness: null,
+              headSha: null,
+              sourceRevision: null,
+              lastPolledAt: null,
+              nextPollAt: null,
+              lastError: null,
+              pollFailureCount: 0,
+              createdAt: now,
+              updatedAt: now,
+              stoppedAt: now,
+            };
+            yield* store.insert(record, emptyCursor());
+            yield* notify;
+            monitorRecord = record;
+          }
         }
 
         // The monitor row can be empty or stale when its opportunistic start poll failed or
@@ -899,26 +999,19 @@ export const layer = Layer.effect(
                   ),
                 )
             : null;
-        if (
-          input.reviewedHeadSha !== undefined &&
-          currentSnapshot !== null &&
-          currentSnapshot.headSha !== input.reviewedHeadSha
-        ) {
-          return {
-            monitor: monitorRecord,
-            linkedReviewThreadId: input.reviewThreadId,
-            ownerThreadId: monitorRecord.ownerThreadId,
-            monitoringStarted: startMonitoring,
-            findings: [],
-          };
+        const reviewedHeadSha = input.reviewedHeadSha ?? currentSnapshot?.headSha;
+        let recoveredOwnerThreadId: ThreadId | null = null;
+        if (input.ownerThreadId === undefined && monitorRecord.ownerThreadId === null) {
+          const ownerCandidates = associatedOwnerCandidates(
+            (yield* engine.getReadModel()).threads,
+            input.reference,
+          );
+          if (ownerCandidates.length === 1) {
+            recoveredOwnerThreadId = ownerCandidates[0]!.threadId;
+          }
         }
-
-        yield* requireProjectThread({
-          projectId: monitorRecord.projectId,
-          threadId: input.reviewThreadId,
-        });
         const ownerThreadId =
-          input.ownerThreadId ?? monitorRecord.ownerThreadId ?? (null as ThreadId | null);
+          input.ownerThreadId ?? monitorRecord.ownerThreadId ?? recoveredOwnerThreadId;
         if (ownerThreadId !== null) {
           yield* requireProjectThread({
             projectId: monitorRecord.projectId,
@@ -926,12 +1019,6 @@ export const layer = Layer.effect(
           });
         }
         const now = yield* isoNow();
-        const updated = {
-          ...monitorRecord,
-          linkedReviewThreadId: input.reviewThreadId,
-          ownerThreadId,
-          updatedAt: now,
-        };
         // Each finding becomes its own durable item/revision so the owner can disposition
         // them individually; delivery follows the normal debounced wake path.
         const findings = yield* feedback.ingestFindings({
@@ -945,25 +1032,52 @@ export const layer = Layer.effect(
                 },
           reviewThreadId: input.reviewThreadId,
           findings: input.findings ?? [],
-          ...(currentSnapshot === null ? {} : { reviewedHeadSha: currentSnapshot.headSha }),
+          ...(reviewedHeadSha === undefined ? {} : { reviewedHeadSha }),
           origin: input.origin ?? "reviewer",
         });
-        // Always use ownership-scoped SQL so concurrent poll updates cannot clobber the link.
-        yield* store.transferOwnershipAtomic({
-          monitorId: updated.id,
+        // Recovery can race an explicit transfer while the provider review is being read.
+        // Claim only if the owner still matches the record we based recovery on.
+        const claimed = yield* store.transferOwnershipAtomic({
+          monitorId: monitorRecord.id,
           ownerThreadId,
+          expectedOwnerThreadId: monitorRecord.ownerThreadId,
           linkedReviewThreadId: input.reviewThreadId,
           updatedAt: now,
           eventId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
           toThreadId: ownerThreadId,
           reason: input.summary?.slice(0, 500) ?? "review-handoff",
         });
+        if (!claimed) {
+          const current = yield* store.getById(monitorRecord.id);
+          if (current === null) {
+            return yield* monitorError("Monitor no longer exists after review handoff.", {
+              monitorId: monitorRecord.id,
+            });
+          }
+          // Keep the review link, but preserve the owner that won the concurrent transfer.
+          yield* store.transferOwnershipAtomic({
+            monitorId: current.id,
+            ownerThreadId: current.ownerThreadId,
+            expectedOwnerThreadId: current.ownerThreadId,
+            linkedReviewThreadId: input.reviewThreadId,
+            updatedAt: now,
+            eventId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+            toThreadId: current.ownerThreadId,
+            reason: input.summary?.slice(0, 500) ?? "review-handoff",
+          });
+        }
+        const submittedMonitor = yield* store.getById(monitorRecord.id);
+        if (submittedMonitor === null) {
+          return yield* monitorError("Monitor no longer exists after review handoff.", {
+            monitorId: monitorRecord.id,
+          });
+        }
         yield* notify;
-        yield* requestRecheck(updated);
+        yield* requestRecheck(submittedMonitor);
         return {
-          monitor: updated,
+          monitor: submittedMonitor,
           linkedReviewThreadId: input.reviewThreadId,
-          ownerThreadId,
+          ownerThreadId: submittedMonitor.ownerThreadId,
           monitoringStarted: startMonitoring,
           findings,
         };
@@ -1440,6 +1554,7 @@ export const layer = Layer.effect(
       start,
       stop,
       status,
+      automationDeliveryState,
       list,
       subscribeList: (input) =>
         Stream.concat(

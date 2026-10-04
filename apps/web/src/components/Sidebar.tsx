@@ -64,6 +64,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
+  parseScopedThreadKey,
 } from "@t3tools/client-runtime";
 import {
   isAtomCommandInterrupted,
@@ -75,7 +76,7 @@ import {
   type SidebarThreadFilter,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
-import { usePrimaryEnvironmentId } from "../environments/primary";
+import { usePrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { reportClientError } from "../lib/clientLogger";
@@ -171,19 +172,28 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isCollapsedSettledRow,
+  isThreadContextDragOutsideList,
+  resolveSettleMenuItems,
   resolveFilteredSidebarProjects,
+  resolvePinnedDragEndShouldReorder,
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarDraftPreview,
   resolveExistingThreadDraftPreview,
+  resolveThreadContextDragRefs,
+  shouldArmThreadContextDrag,
+  shouldIgnoreThreadContextDragStart,
   shouldRenderSidebarDraft,
   resolveThreadRowClassName,
   resolveSidebarThreadClickKind,
   resolveThreadStatusPill,
   filterSidebarThreads,
+  partitionSettledSidebarRows,
   SIDEBAR_THREAD_FILTER_LABELS,
+  THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -223,8 +233,14 @@ import {
   selectVisibleThreadRows,
   type SidebarThreadRowView,
 } from "../sidebarThreadTree";
-import { compactSidebarTimeLabel } from "./SidebarV2.logic";
+import { compactSidebarTimeLabel, resolveThreadLifecycleSupport } from "./SidebarV2.logic";
 import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
+import {
+  dropThreadContext,
+  endThreadContextDrag,
+  moveThreadContextDrag,
+} from "./chat/threadContextDrag";
 import { resolveThreadPullRequests, ThreadPullRequestsPopover } from "./ThreadPullRequestsPopover";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -254,6 +270,332 @@ const SIDEBAR_MENU_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 /** Root threads mounted per project before the tail sentinel grows the window. */
 const SIDEBAR_THREAD_WINDOW_SIZE = 30;
+
+/**
+ * Thread-context drag gesture (sidebar → composer).
+ *
+ * Every real thread row — pinned roots and unpinned/nested rows alike —
+ * arms this pointer gesture alongside the per-project pinned `DndContext`s.
+ * Draft rows never attach it (unsent composer state) and virtual-agent run
+ * rows never arm it (their ref points at the parent thread while the label
+ * names the child run). Past the activation distance the row stays put;
+ * dnd-kit's reorder preview is NOT suspended while outside — the bridge
+ * ghost overlays it, the trailing pinned `onDragEnd` stands down via the
+ * suppression flag, and returning to the list clears the ghost so the
+ * reorder preview underneath resumes. Releasing over a composer form
+ * dispatches the cancelable drop event (only the receiver's `preventDefault`
+ * counts as acceptance); releasing anywhere else, returning to the list, or
+ * cancelling (Escape, blur, unmount, missed release) clears the ghost and
+ * never reorders.
+ *
+ * Ghost position lives in the bridge's external store, so pointer moves
+ * re-render only the ghost — never the sidebar list. The drop payload and
+ * list edges are resolved once at activation; only the ghost position and
+ * target hit test run per move.
+ */
+const THREAD_CONTEXT_DRAG_LIST_SELECTOR = "[data-thread-context-list]";
+
+interface SidebarThreadContextDragSource {
+  readonly threadKey: string;
+  readonly title: string;
+  readonly isPinned: boolean;
+  readonly isVirtualAgentRun: boolean;
+}
+
+let activeThreadContextGesture: {
+  readonly pointerId: number;
+  readonly source: SidebarThreadContextDragSource;
+  readonly startX: number;
+  readonly startY: number;
+  readonly listEl: Element | null;
+  activated: boolean;
+  outside: boolean;
+  /** List horizontal bounds, captured once at activation. */
+  listLeft: number;
+  listRight: number;
+  /** Drop payload, resolved once at activation: the selection cannot change mid-gesture. */
+  refs: ScopedThreadRef[] | null;
+  title: string;
+  cleanup: () => void;
+} | null = null;
+
+/**
+ * Set when a PINNED gesture released outside the list or was cancelled, so
+ * a trailing pinned `onDragEnd` from the same pointer stands down even under
+ * the nested per-project `DndContext`s. Cleared when the next gesture
+ * starts and consumed (cleared) by the next pinned drag end/cancel, so an
+ * unpinned-row drop — which has no trailing pinned drag end — can never
+ * suppress a later genuine reorder.
+ */
+let consumedThreadContextDrop = false;
+
+function cancelActiveThreadContextGesture(): void {
+  const gesture = activeThreadContextGesture;
+  if (gesture?.activated && gesture.source.isPinned) {
+    consumedThreadContextDrop = true;
+  }
+  gesture?.cleanup();
+}
+
+/** Test hooks: expose the production gesture protocol without changing it. */
+export function __getConsumedThreadContextDropForTests(): boolean {
+  return consumedThreadContextDrop;
+}
+
+export function __setConsumedThreadContextDropForTests(value: boolean): void {
+  consumedThreadContextDrop = value;
+}
+
+export function __getActiveThreadContextGestureForTests(): {
+  readonly activated: boolean;
+  readonly outside: boolean;
+} | null {
+  const gesture = activeThreadContextGesture;
+  return gesture ? { activated: gesture.activated, outside: gesture.outside } : null;
+}
+
+export function __resetThreadContextDragForTests(): void {
+  activeThreadContextGesture = null;
+  consumedThreadContextDrop = false;
+  endThreadContextDrag();
+}
+
+export { startSidebarThreadContextGesture, cancelActiveThreadContextGesture };
+
+function resolveThreadContextDragPayload(activeKey: string): ScopedThreadRef[] {
+  const selectedKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
+  const keys = resolveThreadContextDragRefs({
+    activeKey,
+    selectedKeys,
+    parseScopedKey: parseScopedThreadKey,
+  });
+  const refs: ScopedThreadRef[] = [];
+  for (const key of keys) {
+    const ref = parseScopedThreadKey(key);
+    if (ref) refs.push(ref);
+  }
+  return refs;
+}
+
+function startSidebarThreadContextGesture(
+  event: React.PointerEvent,
+  source: SidebarThreadContextDragSource,
+): void {
+  if (activeThreadContextGesture) return;
+  // Virtual-agent run rows carry a parent ref with a child label and are not
+  // real threads: never arm the gesture for them.
+  if (
+    !shouldArmThreadContextDrag({ isDraft: false, isVirtualAgentRun: source.isVirtualAgentRun })
+  ) {
+    return;
+  }
+  const nativeTarget = event.target instanceof Element ? event.target : null;
+  if (
+    shouldIgnoreThreadContextDragStart({
+      button: event.button,
+      isPrimary: event.nativeEvent.isPrimary,
+      closest: (selector) => nativeTarget?.closest(selector) ?? null,
+    })
+  ) {
+    return;
+  }
+  const currentTarget = event.currentTarget instanceof Element ? event.currentTarget : null;
+  const listEl = currentTarget?.closest(THREAD_CONTEXT_DRAG_LIST_SELECTOR) ?? null;
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const pointerId = event.nativeEvent.pointerId;
+
+  const gesture = {
+    pointerId,
+    source,
+    startX,
+    startY,
+    listEl,
+    activated: false,
+    outside: false,
+    listLeft: 0,
+    listRight: 0,
+    refs: null as ScopedThreadRef[] | null,
+    title: "",
+    cleanup: () => {},
+  };
+  activeThreadContextGesture = gesture;
+  // A fresh gesture owns the flag: a previous unpinned-row drop (whose
+  // DndContext never fires drag end) must not suppress this gesture's
+  // genuine reorder.
+  consumedThreadContextDrop = false;
+
+  const suppressReleaseClick = () => {
+    const suppress = (click: Event) => {
+      click.stopPropagation();
+      document.removeEventListener("click", suppress, { capture: true });
+    };
+    document.addEventListener("click", suppress, { capture: true });
+    // A release outside the document never produces that click; a fresh
+    // press ends the suppression instead of eating a future click.
+    const clearOnPress = () => {
+      document.removeEventListener("click", suppress, { capture: true });
+      document.removeEventListener("pointerdown", clearOnPress, { capture: true });
+    };
+    document.addEventListener("pointerdown", clearOnPress, { capture: true });
+  };
+
+  const cleanup = () => {
+    if (activeThreadContextGesture !== gesture) return;
+    activeThreadContextGesture = null;
+    document.removeEventListener("pointermove", onMove, { capture: true });
+    document.removeEventListener("pointerup", onUp, { capture: true });
+    document.removeEventListener("pointercancel", onCancel, { capture: true });
+    document.removeEventListener("keydown", onKeyDown, { capture: true });
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("pagehide", onWindowBlur);
+    window.removeEventListener("resize", onWindowBlur);
+    endThreadContextDrag();
+  };
+  gesture.cleanup = cleanup;
+
+  const cancel = () => {
+    const wasActive = gesture.activated;
+    if (wasActive && source.isPinned) {
+      // Stand down a trailing dnd-kit drag from the same pointer: dnd-kit
+      // aborts its own drag on Escape, but blur/unmount paths leave it live,
+      // and either way the release after a cancelled pinned gesture must not
+      // reorder. Unpinned gestures have no trailing drag end, so they leave
+      // the flag alone. The next gesture start clears this again.
+      consumedThreadContextDrop = true;
+    }
+    cleanup();
+    // A cancelled press must not navigate on release; an untouched press
+    // keeps plain-click behavior.
+    if (wasActive) suppressReleaseClick();
+  };
+
+  const pointFromEvent = (native: PointerEvent) => ({ x: native.clientX, y: native.clientY });
+
+  const onMove = (native: Event) => {
+    if (!(native instanceof PointerEvent) || native.pointerId !== pointerId) return;
+    // A release outside the window can be missed (no pointerup arrives):
+    // whenever the initiating button is no longer held the gesture is over.
+    // Checking after activation too keeps a missed release from stranding
+    // the ghost. `cancel` suppresses the release click only when the press
+    // had activated, preserving plain-click behavior otherwise.
+    if ((native.buttons & 1) === 0) {
+      cancel();
+      return;
+    }
+    const point = pointFromEvent(native);
+    if (!gesture.activated) {
+      const distance = Math.hypot(point.x - startX, point.y - startY);
+      if (distance <= THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE) return;
+      gesture.activated = true;
+      // Rows are `select-none`; clearing here keeps the drag from
+      // accumulating a stray selection. Clicks never reach this path.
+      document.getSelection()?.removeAllRanges();
+      suppressReleaseClick();
+      // Resolve once: the selection cannot change mid-gesture, the title is
+      // fixed, and only the list's horizontal edges matter for exit
+      // detection, so per-move work stays at ghost position + hit test.
+      const bounds = listEl?.getBoundingClientRect();
+      gesture.listLeft = bounds?.left ?? 0;
+      gesture.listRight = bounds?.right ?? Number.POSITIVE_INFINITY;
+      gesture.title = source.title.trim() || "Thread";
+      gesture.refs = resolveThreadContextDragPayload(source.threadKey);
+    } else if (native.cancelable) {
+      native.preventDefault();
+    }
+    const outside =
+      gesture.listEl === null
+        ? true
+        : isThreadContextDragOutsideList(point, {
+            left: gesture.listLeft,
+            right: gesture.listRight,
+          });
+    if (!outside) {
+      if (gesture.outside) {
+        // Back over the list: drop the ghost so the dnd-kit reorder preview
+        // underneath (never suspended while outside) resumes visibly.
+        gesture.outside = false;
+        endThreadContextDrag();
+      }
+      return;
+    }
+    gesture.outside = true;
+    moveThreadContextDrag(point, {
+      title: gesture.title,
+      count: Math.max(1, gesture.refs?.length ?? 0),
+    });
+  };
+
+  const onUp = (native: Event) => {
+    if (!(native instanceof PointerEvent) || native.pointerId !== pointerId) return;
+    const wasOutside = gesture.activated && gesture.outside;
+    const point =
+      native instanceof PointerEvent ? pointFromEvent(native) : { x: startX, y: startY };
+    const refs = gesture.refs ?? [];
+    cleanup();
+    if (!wasOutside) return;
+    // Integration seam: pass `{ enabled: <composer-can-accept> }` once the
+    // composer exposes it; the bridge honors the gate without new contracts.
+    // The return reports receiver acceptance — found target alone is not
+    // success — and only decides the ghost; it never reorders pins.
+    if (refs.length > 0) {
+      dropThreadContext(point, refs);
+    }
+    // Only pinned gestures have a trailing dnd-kit drag end to stand down.
+    // Unpinned drops must never set the flag: no drag end will consume it,
+    // so it would poison the next genuine pinned reorder.
+    if (source.isPinned) {
+      consumedThreadContextDrop = true;
+    }
+  };
+
+  const onCancel = (native: Event) => {
+    if (native instanceof PointerEvent && native.pointerId !== pointerId) return;
+    cancel();
+  };
+
+  const onKeyDown = (native: Event) => {
+    if (native instanceof KeyboardEvent && native.code === "Escape") cancel();
+  };
+
+  const onVisibilityChange = () => {
+    if (document.hidden) cancel();
+  };
+
+  const onWindowBlur = () => {
+    cancel();
+  };
+
+  document.addEventListener("pointermove", onMove, { passive: false, capture: true });
+  document.addEventListener("pointerup", onUp, { capture: true });
+  document.addEventListener("pointercancel", onCancel, { capture: true });
+  document.addEventListener("keydown", onKeyDown, { capture: true });
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("blur", onWindowBlur);
+  window.addEventListener("pagehide", onWindowBlur);
+  window.addEventListener("resize", onWindowBlur);
+}
+
+function useSidebarThreadContextDragSource(
+  source: SidebarThreadContextDragSource,
+): (event: React.PointerEvent) => void {
+  const sourceRef = useRef(source);
+  useLayoutEffect(() => {
+    sourceRef.current = source;
+  }, [source]);
+  useEffect(() => {
+    const ownedKey = source.threadKey;
+    return () => {
+      if (activeThreadContextGesture?.source.threadKey === ownedKey) {
+        cancelActiveThreadContextGesture();
+      }
+    };
+  }, [source.threadKey]);
+  return useCallback((event: React.PointerEvent) => {
+    startSidebarThreadContextGesture(event, sourceRef.current);
+  }, []);
+}
 
 /**
  * Zero-height tail marker that grows the thread window once it scrolls near the
@@ -365,6 +707,8 @@ interface SidebarThreadRowProps {
   jumpLabel: string | null;
   appSettingsConfirmThreadArchive: boolean;
   isPinned: boolean;
+  /** True when the row sits in a settled subtree; renders faded. */
+  settled: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
   setRenamingTitle: (title: string) => void;
@@ -420,6 +764,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     jumpLabel,
     appSettingsConfirmThreadArchive,
     isPinned,
+    settled,
     renamingThreadKey,
     renamingTitle,
     setRenamingTitle,
@@ -457,6 +802,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     virtualAgentRun?.parentThreadId ?? thread.id,
   );
   const threadKey = scopedThreadKey(threadRef);
+  const contextDragPointerDown = useSidebarThreadContextDragSource({
+    threadKey,
+    title: thread.title,
+    isPinned: props.isPinned,
+    isVirtualAgentRun: virtualAgentRun != null,
+  });
   const pendingTurnKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const pendingTurn = usePendingTurnStore(
     (state) => state.pendingByThreadKey[pendingTurnKey] ?? null,
@@ -796,11 +1147,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       style={sortable?.style}
       className={`w-full [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] ${
         sortable?.isDragging ? "z-20 opacity-80" : ""
-      } ${sortable?.isOver && !sortable.isDragging ? "rounded-md ring-1 ring-primary/40" : ""}`}
+      } ${sortable?.isOver && !sortable.isDragging ? "rounded-md ring-1 ring-primary/40" : ""}${
+        settled ? " opacity-60" : ""
+      }`}
       data-thread-item
       data-thread-prewarm-key={threadKey}
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
+      onPointerDownCapture={contextDragPointerDown}
       {...sortable?.attributes}
       {...sortable?.listeners}
     >
@@ -1025,6 +1379,8 @@ interface SidebarProjectThreadListProps {
   orderedProjectThreadKeys: readonly string[];
   pinnedThreadKeys: readonly string[];
   renderedThreadRows: readonly SidebarThreadRowView[];
+  /** Every row key inside a settled subtree (roots and nested children). */
+  settledThreadKeys: ReadonlySet<string>;
   draftRows: readonly SidebarDraftRowData[];
   memberProjectByScopedKey: ReadonlyMap<string, SidebarProjectGroupMember>;
   showEmptyThreadState: boolean;
@@ -1104,6 +1460,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
     orderedProjectThreadKeys,
     pinnedThreadKeys,
     renderedThreadRows,
+    settledThreadKeys,
     draftRows,
     memberProjectByScopedKey,
     showEmptyThreadState,
@@ -1199,6 +1556,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         jumpLabel: threadJumpLabelByKey.get(threadKey) ?? null,
         appSettingsConfirmThreadArchive,
         isPinned: row.depth === 0 && pinnedThreadKeySet.has(threadKey),
+        settled: settledThreadKeys.has(threadKey),
         renamingThreadKey,
         renamingTitle,
         setRenamingTitle,
@@ -1259,6 +1617,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
       setConfirmingArchiveThreadKey,
       setRenamingTitle,
       setThreadPinned,
+      settledThreadKeys,
       toggleThreadExpanded,
       threadJumpLabelByKey,
     ],
@@ -1266,6 +1625,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
 
   const content = (
     <SidebarMenuSub
+      data-thread-context-list="true"
       className={`my-0 mx-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 py-0 ${
         // Half a project-chevron slot of indent: enough to read threads as
         // nested under the project, without pushing titles into the middle of
@@ -1349,11 +1709,33 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
   const handlePinnedThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      reorderPinnedThreads(projectKey, String(active.id), String(over.id));
+      const overId = over ? String(over.id) : null;
+      // A pinned context gesture releasing over (or outside) the list never
+      // reorders, even with the nested per-project DndContexts mounted. The
+      // flag is consumed here so an unpinned-row drop — which sets no flag —
+      // can never suppress a later genuine reorder.
+      const wasContextDrag = consumedThreadContextDrop;
+      consumedThreadContextDrop = false;
+      if (
+        !resolvePinnedDragEndShouldReorder({
+          wasContextDrag,
+          activeId: String(active.id),
+          overId,
+        }) ||
+        overId === null
+      ) {
+        return;
+      }
+      reorderPinnedThreads(projectKey, String(active.id), overId);
     },
     [projectKey, reorderPinnedThreads],
   );
+  const handlePinnedThreadDragCancel = useCallback(() => {
+    // A cancelled dnd-kit drag consumes a pending suppression the same way a
+    // completed one does, so a cancelled pinned gesture cannot poison the
+    // next genuine reorder either.
+    consumedThreadContextDrop = false;
+  }, []);
 
   return (
     <DndContext
@@ -1361,6 +1743,7 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
       collisionDetection={pinnedThreadCollisionDetection}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       onDragEnd={handlePinnedThreadDragEnd}
+      onDragCancel={handlePinnedThreadDragCancel}
     >
       <SortableContext items={[...sortablePinnedThreadKeys]} strategy={verticalListSortingStrategy}>
         {children}
@@ -1723,48 +2106,62 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     () => selectVisibleSidebarThreads(filterSidebarThreads(projectThreads, threadFilter)),
     [projectThreads, threadFilter],
   );
-  const { projectStatus, visibleProjectThreadRows, threadStatusByKey, orderedProjectThreadKeys } =
-    useMemo(() => {
-      const lastVisitedAtByThreadKey = new Map(
-        projectThreads.map((thread, index) => [
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          threadLastVisitedAts[index] ?? null,
-        ]),
+  const {
+    projectStatus,
+    visibleProjectThreadRows,
+    threadStatusByKey,
+    orderedProjectThreadKeys,
+    settledThreadKeys,
+  } = useMemo(() => {
+    const lastVisitedAtByThreadKey = new Map(
+      projectThreads.map((thread, index) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        threadLastVisitedAts[index] ?? null,
+      ]),
+    );
+    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+      const lastVisitedAt = lastVisitedAtByThreadKey.get(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
-      const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-        const lastVisitedAt = lastVisitedAtByThreadKey.get(
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        );
-        return resolveThreadStatusPill({
-          thread,
-          lastVisitedAt,
-        });
-      };
-      const threadRows = buildSidebarThreadRows({
-        threads: visibleProjectThreads,
-        pinnedThreadKeys,
-        activeThreadKey: activeRouteThreadKey ?? undefined,
-        expandedOverrideByThreadKey: threadExpandedOverrides,
-        sortOrder: threadSortOrder,
-        resolveThreadStatus: resolveProjectThreadStatus,
+      return resolveThreadStatusPill({
+        thread,
+        lastVisitedAt,
       });
-      return {
-        orderedProjectThreadKeys: threadRows.orderedThreadKeys,
-        projectStatus: threadRows.projectStatus,
-        visibleProjectThreads,
-        visibleProjectThreadRows: threadRows.rowViews,
-        threadStatusByKey: threadRows.statusByThreadKey,
-      };
-    }, [
-      activeRouteThreadKey,
-      threadExpandedOverrides,
+    };
+    const threadRows = buildSidebarThreadRows({
+      threads: visibleProjectThreads,
       pinnedThreadKeys,
-      projectThreads,
-      threadExpandedOverrides,
-      threadLastVisitedAts,
-      threadSortOrder,
+      activeThreadKey: activeRouteThreadKey ?? undefined,
+      expandedOverrideByThreadKey: threadExpandedOverrides,
+      sortOrder: threadSortOrder,
+      resolveThreadStatus: resolveProjectThreadStatus,
+    });
+    // Settled roots sink below active ones within this project, keeping
+    // their subtrees whole. `now` is read per evaluation rather than
+    // ticked: classification re-runs on every thread-list change, and the
+    // only time-dependent input is the two-minute queued-turn grace.
+    const partitioned = partitionSettledSidebarRows(threadRows.rowViews, {
+      now: new Date().toISOString(),
+      pinnedThreadKeys: new Set(pinnedThreadKeys),
+    });
+    return {
+      orderedProjectThreadKeys: partitioned.orderedThreadKeys,
+      projectStatus: threadRows.projectStatus,
       visibleProjectThreads,
-    ]);
+      visibleProjectThreadRows: partitioned.rowViews,
+      threadStatusByKey: threadRows.statusByThreadKey,
+      settledThreadKeys: partitioned.settledThreadKeys,
+    };
+  }, [
+    activeRouteThreadKey,
+    threadExpandedOverrides,
+    pinnedThreadKeys,
+    projectThreads,
+    threadExpandedOverrides,
+    threadLastVisitedAts,
+    threadSortOrder,
+    visibleProjectThreads,
+  ]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
@@ -1781,49 +2178,67 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   // The project header is the only collapse tier: once it is open every thread
   // of that project is listed, so nothing hides behind a second "show more".
-  const { renderedThreadRows, visibleDraftRows, showEmptyThreadState, shouldShowThreadPanel } =
-    useMemo(() => {
-      const pinnedCollapsedThreadKey = pinnedCollapsedThread
-        ? scopedThreadKey(
-            scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
-          )
-        : null;
-      const renderedThreadRows =
-        pinnedCollapsedThread && pinnedCollapsedThreadKey
-          ? [
-              {
-                thread: pinnedCollapsedThread,
-                threadKey: pinnedCollapsedThreadKey,
-                depth: 0,
-                hasChildren: false,
-                isExpanded: false,
-                childCount: 0,
-                status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
-                rolledUpStatus: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
-              } satisfies SidebarThreadRowView,
-            ]
-          : [...visibleProjectThreadRows];
-      const activeDraftRow = routeDraftId
-        ? draftRows.find((row) => row.draftId === routeDraftId)
-        : undefined;
-      const visibleDraftRows = projectExpanded ? draftRows : activeDraftRow ? [activeDraftRow] : [];
+  const {
+    renderedThreadRows,
+    visibleDraftRows,
+    showEmptyThreadState,
+    shouldShowThreadPanel,
+    settledThreadRowKeys,
+  } = useMemo(() => {
+    const pinnedCollapsedThreadKey = pinnedCollapsedThread
+      ? scopedThreadKey(
+          scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
+        )
+      : null;
+    const activeDraftRow = routeDraftId
+      ? draftRows.find((row) => row.draftId === routeDraftId)
+      : undefined;
+    if (pinnedCollapsedThread && pinnedCollapsedThreadKey) {
       return {
-        renderedThreadRows,
-        visibleDraftRows,
-        showEmptyThreadState:
-          projectExpanded && visibleProjectThreads.length === 0 && draftRows.length === 0,
-        shouldShowThreadPanel:
-          projectExpanded || pinnedCollapsedThread !== null || activeDraftRow !== undefined,
+        renderedThreadRows: [
+          {
+            thread: pinnedCollapsedThread,
+            threadKey: pinnedCollapsedThreadKey,
+            depth: 0,
+            hasChildren: false,
+            isExpanded: false,
+            childCount: 0,
+            status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+            rolledUpStatus: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+          } satisfies SidebarThreadRowView,
+        ],
+        settledThreadRowKeys: isCollapsedSettledRow({
+          status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+          thread: pinnedCollapsedThread,
+          now: new Date().toISOString(),
+        })
+          ? new Set([pinnedCollapsedThreadKey])
+          : new Set<string>(),
+        visibleDraftRows: activeDraftRow ? [activeDraftRow] : [],
+        showEmptyThreadState: false,
+        shouldShowThreadPanel: true,
       };
-    }, [
-      draftRows,
-      pinnedCollapsedThread,
-      projectExpanded,
-      routeDraftId,
-      threadStatusByKey,
-      visibleProjectThreads,
-      visibleProjectThreadRows,
-    ]);
+    }
+    const visibleDraftRows = projectExpanded ? draftRows : activeDraftRow ? [activeDraftRow] : [];
+    return {
+      renderedThreadRows: [...visibleProjectThreadRows],
+      settledThreadRowKeys: settledThreadKeys,
+      visibleDraftRows,
+      showEmptyThreadState:
+        projectExpanded && visibleProjectThreads.length === 0 && draftRows.length === 0,
+      shouldShowThreadPanel:
+        projectExpanded || pinnedCollapsedThread !== null || activeDraftRow !== undefined,
+    };
+  }, [
+    draftRows,
+    pinnedCollapsedThread,
+    projectExpanded,
+    routeDraftId,
+    settledThreadKeys,
+    threadStatusByKey,
+    visibleProjectThreads,
+    visibleProjectThreadRows,
+  ]);
 
   const handleProjectButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -2293,6 +2708,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProject, project],
   );
 
+  const { settleThread, unsettleThread } = useThreadActions();
+  const primaryDescriptor = usePrimaryEnvironmentDescriptor();
+  const remoteEnvironmentDescriptors = useSavedEnvironmentRuntimeStore((state) => state.byId);
+  const lifecycleSupport = useMemo(
+    () =>
+      resolveThreadLifecycleSupport([
+        primaryDescriptor,
+        ...Object.values(remoteEnvironmentDescriptors).map((saved) => saved.descriptor),
+      ]),
+    [primaryDescriptor, remoteEnvironmentDescriptors],
+  );
+
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       try {
@@ -2529,6 +2956,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      const settleMenuItems = resolveSettleMenuItems({
+        status: threadStatusByKey.get(threadKey) ?? null,
+        thread,
+        settlementSupported: lifecycleSupport.get(thread.environmentId)?.settlement === true,
+        now: new Date().toISOString(),
+      });
       const clicked = await api.contextMenu.show(
         [
           { id: "new-subchat", label: "New subchat" },
@@ -2540,6 +2973,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(isThreadActivelyWorking(thread.latestTurn, thread.session)
             ? []
             : [{ id: "archive", label: "Archive" }]),
+          ...settleMenuItems,
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -2598,6 +3032,34 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         await attemptArchiveThread(threadRef);
         return;
       }
+      if (clicked === "settle") {
+        try {
+          await settleThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to settle thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+      if (clicked === "reopen") {
+        try {
+          await unsettleThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to reopen thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -2620,9 +3082,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       createSubchatForThread,
       decoupleThread,
       deleteThread,
+      lifecycleSupport,
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      settleThread,
+      threadStatusByKey,
+      unsettleThread,
     ],
   );
 
@@ -2740,6 +3206,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         pinnedThreadKeys={pinnedThreadKeys}
         renderedThreadRows={renderedThreadRows}
+        settledThreadKeys={settledThreadRowKeys}
         draftRows={visibleDraftRows}
         memberProjectByScopedKey={memberProjectByScopedKey}
         showEmptyThreadState={showEmptyThreadState}
@@ -3459,7 +3926,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
+                    onClick={() => openAddProject()}
                   />
                 }
               >
@@ -3969,7 +4436,12 @@ export default function Sidebar() {
               ) ?? null,
           }),
       });
-      return rowViews.map((row) => row.threadKey);
+      // Same settled-sink order as the rendered rows so jump labels and
+      // prev/next traversal agree with what is on screen.
+      return partitionSettledSidebarRows(rowViews, {
+        now: new Date().toISOString(),
+        pinnedThreadKeys: new Set(pinnedThreadKeysByProjectId[project.projectKey] ?? []),
+      }).orderedThreadKeys;
     });
   }, [
     activeFilterProject,
@@ -4117,6 +4589,13 @@ export default function Sidebar() {
   }, [clearSelection]);
 
   useEffect(() => {
+    return () => {
+      cancelActiveThreadContextGesture();
+      endThreadContextDrag();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isElectron) return;
     const bridge = window.desktopBridge;
     if (
@@ -4236,6 +4715,7 @@ export default function Sidebar() {
 
   return (
     <>
+      <ThreadContextDragGhost />
       <SidebarHoverThreadPrewarmer />
       <SidebarChromeHeader isElectron={isElectron} />
 

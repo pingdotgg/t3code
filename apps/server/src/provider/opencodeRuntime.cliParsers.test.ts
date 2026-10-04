@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  buildOpenCodeServeArgs,
   openCodeRuntimeErrorDetail,
   parseModelsCliOutput,
   parseAgentListCliOutput,
@@ -259,5 +260,38 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("buildOpenCodeServeArgs", () => {
+  // `opencode serve` rejects unknown flags by printing usage and exiting 1.
+  // Every emitted flag is checked against the subcommand's accepted set, which
+  // mirrors `withNetworkOptions` in opencode's cli/cmd/serve.ts, so a future
+  // addition cannot reintroduce a flag that only exists on `run`/`web`/`attach`.
+  const SERVE_FLAGS = new Set(["--port", "--hostname", "--mDNS", "--mDNS-domain", "--cors"]);
+
+  function flagOf(arg: string): string {
+    const separator = arg.indexOf("=");
+    return separator === -1 ? arg : arg.slice(0, separator);
+  }
+
+  it("emits only flags the serve subcommand accepts", () => {
+    const args = buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 });
+
+    NodeAssert.ok(args.length > 1, "expected flags, not just the subcommand");
+    for (const arg of args.slice(1)) {
+      NodeAssert.ok(
+        SERVE_FLAGS.has(flagOf(arg)),
+        `\`opencode serve\` rejects ${arg}; it prints usage and exits 1`,
+      );
+    }
+  });
+
+  it("passes the requested bind address", () => {
+    NodeAssert.deepEqual(buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 }), [
+      "serve",
+      "--hostname=127.0.0.1",
+      "--port=41234",
+    ]);
   });
 });

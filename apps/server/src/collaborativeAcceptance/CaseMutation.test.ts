@@ -126,6 +126,7 @@ const makeRepository = () => {
       }),
     listByAssignmentId: () => Effect.succeed(record === null ? [] : [record]),
     listByParentThreadId: () => Effect.succeed(record === null ? [] : [record]),
+    listByPullRequest: () => Effect.succeed(record === null ? [] : [record]),
     listAll: () => Effect.succeed(record === null ? [] : [record]),
   } satisfies CollaborativeAcceptanceRepository["Service"];
   return {

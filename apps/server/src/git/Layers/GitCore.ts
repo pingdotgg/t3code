@@ -19,10 +19,22 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, type GitBranch, type ReviewSnapshot } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  ThreadId,
+  type GitBranch,
+  type GitPullRequestAssociation,
+  type ReviewSnapshot,
+} from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { redactSensitiveValues } from "../../orchestration/auditRedaction.ts";
+import { findCanonicalActiveWorktreeOwner } from "../../orchestration/worktreeOwnership.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { currentLogContext } from "../../observability/LogContext.ts";
 import { compactTraceAttributes } from "../../observability/Attributes.ts";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../../observability/Metrics.ts";
+import { ProjectionThreadPullRequestRepository } from "../../persistence/Services/ProjectionThreadPullRequests.ts";
+import { GitActivityLedger } from "../../persistence/Services/GitActivityLedger.ts";
 import {
   GitCore,
   type ExecuteGitProgress,
@@ -45,6 +57,7 @@ import {
 } from "../remoteRefs.ts";
 import { ServerConfig } from "../../config.ts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { isGitMutatingInvocation } from "../gitActivity.ts";
 
 const isGitCommandError = Schema.is(GitCommandError);
 
@@ -829,21 +842,82 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     });
   }
 
-  const execute: GitCoreShape["execute"] = (input) =>
-    executeRaw(input).pipe(
-      withMetrics({
-        counter: gitCommandsTotal,
-        timer: gitCommandDuration,
-        attributes: {
-          operation: input.operation,
-        },
-      }),
-      // Acquire outside both the execution timeout and the duration metric so
-      // queue waits neither time out commands nor pollute execution timings.
-      // Interruption while queued never spawns a process; the permit releases
-      // on success, failure, or interruption via withPermits.
-      (execution) =>
-        shouldBypassGitProcessPool(input) ? execution : gitProcesses.withPermits(1)(execution),
+  const recordActivity = (input: ExecuteGitInput, exitCode: number | null, durationMs: number) =>
+    Effect.gen(function* () {
+      const ledger = yield* Effect.serviceOption(GitActivityLedger);
+      if (Option.isNone(ledger)) return;
+
+      const threadId = yield* Effect.gen(function* () {
+        const logContext = yield* currentLogContext;
+        if (logContext.threadId !== undefined) return ThreadId.make(logContext.threadId);
+
+        const engine = yield* Effect.serviceOption(OrchestrationEngineService);
+        if (Option.isNone(engine)) return null;
+        const readModel = yield* engine.value.getReadModel();
+        const owner = yield* findCanonicalActiveWorktreeOwner(readModel, [], input.cwd);
+        return Option.isSome(owner) ? owner.value : null;
+      }).pipe(Effect.catchCause(() => Effect.succeed(null)));
+
+      const pullRequests: ReadonlyArray<GitPullRequestAssociation> =
+        threadId === null
+          ? []
+          : yield* Effect.gen(function* () {
+              const repository = yield* Effect.serviceOption(ProjectionThreadPullRequestRepository);
+              if (Option.isNone(repository)) return [];
+              return (yield* repository.value.listByThreadId({ threadId })).map(
+                (association) => association.pullRequest,
+              );
+            }).pipe(Effect.catchCause(() => Effect.succeed([])));
+
+      const safeArgs = redactSensitiveValues(input.args).payload;
+      const safePullRequests = redactSensitiveValues(pullRequests).payload;
+      yield* ledger.value.record({
+        timestamp: new Date().toISOString(),
+        operation: input.operation,
+        args: Array.isArray(safeArgs)
+          ? safeArgs.filter((arg): arg is string => typeof arg === "string")
+          : [],
+        exitCode,
+        durationMs,
+        cwd: input.cwd,
+        threadId,
+        pullRequests: Array.isArray(safePullRequests)
+          ? (safePullRequests as ReadonlyArray<GitPullRequestAssociation>)
+          : [],
+        isMutating: isGitMutatingInvocation(input.args),
+      });
+    }).pipe(Effect.catchCause(() => Effect.void));
+
+  const execute: GitCoreShape["execute"] = (input) => {
+    const execution = Effect.suspend(() => {
+      const startedAt = Date.now();
+      return executeRaw(input).pipe(
+        withMetrics({
+          counter: gitCommandsTotal,
+          timer: gitCommandDuration,
+          attributes: {
+            operation: input.operation,
+          },
+        }),
+        Effect.matchCauseEffect({
+          onFailure: (cause) =>
+            recordActivity(input, null, Math.max(0, Date.now() - startedAt)).pipe(
+              Effect.andThen(Effect.failCause(cause)),
+            ),
+          onSuccess: (result) =>
+            recordActivity(input, result.code, Math.max(0, Date.now() - startedAt)).pipe(
+              Effect.as(result),
+            ),
+        }),
+      );
+    });
+
+    // Acquire outside the execution timeout and measured duration so queue
+    // waits neither time out commands nor pollute Git/activity timings.
+    const pooledExecution = shouldBypassGitProcessPool(input)
+      ? execution
+      : gitProcesses.withPermits(1)(execution);
+    return pooledExecution.pipe(
       Effect.withSpan(input.operation, {
         kind: "client",
         attributes: {
@@ -853,6 +927,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         },
       }),
     );
+  };
 
   const executeGit = (
     operation: string,

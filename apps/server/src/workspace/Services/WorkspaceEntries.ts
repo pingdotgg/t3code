@@ -49,6 +49,12 @@ export class WorkspaceEntriesBrowseError extends Schema.TaggedErrorClass<Workspa
  * invalidation.
  */
 export interface WorkspaceEntriesShape {
+  /** Immediate regular children, including ignored entries; never scans descendants or .git. */
+  readonly listDirectory: (input: {
+    readonly cwd: string;
+    readonly directoryPath: string;
+  }) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
+
   /**
    * Browse matching directories for the provided partial path.
    */

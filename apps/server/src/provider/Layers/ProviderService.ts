@@ -28,7 +28,18 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, PubSub, Ref, Schema, SchemaIssue, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Layer,
+  Option,
+  PubSub,
+  Queue,
+  Ref,
+  Schema,
+  SchemaIssue,
+  Stream,
+} from "effect";
 
 import {
   increment,
@@ -50,6 +61,7 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import { isLifecycleEvent, ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import {
   ProviderSessionDirectory,
@@ -62,6 +74,12 @@ import { withLogContext } from "../../observability/LogContext.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 const isModelSelection = Schema.is(ModelSelection);
+
+/** Adapter identity a runtime event was emitted by. */
+interface ProviderEventSource {
+  readonly instanceId: ProviderInstanceId;
+  readonly provider: ProviderDriverKind;
+}
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -235,6 +253,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
   const analytics = yield* Effect.service(AnalyticsService);
+  const runtimeLiveness = yield* ProviderRuntimeLiveness;
   const eventLoggers = yield* ProviderEventLoggers;
   // Options-provided logger wins (test overrides); otherwise we take whatever
   // the `ProviderEventLoggers` tag exposes — `undefined` means "no canonical
@@ -254,6 +273,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.bounded<ProviderRuntimeEvent>(
     RUNTIME_EVENT_BUS_CAPACITY,
   );
+  // Liveness recording gets its own unbounded queue and its own fiber so it can
+  // never be stalled by backpressured delivery. See `processRuntimeEvent`.
+  const livenessQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  // Delivery carries the adapter identity because the Pi resume-cursor write
+  // below is provider-scoped and must run before that event publishes.
+  const dispatchQueue = yield* Queue.unbounded<[ProviderEventSource, ProviderRuntimeEvent]>();
 
   const getInstance = (instanceId: ProviderInstanceId) =>
     registry
@@ -361,10 +386,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
 
   const processRuntimeEvent = (
-    source: {
-      readonly instanceId: ProviderInstanceId;
-      readonly provider: ProviderDriverKind;
-    },
+    source: ProviderEventSource,
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
@@ -373,11 +395,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
         }).pipe(
-          // The cursor persists before the terminal event publishes so a
-          // subscriber acting on completion (or a crash right after it)
-          // observes the fresh rollback boundary, not the previous one.
-          Effect.andThen(() => persistPiTurnResumeCursor(source, canonicalEvent)),
-          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          // Both offers are non-blocking (unbounded queues, sole producer), so a
+          // backpressured `publish` can never stop the next event being recorded.
+          // Doing this work inline in the sequential consumer could not: a
+          // suspended publish on event N also blocked event N+1 from being
+          // recorded, so a terminal event could stay unrecorded for as long as
+          // the backlog lasted — which no grace window can cover.
+          //
+          // FIFO drain preserves ordering for both consumers: subscribers depend
+          // on delivery order, and `lastStartedTurnId` attribution needs it.
+          Effect.andThen(
+            isLifecycleEvent(canonicalEvent)
+              ? Queue.offer(livenessQueue, canonicalEvent)
+              : Effect.void,
+          ),
+          Effect.andThen(() => Queue.offer(dispatchQueue, [source, canonicalEvent])),
         ),
       ),
     );
@@ -416,6 +448,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
       ),
     );
+
+  // Exactly one fiber per queue: `Queue` distributes rather than broadcasts, so a
+  // second drainer would split events across both and break the ordering
+  // `lastStartedTurnId` attribution depends on.
+  yield* Effect.forkScoped(
+    Stream.fromQueue(livenessQueue).pipe(
+      Stream.runForEach((event) => runtimeLiveness.record(event)),
+    ),
+  );
+  yield* Effect.forkScoped(
+    Stream.fromQueue(dispatchQueue).pipe(
+      Stream.runForEach(([source, event]) =>
+        persistPiTurnResumeCursor(source, event).pipe(
+          Effect.andThen(() => publishRuntimeEvent(event)),
+        ),
+      ),
+    ),
+  );
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
@@ -804,15 +854,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           `Provider instance '${routed.instanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
         );
       }
+      if (routed.adapter.capabilities.canForkThread !== true) {
+        return yield* new ProviderAdapterRequestError({
+          provider: resolvedProvider,
+          method: "session/fork",
+          detail: `Provider '${resolvedProvider}' does not support forking a chat.`,
+        });
+      }
 
       // Lock ordering: resolve and operate on the source provider session first,
       // then bind the target thread only after the adapter has forked. Future
       // fork paths should preserve source-before-target ordering to avoid
       // deadlocks with per-thread session locks.
       const credential = yield* prepareMcpSession(parsed.threadId, routed.instanceId);
+      const { forkAnchor, ...inputWithoutAnchor } = parsed;
+      const adapterInput =
+        routed.adapter.capabilities.canForkFromTurn === true
+          ? { ...inputWithoutAnchor, ...(forkAnchor === undefined ? {} : { forkAnchor }) }
+          : inputWithoutAnchor;
       const session = yield* routed.adapter
         .forkSession({
-          ...parsed,
+          ...adapterInput,
           provider: resolvedProvider,
           providerInstanceId: routed.instanceId,
         })

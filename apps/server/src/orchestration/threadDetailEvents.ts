@@ -5,6 +5,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
   {
     type:
       | "thread.message-sent"
+      | "thread.turn-start-requested"
       | "thread.review-result-set"
       | "thread.validation-requested"
       | "thread.validation-request-failed"
@@ -17,6 +18,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.child-lifecycle-notified"
+      | "thread.cross-thread-send-recorded"
       | "thread.turn-diff-completed"
       | "thread.reverted"
       | "thread.session-set"
@@ -24,11 +26,15 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.queued-turn-updated"
       | "thread.queued-turn-deleted"
       | "thread.queued-turn-dispatched"
-      | "thread.queued-turn-failed";
+      | "thread.queued-turn-failed"
+      | "thread.queued-turn-reordered"
+      | "thread.queue-held"
+      | "thread.queue-released";
   }
 > {
   switch (event.type) {
     case "thread.message-sent":
+    case "thread.turn-start-requested":
     case "thread.review-result-set":
     case "thread.validation-requested":
     case "thread.validation-request-failed":
@@ -41,6 +47,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     case "thread.proposed-plan-upserted":
     case "thread.activity-appended":
     case "thread.child-lifecycle-notified":
+    case "thread.cross-thread-send-recorded":
     case "thread.turn-diff-completed":
     case "thread.reverted":
     case "thread.session-set":
@@ -49,6 +56,9 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     case "thread.queued-turn-deleted":
     case "thread.queued-turn-dispatched":
     case "thread.queued-turn-failed":
+    case "thread.queued-turn-reordered":
+    case "thread.queue-held":
+    case "thread.queue-released":
       return true;
     default:
       return false;

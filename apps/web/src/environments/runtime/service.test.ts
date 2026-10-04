@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createPrimarySocketUrlProvider,
   shouldApplyProjectionEvent,
   shouldApplyProjectionSnapshot,
   shouldApplyTerminalEvent,
@@ -144,5 +145,21 @@ describe("shouldApplyProjectionEvent", () => {
         sequence: 6,
       }),
     ).toBe(true);
+  });
+});
+
+describe("createPrimarySocketUrlProvider", () => {
+  it("waits for authentication on every dial", async () => {
+    let waits = 0;
+    const provider = createPrimarySocketUrlProvider("ws://127.0.0.1:3000/", async () => {
+      waits += 1;
+    });
+
+    await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
+    await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
+    // Uniform gating (no first-dial special case): a reconnect while the
+    // session is gone waits instead of 401-storming, and proceeds as soon as
+    // the session exists again.
+    expect(waits).toBe(2);
   });
 });

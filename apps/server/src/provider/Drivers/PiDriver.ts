@@ -23,6 +23,7 @@ import {
   discoverPiWorkspaceCommands,
 } from "../Layers/PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -45,6 +46,7 @@ export type PiDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | Path.Path
+  | ProviderEventLoggers
   | ServerConfig;
 
 const withInstanceIdentity =
@@ -76,6 +78,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
+      const eventLoggers = yield* ProviderEventLoggers;
       const { cwd } = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -92,6 +95,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
 
       const adapter = yield* makePiAdapter(effectiveConfig, {
         environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);

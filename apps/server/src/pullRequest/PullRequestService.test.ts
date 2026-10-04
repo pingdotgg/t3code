@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import * as Persistence from "effect/unstable/persistence/Persistence";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
@@ -135,8 +136,17 @@ function makeService(
   input: {
     readonly project?: OrchestrationProjectShell;
     readonly provider?: PullRequestProviderApi;
+    readonly readCache?: PullRequestReadCache.PullRequestReadCache["Service"];
   } = {},
 ) {
+  const readCacheLayer =
+    input.readCache === undefined
+      ? Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
+          Layer.provide(Persistence.layerKvs),
+          Layer.provide(KeyValueStore.layerMemory),
+          Layer.provide(NodeServices.layer),
+        )
+      : Layer.succeed(PullRequestReadCache.PullRequestReadCache, input.readCache);
   return PullRequestService.make.pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -150,11 +160,7 @@ function makeService(
               updatedAt: "2026-08-10T00:00:00Z",
             }),
         }),
-        Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
-          Layer.provide(Persistence.layerKvs),
-          Layer.provide(KeyValueStore.layerMemory),
-          Layer.provide(NodeServices.layer),
-        ),
+        readCacheLayer,
       ),
     ),
   );
@@ -382,6 +388,171 @@ it.effect("serves stale list stats while refreshing an expired batch", () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("coalesces concurrent stale reads into one host request", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let statsCalls = 0;
+    const reference = { projectId: project.id, repository: "acme/web", number: 42 };
+    const service = yield* makeService({
+      provider: providerWith({
+        listChangeRequestStats: () => {
+          statsCalls += 1;
+          const result = [
+            { repository: "acme/web", number: 42, additions: statsCalls, deletions: 0 },
+          ];
+          return statsCalls === 1
+            ? Effect.succeed(result)
+            : Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(result),
+              );
+        },
+      }),
+    });
+
+    const initial = yield* service.listStats({ refs: [reference] });
+    assert.strictEqual(statsCalls, 1);
+    yield* TestClock.adjust("61 seconds");
+    assert.deepStrictEqual(yield* service.listStats({ refs: [reference] }), initial);
+    yield* Effect.yieldNow;
+    yield* Deferred.await(started);
+
+    const concurrent = yield* Effect.all(
+      [service.listStats({ refs: [reference] }), service.listStats({ refs: [reference] })],
+      { concurrency: 2 },
+    );
+    assert.deepStrictEqual(concurrent, [initial, initial]);
+    assert.strictEqual(statsCalls, 2);
+
+    yield* Deferred.succeed(release, undefined);
+    yield* Effect.yieldNow;
+    assert.strictEqual(statsCalls, 2);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("does not extend a stale detail window with background refreshes", () =>
+  Effect.gen(function* () {
+    let detailCalls = 0;
+    const reference = { projectId: project.id, repository: "acme/web", number: 42 };
+    const service = yield* makeService({
+      provider: providerWith({
+        getChangeRequest: () =>
+          Effect.sync(() => {
+            detailCalls += 1;
+            return { ...detailedChange, title: `Review ${detailCalls}` };
+          }),
+      }),
+    });
+
+    assert.strictEqual((yield* service.detail(reference)).title, "Review 1");
+    for (let expectedFreshRead = 2; expectedFreshRead <= 5; expectedFreshRead += 1) {
+      yield* TestClock.adjust("61 seconds");
+      const stale = yield* service.detail(reference);
+      assert.strictEqual(stale.title, `Review ${expectedFreshRead - 1}`);
+      yield* Effect.yieldNow;
+      assert.strictEqual(detailCalls, expectedFreshRead);
+    }
+
+    // Background refreshes cannot restart the five-minute stale window. This read must wait for
+    // the host instead of returning the last background value immediately.
+    yield* TestClock.adjust("61 seconds");
+    const fresh = yield* service.detail(reference);
+    assert.strictEqual(detailCalls, 6);
+    assert.strictEqual(fresh.title, "Review 6");
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("invalidates the affected persisted read keys exactly once per mutation", () =>
+  Effect.gen(function* () {
+    const invalidatedKeys: Array<ReadonlyArray<string> | undefined> = [];
+    const readCache = PullRequestReadCache.PullRequestReadCache.of({
+      get: (_key, lookup) => lookup,
+      invalidate: (key) =>
+        Effect.sync(() => {
+          invalidatedKeys.push(key);
+        }),
+    });
+    const reference = { projectId: project.id, repository: "acme/web", number: 42 };
+    const service = yield* makeService({ readCache });
+
+    yield* service.comment({ ...reference, body: "First write." });
+    yield* service.submitReview({
+      ...reference,
+      verdict: "comment",
+      body: "Second write.",
+      comments: [],
+    });
+
+    assert.strictEqual(invalidatedKeys.length, 2);
+    assert.deepStrictEqual(
+      invalidatedKeys.map((keys) => keys?.length),
+      [2, 2],
+    );
+
+    const failedService = yield* makeService({
+      readCache,
+      provider: providerWith({
+        comment: () =>
+          Effect.fail(
+            new PullRequestProviderError({
+              provider: "github",
+              operation: "comment",
+              reason: "failed",
+              detail: "The comment was rejected.",
+            }),
+          ),
+      }),
+    });
+    yield* failedService.comment({ ...reference, body: "Rejected write." }).pipe(Effect.flip);
+    assert.strictEqual(invalidatedKeys.length, 3);
+
+    yield* service.invalidate({ reference });
+    yield* service.invalidate({});
+    assert.strictEqual(invalidatedKeys.length, 5);
+    assert.strictEqual(invalidatedKeys[3]?.length, 2);
+    assert.isUndefined(invalidatedKeys[4]);
+  }),
+);
+
+it.effect("keeps another pull request's persisted detail warm after a mutation", () => {
+  const readCacheLayer = Layer.effect(
+    PullRequestReadCache.PullRequestReadCache,
+    PullRequestReadCache.make,
+  ).pipe(
+    Layer.provide(Persistence.layerKvs),
+    Layer.provide(KeyValueStore.layerMemory),
+    Layer.provide(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    let detailCalls = 0;
+    const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+    const serviceProvider = providerWith({
+      getChangeRequest: () =>
+        Effect.sync(() => {
+          detailCalls += 1;
+          return detailedChange;
+        }),
+    });
+    const firstService = yield* makeService({ provider: serviceProvider, readCache });
+    const secondService = yield* makeService({ provider: serviceProvider, readCache });
+    const first = { projectId: project.id, repository: "acme/web", number: 42 };
+    const second = { ...first, number: 43 };
+
+    yield* firstService.detail(first);
+    yield* firstService.detail(second);
+    assert.strictEqual(detailCalls, 2);
+
+    yield* firstService.comment({ ...first, body: "Refresh only this change request." });
+    yield* secondService.detail(second);
+    assert.strictEqual(detailCalls, 2);
+
+    yield* secondService.detail(first);
+    assert.strictEqual(detailCalls, 3);
+  }).pipe(Effect.provide(readCacheLayer));
+});
+
 it.effect("keeps listings cached for mutations that only change one pull request", () =>
   Effect.gen(function* () {
     let listCalls = 0;
@@ -471,6 +642,51 @@ it.effect("keeps listings cached for mutations that only change one pull request
     assert.strictEqual(listCalls, 2);
     assert.strictEqual(activityCalls, 7);
   }),
+);
+
+it.effect(
+  "answers a conversation poll inside the client's refresh interval without spending a host read",
+  () =>
+    Effect.gen(function* () {
+      let activityCalls = 0;
+      const reference = { projectId: project.id, repository: "acme/web", number: 42 };
+      const service = yield* makeService({
+        provider: providerWith({
+          getChangeRequestActivity: () => {
+            activityCalls += 1;
+            return Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            });
+          },
+        }),
+      });
+
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // The focused detail panel re-reads its conversation every 30s. A cache shorter than that
+      // interval is read exactly once and then misses forever, so each poll becomes a fresh host
+      // read — a conversation read is the most expensive one on the page, because it walks review
+      // threads and their comments.
+      yield* TestClock.adjust("31 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // A second surface opening the same conversation inside the window must not spend anything.
+      yield* TestClock.adjust("5 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // Past both cache layers it does refresh, or the conversation would never update. The
+      // persisted layer holds a read for a minute, so the refresh lands after that.
+      yield* TestClock.adjust("30 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 2);
+    }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("holds a rate-limit failure briefly instead of calling gh on every read", () =>

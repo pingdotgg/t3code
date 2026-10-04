@@ -31,7 +31,7 @@ import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
 import { providerQueryKeys } from "~/lib/providerReactQuery";
-import { getPrimaryKnownEnvironment } from "../primary";
+import { getPrimaryKnownEnvironment, waitForPrimaryAuthentication } from "../primary";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
@@ -343,9 +343,22 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       if (item.kind === "snapshot") {
         flushPendingEvents();
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
+        reconcilePendingThreadState(scopeThreadRef(entry.environmentId, entry.threadId));
         return;
       }
       if (item.kind === "synchronized") {
+        return;
+      }
+      // Preserve event order while keeping queue acknowledgements and accepted
+      // starts out of the token-delta coalescing window.
+      if (
+        item.event.type.startsWith("thread.queued-turn-") ||
+        item.event.type === "thread.queue-held" ||
+        item.event.type === "thread.queue-released" ||
+        item.event.type === "thread.turn-start-requested"
+      ) {
+        flushPendingEvents();
+        applyRecoveredEventBatch([item.event], entry.environmentId);
         return;
       }
       if (flushTimer === null) {
@@ -795,6 +808,20 @@ function reconcilePendingThreadState(
   }
 
   const threadKey = scopedThreadKey(threadRef);
+  const pendingQueue = pendingTurnStore.optimisticQueuedTurnsByThreadKey[threadKey];
+  if (pendingQueue?.length) {
+    const detail = selectThreadByRef(useStore.getState(), threadRef);
+    const queueIds = new Set(detail?.queuedTurns?.map((turn) => turn.id));
+    const messageIds = new Set(detail?.messages.map((message) => message.id));
+    const acknowledged = new Set(
+      pendingQueue
+        .filter(
+          (entry) => queueIds.has(entry.turn.id) || messageIds.has(entry.turn.message.messageId),
+        )
+        .map((entry) => entry.turn.id),
+    );
+    pendingTurnStore.removeOptimisticQueuedTurns(threadRef, acknowledged);
+  }
   const pendingTurn = pendingTurnStore.pendingByThreadKey[threadKey];
   if (!pendingTurn) {
     return;
@@ -814,6 +841,7 @@ function reconcilePendingEnvironmentSnapshot(
   const storedThreadKeys = new Set([
     ...Object.keys(pendingTurnStore.pendingByThreadKey),
     ...Object.keys(pendingTurnStore.optimisticMessagesByThreadKey),
+    ...Object.keys(pendingTurnStore.optimisticQueuedTurnsByThreadKey),
   ]);
   for (const threadKey of storedThreadKeys) {
     const threadRef = parseScopedThreadKey(threadKey);
@@ -1039,12 +1067,30 @@ function createPrimaryEnvironmentClient(
   }
 
   return createWsRpcClient(
-    new WsTransport(wsBaseUrl, {
+    new WsTransport(createPrimarySocketUrlProvider(wsBaseUrl, waitForPrimaryAuthentication), {
       onProtocolConnected: () => {
         repairRetainedThreadDetailSubscriptionsAfterReconnect();
       },
     }),
   );
+}
+
+/**
+ * Defers every primary socket dial until the session exists, so no dial ever
+ * 401-storms: pre-auth dials are rejected with 401s that Chromium logs as
+ * console errors and the transport retries loudly, all before the user could
+ * possibly be paired. Waiting (rather than failing) preserves recovery: once
+ * a session exists again — submit, refocus, re-check — the pending dial
+ * proceeds without any page action.
+ */
+export function createPrimarySocketUrlProvider(
+  wsBaseUrl: string,
+  waitForAuthentication: () => Promise<void>,
+): () => Promise<string> {
+  return async () => {
+    await waitForAuthentication();
+    return wsBaseUrl;
+  };
 }
 
 function createSavedEnvironmentClient(

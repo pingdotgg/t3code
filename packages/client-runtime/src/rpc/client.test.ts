@@ -122,6 +122,11 @@ describe("environment RPC", () => {
     ).toEqual(["threadAutoSettlement"]);
     expect(
       requiredRpcCapabilities(WS_METHODS.serverUpdateSettings, {
+        patch: { autoArchiveSettledAfterDays: 2 },
+      }),
+    ).toEqual(["threadAutoSettlement"]);
+    expect(
+      requiredRpcCapabilities(WS_METHODS.serverUpdateSettings, {
         patch: { enableAssistantStreaming: false, defaultThreadEnvMode: "local" },
       }),
     ).toEqual([]);

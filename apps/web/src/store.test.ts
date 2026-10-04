@@ -181,6 +181,7 @@ function makeState(thread: Thread): AppState {
     threadTurnStateById: {
       [thread.id]: {
         latestTurn: thread.latestTurn,
+        pendingTurnStart: thread.pendingTurnStart ?? null,
         ...(thread.pendingSourceProposedPlan
           ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
           : {}),
@@ -956,6 +957,73 @@ describe("incremental orchestration updates", () => {
     });
   });
 
+  it("retires a pending turn start when the provider dies before acknowledging", () => {
+    // The server clears its pending-start row on a terminal session, so a web
+    // thread that kept it would report "running" from derivePhase and keep the
+    // composer blocked until a snapshot resync.
+    const thread = makeThread({
+      pendingTurnStart: {
+        messageId: MessageId.make("message-1"),
+        requestedAt: "2026-02-27T00:00:01.000Z",
+      },
+    });
+    const state = makeState(thread);
+
+    const died = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "error",
+          providerName: "copilot",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Provider process exited unexpectedly.",
+          updatedAt: "2026-02-27T00:00:03.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(
+      selectThreadByRef(died, scopeThreadRef(localEnvironmentId, thread.id))?.pendingTurnStart,
+    ).toBeNull();
+  });
+
+  it("keeps a pending turn start while the session is only pre-acknowledgement", () => {
+    const pendingTurnStart = {
+      messageId: MessageId.make("message-1"),
+      requestedAt: "2026-02-27T00:00:01.000Z",
+    };
+    const thread = makeThread({ pendingTurnStart });
+    const state = makeState(thread);
+
+    // `connecting` is not an orchestration session status, so only `ready`
+    // belongs here; both must leave the pending start intact.
+    for (const status of ["ready", "starting"] as const) {
+      const next = applyOrchestrationEvent(
+        state,
+        makeEvent("thread.session-set", {
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status,
+            providerName: "copilot",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-02-27T00:00:02.000Z",
+          },
+        }),
+        localEnvironmentId,
+      );
+      expect(
+        selectThreadByRef(next, scopeThreadRef(localEnvironmentId, thread.id))?.pendingTurnStart,
+      ).toEqual(pendingTurnStart);
+    }
+  });
+
   it("keeps sidebar activity aligned with detail-stream session updates", () => {
     const thread = makeThread();
     const state = makeState(thread);
@@ -1260,6 +1328,7 @@ describe("incremental orchestration updates", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.kind)).toEqual(["workspace-handoff"]);
@@ -1917,6 +1986,7 @@ describe("incremental orchestration updates", () => {
         checkpointRef: CheckpointRef.make("checkpoint-1"),
         status: "ready",
         files: [{ path: "snapshot.ts", kind: "modified", additions: 2, deletions: 1 }],
+        transitionFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 1 }],
         agentTouchedPaths: ["turn.ts"],
         turnFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 0 }],
         assistantMessageId: MessageId.make("assistant-1"),
@@ -1928,6 +1998,7 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.turnDiffSummaries).toMatchObject([
       {
         files: [{ path: "snapshot.ts", kind: "modified", additions: 2, deletions: 1 }],
+        transitionFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 1 }],
         agentTouchedPaths: ["turn.ts"],
         turnFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 0 }],
       },

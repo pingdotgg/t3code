@@ -2,8 +2,10 @@ import {
   ChatAttachment,
   IsoDateTime,
   MessageId,
+  NonNegativeInt,
   MessageOrigin,
   ModelSelection,
+  OrchestrationMessageContext,
   OrchestrationProposedPlanId,
   ProviderInteractionMode,
   QueuedTurnId,
@@ -22,6 +24,7 @@ export const ProjectionQueuedTurn = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
   origin: Schema.NullOr(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   modelSelection: Schema.NullOr(ModelSelection),
   titleSeed: Schema.NullOr(Schema.String),
   runtimeMode: RuntimeMode,
@@ -30,6 +33,12 @@ export const ProjectionQueuedTurn = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /**
+   * Per-thread delivery order. Null only for rows replayed from an event log
+   * written before explicit ordering existed; the create path assigns
+   * `max(existing) + 1` so appends stay FIFO.
+   */
+  queuePosition: Schema.NullOr(NonNegativeInt),
   failedAt: Schema.NullOr(IsoDateTime),
   failureMessage: Schema.NullOr(Schema.String),
 });

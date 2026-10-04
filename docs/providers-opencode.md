@@ -11,6 +11,17 @@ external servers are contacted through the SDK.
   historical parts are not cached or rescanned.
 - Full-access approval auto-replies are guarded by resolved-request IDs and apply to descendant
   sessions owned by the thread.
+- Locally launched OpenCode servers belong to the backend's lifetime. A subprocess guard watches a
+  backend-owned pipe and terminates the server's process tree when that pipe closes, including
+  after abrupt backend death; normal scope closure also terminates the tree. Configured external
+  servers remain externally managed.
+- Local session startup requires the directory-scoped `t3-code` MCP registration to report
+  `connected`. A failed or missing registration fails startup and closes the runtime rather than
+  admitting a session without working T3 tools.
+- Backend restarts invalidate in-memory MCP credentials. Interrupted executions stop instead of
+  continuing with stale credentials; send a new turn to resume persisted conversation history
+  with fresh credentials. Delegation mutations are never automatically replayed after an
+  ambiguous failure.
 
 ## Models and agents
 

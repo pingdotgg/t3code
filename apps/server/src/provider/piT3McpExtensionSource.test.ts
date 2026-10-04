@@ -212,6 +212,40 @@ describe("Pi tool input schemas", () => {
   });
 });
 
+describe("Pi MCP null arguments", () => {
+  const stripNullArguments = NodeVM.runInNewContext(
+    `${runnableSource}\nstripNullArguments`,
+    {},
+  ) as (params: Record<string, unknown>) => Record<string, unknown>;
+
+  it("drops top-level nulls that strict models send for unset optionals", () => {
+    assert.deepEqual(
+      stripNullArguments({
+        monitorId: null,
+        repository: "ronak-guliani/t3code",
+        number: 611,
+        includeClosed: true,
+        deliveryId: null,
+        revisionIds: null,
+        offset: 0,
+        limit: 20,
+      }),
+      {
+        repository: "ronak-guliani/t3code",
+        number: 611,
+        includeClosed: true,
+        offset: 0,
+        limit: 20,
+      },
+    );
+  });
+
+  it("keeps nested nulls and non-objects untouched", () => {
+    const nested = { filter: { tag: null } };
+    assert.deepEqual(stripNullArguments({ a: null, b: nested, c: "x" }), { b: nested, c: "x" });
+  });
+});
+
 describe("Pi approval summaries", () => {
   const confirmMessage = async (toolName: string, input: unknown) => {
     const hook = (await loadHandlers({ T3_PI_RUNTIME_MODE: "approval-required" })).get(

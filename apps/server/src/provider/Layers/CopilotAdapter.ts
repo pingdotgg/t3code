@@ -9,6 +9,7 @@ import * as nodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
+  DEFAULT_AUTOMATED_MODEL_SELECTION,
   EventId,
   type ModelSelection,
   type ProviderApprovalDecision,
@@ -182,10 +183,7 @@ const WORKSPACE_HANDOFF_REQUIRED_MESSAGE =
  * `defaults.model` / `child.model` values always win over this; the parent
  * session model is never inherited.
  */
-const FACTORY_DELEGATED_THREAD_DEFAULT: ModelSelection = {
-  instanceId: ProviderInstanceId.make("copilot"),
-  model: "gpt-6-luna",
-};
+export const FACTORY_DELEGATED_THREAD_DEFAULT: ModelSelection = DEFAULT_AUTOMATED_MODEL_SELECTION;
 
 function stringifyCause(value: unknown): string {
   if (value instanceof Error) {
@@ -1361,7 +1359,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               }
             }),
           ),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         sessionScopeTransferred = true;
         return {
@@ -2176,7 +2174,11 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        canForkThread: true,
+        canForkFromTurn: false,
+      },
       startSession,
       prewarmSession,
       forkSession,

@@ -3,6 +3,8 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_COMPOSER_META_FONT_SIZE,
+  DEFAULT_FILE_PREVIEW_LINE_SPACING,
   DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
@@ -14,6 +16,8 @@ import {
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
+  FILE_PREVIEW_LINE_SPACING_VALUES,
+  type FilePreviewLineSpacing,
   type CodeFont,
   type FontSize,
   type SidebarRowSpacing,
@@ -69,6 +73,13 @@ function normalizeFontSize(value: unknown, fallback: FontSize): FontSize {
   return fallback;
 }
 
+function normalizeFilePreviewLineSpacing(value: unknown): FilePreviewLineSpacing {
+  return (
+    FILE_PREVIEW_LINE_SPACING_VALUES.find((spacing) => spacing === value) ??
+    DEFAULT_FILE_PREVIEW_LINE_SPACING
+  );
+}
+
 export function applyAppFont(font: UiFont): void {
   if (typeof document === "undefined") {
     return;
@@ -88,6 +99,7 @@ export function applyCodeFont(font: CodeFont): void {
 export function applyFontSizes(sizes: {
   codeFontSize: FontSize;
   chatFontSize: FontSize;
+  composerMetaFontSize: FontSize;
   statusLineFontSize: FontSize;
   sidebarFontSize: FontSize;
   sidebarMetaFontSize: FontSize;
@@ -103,6 +115,7 @@ export function applyFontSizes(sizes: {
   const style = document.documentElement.style;
   style.setProperty("--app-code-font-size", `${sizes.codeFontSize}px`);
   style.setProperty("--app-chat-font-size", `${sizes.chatFontSize}px`);
+  style.setProperty("--app-composer-meta-font-size", `${sizes.composerMetaFontSize}px`);
   style.setProperty("--app-status-line-font-size", `${sizes.statusLineFontSize}px`);
   style.setProperty("--app-sidebar-font-size", `${sizes.sidebarFontSize}px`);
   style.setProperty("--app-sidebar-meta-font-size", `${sizes.sidebarMetaFontSize}px`);
@@ -110,6 +123,14 @@ export function applyFontSizes(sizes: {
   style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
   style.setProperty("--pr-body-font-size", `${sizes.pullRequestsBodyFontSize}px`);
+}
+
+export function applyFilePreviewLineSpacing(spacing: FilePreviewLineSpacing): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.style.setProperty("--app-file-preview-line-height", String(spacing));
 }
 
 export function applySidebarRowSpacing(spacing: SidebarRowSpacing): void {
@@ -225,6 +246,10 @@ if (typeof document !== "undefined") {
   applyFontSizes({
     codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
     chatFontSize: normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    composerMetaFontSize: normalizeFontSize(
+      storedSettings?.composerMetaFontSize,
+      DEFAULT_COMPOSER_META_FONT_SIZE,
+    ),
     statusLineFontSize: normalizeFontSize(
       storedSettings?.statusLineFontSize,
       DEFAULT_STATUS_LINE_FONT_SIZE,
@@ -242,13 +267,18 @@ if (typeof document !== "undefined") {
       DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
     ),
   });
+  applyFilePreviewLineSpacing(
+    normalizeFilePreviewLineSpacing(storedSettings?.filePreviewLineSpacing),
+  );
 }
 
 export function useAppFont() {
   const uiFont = useSettings((settings) => settings.uiFont);
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
+  const filePreviewLineSpacing = useSettings((settings) => settings.filePreviewLineSpacing);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
+  const composerMetaFontSize = useSettings((settings) => settings.composerMetaFontSize);
   const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const sidebarMetaFontSize = useSettings((settings) => settings.sidebarMetaFontSize);
@@ -269,9 +299,14 @@ export function useAppFont() {
   }, [codeFont]);
 
   useEffect(() => {
+    applyFilePreviewLineSpacing(filePreviewLineSpacing);
+  }, [filePreviewLineSpacing]);
+
+  useEffect(() => {
     applyFontSizes({
       codeFontSize,
       chatFontSize,
+      composerMetaFontSize,
       statusLineFontSize,
       sidebarFontSize,
       sidebarMetaFontSize,
@@ -283,6 +318,7 @@ export function useAppFont() {
   }, [
     chatFontSize,
     codeFontSize,
+    composerMetaFontSize,
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,
@@ -327,7 +363,9 @@ export function useAppFont() {
     uiFont,
     codeFont,
     codeFontSize,
+    filePreviewLineSpacing,
     chatFontSize,
+    composerMetaFontSize,
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,

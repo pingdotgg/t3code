@@ -39,6 +39,70 @@ const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
+// Scope finalizers cannot run after a backend crash. The guard's stdin is a
+// backend-owned lifeline; EOF terminates OpenCode's group even after SIGKILL.
+const OPENCODE_SERVER_GUARD_SOURCE = `
+const { spawn, spawnSync } = require("node:child_process");
+const [command, args, shell] = JSON.parse(process.argv[1]);
+const child = spawn(command, args, {
+  detached: process.platform !== "win32",
+  shell,
+  stdio: ["ignore", "inherit", "inherit"],
+});
+let stopping = false;
+let exitCode = 0;
+function killGroup(signal) {
+  if (child.pid === undefined) return false;
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "pipe",
+      timeout: 2000,
+    });
+    if (result.error || (result.status !== 0 && child.exitCode === null && child.signalCode === null)) {
+      console.error("OpenCode process-tree cleanup failed:", result.error?.message ?? result.stderr.toString());
+      exitCode = 1;
+      child.kill("SIGKILL");
+    }
+    return false;
+  }
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      console.error("OpenCode process-group cleanup failed:", error.message);
+      exitCode = 1;
+    }
+    return false;
+  }
+}
+function stop(code = 0) {
+  if (stopping) return;
+  stopping = true;
+  exitCode = code;
+  if (!killGroup("SIGTERM")) {
+    process.exit(exitCode);
+  }
+  setTimeout(() => {
+    killGroup("SIGKILL");
+    process.exit(exitCode);
+  }, 1000);
+}
+child.once("error", (error) => {
+  console.error("OpenCode server spawn failed:", error.message);
+  stop(1);
+});
+child.once("exit", (code) => stop(code ?? 1));
+process.once("SIGTERM", () => stop());
+process.once("SIGINT", () => stop());
+process.stdin.once("end", () => stop());
+process.stdin.once("error", (error) => {
+  console.error("OpenCode backend lifeline failed:", error.message);
+  stop(1);
+});
+process.stdin.resume();
+`;
+
 export function resolveOpenCodeConfigContent(
   inputEnvironment: Readonly<Record<string, string | undefined>> | undefined,
   inheritedEnvironment: Readonly<Record<string, string | undefined>> = process.env,
@@ -167,14 +231,14 @@ const MAX_OPENCODE_SKILLS = 512;
 export interface OpenCodeRuntimeShape {
   /**
    * Spawns a local OpenCode server process. Its lifetime is bound to the caller's
-   * `Scope.Scope` — the child is killed automatically when that scope closes.
+   * `Scope.Scope` and backend lifetime — the process tree is killed when the
+   * scope closes or the backend exits, including an abrupt crash.
    * Consumers that want a long-lived server must create and hold a scope explicitly
    * (see {@link Scope.make}) and close it when done.
    */
   readonly startOpenCodeServerProcess: (input: {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly directory?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -188,7 +252,6 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly serverUrl?: string | null;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly directory?: string;
     readonly serverPassword?: string;
     readonly port?: number;
     readonly hostname?: string;
@@ -238,6 +301,53 @@ function parseServerUrlFromOutput(output: string): string | null {
 
 const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
 const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
+
+/**
+ * Build `opencode serve` argv.
+ *
+ * The serve subcommand accepts only `--port`, `--hostname`, `--mDNS`,
+ * `--mDNS-domain`, and `--cors`; it rejects anything else by printing usage and
+ * exiting 1. In particular `--dir` belongs to `run`/`web`/`attach`, not
+ * `serve`.
+ *
+ * Upstream `serve` deliberately carries no ambient project: it sets
+ * `instance: false` and resolves the project per request. Scoping therefore
+ * belongs to the caller, and it is not redundant with anything this function
+ * does.
+ *
+ * `createOpencodeClient({ directory })` sets `x-opencode-directory` on every
+ * request, and a client interceptor rewrites that header into a `directory`
+ * query param for GET/HEAD only. It returns early for other methods, so a POST
+ * is not rewritten. Callers that need a POST bound to a specific project must
+ * keep passing `directory` per call — `client.mcp.add({ directory })` does,
+ * and must not be simplified to rely on the client-level value.
+ *
+ * @internal
+ */
+export function buildOpenCodeServeArgs(input: {
+  readonly hostname: string;
+  readonly port: number;
+}): ReadonlyArray<string> {
+  return ["serve", `--hostname=${input.hostname}`, `--port=${input.port}`];
+}
+
+/**
+ * Wrap a long-lived child so it exits when the spawning process dies. Keep the
+ * wrapper's stdin pipe open for the parent's lifetime. Electron callers must
+ * set ELECTRON_RUN_AS_NODE=1 when spawning the wrapper.
+ *
+ * @internal
+ */
+export function bindToParentLifetime(
+  command: string,
+  args: ReadonlyArray<string>,
+  shell = false,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return {
+    command: process.execPath,
+    args: ["-e", OPENCODE_SERVER_GUARD_SOURCE, JSON.stringify([command, args, shell])],
+  };
+}
 
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
 // does not expose the hidden flag. Keep in sync with OpenCode agent
@@ -531,12 +641,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
-      const args = [
-        "serve",
-        `--hostname=${hostname}`,
-        `--port=${port}`,
-        ...(input.directory ? [`--dir=${input.directory}`] : []),
-      ];
+      const args = buildOpenCodeServeArgs({ hostname, port });
 
       const serverEnv = {
         ...(input.environment ?? process.env),
@@ -549,12 +654,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const { command: serverTarget, shell: serverShell } = resolveWindowsSpawn(input.binaryPath, {
         env: serverEnv,
       });
+      const spawnCommand = bindToParentLifetime(serverTarget, args, serverShell);
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(serverTarget, args, {
-            detached: process.platform !== "win32",
-            shell: serverShell,
-            env: serverEnv,
+          ChildProcess.make(spawnCommand.command, [...spawnCommand.args], {
+            detached: false,
+            stdin: "pipe",
+            env: { ...serverEnv, ELECTRON_RUN_AS_NODE: "1" },
+            forceKillAfter: "3 seconds",
           }),
         )
         .pipe(
@@ -569,23 +676,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         );
 
-      const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
-        process.platform === "win32"
-          ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)
-          : Effect.sync(() => {
-              try {
-                process.kill(-Number(child.pid), signal);
-              } catch {
-                // The direct child may already have exited after starting the
-                // server; the process group kill is best-effort cleanup for
-                // any serve process left in that group.
-              }
-            });
-      const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
-        Effect.andThen(Effect.sleep("1 second")),
-        Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
-        Effect.ignore,
-      );
+      const terminateChild = child
+        .kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" })
+        .pipe(Effect.ignore({ log: true }));
       yield* Scope.addFinalizer(runtimeScope, terminateChild);
 
       const stdoutRef = yield* Ref.make("");
@@ -693,7 +786,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     return startOpenCodeServerProcess({
       binaryPath: input.binaryPath,
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
-      ...(input.directory !== undefined ? { directory: input.directory } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -777,7 +869,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...(input.serverUrl !== undefined ? { serverUrl: input.serverUrl } : {}),
           ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
           ...(input.environment !== undefined ? { environment: input.environment } : {}),
-          directory: input.cwd,
         });
         const client = createOpenCodeSdkClient({
           baseUrl: server.url,

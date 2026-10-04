@@ -11,7 +11,11 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
-import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import {
+  childLifecycleNotificationToActivity,
+  crossThreadSendRecordToActivity,
+} from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 /**
  * Retention limits for collections within a thread.
@@ -369,6 +373,14 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // Must match the server projector: `createdAt`, not `occurredAt`.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.payload.createdAt,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -524,6 +536,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };
@@ -574,6 +589,7 @@ export function applyThreadDetailEvent(
         files: event.payload.files,
         agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
         turnFiles: event.payload.turnFiles ?? [],
+        transitionFiles: event.payload.transitionFiles ?? [],
         assistantMessageId: event.payload.assistantMessageId,
         completedAt: event.payload.completedAt,
       };
@@ -671,15 +687,23 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended":
-    case "thread.child-lifecycle-notified": {
+    case "thread.child-lifecycle-notified":
+    case "thread.cross-thread-send-recorded": {
       const activity =
         event.type === "thread.activity-appended"
           ? event.payload.activity
-          : childLifecycleNotificationToActivity({
-              eventId: event.eventId,
-              payload: event.payload,
-              sequence: event.sequence,
-            });
+          : event.type === "thread.child-lifecycle-notified"
+            ? childLifecycleNotificationToActivity({
+                eventId: event.eventId,
+                payload: event.payload,
+                sequence: event.sequence,
+              })
+            : crossThreadSendRecordToActivity({
+                eventId: event.eventId,
+                payload: event.payload,
+                turnId: event.payload.sourceTurnId,
+                sequence: event.sequence,
+              });
       const activities = pipe(
         thread.activities,
         Arr.filter((entry) => entry.id !== activity.id),

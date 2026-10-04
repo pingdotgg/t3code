@@ -193,6 +193,7 @@ export interface ProjectionSnapshotQueryShape {
   readonly searchTranscript?: (
     query: string,
     threadIds?: ReadonlyArray<ThreadId>,
+    archived?: boolean,
   ) => Effect.Effect<OrchestrationSearchTranscriptResult, ProjectionRepositoryError>;
   /**
    * Batch-resolve owning projects for live threads in a single narrow query.

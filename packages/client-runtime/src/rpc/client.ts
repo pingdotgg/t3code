@@ -61,6 +61,7 @@ export function requiredRpcCapability(
 }
 
 const OPTIONAL_SHARED_SETTINGS = new Set([
+  "autoArchiveSettledAfterDays",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
   "newWorktreesStartFromOrigin",

@@ -42,6 +42,7 @@ function render(
   return renderToStaticMarkup(
     <QueuedMessagesPanel
       queuedTurns={queuedTurns}
+      queueHeldAt={null}
       policyBlocks={policyBlocks}
       editingQueuedTurnId={null}
       editingText=""
@@ -49,6 +50,8 @@ function render(
       onCancelEditingQueuedTurn={() => {}}
       onSaveEditingQueuedTurn={() => {}}
       onDeleteQueuedTurn={() => {}}
+      onMoveQueuedTurn={() => {}}
+      onReleaseQueue={() => {}}
     />,
   );
 }
@@ -57,15 +60,156 @@ function renderEditing(queuedTurn: OrchestrationQueuedTurn) {
   return renderToStaticMarkup(
     <QueuedMessagesPanel
       queuedTurns={[queuedTurn]}
+      queueHeldAt={null}
       editingQueuedTurnId={queuedTurn.id}
       editingText={queuedTurn.message.text}
       onStartEditingQueuedTurn={() => {}}
       onCancelEditingQueuedTurn={() => {}}
       onSaveEditingQueuedTurn={() => {}}
       onDeleteQueuedTurn={() => {}}
+      onMoveQueuedTurn={() => {}}
+      onReleaseQueue={() => {}}
     />,
   );
 }
+
+/**
+ * The reorder handler permutes the *full* thread queue, so the panel's move
+ * bounds must be expressed against that same list. When a healthy workspace
+ * handoff is hidden, the rendered list is shorter than the queue the handler
+ * reorders, and bounds taken from the rendered list render an enabled button
+ * whose click silently does nothing.
+ */
+/**
+ * Whether each move button carries the `disabled` attribute, in render order.
+ *
+ * The class attribute is stripped first: the button variant ships
+ * `disabled:pointer-events-none disabled:opacity-64`, so a naive substring
+ * check reports every button as disabled.
+ */
+function moveButtonStates(html: string, direction: "up" | "down"): boolean[] {
+  const label = direction === "up" ? "Move queued message up" : "Move queued message down";
+  return [...html.matchAll(/<button[^>]*>/g)]
+    .map((match) => match[0])
+    .filter((tag) => tag.includes(`aria-label="${label}"`))
+    .map((tag) => /\sdisabled(?:=""|\s|>)/.test(tag.replace(/\sclass="[^"]*"/, "")));
+}
+
+/**
+ * Crash recovery holds queues whose only turns are hidden ones — a child nudge,
+ * or a healthy workspace-handoff continuation. Those live on dedicated surfaces
+ * with no resume control, so this panel is the only place the hold can be
+ * released. Returning null when no rows are visible left such a queue stuck.
+ */
+describe("QueuedMessagesPanel hold banner", () => {
+  const healthyHandoffOrigin = {
+    kind: "workspace-handoff",
+    role: "continuation",
+    branch: "feature/handoff",
+    worktreePath: "/tmp/handoff",
+  } as OrchestrationQueuedTurn["origin"];
+
+  function renderHeld(queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>) {
+    return renderToStaticMarkup(
+      <QueuedMessagesPanel
+        queuedTurns={queuedTurns}
+        queueHeldAt="2026-01-01T00:00:05.000Z"
+        editingQueuedTurnId={null}
+        editingText=""
+        onStartEditingQueuedTurn={() => {}}
+        onCancelEditingQueuedTurn={() => {}}
+        onSaveEditingQueuedTurn={() => {}}
+        onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
+      />,
+    );
+  }
+
+  it("offers resume when the only queued turn is a hidden handoff", () => {
+    const html = renderHeld([queuedTurn("handoff", "Continue", healthyHandoffOrigin)]);
+
+    expect(html).toContain("Queue held after restart");
+    expect(html).toContain("Resume queue");
+  });
+
+  it("offers resume when the only queued turn is a child nudge", () => {
+    const html = renderHeld([
+      queuedTurn("nudge", "Generated prompt", { kind: "child-nudge" } as never),
+    ]);
+
+    expect(html).toContain("Queue held after restart");
+    expect(html).toContain("Resume queue");
+  });
+
+  it("still renders nothing when unheld and every turn is hidden", () => {
+    const html = renderToStaticMarkup(
+      <QueuedMessagesPanel
+        queuedTurns={[queuedTurn("handoff", "Continue", healthyHandoffOrigin)]}
+        queueHeldAt={null}
+        editingQueuedTurnId={null}
+        editingText=""
+        onStartEditingQueuedTurn={() => {}}
+        onCancelEditingQueuedTurn={() => {}}
+        onSaveEditingQueuedTurn={() => {}}
+        onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+describe("QueuedMessagesPanel reorder bounds", () => {
+  const hiddenHandoffOrigin = {
+    kind: "workspace-handoff",
+    role: "continuation",
+    branch: "feature/handoff",
+    worktreePath: "/tmp/handoff",
+  } as OrchestrationQueuedTurn["origin"];
+
+  function renderWithHiddenHandoff() {
+    return renderToStaticMarkup(
+      <QueuedMessagesPanel
+        queuedTurns={[
+          queuedTurn("first", "First message"),
+          // Hidden: a healthy handoff continuation is not a user message.
+          queuedTurn("handoff", "Continue", hiddenHandoffOrigin),
+          queuedTurn("last", "Last message"),
+        ]}
+        queueHeldAt={null}
+        editingQueuedTurnId={null}
+        editingText=""
+        onStartEditingQueuedTurn={() => {}}
+        onCancelEditingQueuedTurn={() => {}}
+        onSaveEditingQueuedTurn={() => {}}
+        onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
+      />,
+    );
+  }
+
+  it("disables move-down on the last turn of the full queue, not the rendered list", () => {
+    const html = renderWithHiddenHandoff();
+
+    // The hidden handoff must not appear at all.
+    expect(html).not.toContain("Continue");
+
+    // "Last message" is rendered last and is index 2 of a 3-turn queue, so its
+    // move-down is the only disabled one. Two rendered rows against a three-turn
+    // queue is exactly the case that used to render an enabled no-op button.
+    expect(moveButtonStates(html, "down")).toEqual([false, true]);
+  });
+
+  it("disables move-up only on the first turn of the full queue", () => {
+    const html = renderWithHiddenHandoff();
+
+    expect(moveButtonStates(html, "up")).toEqual([true, false]);
+  });
+});
 
 describe("QueuedMessagesPanel", () => {
   it("leaves child updates to the dedicated follow-up surface", () => {
@@ -86,12 +230,15 @@ describe("QueuedMessagesPanel", () => {
             ],
           }),
         ]}
+        queueHeldAt={null}
         editingQueuedTurnId={null}
         editingText=""
         onStartEditingQueuedTurn={() => {}}
         onCancelEditingQueuedTurn={() => {}}
         onSaveEditingQueuedTurn={() => {}}
         onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
       />,
     );
     expect(html).toBe("");

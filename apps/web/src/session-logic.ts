@@ -5,14 +5,17 @@ import {
   extractWorkLogToolLifecycleStatus,
   mergeWorkLogToolData,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { hasPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { extractNormalizedChangedFilePathsFromToolPayload } from "@t3tools/shared/toolChangedFiles";
 import { extractToolCommandInput } from "@t3tools/shared/toolActivity";
 import {
   ApprovalRequestId,
   type ChildThreadLifecycle,
+  type CrossThreadSendRecord,
   isToolLifecycleItemType,
   MessageId,
   type OrchestrationLatestTurn,
+  type OrchestrationPendingTurnStart,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
@@ -27,6 +30,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-status";
 import {
   isChildLifecycleThreadActivity,
+  isCrossThreadSendActivity,
   isTurnLifecycleInsightActivity,
 } from "@t3tools/shared/orchestrationActivity";
 
@@ -645,6 +649,7 @@ export function deriveWorkLogEntries(
         activity.kind !== "context-window.updated" &&
         !isTurnLifecycleInsightActivity(activity) &&
         activity.summary !== "Checkpoint captured" &&
+        !isCrossThreadSendActivity(activity) &&
         !isPlanBoundaryToolActivity(activity),
     )
     .map(toDerivedWorkLogEntry);
@@ -1422,6 +1427,28 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+/**
+ * Cross-thread sends recorded against the user message that authorized them.
+ * These render as a quiet receipt under the message rather than as work-log
+ * rows, so they stay out of `deriveWorkLogEntries`.
+ */
+export function deriveCrossThreadSendsBySourceMessageId(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyMap<MessageId, readonly CrossThreadSendRecord[]> {
+  const bySourceMessageId = new Map<MessageId, CrossThreadSendRecord[]>();
+  for (const activity of activities) {
+    if (!isCrossThreadSendActivity(activity)) continue;
+    const record = activity.payload;
+    const existing = bySourceMessageId.get(record.sourceMessageId);
+    if (existing) {
+      existing.push(record);
+    } else {
+      bySourceMessageId.set(record.sourceMessageId, [record]);
+    }
+  }
+  return bySourceMessageId;
+}
+
 export function hasToolActivityForTurn(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   turnId: TurnId | null | undefined,
@@ -1531,9 +1558,16 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
-export function derivePhase(session: ThreadSession | null): SessionPhase {
+/** Delegates to the shared derivation so this cannot drift from the invariant. */
+export function derivePhase(
+  session: ThreadSession | null,
+  pendingTurnStart?: OrchestrationPendingTurnStart | null,
+): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
   if (session.status === "connecting") return "connecting";
   if (session.status === "running") return "running";
+  if (hasPendingTurnStart(pendingTurnStart)) {
+    return "running";
+  }
   return "ready";
 }

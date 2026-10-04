@@ -478,11 +478,19 @@ export function PullRequestDetailPanel({
   environmentId,
   reference,
   listEntry = null,
+  visible = true,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly listEntry?: PullRequestListEntry | null;
+  /**
+   * Whether this panel is the one the reader is looking at. Opened surfaces stay mounted so
+   * their scroll position and folded rows survive a tab switch, which would otherwise leave every
+   * backgrounded panel polling GitHub on its own schedule — one conversation read per open
+   * surface per interval, forever, with a single surface visible.
+   */
+  readonly visible?: boolean;
   readonly onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -512,36 +520,65 @@ export function PullRequestDetailPanel({
     listEntry.number === reference.number
       ? listEntry
       : null;
-  const detailQuery = useQuery(pullRequestDetailQueryOptions({ environmentId, reference }));
+  const detailQuery = useQuery({
+    ...pullRequestDetailQueryOptions({ environmentId, reference }),
+    enabled: visible,
+  });
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [timelineNewestFirst, setTimelineNewestFirst] = useState(true);
   const [expandedTimelineGroups, setExpandedTimelineGroups] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const monitorQuery = useQuery(
-    pullRequestMonitorStatusQueryOptions({
+  // Only the collaboration tab reads monitor/acceptance state; the summary
+  // description and checks render from the detail alone.
+  const collaborationVisible = visible && tab === "collaboration";
+  // Comments, review threads, and commits come from the activity walk; the
+  // summary description and checks do not wait for it.
+  const activityNeeded = visible && tab !== "collaboration";
+  const monitorQuery = useQuery({
+    ...pullRequestMonitorStatusQueryOptions({
       environmentId,
       reference,
-      enabled: detailQuery.data !== undefined,
+      enabled: collaborationVisible && detailQuery.data !== undefined,
     }),
-  );
-  const monitorContextQuery = useQuery(
-    pullRequestMonitorContextQueryOptions({
+    enabled: collaborationVisible && detailQuery.data !== undefined,
+  });
+  const monitorContextQuery = useQuery({
+    ...pullRequestMonitorContextQueryOptions({
       environmentId,
       reference,
-      enabled: monitorQuery.data?.monitor !== null && monitorQuery.data?.monitor !== undefined,
+      enabled:
+        collaborationVisible &&
+        monitorQuery.data?.monitor !== null &&
+        monitorQuery.data?.monitor !== undefined,
     }),
-  );
+    enabled:
+      collaborationVisible &&
+      monitorQuery.data?.monitor !== null &&
+      monitorQuery.data?.monitor !== undefined,
+  });
   const activityQuery = useQuery({
     ...pullRequestActivityQueryOptions({
       environmentId,
       reference,
     }),
+    // A backgrounded panel keeps its last answer but stops asking for a new one: the reader is
+    // looking at another surface, and a conversation read is one host request per interval.
+    // Gated on the tab as well as visibility, so the collaboration tab and hidden surfaces
+    // never fetch — only summary, timeline, and code need the conversation. Returning to a
+    // needing tab re-asks through the enabled transition when the held answer is stale (and
+    // costs nothing when it is fresh), so no separate resume-fetch is needed.
+    enabled: activityNeeded,
     // While GitHub's quota is exhausted every poll fails identically; back
     // off to the server's failure cooldown instead of re-walking the review
     // threads every 30s. Recovery is still automatic on the next poll.
+    // Hidden surfaces and the collaboration tab never poll.
     refetchInterval: (query) =>
-      tab === "timeline" ? (isRateLimitQueryError(query.state.error) ? 60_000 : 30_000) : false,
+      activityNeeded && tab === "timeline"
+        ? isRateLimitQueryError(query.state.error)
+          ? 60_000
+          : 30_000
+        : false,
   });
   const [comment, setComment] = useState("");
   const [actionPending, setActionPending] = useState<PullRequestAction | null>(null);
@@ -574,7 +611,11 @@ export function PullRequestDetailPanel({
     }
     return null;
   }, [monitorContextQuery.data?.findingDetails]);
-  const acceptanceThreadId = monitorQuery.data?.monitor?.ownerThreadId ?? owner?.id ?? null;
+  // This ID only scopes the lookup to a thread durably associated with the PR. The
+  // acceptance service returns the case's authoritative parent thread; association
+  // source/provenance must never be used as a substitute for that identity.
+  const acceptanceLookupThreadId =
+    monitorQuery.data?.monitor?.ownerThreadId ?? owner?.id ?? creatorThread?.id ?? null;
   const reviewThreadId =
     monitorQuery.data?.monitor?.linkedReviewThreadId ??
     monitorContextQuery.data?.findingDetails?.find(
@@ -590,25 +631,31 @@ export function PullRequestDetailPanel({
           ) ?? null),
     [environmentId, reviewThreadId, threads],
   );
-  const acceptanceLookupQuery = useQuery(
-    collaborativeAcceptanceLookupQueryOptions({
+  const acceptanceLookupQuery = useQuery({
+    ...collaborativeAcceptanceLookupQueryOptions({
       environmentId,
-      threadId: acceptanceThreadId,
+      threadId: acceptanceLookupThreadId,
       reference,
-      enabled: acceptanceThreadId !== null && acceptanceProvenance === null,
+      enabled:
+        collaborationVisible && acceptanceLookupThreadId !== null && acceptanceProvenance === null,
     }),
-  );
+    enabled:
+      collaborationVisible && acceptanceLookupThreadId !== null && acceptanceProvenance === null,
+  });
   const acceptanceCaseId =
     acceptanceProvenance?.caseId ?? acceptanceLookupQuery.data?.caseId ?? null;
-  const acceptanceQuery = useQuery(
-    collaborativeAcceptanceStatusQueryOptions({
+  const acceptanceQuery = useQuery({
+    ...collaborativeAcceptanceStatusQueryOptions({
       environmentId,
-      threadId: acceptanceThreadId,
+      threadId: acceptanceLookupThreadId,
       caseId: acceptanceCaseId,
-      enabled: acceptanceCaseId !== null && acceptanceThreadId !== null,
+      enabled:
+        collaborationVisible && acceptanceCaseId !== null && acceptanceLookupThreadId !== null,
     }),
-  );
+    enabled: collaborationVisible && acceptanceCaseId !== null && acceptanceLookupThreadId !== null,
+  });
   const acceptanceStatus = acceptanceQuery.data ?? acceptanceLookupQuery.data?.status;
+  const acceptanceParentThreadId = acceptanceStatus?.record?.case.parentThreadId ?? null;
   const browserThreadRef = useMemo(
     () => (owner ? scopeThreadRef(owner.environmentId, owner.id) : null),
     [owner?.environmentId, owner?.id],
@@ -647,11 +694,11 @@ export function PullRequestDetailPanel({
   const acceptanceControls = {
     canControl:
       acceptanceCaseId !== null &&
-      acceptanceThreadId !== null &&
+      acceptanceParentThreadId !== null &&
       acceptanceStatus?.record !== null &&
       acceptanceStatus?.record !== undefined,
     isLoading:
-      acceptanceThreadId !== null &&
+      acceptanceLookupThreadId !== null &&
       (acceptanceLookupQuery.isLoading ||
         (acceptanceCaseId !== null && acceptanceQuery.isLoading && acceptanceStatus === undefined)),
     error: acceptanceQuery.isError
@@ -662,10 +709,10 @@ export function PullRequestDetailPanel({
     isPaused: acceptanceProjection?.executionPhase === "paused",
     isPending: acceptanceMutationPending,
     onPause: () => {
-      if (acceptanceCaseId === null || acceptanceThreadId === null) return;
+      if (acceptanceCaseId === null || acceptanceParentThreadId === null) return;
       void pauseAcceptance
         .mutateAsync({
-          threadId: acceptanceThreadId,
+          threadId: acceptanceParentThreadId,
           caseId: acceptanceCaseId,
           reason: "ambiguous-outcome",
         })
@@ -681,9 +728,9 @@ export function PullRequestDetailPanel({
         });
     },
     onResume: () => {
-      if (acceptanceCaseId === null || acceptanceThreadId === null) return;
+      if (acceptanceCaseId === null || acceptanceParentThreadId === null) return;
       void resumeAcceptance
-        .mutateAsync({ threadId: acceptanceThreadId, caseId: acceptanceCaseId })
+        .mutateAsync({ threadId: acceptanceParentThreadId, caseId: acceptanceCaseId })
         .then(() => {
           toastManager.add({ type: "success", title: "Automation resumed" });
         })
@@ -696,9 +743,9 @@ export function PullRequestDetailPanel({
         });
     },
     onRequestReview: () => {
-      if (acceptanceCaseId === null || acceptanceThreadId === null) return;
+      if (acceptanceCaseId === null || acceptanceParentThreadId === null) return;
       void requestAcceptanceReview
-        .mutateAsync({ threadId: acceptanceThreadId, caseId: acceptanceCaseId })
+        .mutateAsync({ threadId: acceptanceParentThreadId, caseId: acceptanceCaseId })
         .then(() => {
           toastManager.add({ type: "success", title: "Review request queued" });
         })

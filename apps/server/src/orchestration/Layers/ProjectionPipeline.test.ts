@@ -12,11 +12,12 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -234,6 +235,21 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         ],
       );
+
+      // An unrelated durable job must not make an otherwise fully projected
+      // message wait on shell-summary reads or attachment filesystem cleanup.
+      yield* sql`
+        INSERT INTO projection_reconciliation_jobs
+          (sequence, shell_thread_ids_json, attachment_thread_ids_json, created_at)
+        VALUES (4, '[]', '[]', '2026-03-01T08:00:04.000Z')
+      `;
+      const receipt = yield* project(
+        messageEvent(5, "user", "2026-03-01T08:00:05.000Z", "2026-03-01T08:00:05.000Z"),
+      );
+      yield* receipt.reconcile;
+      assert.deepEqual(yield* sql`SELECT sequence FROM projection_reconciliation_jobs`, [
+        { sequence: 4 },
+      ]);
     }).pipe(
       Effect.provide(
         Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-message-summary-")),
@@ -711,6 +727,75 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("clears pending turn starts orphaned by a restart", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const projectionTurns = yield* ProjectionTurnRepository;
+      const now = new Date().toISOString();
+
+      yield* projectionTurns.replacePendingTurnStart({
+        threadId: ThreadId.make("thread-orphaned-start"),
+        messageId: MessageId.make("message-orphaned"),
+        requestedAt: now,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+      });
+      yield* projectionTurns.replacePendingTurnStart({
+        threadId: ThreadId.make("thread-live-start"),
+        messageId: MessageId.make("message-live"),
+        requestedAt: now,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+      });
+      yield* projectionTurns.upsertByTurnId({
+        turnId: TurnId.make("turn-concrete"),
+        threadId: ThreadId.make("thread-concrete"),
+        pendingMessageId: null,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        assistantMessageId: null,
+        state: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointTurnCount: null,
+        checkpointRef: null,
+        checkpointStatus: null,
+        checkpointFiles: [],
+        checkpointAgentTouchedPaths: [],
+        checkpointTurnFiles: [],
+        checkpointTransitionFiles: [],
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      // Nothing is working on a start after a restart, so a placeholder must not
+      // survive to report the thread busy forever.
+      assert.deepStrictEqual(
+        yield* projectionTurns.getPendingTurnStartByThreadId({
+          threadId: ThreadId.make("thread-orphaned-start"),
+        }),
+        Option.none(),
+      );
+      assert.deepStrictEqual(
+        yield* projectionTurns.getPendingTurnStartByThreadId({
+          threadId: ThreadId.make("thread-live-start"),
+        }),
+        Option.none(),
+      );
+      // A concrete turn row is not a placeholder and must survive.
+      assert.strictEqual(
+        Option.getOrUndefined(
+          yield* projectionTurns.getByTurnId({
+            threadId: ThreadId.make("thread-concrete"),
+            turnId: TurnId.make("turn-concrete"),
+          }),
+        )?.state,
+        "running",
+      );
+    }),
   );
 
   it.effect("bootstraps all projection states and writes projection rows", () =>
@@ -2066,6 +2151,7 @@ it.layer(
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert-files/turn/1"),
           status: "ready",
           files: [],
+          transitionFiles: [],
           agentTouchedPaths: [],
           turnFiles: [],
           assistantMessageId: MessageId.make("message-keep"),
@@ -2128,6 +2214,7 @@ it.layer(
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert-files/turn/2"),
           status: "ready",
           files: [],
+          transitionFiles: [],
           agentTouchedPaths: [],
           turnFiles: [],
           assistantMessageId: MessageId.make("message-remove"),
@@ -2974,6 +3061,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-conflict/turn/1"),
             status: "ready",
             files: [],
+            transitionFiles: [],
             agentTouchedPaths: [],
             turnFiles: [],
             assistantMessageId: MessageId.make("assistant-conflict"),
@@ -3448,6 +3536,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert/turn/1"),
           status: "ready",
           files: [],
+          transitionFiles: [],
           agentTouchedPaths: [],
           turnFiles: [],
           assistantMessageId: MessageId.make("assistant-keep"),
@@ -3494,6 +3583,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert/turn/2"),
           status: "ready",
           files: [],
+          transitionFiles: [],
           agentTouchedPaths: [],
           turnFiles: [],
           assistantMessageId: MessageId.make("assistant-remove"),
@@ -3585,7 +3675,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
-it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
+it.effect("carries pending turn-start metadata onto the turn row on acknowledgement", () =>
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
@@ -3631,8 +3721,6 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
           createdAt: turnStartedAt,
         },
       });
-
-      yield* projectionPipeline.bootstrap;
     }).pipe(Effect.provide(firstProjectionLayer));
 
     const turnRows = yield* Effect.gen(function* () {

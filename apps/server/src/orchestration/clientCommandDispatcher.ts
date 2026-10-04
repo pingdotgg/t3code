@@ -289,16 +289,34 @@ export const makeClientCommandDispatcher = ({
         ? dispatchBootstrapTurnStart(normalizedCommand)
         : dispatchThroughStartupGate(normalizedCommand, orchestrationEngine, startup);
 
-    return normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-      ? Effect.flatMap(CheckoutCoordinator, (checkoutCoordinator) =>
-          startup.enqueueCommand(
-            dispatchEffect.pipe(Effect.provideService(CheckoutCoordinator, checkoutCoordinator)),
-          ),
-        ).pipe(
-          Effect.mapError((cause) =>
-            toOrchestrationDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-          ),
-        )
-      : dispatchEffect;
+    const dispatched =
+      normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+        ? Effect.flatMap(CheckoutCoordinator, (checkoutCoordinator) =>
+            startup.enqueueCommand(
+              dispatchEffect.pipe(Effect.provideService(CheckoutCoordinator, checkoutCoordinator)),
+            ),
+          ).pipe(
+            Effect.mapError((cause) =>
+              toOrchestrationDispatchCommandError(
+                cause,
+                "Failed to dispatch orchestration command",
+              ),
+            ),
+          )
+        : dispatchEffect;
+
+    // The one place both client transports pass through, so a rejection is
+    // explainable in server.log. Reason by class only: invariant details embed
+    // user content.
+    return dispatched.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("client command rejected", {
+          commandId: normalizedCommand.commandId,
+          commandType: normalizedCommand.type,
+          ...("threadId" in normalizedCommand ? { threadId: normalizedCommand.threadId } : {}),
+          reason: error._tag,
+        }),
+      ),
+    );
   };
 };

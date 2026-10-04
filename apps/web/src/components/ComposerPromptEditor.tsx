@@ -5,7 +5,12 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
-import { type ServerProviderSkill } from "@t3tools/contracts";
+import {
+  type ServerProviderSkill,
+  type ThreadContextId,
+  type ThreadContextRecord,
+} from "@t3tools/contracts";
+import { formatThreadContextReference } from "@t3tools/shared/threadContext";
 import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
@@ -30,6 +35,10 @@ import {
   KEY_BACKSPACE_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  PASTE_COMMAND,
+  $getNodeByKey,
   DecoratorNode,
   type ElementNode,
   type LexicalNode,
@@ -77,6 +86,13 @@ import {
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { ThreadContextChip } from "./chat/ThreadContextChip";
+import {
+  THREAD_CONTEXT_CLIPBOARD_MIME,
+  parseThreadContextClipboardPayload,
+  selectedThreadContextRecords,
+  serializeThreadContextClipboard,
+} from "~/threadContextAttach";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -131,6 +147,108 @@ const ComposerTerminalContextActionsContext = createContext<{
 }>({
   onRemoveTerminalContext: () => {},
 });
+
+const EMPTY_THREAD_CONTEXTS: ReadonlyArray<ThreadContextRecord> = [];
+const ComposerThreadRecordsContext = createContext<ReadonlyMap<string, ThreadContextRecord>>(
+  new Map(),
+);
+
+function ComposerThreadDecorator(props: {
+  contextId: ThreadContextId;
+  label: string;
+  nodeKey: NodeKey;
+}) {
+  const records = useContext(ComposerThreadRecordsContext);
+  const [editor] = useLexicalComposerContext();
+  const record = records.get(props.contextId);
+  if (!record)
+    return (
+      <span
+        className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "border-dashed")}
+        title="This thread context is unavailable. Remove it or attach the thread again."
+      >
+        {props.label}
+      </span>
+    );
+  return (
+    <ThreadContextChip
+      record={record}
+      liveTitle={null}
+      disabled={!editor.isEditable()}
+      onRemove={() => {
+        if (!editor.isEditable()) return;
+        editor.update(() => {
+          $getNodeByKey(props.nodeKey)?.remove();
+        });
+      }}
+    />
+  );
+}
+
+type SerializedComposerThreadNode = Spread<
+  {
+    type: "composer-thread-context";
+    version: 1;
+    contextId: ThreadContextId;
+    label: string;
+  },
+  SerializedLexicalNode
+>;
+
+class ComposerThreadContextNode extends DecoratorNode<ReactElement> {
+  __contextId: ThreadContextId;
+  __label: string;
+  static override getType() {
+    return "composer-thread-context";
+  }
+  static override clone(node: ComposerThreadContextNode) {
+    return new ComposerThreadContextNode(node.__contextId, node.__label, node.__key);
+  }
+  static override importJSON(node: SerializedComposerThreadNode) {
+    return $createComposerThreadContextNode(node.contextId, node.label);
+  }
+  constructor(contextId: ThreadContextId, label: string, key?: NodeKey) {
+    super(key);
+    this.__contextId = contextId;
+    this.__label = label;
+  }
+  override exportJSON(): SerializedComposerThreadNode {
+    return {
+      ...super.exportJSON(),
+      type: "composer-thread-context",
+      version: 1,
+      contextId: this.__contextId,
+      label: this.__label,
+    };
+  }
+  override createDOM() {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex align-middle leading-none";
+    return dom;
+  }
+  override updateDOM(): false {
+    return false;
+  }
+  override isInline(): true {
+    return true;
+  }
+  override getTextContent() {
+    return formatThreadContextReference({ contextId: this.__contextId, label: this.__label });
+  }
+  override decorate() {
+    return (
+      <ComposerThreadDecorator
+        contextId={this.__contextId}
+        label={this.__label}
+        nodeKey={this.__key}
+      />
+    );
+  }
+}
+
+function $createComposerThreadContextNode(contextId: ThreadContextId, label: string) {
+  return $applyNodeReplacement(new ComposerThreadContextNode(contextId, label));
+}
 
 function ComposerMentionDecorator(props: { path: string }) {
   const theme = resolvedThemeFromDocument();
@@ -433,12 +551,14 @@ function $createComposerTerminalContextNode(
 type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSkillNode
+  | ComposerThreadContextNode
   | ComposerTerminalContextNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
     candidate instanceof ComposerMentionNode ||
     candidate instanceof ComposerSkillNode ||
+    candidate instanceof ComposerThreadContextNode ||
     candidate instanceof ComposerTerminalContextNode
   );
 }
@@ -856,6 +976,10 @@ function $setComposerEditorPrompt(
       }
       continue;
     }
+    if (segment.type === "thread-context") {
+      paragraph.append($createComposerThreadContextNode(segment.contextId, segment.label));
+      continue;
+    }
     $appendTextWithLineBreaks(paragraph, segment.text);
   }
 }
@@ -886,6 +1010,14 @@ interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  threadContexts?: ReadonlyArray<ThreadContextRecord> | undefined;
+  onThreadContextPaste?:
+    | ((
+        text: string,
+        records: ReadonlyArray<ThreadContextRecord>,
+        range: { start: number; end: number },
+      ) => boolean)
+    | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
@@ -907,6 +1039,68 @@ interface ComposerPromptEditorProps {
 
 interface ComposerPromptEditorInnerProps extends ComposerPromptEditorProps {
   editorRef: Ref<ComposerPromptEditorHandle>;
+}
+
+function ComposerThreadClipboardPlugin(
+  props: Pick<ComposerPromptEditorProps, "threadContexts" | "onThreadContextPaste">,
+) {
+  const [editor] = useLexicalComposerContext();
+  const propsRef = useRef(props);
+  useLayoutEffect(() => {
+    propsRef.current = props;
+  }, [props]);
+  useEffect(() => {
+    const copy = (event: ClipboardEvent | KeyboardEvent | null, cut: boolean) => {
+      if (!(event instanceof ClipboardEvent) || !event.clipboardData) return false;
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const text = selection.getTextContent();
+      const records = selectedThreadContextRecords({
+        prompt: text,
+        records: propsRef.current.threadContexts ?? EMPTY_THREAD_CONTEXTS,
+        start: 0,
+        end: text.length,
+      });
+      if (records.length === 0) return false;
+      const payload = serializeThreadContextClipboard(text, records);
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text);
+      event.clipboardData.setData(THREAD_CONTEXT_CLIPBOARD_MIME, payload.json);
+      event.clipboardData.setData("text/html", payload.html);
+      if (cut && editor.isEditable()) selection.removeText();
+      return true;
+    };
+    const handlers = [
+      editor.registerCommand(COPY_COMMAND, (event) => copy(event, false), COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(CUT_COMMAND, (event) => copy(event, true), COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          if (!editor.isEditable()) return false;
+          if (!(event instanceof ClipboardEvent) || !event.clipboardData) return false;
+          const text = event.clipboardData.getData("text/plain");
+          if (!text.includes("t3-context://v1/thread/") || !propsRef.current.onThreadContextPaste)
+            return false;
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return false;
+          const range = getSelectionRangeForExpandedComposerOffsets(selection);
+          if (!range) return false;
+          const json = event.clipboardData.getData(THREAD_CONTEXT_CLIPBOARD_MIME);
+          const records = json
+            ? (parseThreadContextClipboardPayload(json) ?? [])
+            : (propsRef.current.threadContexts ?? EMPTY_THREAD_CONTEXTS);
+          event.preventDefault();
+          propsRef.current.onThreadContextPaste(text, records, range);
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    ];
+    return () => {
+      for (const unregister of handlers) unregister();
+    };
+  }, [editor]);
+  return null;
 }
 
 function ComposerCommandKeyPlugin(props: {
@@ -1409,6 +1603,8 @@ function ComposerPromptEditorInner({
   value,
   cursor,
   terminalContexts,
+  threadContexts = EMPTY_THREAD_CONTEXTS,
+  onThreadContextPaste,
   skills,
   disabled,
   placeholder,
@@ -1437,6 +1633,10 @@ function ComposerPromptEditorInner({
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),
     [onRemoveTerminalContext],
+  );
+  const threadRecords = useMemo(
+    () => new Map(threadContexts.map((record) => [record.contextId, record])),
+    [threadContexts],
   );
 
   useEffect(() => {
@@ -1626,43 +1826,49 @@ function ComposerPromptEditorInner({
   }, []);
 
   return (
-    <ComposerTerminalContextActionsContext.Provider value={terminalContextActions}>
-      <div className="relative">
-        <PlainTextPlugin
-          contentEditable={
-            <ContentEditable
-              className={cn(
-                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
-                className,
-              )}
-              style={{ fontSize: "var(--app-input-font-size)" }}
-              data-testid="composer-editor"
-              aria-placeholder={placeholder}
-              placeholder={<span />}
-              onPaste={onPaste}
-            />
-          }
-          placeholder={
-            terminalContexts.length > 0 ? null : (
-              <div
-                className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground"
+    <ComposerThreadRecordsContext.Provider value={threadRecords}>
+      <ComposerTerminalContextActionsContext.Provider value={terminalContextActions}>
+        <div className="relative">
+          <PlainTextPlugin
+            contentEditable={
+              <ContentEditable
+                className={cn(
+                  "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+                  className,
+                )}
                 style={{ fontSize: "var(--app-input-font-size)" }}
-              >
-                {placeholder}
-              </div>
-            )
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <OnChangePlugin onChange={handleEditorChange} />
-        <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
-        <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
-        <ComposerInlineTokenArrowPlugin />
-        <ComposerInlineTokenSelectionNormalizePlugin />
-        <ComposerInlineTokenBackspacePlugin />
-        <HistoryPlugin />
-      </div>
-    </ComposerTerminalContextActionsContext.Provider>
+                data-testid="composer-editor"
+                aria-placeholder={placeholder}
+                placeholder={<span />}
+                onPaste={onPaste}
+              />
+            }
+            placeholder={
+              terminalContexts.length > 0 ? null : (
+                <div
+                  className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground"
+                  style={{ fontSize: "var(--app-input-font-size)" }}
+                >
+                  {placeholder}
+                </div>
+              )
+            }
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <OnChangePlugin onChange={handleEditorChange} />
+          <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+          <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+          <ComposerInlineTokenArrowPlugin />
+          <ComposerInlineTokenSelectionNormalizePlugin />
+          <ComposerInlineTokenBackspacePlugin />
+          <ComposerThreadClipboardPlugin
+            threadContexts={threadContexts}
+            onThreadContextPaste={onThreadContextPaste}
+          />
+          <HistoryPlugin />
+        </div>
+      </ComposerTerminalContextActionsContext.Provider>
+    </ComposerThreadRecordsContext.Provider>
   );
 }
 
@@ -1674,6 +1880,8 @@ export const ComposerPromptEditor = forwardRef<
     value,
     cursor,
     terminalContexts,
+    threadContexts,
+    onThreadContextPaste,
     skills,
     disabled,
     placeholder,
@@ -1692,7 +1900,12 @@ export const ComposerPromptEditor = forwardRef<
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
+      nodes: [
+        ComposerMentionNode,
+        ComposerSkillNode,
+        ComposerTerminalContextNode,
+        ComposerThreadContextNode,
+      ],
       editorState: () => {
         $setComposerEditorPrompt(
           initialValueRef.current,
@@ -1713,6 +1926,8 @@ export const ComposerPromptEditor = forwardRef<
         value={value}
         cursor={cursor}
         terminalContexts={terminalContexts}
+        threadContexts={threadContexts}
+        onThreadContextPaste={onThreadContextPaste}
         skills={skills}
         disabled={disabled}
         placeholder={placeholder}

@@ -10,6 +10,7 @@ import { Effect, Fiber, Layer, Stream } from "effect";
 
 import {
   ApprovalRequestId,
+  DEFAULT_AUTOMATED_MODEL_SELECTION,
   EnvironmentId,
   MessageId,
   ProviderDriverKind,
@@ -28,7 +29,7 @@ import {
   buildCopilotWorkspaceInstructions,
 } from "../acp/CopilotAcpSupport.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
-import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
+import { FACTORY_DELEGATED_THREAD_DEFAULT, makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -140,8 +141,17 @@ const copilotAdapterTestLayer = it.layer(
   Layer.merge(copilotAdapterLayer, mcpSessionRegistryTestLayer),
 );
 
+it("defaults delegated threads to gpt-6-luna on low reasoning", () => {
+  assert.deepStrictEqual(FACTORY_DELEGATED_THREAD_DEFAULT, DEFAULT_AUTOMATED_MODEL_SELECTION);
+  assert.deepStrictEqual(FACTORY_DELEGATED_THREAD_DEFAULT, {
+    instanceId: COPILOT_INSTANCE_ID,
+    model: "gpt-6-luna",
+    options: [{ id: "reasoning", value: "low" }],
+  });
+});
+
 copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
-  it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
+  it.effect("streams replies after the session-start request finishes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const settings = yield* ServerSettingsService;
@@ -157,13 +167,15 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
         Effect.forkChild,
       );
 
-      const session = yield* adapter.startSession({
-        threadId,
-        provider: COPILOT_DRIVER,
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
-      });
+      const session = yield* adapter
+        .startSession({
+          threadId,
+          provider: COPILOT_DRIVER,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+        })
+        .pipe(Effect.forkChild, Effect.flatMap(Fiber.join));
 
       assert.equal(session.provider, "copilot");
       assert.deepStrictEqual(session.resumeCursor, {

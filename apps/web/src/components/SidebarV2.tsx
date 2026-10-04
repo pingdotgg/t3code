@@ -426,6 +426,15 @@ export default function SidebarV2() {
     threadsWithAgentRuns,
   ]);
 
+  // Fade follows shelf membership, not the raw override: a settled root with
+  // an active descendant (or a stale override defeated by blockers) stays in
+  // the active shelf and must not dim, while a quiet child under a settled
+  // root fades with its group.
+  const settledThreadKeys = useMemo(
+    () => new Set(shelves.settled.flatMap((group) => group.rows.map((row) => row.threadKey))),
+    [shelves.settled],
+  );
+
   // Snoozed rows the shelf's bulk buttons may actually target.
   const bulkSnoozeTargets = useMemo(
     () =>
@@ -678,7 +687,7 @@ export default function SidebarV2() {
       const isVirtualAgentRun = thread.virtualAgentRun !== undefined;
       const projectKey = scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
       const project = projectsByKey.get(projectKey);
-      const settled = thread.settledOverride === "settled";
+      const settled = settledThreadKeys.has(row.threadKey);
       const instanceId = thread.session?.providerInstanceId ?? null;
       const active =
         `${thread.environmentId}:${routeTarget.threadId}` === activeThreadKey &&
@@ -703,6 +712,7 @@ export default function SidebarV2() {
             hasChildren={row.hasChildren}
             isExpanded={row.isExpanded}
             key={row.threadKey}
+            settled={settled}
             onArchive={handleArchive}
             onDismissAgentRun={handleDismissAgentRun}
             onOpen={handleThreadClick}
@@ -770,6 +780,7 @@ export default function SidebarV2() {
       projectsByKey,
       providerEntryByKey,
       pinnedThreadKeysByProjectKey,
+      settledThreadKeys,
     ],
   );
   const renderGroup = useCallback(

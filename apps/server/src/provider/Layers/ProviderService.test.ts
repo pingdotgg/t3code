@@ -35,7 +35,10 @@ import {
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import {
   ProviderInstanceRegistry,
   type ProviderInstanceRegistryShape,
@@ -48,7 +51,9 @@ import {
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeProviderServiceLive as makeProviderServiceLiveBase } from "./ProviderService.ts";
+import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
+import { ProviderRuntimeLivenessLive } from "./ProviderRuntimeLiveness.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -68,6 +73,10 @@ import {
 } from "../testUtils/providerInstanceRegistryMock.ts";
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
+
+// Production provides this from the runtime layer; standalone tests supply it.
+const makeProviderServiceLive = (options?: Parameters<typeof makeProviderServiceLiveBase>[0]) =>
+  makeProviderServiceLiveBase(options).pipe(Layer.provide(ProviderRuntimeLivenessLive));
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
@@ -191,7 +200,10 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
-function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
+function makeFakeCodexAdapter(
+  provider: ProviderDriverKind = CODEX_DRIVER,
+  capabilities: Partial<ProviderAdapterCapabilities> = {},
+) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
@@ -318,6 +330,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       startSession({
         ...input,
         provider,
+        ...(input.forkAnchor !== undefined ? { resumeCursor: input.forkAnchor } : {}),
       }),
   );
 
@@ -325,6 +338,11 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      // The fake forks like a fork-capable provider; callers opt out with
+      // `canForkThread: false` so capability gating is exercised explicitly
+      // instead of relying on an undeclared default.
+      canForkThread: true,
+      ...capabilities,
     },
     startSession,
     forkSession,
@@ -2368,6 +2386,91 @@ describe("agent MCP access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("forwards turn anchors only to adapters that declare turn-level forking", () =>
+    Effect.gen(function* () {
+      const turnForkAdapter = makeFakeCodexAdapter(CODEX_DRIVER, { canForkFromTurn: true });
+      const wholeThreadAdapter = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const noThreadForkAdapter = makeFakeCodexAdapter(CURSOR_DRIVER, { canForkThread: false });
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderInstanceRegistry,
+            makeInstanceRegistryMock({
+              [CODEX_DRIVER]: turnForkAdapter.adapter,
+              [CLAUDE_AGENT_DRIVER]: wholeThreadAdapter.adapter,
+              [CURSOR_DRIVER]: noThreadForkAdapter.adapter,
+            }),
+          ),
+        ),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+      );
+      const anchor = { turnId: asTurnId("fork-anchor-turn"), turnIndex: 1 };
+      const forked = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.startSession(asThreadId("anchor-source"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("anchor-source"),
+          runtimeMode: "full-access",
+        });
+        yield* provider.startSession(asThreadId("whole-source"), {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          threadId: asThreadId("whole-source"),
+          runtimeMode: "full-access",
+        });
+        yield* provider.startSession(asThreadId("unsupported-source"), {
+          provider: CURSOR_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          threadId: asThreadId("unsupported-source"),
+          runtimeMode: "full-access",
+        });
+        const anchored = yield* provider.forkSession({
+          sourceThreadId: asThreadId("anchor-source"),
+          threadId: asThreadId("anchor-target"),
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+          forkAnchor: anchor,
+        });
+        const wholeThread = yield* provider.forkSession({
+          sourceThreadId: asThreadId("whole-source"),
+          threadId: asThreadId("whole-target"),
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "full-access",
+          forkAnchor: anchor,
+        });
+        const unsupported = yield* provider
+          .forkSession({
+            sourceThreadId: asThreadId("unsupported-source"),
+            threadId: asThreadId("unsupported-target"),
+            provider: CURSOR_DRIVER,
+            providerInstanceId: ProviderInstanceId.make("cursor"),
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.flip);
+        return { anchored, wholeThread, unsupported };
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.deepEqual(forked.anchored.resumeCursor, anchor);
+      assert.deepEqual(forked.wholeThread.resumeCursor, {
+        opaque: "resume-whole-target",
+      });
+      assert.include(forked.unsupported.message, "does not support forking a chat");
+      assert.equal(noThreadForkAdapter.forkSession.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("revokes a fork target credential when the adapter fork fails", () =>
     Effect.gen(function* () {
       const revokedSessions: Array<string> = [];
@@ -2467,10 +2570,122 @@ function makePiProviderServiceLayer() {
     ),
     directoryLayer,
     runtimeRepositoryLayer,
+    ProviderRuntimeLivenessLive,
     NodeServices.layer,
   );
   return { pi, providerLayer };
 }
+
+it.effect("ProviderServiceLive records runtime liveness before publishing events", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const liveness = yield* ProviderRuntimeLiveness;
+      const threadId = asThreadId("thread-liveness-recorded");
+      const turnId = asTurnId("pi-turn-liveness");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-liveness",
+        runtimeMode: "full-access",
+      });
+      const settledAtDelivery = yield* Ref.make<ReadonlySet<string> | null>(null);
+      const collector = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "turn.completed") {
+            // The ledger must know the turn is settled before any subscriber
+            // sees the terminal event.
+            const observation = yield* liveness.observe(threadId);
+            yield* Ref.set(settledAtDelivery, new Set(observation?.settledTurns.keys() ?? []));
+          }
+        }),
+      ).pipe(Effect.forkScoped);
+      // Let the service subscription attach before publishing: an unbounded
+      // PubSub drops messages published with zero subscribers.
+      yield* sleep(50);
+      pi.emit({
+        eventId: asEventId("evt-liveness-recorded"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId,
+        payload: { state: "completed" },
+      });
+      yield* sleep(50);
+      yield* Fiber.interrupt(collector);
+      assert.isTrue((yield* Ref.get(settledAtDelivery))?.has(turnId) ?? false);
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// Regression: recording inline in the sequential per-adapter consumer meant a
+// publish suspended on event N also blocked event N+1 from being recorded, so a
+// terminal event could stay unrecorded as long as the backlog lasted. Liveness
+// must record on its own fiber, even while a subscriber wedges delivery.
+it.effect("ProviderServiceLive records terminal liveness while a subscriber wedges delivery", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const liveness = yield* ProviderRuntimeLiveness;
+      const threadId = asThreadId("thread-liveness-backpressure");
+      const turnId = asTurnId("pi-turn-backpressure");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-backpressure",
+        runtimeMode: "full-access",
+      });
+      // A subscriber that attaches but never takes, so the bounded bus fills
+      // and `publish` blocks on delivery.
+      yield* Stream.runForEach(provider.streamEvents, () => Effect.never).pipe(Effect.forkScoped);
+      yield* sleep(50);
+
+      // Non-terminal lifecycle events deliberately: streaming events are
+      // filtered before the ledger, so only lifecycle traffic can both wedge
+      // delivery and still need recording. A delta burst would let this test
+      // pass even against the coupled implementation it disproves.
+      for (let index = 0; index < 8_000; index += 1) {
+        pi.emit({
+          eventId: asEventId(`evt-liveness-burst-${index}`),
+          provider: piDriver,
+          threadId,
+          createdAt: new Date().toISOString(),
+          type: "turn.started",
+          turnId,
+          payload: {},
+        });
+      }
+      pi.emit({
+        eventId: asEventId("evt-liveness-backpressure-terminal"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId,
+        payload: { state: "completed" },
+      });
+
+      // The ledger must record the settle regardless of how far behind
+      // delivery is.
+      yield* sleep(200);
+      const observation = yield* liveness.observe(threadId);
+      assert.isTrue(observation?.settledTurns.has(turnId) ?? false);
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles", () =>
   Effect.gen(function* () {

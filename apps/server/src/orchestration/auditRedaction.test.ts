@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { redactAuditPayload, redactAuditText } from "./auditRedaction.ts";
+import { redactAuditPayload, redactAuditText, redactSensitiveValues } from "./auditRedaction.ts";
 
 describe("audit redaction", () => {
   it("bounds truncated previews by UTF-8 bytes without splitting characters", () => {
@@ -26,5 +26,23 @@ describe("audit redaction", () => {
     expect(typeof error).toBe("string");
     expect(Buffer.byteLength(error, "utf8")).toBeLessThanOrEqual(64 * 1024);
     expect(error).not.toContain("\uFFFD");
+  });
+
+  it("redacts credentials embedded in Git remotes and http.extraheader arguments", () => {
+    const credentials = [
+      "https://live-token:another-secret@github.com/owner/repo.git",
+      "-c",
+      "http.extraheader=Authorization: Basic c2VjcmV0",
+      "--config=http.extraheader=Authorization: Bearer live-bearer-token",
+    ];
+
+    const result = redactSensitiveValues(credentials);
+    const serialized = JSON.stringify(result.payload);
+
+    expect(result.redacted).toBe(true);
+    expect(serialized).not.toContain("live-token");
+    expect(serialized).not.toContain("another-secret");
+    expect(serialized).not.toContain("c2VjcmV0");
+    expect(serialized).not.toContain("live-bearer-token");
   });
 });

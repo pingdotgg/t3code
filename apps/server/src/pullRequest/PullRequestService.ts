@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import {
   isGitHubRateLimitMessage,
   PullRequestOperationError,
+  PullRequestActivity as PullRequestActivitySchema,
   PullRequestDetail as PullRequestDetailSchema,
   type PullRequestProviderKind,
   PullRequestUnavailableError,
@@ -90,6 +91,14 @@ const REPOSITORY_SEARCH_CHUNK = 100;
  */
 const LIST_CACHE_TTL = Duration.seconds(30);
 const DETAIL_CACHE_TTL = Duration.seconds(15);
+/**
+ * The client re-reads a focused conversation on an interval. A cache shorter than that interval
+ * cannot ever be read twice, so every poll becomes a fresh host read — and a conversation read is
+ * the most expensive one on the page, walking review threads and their comments. Cover the poll so
+ * consecutive panels and repeat visits share one answer, and let the client's own stale time
+ * absorb the difference: a poll inside the window is served from here without spending anything.
+ */
+const ACTIVITY_CACHE_TTL = Duration.seconds(45);
 const DIFF_CACHE_TTL = Duration.seconds(60);
 /** A commit is content-addressed, so its own diff cannot change under its key. */
 const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
@@ -234,6 +243,35 @@ interface SupportedProject {
   readonly repository: string;
   /** The host the repository lives on, which is the account boundary rather than the kind. */
   readonly host: string;
+}
+
+/**
+ * Host and workspace scope persisted entries. Scoped invalidation cannot reach an old key after
+ * either changes; those entries are reclaimed by the no-reference global refresh.
+ */
+function persistedReadKey(
+  input: PullRequestRef,
+  operation: string,
+  project: SupportedProject,
+): string {
+  return [
+    operation,
+    project.api.kind,
+    project.host.toLowerCase(),
+    project.repository.toLowerCase(),
+    project.project.id,
+    project.project.workspaceRoot,
+    String(input.number),
+  ]
+    .map(encodeURIComponent)
+    .join(":");
+}
+
+function persistedReadKeys(
+  input: PullRequestRef,
+  project: SupportedProject,
+): ReadonlyArray<string> {
+  return ["detail", "activity"].map((operation) => persistedReadKey(input, operation, project));
 }
 
 /**
@@ -1479,6 +1517,13 @@ export const make = Effect.gen(function* () {
         }
         held.set(key, { at, value });
       });
+    const refresh = (key: string, snapshot: { readonly at: number; readonly value: A }, value: A) =>
+      Effect.sync(() => {
+        const current = held.get(key);
+        if (current !== snapshot) return;
+        held.delete(key);
+        if (shouldHold(value)) held.set(key, { at: current.at, value });
+      });
     return <E>(
       key: string,
       read: Effect.Effect<A, E>,
@@ -1490,7 +1535,6 @@ export const make = Effect.gen(function* () {
        */
       backgroundRead?: Effect.Effect<A, E>,
     ): Effect.Effect<A, E> => {
-      const refresh = (backgroundRead ?? read).pipe(Effect.tap((value) => record(key, value)));
       return Effect.flatMap(Clock.currentTimeMillis, (now) => {
         const snapshot = held.get(key);
         if (snapshot === undefined || now - snapshot.at > staleMs) {
@@ -1498,8 +1542,15 @@ export const make = Effect.gen(function* () {
         }
         // Run as its own fiber rather than a child: the caller is answered and gone before the
         // refresh lands. The read still coalesces on the cache key, so ten stale reads in one
-        // window cost one host request — and a failed refresh costs nothing but the retry.
-        const backgrounded = Effect.sync(() => runFork(Effect.ignore(refresh)));
+        // window cost one host request — and a failed refresh costs nothing but the retry. A
+        // successful background read may update the held value, but never its original expiry.
+        const backgrounded = Effect.sync(() =>
+          runFork(
+            Effect.ignore(
+              (backgroundRead ?? read).pipe(Effect.tap((value) => refresh(key, snapshot, value))),
+            ),
+          ),
+        );
         const served =
           onStaleHit === undefined ? backgrounded : onStaleHit.pipe(Effect.andThen(backgrounded));
         return Effect.as(served, snapshot.value);
@@ -1624,17 +1675,7 @@ export const make = Effect.gen(function* () {
     read: Effect.Effect<A, PullRequestError>,
   ) {
     const project = yield* requireProject(input);
-    const key = [
-      operation,
-      project.api.kind,
-      project.host.toLowerCase(),
-      project.repository.toLowerCase(),
-      project.project.id,
-      project.project.workspaceRoot,
-      String(input.number),
-    ]
-      .map(encodeURIComponent)
-      .join(":");
+    const key = persistedReadKey(input, operation, project);
     const lookup = yield* Effect.cached(read);
     const encodedRead = lookup.pipe(
       Effect.flatMap((value) =>
@@ -1698,14 +1739,16 @@ export const make = Effect.gen(function* () {
     return staleDetail(key, cachedRead(detailCache, key, lookup, hit), hit, lookup);
   };
 
+  const activityCodec = Schema.fromJsonString(PullRequestActivitySchema);
   const activityCache = yield* Cache.makeWith(
     (key: string) => {
       const [, projectId, repository, number] = JSON.parse(key) as [number, string, string, number];
-      return activityUncached({ projectId, repository, number } as PullRequestRef);
+      const reference = { projectId, repository, number } as PullRequestRef;
+      return persistedRead(reference, "activity", activityCodec, activityUncached(reference));
     },
     {
       capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: rateLimitAwareTtl(DETAIL_CACHE_TTL),
+      timeToLive: rateLimitAwareTtl(ACTIVITY_CACHE_TTL),
     },
   );
   const staleActivity = staleWhileRevalidate<PullRequestActivity>(
@@ -1855,20 +1898,32 @@ export const make = Effect.gen(function* () {
 
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     if (input.reference !== undefined) {
-      return readCache.invalidate.pipe(
+      return requireProject(input.reference).pipe(
+        Effect.flatMap((project) =>
+          readCache.invalidate(persistedReadKeys(input.reference!, project)),
+        ),
         Effect.andThen(
+          Effect.sync(() => {
+            bumpRefEpoch(input.reference!);
+          }),
+        ),
+        Effect.catch(() =>
           Effect.sync(() => {
             bumpRefEpoch(input.reference!);
           }),
         ),
       );
     }
-    return Effect.sync(() => {
-      listingsEpoch = ++epochCounter;
-      // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
-      // and that includes who the hosts say they are.
-      viewersByHost.clear();
-    });
+    return readCache.invalidate().pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          listingsEpoch = ++epochCounter;
+          // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
+          // and that includes who the hosts say they are.
+          viewersByHost.clear();
+        }),
+      ),
+    );
   };
 
   const monitorSnapshot: PullRequestService["Service"]["monitorSnapshot"] = (input) =>
@@ -1899,14 +1954,17 @@ export const make = Effect.gen(function* () {
       scope: "reference" | "listings" = "reference",
     ): ((input: I) => Effect.Effect<void, PullRequestError>) =>
     (input) =>
-      readCache.invalidate.pipe(
-        Effect.andThen(method(input)),
-        Effect.ensuring(readCache.invalidate),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            bumpRefEpoch(input);
-            if (scope === "listings") listingsEpoch = ++epochCounter;
-          }),
+      requireProject(input).pipe(
+        Effect.flatMap((project) =>
+          method(input).pipe(
+            Effect.ensuring(readCache.invalidate(persistedReadKeys(input, project))),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                bumpRefEpoch(input);
+                if (scope === "listings") listingsEpoch = ++epochCounter;
+              }),
+            ),
+          ),
         ),
       );
 

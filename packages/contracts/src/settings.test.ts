@@ -5,9 +5,11 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
+  DEFAULT_COMPOSER_META_FONT_SIZE,
   DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS,
   DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE,
@@ -19,6 +21,8 @@ import {
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UI_DENSITY,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   RECOMMENDED_FONT_SIZES_BY_UI_DENSITY,
   ServerSettings,
   ServerSettingsPatch,
@@ -76,6 +80,34 @@ describe("ServerSettings.agentWorkflows", () => {
   });
 });
 
+describe("ServerSettings.autoArchiveSettledAfterDays", () => {
+  it("defaults to two days", () => {
+    expect(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(2);
+    expect(DEFAULT_SERVER_SETTINGS.autoArchiveSettledAfterDays).toBe(2);
+    expect(decodeServerSettings({}).autoArchiveSettledAfterDays).toBe(2);
+  });
+
+  it("passes null through to disable auto-archive (fail closed)", () => {
+    expect(
+      decodeServerSettings({ autoArchiveSettledAfterDays: null }).autoArchiveSettledAfterDays,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ autoArchiveSettledAfterDays: null }).autoArchiveSettledAfterDays,
+    ).toBeNull();
+  });
+
+  it("accepts day values inside the 1-90 range in patches", () => {
+    expect(
+      decodeServerSettingsPatch({ autoArchiveSettledAfterDays: 2 }).autoArchiveSettledAfterDays,
+    ).toBe(2);
+  });
+
+  it("exports the range bounds mirroring the sidebar auto-settle pattern", () => {
+    expect(MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(1);
+    expect(MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(90);
+  });
+});
+
 describe("ServerSettings.pullRequestMonitoring", () => {
   it("defaults automatic monitoring and maintenance chats on", () => {
     expect(DEFAULT_SERVER_SETTINGS.autoMonitorPullRequestsOnCreate).toBe(true);
@@ -109,6 +141,17 @@ describe("ClientSettings.codeFont", () => {
 
   it("rejects unknown code font options in patches", () => {
     expect(() => decodeClientSettingsPatch({ codeFont: "not-a-font" })).toThrow();
+  });
+});
+
+describe("ClientSettings.filePreviewLineSpacing", () => {
+  it("defaults to upstream-like spacing and accepts only supported values", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.filePreviewLineSpacing).toBe(1.5);
+    expect(decodeClientSettings({}).filePreviewLineSpacing).toBe(1.5);
+    expect(decodeClientSettingsPatch({ filePreviewLineSpacing: 1.65 })).toEqual({
+      filePreviewLineSpacing: 1.65,
+    });
+    expect(() => decodeClientSettingsPatch({ filePreviewLineSpacing: 2 })).toThrow();
   });
 });
 
@@ -253,6 +296,22 @@ describe("ClientSettings.sidebarFontSize", () => {
 
     it("rejects invalid sidebar icon size patches", () => {
       expect(() => decodeClientSettingsPatch({ sidebarIconSize: 25 })).toThrow();
+    });
+  });
+
+  describe("ClientSettings.composerMetaFontSize", () => {
+    it("defaults the under-composer metadata line to 11px", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.composerMetaFontSize).toBe(DEFAULT_COMPOSER_META_FONT_SIZE);
+      expect(decodeClientSettings({}).composerMetaFontSize).toBe(DEFAULT_COMPOSER_META_FONT_SIZE);
+      expect(DEFAULT_COMPOSER_META_FONT_SIZE).toBe(11);
+    });
+
+    it("accepts valid composer metadata font size patches", () => {
+      expect(decodeClientSettingsPatch({ composerMetaFontSize: 9 }).composerMetaFontSize).toBe(9);
+    });
+
+    it("rejects invalid composer metadata font size patches", () => {
+      expect(() => decodeClientSettingsPatch({ composerMetaFontSize: 25 })).toThrow();
     });
   });
 

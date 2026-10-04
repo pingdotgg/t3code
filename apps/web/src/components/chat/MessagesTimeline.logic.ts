@@ -1,12 +1,60 @@
 import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import {
+  type CrossThreadSendRecord,
   type DelegationAuditEvent,
   type MessageId,
+  type ThreadContextRecord,
   type TurnId,
   type WorkspaceHandoffOrigin,
 } from "@t3tools/contracts";
 import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+
+export interface TimelineThreadContextChip {
+  /** Context identity: stable React key and record binding, never the label. */
+  key: string;
+  title: string;
+  /** True when no record backs the reference: render as unavailable, never as a live thread. */
+  unavailable: boolean;
+}
+
+/**
+ * Chips for one timeline message, in first-reference order. Every inline
+ * reference resolves to its structured record (live title with label
+ * fallback) or is marked unavailable when the record is gone. Unreferenced
+ * records are never surfaced: they were never sent to the provider.
+ */
+export function selectTimelineThreadContextChips(message: {
+  text: string;
+  context?: { records?: ReadonlyArray<ThreadContextRecord> } | undefined;
+}): TimelineThreadContextChip[] {
+  const recordsById = new Map<string, ThreadContextRecord>();
+  for (const record of message.context?.records ?? []) {
+    const key = String(record.contextId);
+    if (!recordsById.has(key)) recordsById.set(key, record);
+  }
+  const chips: TimelineThreadContextChip[] = [];
+  const seen = new Set<string>();
+  for (const occurrence of collectThreadContextReferences(message.text)) {
+    const key = String(occurrence.contextId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const record = recordsById.get(key);
+    if (!record) {
+      chips.push({ key, title: occurrence.label, unavailable: true });
+      continue;
+    }
+    const title =
+      record.title?.trim().length > 0
+        ? record.title
+        : record.label?.trim().length > 0
+          ? record.label
+          : occurrence.label;
+    chips.push({ key, title, unavailable: false });
+  }
+  return chips;
+}
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 export const EMPTY_REVIEW_OUTPUT_MESSAGE_IDS: ReadonlySet<string> = new Set();
@@ -120,6 +168,8 @@ type BaseMessagesTimelineRow =
       showCompletionDivider: boolean;
       showAssistantCopyButton: boolean;
       showAssistantTerminalMetadata: boolean;
+      /** Messages this turn pushed into other threads, in send order. */
+      crossThreadSends?: readonly CrossThreadSendRecord[] | undefined;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
     }
@@ -401,6 +451,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  crossThreadSendsBySourceMessageId: ReadonlyMap<MessageId, readonly CrossThreadSendRecord[]>;
 }): MessagesTimelineRow[] {
   const nextRows: BaseMessagesTimelineRow[] = [];
   // Last assistant message row per response key (turn). Only the final
@@ -535,6 +586,10 @@ export function deriveMessagesTimelineRows(input: {
       // know which assistant row is the last of its turn.
       showAssistantCopyButton: false,
       showAssistantTerminalMetadata: false,
+      crossThreadSends:
+        message.role === "user"
+          ? input.crossThreadSendsBySourceMessageId.get(message.id)
+          : undefined,
       assistantTurnDiffSummary:
         message.role === "assistant"
           ? input.turnDiffSummaryByAssistantMessageId.get(message.id)
@@ -758,6 +813,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showCompletionDivider === bm.showCompletionDivider &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.showAssistantTerminalMetadata === bm.showAssistantTerminalMetadata &&
+        areCrossThreadSendsUnchanged(a.crossThreadSends, bm.crossThreadSends) &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount
       );
@@ -766,6 +822,22 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "reasoning":
       return areReasoningRowsUnchanged(a, b as typeof a);
   }
+}
+
+// Records are the activity payloads themselves, so an unchanged send keeps its
+// identity across streaming chunks and must not invalidate the message row.
+function areCrossThreadSendsUnchanged(
+  a: readonly CrossThreadSendRecord[] | undefined,
+  b: readonly CrossThreadSendRecord[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  return a.every(
+    (record, index) =>
+      record === b[index] ||
+      (record.destinationThreadId === b[index]?.destinationThreadId &&
+        record.destinationMessageId === b[index]?.destinationMessageId),
+  );
 }
 
 function areReasoningRowsUnchanged(

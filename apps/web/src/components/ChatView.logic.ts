@@ -1,17 +1,24 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type OrchestrationMessageContext,
+  THREAD_CONTEXT_MAX_RECORDS,
   type OrchestrationThreadActivity,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
   type ScopedThreadRef,
+  type ThreadContextRecord,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import type { LegendListState } from "@legendapp/list/react";
 import { type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
+import type { RightPanelSurface } from "../rightPanelStore";
 import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
 import { type AppState, type EnvironmentState, selectThreadExistsByRef, useStore } from "../store";
@@ -337,10 +344,78 @@ export function cloneComposerImageForRetry(
   }
 }
 
+export function buildThreadContextForSend(
+  prompt: string,
+  records: ReadonlyArray<ThreadContextRecord>,
+): OrchestrationMessageContext | undefined {
+  if (records.length === 0) return undefined;
+  const referencedIds = new Set(
+    collectThreadContextReferences(prompt).map((occurrence) => String(occurrence.contextId)),
+  );
+  if (referencedIds.size === 0) return undefined;
+  const seen = new Set<string>();
+  const filtered: ThreadContextRecord[] = [];
+  for (const record of records) {
+    const key = String(record.contextId);
+    if (!referencedIds.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    filtered.push(record);
+    if (filtered.length >= THREAD_CONTEXT_MAX_RECORDS) break;
+  }
+  if (filtered.length === 0) return undefined;
+  return { version: 1, records: filtered };
+}
+
+export { countReferencedThreadContexts } from "@t3tools/shared/threadContext";
+
+/**
+ * Context envelope for `thread.queued-turn.update`. Referenced records are
+ * retained; when the edit removes the last reference but the queued turn
+ * already carries context, an explicit empty envelope clears the stale state
+ * instead of leaving it behind. Returns `undefined` only when neither the
+ * edit nor the previous turn carries context.
+ */
+export function buildThreadContextForQueueUpdate(input: {
+  text: string;
+  records: ReadonlyArray<ThreadContextRecord>;
+  previousRecords: ReadonlyArray<ThreadContextRecord>;
+}): OrchestrationMessageContext | undefined {
+  const retained = buildThreadContextForSend(input.text, input.records);
+  if (retained) return retained;
+  if (input.previousRecords.length === 0) return undefined;
+  return { version: 1, records: [] };
+}
+
+/**
+ * Synchronous retry guard: the failed send cleared the composer draft, so a
+ * restore is safe only when the draft is still empty. Reads the store draft
+ * directly instead of the mirrored refs, which lag behind the clear.
+ */
+export function isComposerDraftCleared(
+  draft:
+    | {
+        prompt: string;
+        imageCount: number;
+        terminalContextCount: number;
+        threadContextCount: number;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!draft) return true;
+  return (
+    draft.prompt.length === 0 &&
+    draft.imageCount === 0 &&
+    draft.terminalContextCount === 0 &&
+    draft.threadContextCount === 0
+  );
+}
+
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  threadContextCount?: number | undefined;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
@@ -356,7 +431,10 @@ export function deriveComposerSendState(options: {
     sendableTerminalContexts,
     expiredTerminalContextCount,
     hasSendableContent:
-      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+      trimmedPrompt.length > 0 ||
+      options.imageCount > 0 ||
+      sendableTerminalContexts.length > 0 ||
+      (options.threadContextCount ?? 0) > 0,
   };
 }
 
@@ -409,6 +487,76 @@ export function threadHasStarted(
 ): boolean {
   const hasMessages = options?.hasMessages ?? (thread?.messages.length ?? 0) > 0;
   return Boolean(thread && (thread.latestTurn !== null || hasMessages || thread.session !== null));
+}
+
+export function shouldClosePreviewMiniPlayer(input: {
+  readonly hasAuthoritativeServerState: boolean;
+  readonly sameTabOpenInPanel: boolean;
+  readonly tabExists: boolean;
+}): boolean {
+  return input.hasAuthoritativeServerState && !input.tabExists;
+}
+
+export function shouldRenderPreviewMiniPlayer(input: {
+  readonly source: PreviewMiniPlayerSource | null;
+  readonly panelOpen: boolean;
+  readonly panelSurface: RightPanelSurface | null;
+}): boolean {
+  if (input.source === null) return false;
+  if (input.source.kind === "browser") {
+    return !(
+      input.panelOpen &&
+      input.panelSurface?.kind === "preview" &&
+      input.panelSurface.resourceId === input.source.tabId
+    );
+  }
+  return !(
+    input.panelOpen &&
+    input.panelSurface?.kind === "device" &&
+    input.panelSurface.target?.hostId === input.source.hostId &&
+    input.panelSurface.target.deviceId === input.source.deviceId
+  );
+}
+
+export function getCopilotResumeCommand(
+  thread: Pick<Thread, "modelSelection" | "session"> | null,
+): string | null {
+  if (!thread) return null;
+  const session = thread.session;
+  if (!session) return null;
+  const isCopilotSession =
+    session.provider === "copilot" ||
+    session.providerInstanceId === "copilot" ||
+    thread.modelSelection.instanceId === "copilot";
+  if (!isCopilotSession) return null;
+
+  const resumeCursor = session.resumeCursor;
+  if (
+    typeof resumeCursor !== "object" ||
+    resumeCursor === null ||
+    !("sessionId" in resumeCursor) ||
+    typeof resumeCursor.sessionId !== "string"
+  ) {
+    return null;
+  }
+  const sessionId = resumeCursor.sessionId.trim();
+  return sessionId.length > 0 ? `copilot --resume=${sessionId}` : null;
+}
+
+export const SCROLL_TO_BOTTOM_THRESHOLD_PX = 8;
+
+type ScrollAtEndMetrics = Pick<
+  LegendListState,
+  "contentLength" | "isAtEnd" | "scroll" | "scrollLength"
+>;
+
+export function isScrollMetricsAtEnd(
+  metrics: ScrollAtEndMetrics,
+  thresholdPx = SCROLL_TO_BOTTOM_THRESHOLD_PX,
+): boolean {
+  if (metrics.isAtEnd) return true;
+  const remainingDistance = metrics.contentLength - metrics.scroll - metrics.scrollLength;
+  return Number.isFinite(remainingDistance) && remainingDistance <= thresholdPx;
 }
 
 export function resolveDraftCanonicalThreadRef(

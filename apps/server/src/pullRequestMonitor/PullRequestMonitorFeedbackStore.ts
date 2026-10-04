@@ -674,7 +674,10 @@ export const PullRequestMonitorFeedbackStore = {
     const updateDelivery: PullRequestMonitorFeedbackStoreApi["updateDelivery"] = (delivery) =>
       sql`
         UPDATE pull_request_monitor_feedback_deliveries
-        SET status = ${delivery.status},
+        SET target_thread_id = ${delivery.targetThreadId},
+            command_id = ${delivery.commandId},
+            message_id = ${delivery.messageId},
+            status = ${delivery.status},
             attempt_count = ${delivery.attemptCount},
             last_error = ${delivery.lastError},
             next_attempt_at = ${delivery.nextAttemptAt},

@@ -6,8 +6,10 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationThread,
   ProviderDriverKind,
+  ProviderInstanceId,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -16,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import {
   checkpointBaselineRefForThreadTurn,
@@ -39,6 +41,9 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import { isTerminalOrchestrationSessionStatus } from "@t3tools/shared/threadBusyState";
+import { projectThreadContextForProvider } from "@t3tools/shared/threadContext";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import { WorkspaceOwnershipRepositoryLive } from "../../persistence/Layers/WorkspaceOwnership.ts";
 import {
@@ -212,6 +217,7 @@ const make = Effect.gen(function* () {
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const serverEnvironment = yield* ServerEnvironment;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
@@ -696,6 +702,22 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // Reference-only thread context: inline refs become identity markers plus a
+  // read-only history pointer. The transcript is never injected eagerly, and
+  // records scoped to another environment never bind.
+  const resolveProviderPromptText = Effect.fnUntraced(function* (message: {
+    readonly text: string;
+    readonly context?: OrchestrationMessageContext | undefined;
+  }) {
+    if (message.context === undefined) return message.text;
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
+    return projectThreadContextForProvider({
+      text: message.text,
+      records: message.context.records,
+      environmentId,
+    });
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
@@ -841,9 +863,8 @@ const make = Effect.gen(function* () {
     }
 
     const sourceSession = sourceThread.session;
-    if (!sourceSession || sourceSession.status === "stopped") {
-      const detail = `Source thread '${event.payload.sourceThreadId}' has no active provider session to fork.`;
-      yield* setThreadSession({
+    const failFork = (summary: string, detail: string) =>
+      setThreadSession({
         threadId: event.payload.threadId,
         session: {
           threadId: event.payload.threadId,
@@ -858,45 +879,93 @@ const make = Effect.gen(function* () {
           updatedAt: event.payload.createdAt,
         },
         createdAt: event.payload.createdAt,
-      });
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.session.fork.failed",
-        summary: "Provider fork failed",
-        detail,
-        turnId: null,
-        createdAt: event.payload.createdAt,
-      });
+      }).pipe(
+        Effect.flatMap(() =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.session.fork.failed",
+            summary,
+            detail,
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+
+    if (
+      !sourceSession ||
+      sourceSession.status === "stopped" ||
+      sourceSession.providerName === null
+    ) {
+      const status = sourceSession?.status ?? "missing";
+      return yield* failFork(
+        "Provider fork failed",
+        `Source provider session status is '${status}'; no active provider session is available to fork.`,
+      );
     }
 
     const sourceAssistantTurnCount = assistantTurnCount(sourceThread.messages);
-    if (event.payload.targetTurnCount !== sourceAssistantTurnCount) {
-      const detail =
-        "Copilot native forking currently supports only the latest completed assistant response. Mid-conversation forks keep visible T3 history but cannot safely reuse provider context.";
-      yield* setThreadSession({
-        threadId: event.payload.threadId,
-        session: {
-          threadId: event.payload.threadId,
-          status: "error",
-          providerName: sourceSession.providerName,
-          ...(sourceSession.providerInstanceId !== undefined
-            ? { providerInstanceId: sourceSession.providerInstanceId }
-            : {}),
-          runtimeMode: targetThread.runtimeMode,
-          activeTurnId: null,
-          lastError: detail,
-          updatedAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.session.fork.failed",
-        summary: "Provider fork unavailable",
-        detail,
-        turnId: null,
-        createdAt: event.payload.createdAt,
-      });
+    if (event.payload.targetTurnCount > sourceAssistantTurnCount) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        "Source run status is 'rolled-back'; the selected turn is no longer present in the source thread.",
+      );
+    }
+
+    if (
+      sourceSession.status === "running" ||
+      sourceSession.activeTurnId !== null ||
+      sourceThread.latestTurn?.state === "running"
+    ) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        "Source run status is 'running'; only provider-finished runs can be forked.",
+      );
+    }
+
+    const capabilities = yield* providerService.getCapabilities(
+      sourceSession.providerInstanceId ?? ProviderInstanceId.make(sourceSession.providerName),
+    );
+    // Capabilities are declared, never inferred: an adapter that does not
+    // declare fork support cannot fork, so a missing flag is a refusal rather
+    // than a call that fails after the fork thread already exists.
+    if (capabilities.canForkThread !== true) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        `Provider '${sourceSession.providerName}' does not support forking a chat, so the fork keeps its visible history but has no provider session.`,
+      );
+    }
+
+    const canForkFromTurn = capabilities.canForkFromTurn === true;
+    if (!canForkFromTurn && event.payload.targetTurnCount !== sourceAssistantTurnCount) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        `Provider '${sourceSession.providerName}' can only fork a whole chat, so forking from an earlier turn would hand the model context you cannot see.`,
+      );
+    }
+
+    const sourceTurnIds = new Set<string>();
+    let targetTurnIndex = -1;
+    for (const message of sourceThread.messages) {
+      if (message.turnId === null || sourceTurnIds.has(message.turnId)) continue;
+      sourceTurnIds.add(message.turnId);
+      if (message.turnId === event.payload.targetTurnId) {
+        targetTurnIndex = sourceTurnIds.size - 1;
+      }
+    }
+    const forkAnchor =
+      canForkFromTurn && event.payload.targetTurnId !== null && targetTurnIndex >= 0
+        ? { turnId: event.payload.targetTurnId, turnIndex: targetTurnIndex }
+        : undefined;
+    if (
+      canForkFromTurn &&
+      event.payload.targetTurnCount !== sourceAssistantTurnCount &&
+      forkAnchor === undefined
+    ) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        `Provider '${sourceSession.providerName}' can fork this chat, but the selected turn is missing from the source history, so the fork would start from a different point than you chose.`,
+      );
     }
 
     yield* setThreadSession({
@@ -932,6 +1001,7 @@ const make = Effect.gen(function* () {
           ? { providerInstanceId: sourceSession.providerInstanceId }
           : {}),
         ...(cwd !== undefined ? { cwd } : {}),
+        ...(forkAnchor !== undefined ? { forkAnchor } : {}),
         modelSelection: targetThread.modelSelection,
         interactionMode: targetThread.interactionMode,
         runtimeMode: targetThread.runtimeMode,
@@ -1090,7 +1160,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: yield* resolveProviderPromptText(message),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
@@ -1121,6 +1191,12 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         session: {
           ...sessionBeforeTurn.session,
+          // A terminal status here describes the *previous* turn, and every
+          // reader treats terminal-with-no-active-turn as settled — so keeping it
+          // retired this start before the provider was called.
+          status: isTerminalOrchestrationSessionStatus(sessionBeforeTurn.session.status)
+            ? "starting"
+            : sessionBeforeTurn.session.status,
           activeMessageId: event.payload.messageId,
           updatedAt: event.payload.createdAt,
         },
@@ -1496,7 +1572,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  // Per-thread FIFO: one thread's slow turn start (checkpoint, session boot)
+  // must not delay every other thread. A fork also orders against its source.
+  const worker = yield* makeKeyedDrainableWorker(processDomainEventSafely, (event) =>
+    event.type === "thread.provider-fork-requested"
+      ? [event.payload.threadId, event.payload.sourceThreadId]
+      : [event.payload.threadId],
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {

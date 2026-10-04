@@ -99,6 +99,11 @@ jobs:
       - name: Build desktop pipeline
         run: pnpm build:desktop
 
+      # Spawns the built server bundle, so it must follow the build rather than
+      # the unit suite, which runs before any artifact exists.
+      - name: Desktop connect integration
+        run: pnpm test:desktop-connect
+
       - name: Verify preload bundle output
         run: |
           test -f apps/desktop/dist-electron/preload.cjs

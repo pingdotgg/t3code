@@ -453,8 +453,10 @@ export const PullRequestListStatsResult = Schema.Struct({
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
 /**
- * Forget what the server has cached, so the next read asks the host. With a reference it
- * forgets that one change request's detail and diff; without one it forgets the listings.
+ * Forget what the server has cached, so the next read asks the host. With a reference it removes
+ * that change request's persisted detail and activity reads and strands its in-memory detail,
+ * activity, and diff entries. Without one it clears all persisted pull-request reads and refreshes
+ * workspace listings and cached viewer identities.
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
  * presses is the only thing that spends host requests — every ordinary read shares.
  */

@@ -1,18 +1,26 @@
 import type { OrchestrationQueuedTurn, QueuedTurnId } from "@t3tools/contracts";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, PauseCircle, Pencil, Trash2, X } from "lucide-react";
 import { memo } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 
 interface QueuedMessagesPanelProps {
+  queuedTurnStatuses?: ReadonlyMap<QueuedTurnId, "submitting" | "accepted"> | undefined;
   policyBlocks?: ReadonlyMap<QueuedTurnId, string> | undefined;
   queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>;
+  /**
+   * Set while crash recovery holds the queue. Nothing drains until the user
+   * releases it, so the panel must say so and offer the release.
+   */
+  queueHeldAt: string | null;
   editingQueuedTurnId: QueuedTurnId | null;
   editingText: string;
-  onStartEditingQueuedTurn: (queuedTurn: OrchestrationQueuedTurn) => void;
+  onStartEditingQueuedTurn?: ((queuedTurn: OrchestrationQueuedTurn) => void) | undefined;
   onCancelEditingQueuedTurn: () => void;
   onSaveEditingQueuedTurn: () => void;
   onDeleteQueuedTurn: (queuedTurnId: QueuedTurnId) => void;
+  onMoveQueuedTurn: (queuedTurnId: QueuedTurnId, direction: -1 | 1) => void;
+  onReleaseQueue: () => void;
 }
 
 /**
@@ -44,13 +52,17 @@ function attachmentLabel(queuedTurn: OrchestrationQueuedTurn): string | null {
 
 export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   policyBlocks,
+  queuedTurnStatuses,
   queuedTurns,
+  queueHeldAt,
   editingQueuedTurnId,
   editingText,
   onStartEditingQueuedTurn,
   onCancelEditingQueuedTurn,
   onSaveEditingQueuedTurn,
   onDeleteQueuedTurn,
+  onMoveQueuedTurn,
+  onReleaseQueue,
 }: QueuedMessagesPanelProps) {
   const nextEligibleId = queuedTurns.find(
     (turn) => !policyBlocks?.has(turn.id) && turn.origin?.kind !== "child-nudge",
@@ -58,7 +70,11 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   const visibleQueuedTurns = queuedTurns.flatMap((queuedTurn, queueIndex) =>
     isHiddenQueuedTurn(queuedTurn) ? [] : [{ queuedTurn, queueIndex }],
   );
-  if (visibleQueuedTurns.length === 0) {
+  // The hold banner must render even with no visible rows: crash recovery holds
+  // queues whose only turns are hidden ones (a child nudge, a healthy workspace
+  // handoff), and those live on dedicated surfaces that have no resume control.
+  // Returning null here would leave such a queue held with no way to release it.
+  if (visibleQueuedTurns.length === 0 && queueHeldAt === null) {
     return null;
   }
 
@@ -66,15 +82,20 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
       <ul className="flex flex-col gap-0.5">
         {visibleQueuedTurns.map(({ queuedTurn, queueIndex }) => {
-          const isEditing = editingQueuedTurnId === queuedTurn.id;
+          const isEditing =
+            onStartEditingQueuedTurn !== undefined && editingQueuedTurnId === queuedTurn.id;
           const isFailed = queuedTurn.failedAt !== null;
+          const isPending = queuedTurnStatuses?.has(queuedTurn.id) === true;
+          const isSubmitting = queuedTurnStatuses?.get(queuedTurn.id) === "submitting";
           const policyBlock = policyBlocks?.get(queuedTurn.id);
           const meta = attachmentLabel(queuedTurn);
-          const label = policyBlock
-            ? "Pending"
-            : queuedTurn.id === nextEligibleId
-              ? "Up next"
-              : `Queued ${queueIndex + 1}`;
+          const label = isSubmitting
+            ? "Queuing…"
+            : policyBlock
+              ? "Pending"
+              : queuedTurn.id === nextEligibleId
+                ? "Up next"
+                : `Queued ${queueIndex + 1}`;
           return (
             <li
               key={queuedTurn.id}
@@ -115,6 +136,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
               ) : (
                 <div className="flex items-center gap-2.5">
                   <span
+                    role={isSubmitting ? "status" : undefined}
                     className={cn(
                       "composer-input-font-secondary w-16 shrink-0 font-medium text-muted-foreground",
                       isFailed ? "text-destructive" : null,
@@ -135,9 +157,34 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       type="button"
                       size="icon-xs"
                       variant="ghost"
+                      disabled={queueIndex === 0 || (queuedTurnStatuses?.size ?? 0) > 0}
+                      aria-label="Move queued message up"
+                      title="Move up"
+                      onClick={() => onMoveQueuedTurn(queuedTurn.id, -1)}
+                    >
+                      <ArrowUp />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={
+                        queueIndex === queuedTurns.length - 1 || (queuedTurnStatuses?.size ?? 0) > 0
+                      }
+                      aria-label="Move queued message down"
+                      title="Move down"
+                      onClick={() => onMoveQueuedTurn(queuedTurn.id, 1)}
+                    >
+                      <ArrowDown />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
                       aria-label="Edit queued message"
+                      disabled={isPending || onStartEditingQueuedTurn === undefined}
                       title="Edit"
-                      onClick={() => onStartEditingQueuedTurn(queuedTurn)}
+                      onClick={() => onStartEditingQueuedTurn?.(queuedTurn)}
                     >
                       <Pencil />
                     </Button>
@@ -146,6 +193,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       size="icon-xs"
                       variant="ghost"
                       aria-label="Delete queued message"
+                      disabled={isPending}
                       title="Delete"
                       onClick={() => onDeleteQueuedTurn(queuedTurn.id)}
                     >
@@ -168,6 +216,17 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
           );
         })}
       </ul>
+      {queueHeldAt !== null ? (
+        <div className="mt-1.5 flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
+          <PauseCircle className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="composer-input-font-secondary min-w-0 flex-1 text-muted-foreground">
+            Queue held after restart. These messages will not run until you resume them.
+          </span>
+          <Button type="button" size="xs" onClick={onReleaseQueue}>
+            Resume queue
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 });

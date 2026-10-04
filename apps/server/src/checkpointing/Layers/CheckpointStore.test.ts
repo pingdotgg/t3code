@@ -753,6 +753,54 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
     );
   });
 
+  describe("captureCheckpoint", () => {
+    it.effect("captures the exact worktree even when the index holds stale stat data", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-stale-index"),
+          0,
+        );
+
+        yield* writeTextFile(path.join(tmp, "racy.txt"), "aaaa\n");
+        yield* git(tmp, ["add", "racy.txt"]);
+        // Same size, same mtime second: only a content check can see this edit.
+        yield* writeTextFile(path.join(tmp, "racy.txt"), "bbbb\n");
+        yield* fileSystem.remove(path.join(tmp, "README.md"));
+        yield* writeTextFile(path.join(tmp, "untracked.txt"), "untracked\n");
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        expect(yield* git(tmp, ["show", `${checkpointRef}:racy.txt`])).toBe("bbbb");
+        expect(yield* git(tmp, ["ls-tree", "--name-only", checkpointRef])).toBe(
+          "racy.txt\nuntracked.txt",
+        );
+        expect(yield* git(tmp, ["show", ":racy.txt"])).toBe("aaaa");
+      }),
+    );
+
+    it.effect("captures a repository whose index has never been written", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const core = yield* GitCore;
+        yield* core.initRepo({ cwd: tmp });
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-no-index"),
+          0,
+        );
+        yield* writeTextFile(path.join(tmp, "first.txt"), "first\n");
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        expect(yield* git(tmp, ["show", `${checkpointRef}:first.txt`])).toBe("first");
+      }),
+    );
+  });
+
   describe("restoreCheckpoint", () => {
     it.effect("restores staged, unstaged, and untracked workspace state separately", () =>
       Effect.gen(function* () {

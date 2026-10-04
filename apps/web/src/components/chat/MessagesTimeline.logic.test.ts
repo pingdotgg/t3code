@@ -14,6 +14,7 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveExternalActionUrl,
+  selectTimelineThreadContextChips,
   shouldHandleInternalActionClick,
   stabilizeReadonlyStringSet,
   stabilizeResponseMetaByTurnId,
@@ -131,6 +132,7 @@ describe("compaction timeline boundaries", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
   it("splits work groups around each compaction instead of folding it into a work log", () => {
@@ -508,6 +510,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const assistantRows = rows.filter(
@@ -614,6 +617,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const reasoningRows = rows.filter(
@@ -673,6 +677,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.some((row) => row.kind === "reasoning")).toBe(false);
@@ -713,6 +718,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const workRow = rows.find(
@@ -785,6 +791,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.id)).toEqual([
@@ -842,6 +849,7 @@ describe("deriveMessagesTimelineRows", () => {
         ["assistant-1" as never, assistantTurnDiffSummary],
       ]),
       revertTurnCountByUserMessageId: new Map([["user-1" as never, 1]]),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const userRow = rows.find(
@@ -926,6 +934,7 @@ describe("computeStableMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const initial = computeStableMessagesTimelineRows(rows, {
@@ -978,6 +987,7 @@ describe("computeStableMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const initial = computeStableMessagesTimelineRows(firstRows, {
@@ -1026,6 +1036,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: "2026-01-01T00:00:00Z",
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const initial = computeStableMessagesTimelineRows(buildRows(), {
@@ -1092,6 +1103,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: null,
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const firstRows = buildRows();
@@ -1197,6 +1209,7 @@ describe("computeStableMessagesTimelineRows", () => {
         activeTurnStartedAt: streamingAssistant.createdAt,
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
+        crossThreadSendsBySourceMessageId: new Map(),
       });
 
     const initial = computeStableMessagesTimelineRows(buildRows("Streaming"), {
@@ -1338,6 +1351,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
   it("renders the marker as a transition row and hides the boilerplate continuation", () => {
@@ -1392,6 +1406,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map([["continuation-1" as never, 2]]),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     const markerRow = rows.find(
@@ -1494,6 +1509,7 @@ describe("workspace handoff rows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
+      crossThreadSendsBySourceMessageId: new Map(),
     });
 
     expect(rows.map((row) => row.kind)).toEqual(["message", "message"]);
@@ -1746,5 +1762,53 @@ describe("deriveRevertTurnCountByUserMessageId", () => {
       { "turn-1": 1 },
     );
     expect([...result]).toEqual([[MessageId.make("user-1"), 0]]);
+  });
+});
+
+describe("timeline thread context chips", () => {
+  const record = (contextId: string, threadId: string, title: string) => ({
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId,
+    label: `Label ${threadId}`,
+    environmentId: "env-a",
+    threadId,
+    title,
+  });
+
+  it("keys chips by context identity with live record titles in first-reference order", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "see [Beta](t3-context://v1/thread/ctx-b) and [Alpha](t3-context://v1/thread/ctx-a)",
+      context: {
+        records: [
+          record("ctx-a", "thread-a", "Alpha live"),
+          record("ctx-b", "thread-b", "Beta live"),
+        ] as never,
+      },
+    });
+    expect(chips.map((chip) => chip.key)).toEqual(["ctx-b", "ctx-a"]);
+    expect(chips.map((chip) => chip.title)).toEqual(["Beta live", "Alpha live"]);
+    expect(chips.every((chip) => chip.unavailable === false)).toBe(true);
+  });
+
+  it("marks dangling references unavailable instead of rendering misleading titles", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "see [Ghost](t3-context://v1/thread/ctx-ghost)",
+      context: { records: [] },
+    });
+    expect(chips).toEqual([{ key: "ctx-ghost", title: "Ghost", unavailable: true }]);
+  });
+
+  it("dedups repeated references and never surfaces unreferenced records", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "[A](t3-context://v1/thread/ctx-a) then [A](t3-context://v1/thread/ctx-a)",
+      context: {
+        records: [
+          record("ctx-a", "thread-a", "A live"),
+          record("ctx-unreferenced", "thread-u", "Unreferenced"),
+        ] as never,
+      },
+    });
+    expect(chips).toEqual([{ key: "ctx-a", title: "A live", unavailable: false }]);
   });
 });

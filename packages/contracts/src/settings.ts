@@ -52,6 +52,10 @@ export const DEFAULT_CODE_FONT_SIZE: FontSize = 13 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_STATUS_LINE_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
+export const FILE_PREVIEW_LINE_SPACING_VALUES = [1.2, 1.35, 1.5, 1.65, 1.8] as const;
+export const FilePreviewLineSpacing = Schema.Literals(FILE_PREVIEW_LINE_SPACING_VALUES);
+export type FilePreviewLineSpacing = typeof FilePreviewLineSpacing.Type;
+export const DEFAULT_FILE_PREVIEW_LINE_SPACING: FilePreviewLineSpacing = 1.5;
 export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 11 as FontSize;
 /** Sidebar metadata (project, worktree, branch, PR, timestamps) sits a deliberate step
     below the thread title so the title stays the row's anchor. */
@@ -60,6 +64,9 @@ export const DEFAULT_SIDEBAR_META_FONT_SIZE: FontSize = 10 as FontSize;
     sidebar used before this became a setting. */
 export const DEFAULT_SIDEBAR_ICON_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
+/** Under-composer metadata (workspace, branch, pull request). 11px keeps it a
+    deliberate step below the composer's own controls. */
+export const DEFAULT_COMPOSER_META_FONT_SIZE: FontSize = 11 as FontSize;
 
 export const MessagePreviewLineCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(30),
@@ -102,6 +109,7 @@ export const DEFAULT_UI_DENSITY: UiDensity = "default";
 export interface DensityFontSizes {
   readonly chatFontSize: FontSize;
   readonly codeFontSize: FontSize;
+  readonly composerMetaFontSize: FontSize;
   readonly inputFontSize: FontSize;
   readonly sidebarFontSize: FontSize;
   readonly sidebarMetaFontSize: FontSize;
@@ -123,6 +131,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   compact: {
     chatFontSize: 13 as FontSize,
     codeFontSize: 11 as FontSize,
+    composerMetaFontSize: 10 as FontSize,
     inputFontSize: 13 as FontSize,
     sidebarFontSize: 10 as FontSize,
     sidebarMetaFontSize: 9 as FontSize,
@@ -133,6 +142,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   default: {
     chatFontSize: DEFAULT_CHAT_FONT_SIZE,
     codeFontSize: DEFAULT_CODE_FONT_SIZE,
+    composerMetaFontSize: DEFAULT_COMPOSER_META_FONT_SIZE,
     inputFontSize: DEFAULT_INPUT_FONT_SIZE,
     sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
     sidebarMetaFontSize: DEFAULT_SIDEBAR_META_FONT_SIZE,
@@ -143,6 +153,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   comfortable: {
     chatFontSize: 15 as FontSize,
     codeFontSize: 14 as FontSize,
+    composerMetaFontSize: 12 as FontSize,
     inputFontSize: 15 as FontSize,
     sidebarFontSize: 12 as FontSize,
     sidebarMetaFontSize: 11 as FontSize,
@@ -153,6 +164,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   spacious: {
     chatFontSize: 16 as FontSize,
     codeFontSize: 15 as FontSize,
+    composerMetaFontSize: 13 as FontSize,
     inputFontSize: 16 as FontSize,
     sidebarFontSize: 13 as FontSize,
     sidebarMetaFontSize: 12 as FontSize,
@@ -287,6 +299,12 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_STATUS_LINE_FONT_SIZE)),
   ),
   codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
+  composerMetaFontSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_META_FONT_SIZE)),
+  ),
+  filePreviewLineSpacing: FilePreviewLineSpacing.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FILE_PREVIEW_LINE_SPACING)),
+  ),
   inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   messagePreviewLineLimits: MessagePreviewLineLimits.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS)),
@@ -550,6 +568,9 @@ export const ServerSettings = Schema.Struct({
   autoArchiveReviewThreadsOnMerge: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  autoArchiveSettledAfterDays: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(2)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -788,6 +809,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoArchiveReviewThreadsOnMerge: Schema.optionalKey(Schema.Boolean),
+  autoArchiveSettledAfterDays: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(Schema.String),
   // Server settings
@@ -805,6 +827,9 @@ export const ServerSettingsPatch = Schema.Struct({
   agentWorkflows: Schema.optionalKey(AgentWorkflowSettingsPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   delegatedThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  // Full-replace (including null to clear): unlike the non-nullable rows
+  // above, the global default has a meaningful empty state.
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   delegationIdleStallThresholdMs: Schema.optionalKey(
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
   ),
@@ -855,6 +880,8 @@ export const ClientSettingsPatch = Schema.Struct({
   chatFontSize: Schema.optionalKey(FontSize),
   statusLineFontSize: Schema.optionalKey(FontSize),
   codeFontSize: Schema.optionalKey(FontSize),
+  composerMetaFontSize: Schema.optionalKey(FontSize),
+  filePreviewLineSpacing: Schema.optionalKey(FilePreviewLineSpacing),
   inputFontSize: Schema.optionalKey(FontSize),
   messagePreviewLineLimits: Schema.optionalKey(MessagePreviewLineLimits),
   sidebarFontSize: Schema.optionalKey(FontSize),
@@ -945,3 +972,18 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 
 export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+
+export const MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS = 1;
+
+export const MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS = 90;
+
+export const AutoArchiveSettledAfterDays = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+    maximum: MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  }),
+);
+
+export type AutoArchiveSettledAfterDays = typeof AutoArchiveSettledAfterDays.Type;
+
+export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS: AutoArchiveSettledAfterDays = 2;

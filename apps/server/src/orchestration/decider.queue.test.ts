@@ -95,6 +95,49 @@ function makeHandoffCommand(input: {
   } as const;
 }
 
+/**
+ * A thread with three queued messages, each created through the real decider so
+ * the queue carries the positions the create path assigns.
+ */
+async function makeQueuedReadModel(input: {
+  readonly now: string;
+  readonly threadId: ThreadId;
+  readonly count: number;
+}) {
+  let readModel = await makeThreadReadModel({ now: input.now, threadId: input.threadId });
+  const queuedTurnIds: QueuedTurnId[] = [];
+  for (let index = 0; index < input.count; index += 1) {
+    const id = asQueuedTurnId(`queued-${index}`);
+    const createdAt = new Date(Date.parse(input.now) + index * 1_000).toISOString();
+    const planned = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.create",
+          commandId: CommandId.make(`cmd-queue-${index}`),
+          threadId: input.threadId,
+          queuedTurnId: id,
+          message: {
+            messageId: asMessageId(`message-${index}`),
+            role: "user",
+            text: `queued ${index}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        },
+        readModel,
+      }),
+    );
+    const events = Array.isArray(planned) ? planned : [planned];
+    for (const event of events) {
+      readModel = await Effect.runPromise(projectEvent(readModel, event as OrchestrationEvent));
+    }
+    queuedTurnIds.push(id);
+  }
+  return { readModel, queuedTurnIds };
+}
+
 describe("decider queued turns", () => {
   it("preserves pull request monitor provenance on queued turns", async () => {
     const now = "2026-03-01T00:00:00.000Z";
@@ -169,116 +212,140 @@ describe("decider queued turns", () => {
     });
   });
 
-  it.each(["thread.turn.start", "thread.queued-turn.create"] as const)(
-    "derives cross-thread provenance at acceptance for %s",
-    async (type) => {
-      const now = "2026-03-01T00:00:00.000Z";
-      const sourceThreadId = asThreadId("thread-source");
-      const nestedThreadId = asThreadId("thread-nested");
-      const sourceMessageId = asMessageId("message-source");
-      const source = await makeThreadReadModel({ now, threadId: sourceThreadId });
-      const withSourceMessage = await Effect.runPromise(
-        projectEvent(source, {
-          sequence: 2,
-          eventId: asEventId("evt-source-message"),
-          aggregateKind: "thread",
-          aggregateId: sourceThreadId,
-          type: "thread.message-sent",
-          occurredAt: now,
-          commandId: CommandId.make("cmd-source-message"),
-          causationEventId: null,
-          correlationId: CommandId.make("cmd-source-message"),
-          metadata: {},
-          payload: {
+  /**
+   * A busy source thread running turn `turn-source` on message `message-source`,
+   * plus an idle-or-busy sibling thread in the same project, ready to receive a
+   * cross-thread command from it.
+   */
+  async function makeCrossThreadSendReadModel(input: {
+    readonly now: string;
+    readonly destinationBusy: boolean;
+  }) {
+    const sourceThreadId = asThreadId("thread-source");
+    const destinationThreadId = asThreadId("thread-nested");
+    const sourceMessageId = asMessageId("message-source");
+    const source = await makeThreadReadModel({ now: input.now, threadId: sourceThreadId });
+    const withSourceMessage = await Effect.runPromise(
+      projectEvent(source, {
+        sequence: 2,
+        eventId: asEventId("evt-source-message"),
+        aggregateKind: "thread",
+        aggregateId: sourceThreadId,
+        type: "thread.message-sent",
+        occurredAt: input.now,
+        commandId: CommandId.make("cmd-source-message"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-source-message"),
+        metadata: {},
+        payload: {
+          threadId: sourceThreadId,
+          messageId: sourceMessageId,
+          role: "user",
+          text: "Investigate the regression.",
+          turnId: null,
+          streaming: false,
+          createdAt: input.now,
+          updatedAt: input.now,
+        },
+      }),
+    );
+    const withActiveSource = await Effect.runPromise(
+      projectEvent(withSourceMessage, {
+        sequence: 3,
+        eventId: asEventId("evt-source-session"),
+        aggregateKind: "thread",
+        aggregateId: sourceThreadId,
+        type: "thread.session-set",
+        occurredAt: input.now,
+        commandId: CommandId.make("cmd-source-session"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-source-session"),
+        metadata: {},
+        payload: {
+          threadId: sourceThreadId,
+          session: {
             threadId: sourceThreadId,
-            messageId: sourceMessageId,
-            role: "user",
-            text: "Investigate the regression.",
-            turnId: null,
-            streaming: false,
-            createdAt: now,
-            updatedAt: now,
-          },
-        }),
-      );
-      const withActiveSource = await Effect.runPromise(
-        projectEvent(withSourceMessage, {
-          sequence: 3,
-          eventId: asEventId("evt-source-session"),
-          aggregateKind: "thread",
-          aggregateId: sourceThreadId,
-          type: "thread.session-set",
-          occurredAt: now,
-          commandId: CommandId.make("cmd-source-session"),
-          causationEventId: null,
-          correlationId: CommandId.make("cmd-source-session"),
-          metadata: {},
-          payload: {
-            threadId: sourceThreadId,
-            session: {
-              threadId: sourceThreadId,
-              status: "running",
-              providerName: "copilot",
-              runtimeMode: "approval-required",
-              activeTurnId: asTurnId("turn-source"),
-              activeMessageId: sourceMessageId,
-              lastError: null,
-              updatedAt: now,
-            },
-          },
-        }),
-      );
-      const readModel = await Effect.runPromise(
-        projectEvent(withActiveSource, {
-          sequence: 4,
-          eventId: asEventId("evt-nested-create"),
-          aggregateKind: "thread",
-          aggregateId: nestedThreadId,
-          type: "thread.created",
-          occurredAt: now,
-          commandId: CommandId.make("cmd-nested-create"),
-          causationEventId: null,
-          correlationId: CommandId.make("cmd-nested-create"),
-          metadata: {},
-          payload: {
-            threadId: nestedThreadId,
-            projectId: asProjectId("project-1"),
-            parentThreadId: sourceThreadId,
-            title: "Nested investigation",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("copilot"),
-              model: "gpt-5.6",
-            },
+            status: "running",
+            providerName: "copilot",
             runtimeMode: "approval-required",
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            pendingRuntimeMode: null,
-            branch: null,
-            worktreePath: null,
-            createdAt: now,
-            updatedAt: now,
+            activeTurnId: asTurnId("turn-source"),
+            activeMessageId: sourceMessageId,
+            lastError: null,
+            updatedAt: input.now,
           },
-        }),
-      );
-
-      const busyReadModel = {
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withActiveSource, {
+        sequence: 4,
+        eventId: asEventId("evt-nested-create"),
+        aggregateKind: "thread",
+        aggregateId: destinationThreadId,
+        type: "thread.created",
+        occurredAt: input.now,
+        commandId: CommandId.make("cmd-nested-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-nested-create"),
+        metadata: {},
+        payload: {
+          threadId: destinationThreadId,
+          projectId: asProjectId("project-1"),
+          parentThreadId: sourceThreadId,
+          title: "Nested investigation",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("copilot"),
+            model: "gpt-5.6",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          pendingRuntimeMode: null,
+          branch: null,
+          worktreePath: null,
+          createdAt: input.now,
+          updatedAt: input.now,
+        },
+      }),
+    );
+    return {
+      sourceThreadId,
+      destinationThreadId,
+      sourceMessageId,
+      readModel: {
         ...readModel,
         threads: readModel.threads.map((thread) =>
-          thread.id === nestedThreadId && type === "thread.queued-turn.create"
+          thread.id === destinationThreadId && input.destinationBusy
             ? {
                 ...thread,
                 session: {
-                  threadId: nestedThreadId,
+                  threadId: destinationThreadId,
                   status: "running" as const,
                   providerName: "copilot",
                   runtimeMode: "approval-required" as const,
                   activeTurnId: asTurnId("turn-destination"),
                   lastError: null,
-                  updatedAt: now,
+                  updatedAt: input.now,
                 },
               }
             : thread,
         ),
-      };
+      },
+    };
+  }
+
+  it.each(["thread.turn.start", "thread.queued-turn.create"] as const)(
+    "derives cross-thread provenance at acceptance for %s",
+    async (type) => {
+      const now = "2026-03-01T00:00:00.000Z";
+      const {
+        sourceThreadId,
+        destinationThreadId: nestedThreadId,
+        sourceMessageId,
+        readModel: busyReadModel,
+      } = await makeCrossThreadSendReadModel({
+        now,
+        destinationBusy: type === "thread.queued-turn.create",
+      });
       const command = {
         type,
         queuedTurnId: asQueuedTurnId("queued-cross-thread"),
@@ -380,6 +447,70 @@ describe("decider queued turns", () => {
           ),
         ).rejects.toThrow(/Cross-thread source/);
       }
+    },
+  );
+
+  it.each(["thread.turn.start", "thread.queued-turn.create"] as const)(
+    "records the send against the source message for %s",
+    async (type) => {
+      const now = "2026-03-01T00:00:00.000Z";
+      const { sourceThreadId, destinationThreadId, sourceMessageId, readModel } =
+        await makeCrossThreadSendReadModel({
+          now,
+          destinationBusy: type === "thread.queued-turn.create",
+        });
+      const messageId = asMessageId("message-destination");
+      const result = await Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type,
+            queuedTurnId: asQueuedTurnId("queued-record"),
+            commandId: CommandId.make("cmd-record"),
+            threadId: destinationThreadId,
+            message: { messageId, role: "user", text: "Find the root cause.", attachments: [] },
+            crossThreadSourceThreadId: sourceThreadId,
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: now,
+          },
+          readModel,
+        }),
+      );
+
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.at(-1)).toMatchObject({
+        type: "thread.cross-thread-send-recorded",
+        aggregateId: sourceThreadId,
+        payload: {
+          sourceThreadId,
+          sourceMessageId,
+          sourceTurnId: asTurnId("turn-source"),
+          destinationThreadId,
+          destinationThreadTitle: "Nested investigation",
+          destinationMessageId: messageId,
+          createdAt: now,
+        },
+      });
+      // The source-side record projects into the source thread's activities so
+      // the timeline can render a receipt under the sending message.
+      const sourceThreadIdBefore = sourceThreadId;
+      expect(
+        (
+          await Effect.runPromise(
+            projectEvent(readModel, {
+              ...events.at(-1)!,
+              sequence: 5,
+            }),
+          )
+        ).threads.find((thread) => thread.id === sourceThreadIdBefore)?.activities,
+      ).toEqual([
+        expect.objectContaining({
+          kind: "cross-thread.send",
+          tone: "info",
+          turnId: asTurnId("turn-source"),
+          payload: expect.objectContaining({ destinationThreadId }),
+        }),
+      ]);
     },
   );
 
@@ -1090,5 +1221,194 @@ describe("decider redundant workspace handoff", () => {
 
     const events = Array.isArray(result) ? result : [result];
     expect(events.map((event) => event.type)).toContain("thread.message-sent");
+  });
+});
+
+describe("queued turn queue hold and ordering", () => {
+  const now = "2026-03-01T00:00:00.000Z";
+
+  it("assigns appending positions so enqueue order is preserved", async () => {
+    const threadId = asThreadId("thread-queue-append");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    const positions = (readModel.threads[0]!.queuedTurns ?? []).map((turn) => [
+      turn.id,
+      turn.queuePosition,
+    ]);
+    expect(positions).toEqual([
+      [queuedTurnIds[0], 0],
+      [queuedTurnIds[1], 1],
+      [queuedTurnIds[2], 2],
+    ]);
+  });
+
+  it("holds a populated queue and is a no-op when already held", async () => {
+    const threadId = asThreadId("thread-queue-hold");
+    const { readModel } = await makeQueuedReadModel({ now, threadId, count: 2 });
+
+    const held = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    const heldEvents = Array.isArray(held) ? held : [held];
+    expect(heldEvents).toHaveLength(1);
+    expect(heldEvents[0]!.type).toBe("thread.queue-held");
+
+    const heldReadModel = await Effect.runPromise(
+      projectEvent(readModel, heldEvents[0] as OrchestrationEvent),
+    );
+    const again = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-again"),
+          threadId,
+          heldAt: now,
+        },
+        readModel: heldReadModel,
+      }),
+    );
+    // Crash recovery re-sweeps on every boot; re-holding must not fail.
+    expect(Array.isArray(again) ? again : [again]).toEqual([]);
+  });
+
+  it("does not hold an empty queue", async () => {
+    const threadId = asThreadId("thread-queue-hold-empty");
+    const readModel = await makeThreadReadModel({ now, threadId });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-empty"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    expect(Array.isArray(result) ? result : [result]).toEqual([]);
+  });
+
+  it("releases only a held queue", async () => {
+    const threadId = asThreadId("thread-queue-release");
+    const { readModel } = await makeQueuedReadModel({ now, threadId, count: 1 });
+
+    const notHeld = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.release",
+          commandId: CommandId.make("cmd-release-unheld"),
+          threadId,
+          releasedAt: now,
+        },
+        readModel,
+      }),
+    );
+    expect(Array.isArray(notHeld) ? notHeld : [notHeld]).toEqual([]);
+
+    const held = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-for-release"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    const heldEvents = Array.isArray(held) ? held : [held];
+    const heldReadModel = await Effect.runPromise(
+      projectEvent(readModel, heldEvents[0] as OrchestrationEvent),
+    );
+
+    const released = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.release",
+          commandId: CommandId.make("cmd-release"),
+          threadId,
+          releasedAt: now,
+        },
+        readModel: heldReadModel,
+      }),
+    );
+    const releasedEvents = Array.isArray(released) ? released : [released];
+    expect(releasedEvents).toHaveLength(1);
+    expect(releasedEvents[0]!.type).toBe("thread.queue-released");
+  });
+
+  it("reorders the whole queue and persists the new order", async () => {
+    const threadId = asThreadId("thread-queue-reorder");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    const reordered = queuedTurnIds.toReversed();
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.reorder",
+          commandId: CommandId.make("cmd-reorder"),
+          threadId,
+          orderedQueuedTurnIds: reordered,
+          reorderedAt: now,
+        },
+        readModel,
+      }),
+    );
+    const events = Array.isArray(result) ? result : [result];
+    expect(events[0]!.type).toBe("thread.queued-turn-reordered");
+
+    const afterReorder = await Effect.runPromise(
+      projectEvent(readModel, events[0] as OrchestrationEvent),
+    );
+    expect((afterReorder.threads[0]!.queuedTurns ?? []).map((turn) => turn.id)).toEqual(reordered);
+  });
+
+  it("rejects a partial order so a restart cannot rebuild a different one", async () => {
+    const threadId = asThreadId("thread-queue-reorder-partial");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.reorder",
+            commandId: CommandId.make("cmd-reorder-partial"),
+            threadId,
+            orderedQueuedTurnIds: queuedTurnIds.slice(0, 2),
+            reorderedAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow(/every queued turn exactly once/);
+  });
+
+  it("rejects an order that repeats a queued turn", async () => {
+    const threadId = asThreadId("thread-queue-reorder-duplicate");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 2 });
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.reorder",
+            commandId: CommandId.make("cmd-reorder-duplicate"),
+            threadId,
+            orderedQueuedTurnIds: [queuedTurnIds[0]!, queuedTurnIds[0]!],
+            reorderedAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow(/every queued turn exactly once/);
   });
 });

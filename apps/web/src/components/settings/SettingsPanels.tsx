@@ -40,7 +40,11 @@ import {
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
+  DEFAULT_FILE_PREVIEW_LINE_SPACING,
   DEFAULT_UNIFIED_SETTINGS,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_HEADER_SHOW_PROJECT_SCRIPTS,
   DEFAULT_HEADER_SHOW_OPEN_IN,
   DEFAULT_HEADER_SHOW_GIT_ACTIONS,
@@ -67,8 +71,10 @@ import {
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+  FILE_PREVIEW_LINE_SPACING_VALUES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
+  type FilePreviewLineSpacing,
   type FontSize,
   type MessagePreviewLineCount,
   type SidebarRowSpacing,
@@ -128,6 +134,8 @@ import {
   buildArchivedThreadGroupsFromSnapshots,
   filterArchivedThreadGroups,
   mergeCollaborativeAcceptancePolicy,
+  parseAutoArchiveSettledAfterDays,
+  resolveAutoArchiveSettledAfterDays,
   runSequentiallySettled,
   type CollaborativeAcceptancePolicyPatch,
 } from "./SettingsPanels.logic";
@@ -626,6 +634,21 @@ export function isFontSize(value: unknown): value is FontSize {
   return FONT_SIZE_OPTIONS.some((option) => String(option.value) === String(value));
 }
 
+export const FILE_PREVIEW_LINE_SPACING_OPTIONS: ReadonlyArray<{
+  readonly value: FilePreviewLineSpacing;
+  readonly label: string;
+}> = [
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[0], label: "Compact" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[1], label: "Comfortable" },
+  { value: DEFAULT_FILE_PREVIEW_LINE_SPACING, label: "Default" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[3], label: "Relaxed" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[4], label: "Loose" },
+];
+
+export function isFilePreviewLineSpacing(value: unknown): value is FilePreviewLineSpacing {
+  return FILE_PREVIEW_LINE_SPACING_OPTIONS.some((option) => option.value === value);
+}
+
 const PULL_REQUESTS_STATE_OPTIONS: ReadonlyArray<{
   readonly value: PullRequestListState;
   readonly label: string;
@@ -1083,6 +1106,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.delegatedThreadModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection ?? null,
   );
+  const isDefaultModelDirty = !Equal.equals(
+    settings.defaultModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.defaultModelSelection ?? null,
+  );
   // A provider surface is "dirty" if either the legacy per-kind
   // `settings.providers[kind]` struct differs from defaults (for users
   // on pre-migration data) or the new `settings.providerInstances` map
@@ -1124,6 +1151,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize
         ? ["Code font size"]
         : []),
+      ...(settings.filePreviewLineSpacing !== DEFAULT_UNIFIED_SETTINGS.filePreviewLineSpacing
+        ? ["File preview line spacing"]
+        : []),
       ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
         ? ["Chat font size"]
         : []),
@@ -1138,6 +1168,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.inputFontSize !== DEFAULT_UNIFIED_SETTINGS.inputFontSize
         ? ["Input font size"]
+        : []),
+      ...(settings.composerMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.composerMetaFontSize
+        ? ["Composer metadata font size"]
         : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
@@ -1210,12 +1243,14 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(isDelegatedThreadModelDirty ? ["Delegated thread model"] : []),
+      ...(isDefaultModelDirty ? ["Default model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
       isDelegatedThreadModelDirty,
+      isDefaultModelDirty,
       settings.autoOpenPlanSidebar,
       settings.browserAutoShowFloatingPreview,
       settings.browserRecordingFrameRate,
@@ -1223,6 +1258,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatFontSize,
       settings.messagePreviewLineLimits,
       settings.codeFontSize,
+      settings.composerMetaFontSize,
       settings.statusLineFontSize,
       settings.inputFontSize,
       settings.confirmThreadArchive,
@@ -1618,6 +1654,16 @@ export function GeneralSettingsPanel() {
   const isOpeningKeybindings = openingPathByTarget.keybindings;
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
+  // `resolveAutoArchiveSettledAfterDays` still accepts undefined so the UI
+  // keeps the default if an older server omits the key.
+  const autoArchiveSettledAfterDays = resolveAutoArchiveSettledAfterDays(
+    settings.autoArchiveSettledAfterDays,
+  );
+  const updateAutoArchiveSettledAfterDays = useCallback(
+    (days: number | null) => updateSettings({ autoArchiveSettledAfterDays: days }),
+    [updateSettings],
+  );
+
   return (
     <SettingsPageContainer>
       <SettingsSection title="Pull request monitoring">
@@ -1704,6 +1750,59 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Auto-archive settled threads"
+          description="Move settled threads to the archive after days without activity. Pinned and snoozed threads are skipped."
+          resetAction={
+            autoArchiveSettledAfterDays !== DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS ? (
+              <SettingResetButton
+                label="automatic settled thread archiving"
+                onClick={() =>
+                  updateAutoArchiveSettledAfterDays(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS)
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={autoArchiveSettledAfterDays !== null}
+              onCheckedChange={(checked) =>
+                updateAutoArchiveSettledAfterDays(
+                  checked ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : null,
+                )
+              }
+              aria-label="Automatically archive settled threads after days without activity"
+            />
+          }
+        />
+        {autoArchiveSettledAfterDays !== null ? (
+          <SettingsRow
+            title="Days before archive"
+            description={`Whole days of inactivity before a settled thread is archived (${MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}–${MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}).`}
+            control={
+              <DraftInput
+                className="w-24"
+                value={String(autoArchiveSettledAfterDays)}
+                inputMode="numeric"
+                onCommit={(value) => {
+                  const days = parseAutoArchiveSettledAfterDays(value);
+                  if (days === null) {
+                    toastManager.add({
+                      type: "warning",
+                      title: `Days must be a whole number between ${MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS} and ${MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}`,
+                    });
+                    return;
+                  }
+                  if (days !== autoArchiveSettledAfterDays) {
+                    updateAutoArchiveSettledAfterDays(days);
+                  }
+                }}
+                aria-label="Days before settled threads are archived"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Pull requests">

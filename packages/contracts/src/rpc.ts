@@ -82,6 +82,9 @@ import {
 } from "./assets.ts";
 import {
   GitActionProgressEvent,
+  GitActivityLogError,
+  GitActivityLogInput,
+  GitActivityLogEntry,
   GitCheckoutInput,
   GitCheckoutResult,
   GitCommandError,
@@ -217,6 +220,8 @@ import {
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerTraceDiagnosticsResult,
+  ServerReplaceKeybindingRulesInput,
+  ServerReplaceKeybindingRulesResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
@@ -362,6 +367,7 @@ export const WS_METHODS = {
 
   // Git methods
   gitPull: "git.pull",
+  gitLog: "git.log",
   gitRefreshStatus: "git.refreshStatus",
   gitLocalStatus: "git.localStatus",
   gitRunStackedAction: "git.runStackedAction",
@@ -417,6 +423,7 @@ export const WS_METHODS = {
   serverListSkills: "server.listSkills",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverReplaceKeybindingRules: "server.replaceKeybindingRules",
   serverUpdateProvider: "server.updateProvider",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
@@ -501,6 +508,12 @@ export const WS_METHODS = {
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
   success: ServerUpsertKeybindingResult,
+  error: KeybindingsConfigError,
+});
+
+export const WsServerReplaceKeybindingRulesRpc = Rpc.make(WS_METHODS.serverReplaceKeybindingRules, {
+  payload: ServerReplaceKeybindingRulesInput,
+  success: ServerReplaceKeybindingRulesResult,
   error: KeybindingsConfigError,
 });
 
@@ -954,6 +967,12 @@ export const WsGitPullRpc = Rpc.make(WS_METHODS.gitPull, {
   payload: GitPullInput,
   success: GitPullResult,
   error: GitCommandError,
+});
+
+export const WsGitActivityLogRpc = Rpc.make(WS_METHODS.gitLog, {
+  payload: GitActivityLogInput,
+  success: Schema.Array(GitActivityLogEntry),
+  error: GitActivityLogError,
 });
 
 export const WsGitRefreshStatusRpc = Rpc.make(WS_METHODS.gitRefreshStatus, {
@@ -1503,6 +1522,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderSessionCommandRpc,
   WsServerListSkillsRpc,
   WsServerUpsertKeybindingRpc,
+  WsServerReplaceKeybindingRulesRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsSidebarGetStateRpc,
@@ -1571,6 +1591,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeDeviceStateRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
+  WsGitActivityLogRpc,
   WsGitRefreshStatusRpc,
   WsGitLocalStatusRpc,
   WsGitRunStackedActionRpc,

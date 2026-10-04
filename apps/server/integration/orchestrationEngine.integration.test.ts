@@ -12,6 +12,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  QueuedTurnId,
   ProviderDriverKind,
   ThreadId,
   ModelSelection,
@@ -162,6 +163,106 @@ const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
       createdAt,
     });
   });
+
+// A nonempty queue must decode on the detail path as well as the full snapshot.
+// Explicit positions (including zero) and reorder must survive SQL projection;
+// otherwise opening a thread fails or silently restores creation order.
+it.live("loads thread detail snapshots with persisted reordered queued follow-ups", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      yield* seedProjectAndThread(harness);
+      const createdAt = nowIso();
+      const ids = [QueuedTurnId.make("queued-first"), QueuedTurnId.make("queued-second")];
+      for (const id of ids) {
+        yield* harness.engine.dispatch({
+          type: "thread.queued-turn.create",
+          commandId: CommandId.make(`cmd-create-${id}`),
+          threadId: THREAD_ID,
+          queuedTurnId: id,
+          message: {
+            messageId: MessageId.make(`message-${id}`),
+            role: "user",
+            text: `Follow-up ${id}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+      }
+      yield* harness.engine.dispatch({
+        type: "thread.queue.hold",
+        commandId: CommandId.make("cmd-hold-queue"),
+        threadId: THREAD_ID,
+        heldAt: createdAt,
+      });
+      // Crash recovery also sees already-held queues. Its no-op must be
+      // accepted; otherwise the reactor retains its recovery barrier forever.
+      const repeatedHold = {
+        type: "thread.queue.hold" as const,
+        commandId: CommandId.make("cmd-repeat-hold-queue"),
+        threadId: THREAD_ID,
+        heldAt: createdAt,
+      };
+      yield* harness.engine.dispatch(repeatedHold);
+      yield* harness.engine.dispatch({
+        type: "thread.queue.release",
+        commandId: CommandId.make("cmd-release-queue"),
+        threadId: THREAD_ID,
+        releasedAt: createdAt,
+      });
+      // Replaying the accepted no-op may not re-hold a subsequently released
+      // queue, and another release is independently idempotent.
+      yield* harness.engine.dispatch(repeatedHold);
+      yield* harness.engine.dispatch({
+        type: "thread.queue.release",
+        commandId: CommandId.make("cmd-repeat-release-queue"),
+        threadId: THREAD_ID,
+        releasedAt: createdAt,
+      });
+      assert.isNull(
+        (yield* harness.engine.getReadModel()).threads.find((thread) => thread.id === THREAD_ID)
+          ?.queueHeldAt,
+      );
+
+      const readQueue = () =>
+        harness.snapshotQuery
+          .getThreadDetailSnapshotById(THREAD_ID)
+          .pipe(Effect.map((snapshot) => Option.getOrThrow(snapshot).thread.queuedTurns ?? []));
+      const initial = yield* readQueue();
+      assert.deepStrictEqual(
+        initial.map((turn) => turn.queuePosition),
+        [0, 1],
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.queued-turn.reorder",
+        commandId: CommandId.make("cmd-reorder-queue"),
+        threadId: THREAD_ID,
+        orderedQueuedTurnIds: ids.toReversed(),
+        reorderedAt: nowIso(),
+      });
+
+      const reordered = yield* readQueue();
+      assert.deepStrictEqual(
+        reordered.map((turn) => turn.id),
+        ids.toReversed(),
+      );
+      assert.deepStrictEqual(
+        reordered.map((turn) => turn.queuePosition),
+        [0, 1],
+      );
+      assert.deepStrictEqual(
+        reordered.map((turn) => turn.message.text),
+        ["Follow-up queued-second", "Follow-up queued-first"],
+      );
+      const fullSnapshot = yield* harness.snapshotQuery.getSnapshot();
+      assert.deepStrictEqual(
+        fullSnapshot.threads.find((thread) => thread.id === THREAD_ID)?.queuedTurns,
+        reordered,
+      );
+    }),
+  ),
+);
 
 it.live("allocates a unique task branch from an existing main checkout", () =>
   withHarness((harness) =>

@@ -23,6 +23,8 @@ import {
   hasUnseenThreadCompletion,
   resolveThreadSemanticStatus,
 } from "@t3tools/client-runtime/state/thread-status";
+import { canSettle, effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -765,4 +767,222 @@ export function sortProjectsForSidebar<
     if (byTimestamp !== 0) return byTimestamp;
     return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
   });
+}
+
+/**
+ * Minimal row shape the settled partition needs. Kept structural (instead of
+ * importing `SidebarThreadRowView`) because `sidebarThreadTree` already
+ * imports this module.
+ */
+export interface PartitionableSidebarRow {
+  readonly thread: SidebarThreadSummary;
+  readonly threadKey: string;
+  readonly depth: number;
+  readonly status: ThreadStatusPill | null;
+}
+
+export interface PartitionedSidebarRows<TRow extends PartitionableSidebarRow> {
+  /** Root subtrees reordered whole: pinned, then active, then settled. */
+  readonly rowViews: TRow[];
+  /** Flattened keys of `rowViews`, backing Shift+Click range selection. */
+  readonly orderedThreadKeys: string[];
+  /** Every row key (roots and nested children) inside a settled subtree. */
+  readonly settledThreadKeys: ReadonlySet<string>;
+}
+
+function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
+  // SidebarThreadSummary.updatedAt is optional while the settled-timestamp
+  // input requires a string; a missing stamp falls through to the same
+  // bottom-of-list treatment as a malformed one.
+  const parsed = Date.parse(
+    resolveSettledThreadTimestamp({
+      settledAt: thread.settledAt ?? null,
+      latestUserMessageAt: thread.latestUserMessageAt,
+      latestTurn: thread.latestTurn,
+      updatedAt: thread.updatedAt ?? "",
+    }) ?? "",
+  );
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+export function resolveSettleMenuItems(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): ReadonlyArray<{ readonly id: "settle" | "reopen"; readonly label: string }> {
+  if (!input.settlementSupported) return [];
+  if (isCollapsedSettledRow({ status: input.status, thread: input.thread, now: input.now })) {
+    return [{ id: "reopen", label: "Reopen thread" }];
+  }
+  if (canSettle(input.thread, { now: input.now })) {
+    return [{ id: "settle", label: "Settle thread" }];
+  }
+  return [];
+}
+
+export function isCollapsedSettledRow(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly now: string;
+}): boolean {
+  return !isActiveThreadStatus(input.status) && effectiveSettled(input.thread, { now: input.now });
+}
+
+/**
+ * Sinks settled roots to the bottom of their own project list. The whole
+ * subtree follows its root, mirroring `classifySidebarV2Shelves`: a block
+ * stays active while any row in it — root or descendant — carries a status
+ * pill, since the root's own `canSettle` check cannot see pills like a failed
+ * turn or an unseen completion that still need attention. Pinned roots keep
+ * their leading position — a pin is an explicit order override the settle
+ * must not defeat — but still fade when settled, matching SidebarV2. Settled
+ * roots sort most-recently-settled first (`settledAt`, falling back through
+ * the same stamps `resolveSettledThreadTimestamp` uses); the sort is stable
+ * so ties keep their existing order.
+ *
+ * Blocks move whole, so nested-tree expansion, `selectVisibleThreadRows`
+ * windowing (including its active-route forced inclusion), and Shift+Click
+ * ranges keep working on the returned order.
+ */
+export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow>(
+  rowViews: readonly TRow[],
+  input: { readonly now: string; readonly pinnedThreadKeys?: ReadonlySet<string> },
+): PartitionedSidebarRows<TRow> {
+  const blocks: TRow[][] = [];
+  for (const row of rowViews) {
+    if (row.depth === 0 || blocks.length === 0) {
+      blocks.push([row]);
+    } else {
+      blocks[blocks.length - 1]!.push(row);
+    }
+  }
+
+  const pinnedBlocks: TRow[][] = [];
+  const activeBlocks: TRow[][] = [];
+  const settledBlocks: TRow[][] = [];
+  const settledThreadKeys = new Set<string>();
+  for (const block of blocks) {
+    const root = block[0]!;
+    const isSettledSubtree =
+      !block.some((row) => isActiveThreadStatus(row.status)) &&
+      effectiveSettled(root.thread, { now: input.now });
+    if (input.pinnedThreadKeys?.has(root.threadKey) === true) {
+      pinnedBlocks.push(block);
+      // A pin is an explicit order override, so the block stays leading —
+      // but settled-ness still shows through the fade.
+      if (isSettledSubtree) {
+        for (const row of block) {
+          settledThreadKeys.add(row.threadKey);
+        }
+      }
+      continue;
+    }
+    if (isSettledSubtree) {
+      settledBlocks.push(block);
+      for (const row of block) {
+        settledThreadKeys.add(row.threadKey);
+      }
+      continue;
+    }
+    activeBlocks.push(block);
+  }
+  settledBlocks.sort(
+    (left, right) =>
+      resolveSettledSortTimestampMs(right[0]!.thread) -
+      resolveSettledSortTimestampMs(left[0]!.thread),
+  );
+
+  const ordered = [...pinnedBlocks, ...activeBlocks, ...settledBlocks];
+  const reordered = ordered.flat();
+  return {
+    rowViews: reordered,
+    orderedThreadKeys: reordered.map((row) => row.threadKey),
+    settledThreadKeys,
+  };
+}
+
+/**
+ * Sidebar thread-context drag: pointer-gesture gating for dragging a thread
+ * row out of the list to attach it as composer context.
+ *
+ * The gesture coexists with the per-project pinned `DndContext`s: vertical
+ * moves inside the list keep the reorder preview, while a horizontal exit
+ * past the list edge switches to the context ghost. A context drop never
+ * reorders — `resolvePinnedDragEndShouldReorder` is the single decision
+ * point both paths share.
+ */
+
+/** Pointer travel before a press becomes a context drag. Matches dnd-kit's pinned distance. */
+export const THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE = 6;
+
+/** Presses that must never start the gesture: native controls and row actions. */
+const THREAD_CONTEXT_DRAG_INTERACTIVE_SELECTOR = [
+  "button",
+  "input",
+  "a",
+  "textarea",
+  "select",
+  "[data-thread-selection-safe]",
+  "[contenteditable]",
+  "[role='menu']",
+  "[role='dialog']",
+].join(", ");
+
+export function shouldArmThreadContextDrag(input: {
+  readonly isDraft: boolean;
+  readonly isVirtualAgentRun: boolean;
+}): boolean {
+  // Drafts are unsent composer state, not threads: they navigate, never drag
+  // (SidebarDraftRow never attaches the gesture — structural, not gated).
+  // Virtual-agent run rows are not threads either: their ref points at the
+  // parent thread while the label names the child run, so arming them would
+  // attach the wrong identity. Every other real row arms the gesture.
+  if (input.isDraft) return false;
+  if (input.isVirtualAgentRun) return false;
+  return true;
+}
+
+export function shouldIgnoreThreadContextDragStart(input: {
+  readonly button: number;
+  readonly isPrimary: boolean;
+  readonly closest: (selector: string) => unknown;
+}): boolean {
+  // Only the primary button starts the gesture; right/middle clicks and
+  // multi-touch pointers keep their click, selection, and menu behavior.
+  if (!input.isPrimary || input.button !== 0) return true;
+  return input.closest(THREAD_CONTEXT_DRAG_INTERACTIVE_SELECTOR) != null;
+}
+
+export function resolveThreadContextDragRefs(input: {
+  readonly activeKey: string;
+  readonly selectedKeys: readonly string[];
+  readonly parseScopedKey: (key: string) => unknown;
+}): string[] {
+  // The multi-selection travels when the picked-up row is part of it;
+  // otherwise only the picked-up row does. Unparseable keys never leak into
+  // the drop payload.
+  const keys = input.selectedKeys.includes(input.activeKey)
+    ? [...input.selectedKeys]
+    : [input.activeKey];
+  return keys.filter((key) => input.parseScopedKey(key) != null);
+}
+
+export function isThreadContextDragOutsideList(
+  point: { readonly x: number },
+  bounds: { readonly left: number; readonly right: number },
+): boolean {
+  return point.x < bounds.left || point.x > bounds.right;
+}
+
+export function resolvePinnedDragEndShouldReorder(input: {
+  readonly wasContextDrag: boolean;
+  readonly activeId: string;
+  readonly overId: string | null;
+}): boolean {
+  // Releasing a context gesture — on a composer target or on empty space —
+  // never reorders pins, including under the nested per-project DndContexts.
+  if (input.wasContextDrag) return false;
+  if (input.overId === null || input.overId === input.activeId) return false;
+  return true;
 }

@@ -8,6 +8,10 @@ function eventOf(type: OrchestrationEvent["type"]): OrchestrationEvent {
 }
 
 describe("isThreadDetailEvent", () => {
+  it("publishes accepted turn starts before a provider session is ready", () => {
+    expect(isThreadDetailEvent(eventOf("thread.turn-start-requested"))).toBe(true);
+  });
+
   it("includes queued-turn lifecycle events in live thread detail streams", () => {
     expect(isThreadDetailEvent(eventOf("thread.queued-turn-created"))).toBe(true);
     expect(isThreadDetailEvent(eventOf("thread.queued-turn-updated"))).toBe(true);

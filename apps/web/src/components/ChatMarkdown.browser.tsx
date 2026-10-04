@@ -222,6 +222,57 @@ describe("ChatMarkdown", () => {
     document.body.innerHTML = "";
   });
 
+  it("retains completed prose paragraphs while streaming the active paragraph", async () => {
+    const firstText = "Opening **statement**";
+    const renderMarkdown = (text: string, isStreaming: boolean) => (
+      <ChatMarkdown text={text} cwd="/repo/project" isStreaming={isStreaming} />
+    );
+    const screen = await render(renderMarkdown(firstText, true));
+
+    try {
+      await expect.element(page.getByText("Opening statement")).toBeVisible();
+
+      const nextText = `${firstText}\n\nSecond *paragraph*`;
+      await screen.rerender(renderMarkdown(nextText, true));
+      await expect.element(page.getByText("Second paragraph")).toBeVisible();
+      expect(document.querySelectorAll(".chat-markdown > p")).toHaveLength(2);
+      expect(document.querySelector(".chat-markdown > p strong")?.textContent).toBe("statement");
+      expect(document.querySelector(".chat-markdown > p em")?.textContent).toBe("paragraph");
+
+      await screen.rerender(renderMarkdown(nextText, false));
+      await expect.element(page.getByText("Second paragraph")).toBeVisible();
+      expect(document.querySelectorAll(".chat-markdown > p")).toHaveLength(2);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps reference links, task lists, and fences on the full Markdown parser path", async () => {
+    const text = [
+      "[pull request][pr]",
+      "",
+      "[pr]: https://github.com/owner/repo/pull/42",
+      "",
+      "- [ ] Keep this task",
+      "",
+      "```ts",
+      "const answer = 42;",
+      "```",
+    ].join("\n");
+    const screen = await render(<ChatMarkdown text={text} cwd="/repo/project" isStreaming />);
+
+    try {
+      const link = page.getByRole("link", { name: "pull request" });
+      await expect.element(link).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
+      expect(document.querySelector('input[type="checkbox"]')).not.toBeNull();
+      expect(document.querySelector(".chat-markdown-codeblock code")?.textContent?.trim()).toBe(
+        "const answer = 42;",
+      );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("navigates thread references within the current environment", async () => {
     const linkedThreadId = "bc880b45-fd48-42db-98fa-f211bae7cc0a";
     const uppercaseThreadId = linkedThreadId.toUpperCase();
@@ -510,12 +561,12 @@ describe("ChatMarkdown", () => {
       await vi.waitFor(() => {
         expect(eventHandler).toHaveBeenCalledWith(
           expect.objectContaining({
-            detail: {
+            detail: expect.objectContaining({
               host: "github.com",
               repository: "owner/repo",
               number: 42,
               url: "https://github.com/owner/repo/pull/42",
-            },
+            }),
           }),
         );
       });
@@ -548,12 +599,12 @@ describe("ChatMarkdown", () => {
       await vi.waitFor(() => {
         expect(eventHandler).toHaveBeenCalledWith(
           expect.objectContaining({
-            detail: {
+            detail: expect.objectContaining({
               host: "github.com",
               repository: "owner/repo",
               number: 42,
               url: "https://github.com/owner/repo/pull/42",
-            },
+            }),
           }),
         );
       });

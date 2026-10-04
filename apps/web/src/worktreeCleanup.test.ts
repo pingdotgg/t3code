@@ -48,6 +48,12 @@ describe("getOrphanedWorktreePathForThread", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when the target thread worktree path is only whitespace", () => {
+    const threads = [makeThread({ worktreePath: "   " })];
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));
+    expect(result).toBeNull();
+  });
+
   it("returns the path when no other thread links to that worktree", () => {
     const threads = [makeThread({ worktreePath: "/tmp/repo/worktrees/feature-a" })];
     const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));
@@ -63,6 +69,21 @@ describe("getOrphanedWorktreePathForThread", () => {
       makeThread({
         id: ThreadId.make("thread-2"),
         worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
+    ];
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));
+    expect(result).toBeNull();
+  });
+
+  it("treats whitespace-padded duplicates as the same shared worktree", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-2"),
+        worktreePath: "  /tmp/repo/worktrees/feature-a  ",
       }),
     ];
     const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));

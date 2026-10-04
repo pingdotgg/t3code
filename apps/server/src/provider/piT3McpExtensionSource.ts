@@ -31,7 +31,15 @@ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const RUNTIME_INSTRUCTIONS = ${JSON.stringify(buildRuntimeInstructions({ harness: "Pi" }))};
 const PROTOCOL = "2025-06-18";
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const READ_ONLY_TOOLS = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  // Reference-only thread-history reads never mutate state; like read they
+  // stay available without a confirmation in restrictive runtime modes.
+  "mcp__t3-code__t3_thread_read",
+]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -93,6 +101,21 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
     throw new Error("MCP SSE response had no JSON-RPC payload.");
   }
   return JSON.parse(body) as JsonRpcResponse;
+}
+
+/**
+ * Drops explicit nulls from top-level tool arguments before the MCP call.
+ * Strict-mode models send null for optional arguments they leave unset, but
+ * T3 tool schemas accept missing/undefined — not null — for those fields, so
+ * the call would fail validation. Nested nulls are the model's own data and
+ * pass through untouched.
+ */
+function stripNullArguments(params: Record<string, unknown>) {
+  const cleaned: Record<string, unknown> = {};
+  for (const key of Object.keys(params)) {
+    if (params[key] !== null) cleaned[key] = params[key];
+  }
+  return cleaned;
 }
 
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
@@ -355,7 +378,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
               name,
-              (params ?? {}) as Record<string, unknown>,
+              stripNullArguments((params ?? {}) as Record<string, unknown>),
               signal,
             );
             return {

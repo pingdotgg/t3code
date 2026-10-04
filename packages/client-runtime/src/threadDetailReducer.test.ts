@@ -712,6 +712,51 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.cross-thread-send-recorded", () => {
+    it("restores the source-side send activity on reconnect without duplicating a replay", () => {
+      const event = {
+        ...baseEventFields,
+        eventId: EventId.make("event-cross-thread-send"),
+        sequence: 14,
+        occurredAt: "2026-04-01T12:00:00.000Z",
+        aggregateKind: "thread" as const,
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.cross-thread-send-recorded" as const,
+        payload: {
+          sourceThreadId: ThreadId.make("thread-1"),
+          sourceMessageId: MessageId.make("message-1"),
+          sourceTurnId: TurnId.make("turn-1"),
+          destinationThreadId: ThreadId.make("thread-2"),
+          destinationThreadTitle: "Nested investigation",
+          destinationMessageId: MessageId.make("message-destination"),
+          createdAt: "2026-04-01T12:00:00.000Z",
+        },
+      };
+
+      const restored = applyThreadDetailEvent(baseThread, event);
+      expect(restored.kind).toBe("updated");
+      if (restored.kind !== "updated") return;
+      expect(restored.thread.activities).toHaveLength(1);
+      expect(restored.thread.activities[0]).toMatchObject({
+        id: "event-cross-thread-send",
+        kind: "cross-thread.send",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          sourceMessageId: "message-1",
+          destinationThreadId: "thread-2",
+          destinationMessageId: "message-destination",
+        },
+      });
+
+      const replayed = applyThreadDetailEvent(restored.thread, event);
+      expect(replayed.kind).toBe("updated");
+      if (replayed.kind === "updated") {
+        expect(replayed.thread.activities).toHaveLength(1);
+      }
+    });
+  });
+
   describe("thread.turn-diff-completed", () => {
     it("adds a checkpoint and updates latestTurn", () => {
       const result = applyThreadDetailEvent(baseThread, {
@@ -730,6 +775,7 @@ describe("applyThreadDetailEvent", () => {
           files: [],
           agentTouchedPaths: [],
           turnFiles: [],
+          transitionFiles: [],
           assistantMessageId: MessageId.make("msg-3"),
           completedAt: "2026-04-01T12:00:00.000Z",
         },
@@ -786,6 +832,7 @@ describe("applyThreadDetailEvent", () => {
             files: [],
             agentTouchedPaths: [],
             turnFiles: [],
+            transitionFiles: [],
             assistantMessageId: MessageId.make("msg-2"),
             completedAt: "2026-04-01T02:00:00.000Z",
           },
@@ -797,6 +844,7 @@ describe("applyThreadDetailEvent", () => {
             files: [],
             agentTouchedPaths: [],
             turnFiles: [],
+            transitionFiles: [],
             assistantMessageId: MessageId.make("msg-3"),
             completedAt: "2026-04-01T03:00:00.000Z",
           },

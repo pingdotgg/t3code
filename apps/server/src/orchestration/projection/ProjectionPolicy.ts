@@ -1,5 +1,7 @@
 import type {
   GitPullRequestAssociation,
+  OrchestrationLatestTurn,
+  OrchestrationSession,
   ReviewSnapshot,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -66,15 +68,62 @@ export function terminalTurnStateForSessionStatus(status: string): "error" | "in
 }
 
 /**
- * Provider sessions omit `activeMessageId` while the same turn stays active.
- * Both projections must preserve the previous value in that case instead of
- * clearing it.
+ * Session-to-turn mapping, shared by both projections because the decider reads
+ * the in-memory result while clients read the SQL one. A running session is
+ * authoritative for its active turn; a turn still marked running under a session
+ * that has stopped has been orphaned and is terminalised.
+ */
+export function reconcileLatestTurnWithSession(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): OrchestrationLatestTurn | null {
+  if (session === null) {
+    return latestTurn;
+  }
+  if (session.status === "running" && session.activeTurnId !== null) {
+    if (latestTurn?.turnId === session.activeTurnId) {
+      return {
+        ...latestTurn,
+        state: "running",
+        startedAt: latestTurn.startedAt ?? session.updatedAt,
+        completedAt: null,
+      };
+    }
+    return {
+      turnId: session.activeTurnId,
+      state: "running",
+      requestedAt: session.updatedAt,
+      startedAt: session.updatedAt,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+  }
+  if (latestTurn?.state === "running") {
+    return {
+      ...latestTurn,
+      state: terminalTurnStateForSessionStatus(session.status),
+      completedAt: session.updatedAt,
+    };
+  }
+  return latestTurn;
+}
+
+/**
+ * Provider sessions omit `activeMessageId` while the same turn stays active, and
+ * they can also report session state between the server's turn start and the
+ * provider's own `turn.started` notification. Both projections must keep the
+ * previously authenticated active message in those cases instead of clearing it.
+ * Only a turn that actually ended releases the active message.
  */
 export function shouldPreserveActiveMessageId(input: {
+  readonly previousActiveTurnId: string | null;
   readonly activeTurnId: string | null;
   readonly activeMessageId: string | null | undefined;
 }): boolean {
-  return input.activeTurnId !== null && input.activeMessageId === undefined;
+  if (input.activeMessageId !== undefined) {
+    return false;
+  }
+  return input.previousActiveTurnId === null || input.activeTurnId !== null;
 }
 
 export interface InitialThreadPullRequest {

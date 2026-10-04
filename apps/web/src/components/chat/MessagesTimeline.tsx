@@ -1,9 +1,11 @@
 import {
+  type CrossThreadSendRecord,
   type DelegationAuditActivityEvidence,
   type DelegationAuditPage,
   EnvironmentId,
   EventId,
   type MessageId,
+  type ThreadContextRecord,
   ThreadId,
   type TurnDiffScope,
   TurnId,
@@ -28,6 +30,7 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowUpRightIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -71,11 +74,15 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveExternalActionUrl,
+  selectTimelineThreadContextChips,
   shouldHandleInternalActionClick,
   stabilizeReadonlyStringSet,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import { ThreadContextChip } from "./ThreadContextChip";
+
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -125,6 +132,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 // non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
 // components (WorkingTimer, LiveElapsed) handle it.
 // ---------------------------------------------------------------------------
+
+const EMPTY_THREAD_CONTEXTS: ReadonlyArray<ThreadContextRecord> = [];
 
 interface TimelineRowSharedState {
   isWorking: boolean;
@@ -296,6 +305,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        crossThreadSendsBySourceMessageId: EMPTY_CROSS_THREAD_SENDS_BY_MESSAGE_ID,
       }),
     [
       providedRows,
@@ -737,14 +747,16 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
             <div className="flex flex-col items-end">
               {row.message.origin?.kind === "cross-thread" ? (
                 <CrossThreadProvenance origin={row.message.origin} />
+              ) : isCollaborationMessageOrigin(row.message.origin) ? (
+                <CollaborationProvenance origin={row.message.origin} />
               ) : row.message.origin?.kind === "pull-request-monitor" ? (
                 <PullRequestMonitorProvenance origin={row.message.origin} />
               ) : null}
               <div
                 className={cn(
                   "group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
-                  row.message.origin?.kind === "cross-thread" &&
-                    "border-violet-400/30 bg-gradient-to-br from-violet-500/[0.07] via-violet-500/[0.02] to-transparent",
+                  isInterThreadMessageOrigin(row.message.origin) &&
+                    "border-violet-400/55 bg-violet-500/20",
                   row.message.origin?.kind === "pull-request-monitor" &&
                     "border-sky-400/30 bg-gradient-to-br from-sky-500/[0.07] via-sky-500/[0.02] to-transparent",
                 )}
@@ -775,6 +787,7 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                   rowId={row.id}
                   text={visibleText}
                   terminalContexts={terminalContexts}
+                  threadContexts={row.message.context?.records ?? EMPTY_THREAD_CONTEXTS}
                   collapsedLineLimit={resolveMessagePreviewLineLimit(
                     row.message.origin?.kind,
                     ctx.messagePreviewLineLimits,
@@ -782,6 +795,9 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                   forceExpanded={ctx.activeChatFindRowId === row.id}
                 />
               </div>
+              {row.crossThreadSends && row.crossThreadSends.length > 0 && (
+                <CrossThreadSendReceipts sends={row.crossThreadSends} />
+              )}
             </div>
           );
         })()}
@@ -1063,10 +1079,13 @@ function CrossThreadProvenance({
   if (!canNavigate) {
     return (
       <span
-        className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-muted-foreground/40"
+        className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-violet-700/80 dark:text-violet-300/80"
         title={`Source chat unavailable: ${sourceTitle}`}
       >
-        <CornerDownRightIcon className="size-2.5 shrink-0 text-violet-400/40" aria-hidden="true" />
+        <CornerDownRightIcon
+          className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300"
+          aria-hidden="true"
+        />
         <span className="truncate">{sourceTitle}</span>
       </span>
     );
@@ -1075,7 +1094,7 @@ function CrossThreadProvenance({
   return (
     <button
       type="button"
-      className="group/origin mb-1 mr-2 inline-flex max-w-[80%] cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-muted-foreground/45 transition-colors hover:text-muted-foreground/85 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
+      className="group/origin mb-1 mr-2 inline-flex max-w-[80%] cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-violet-700 dark:text-violet-300 transition-colors hover:text-violet-800 dark:hover:text-violet-200 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
       title={`Open source chat: ${sourceTitle}`}
       aria-label={`Open source chat ${sourceTitle} at the initiating message`}
       onClick={() => {
@@ -1090,13 +1109,131 @@ function CrossThreadProvenance({
       }}
     >
       <CornerDownRightIcon
-        className="size-2.5 shrink-0 text-violet-400/50 transition-colors group-hover/origin:text-violet-400/90"
+        className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300 transition-colors group-hover/origin:text-violet-800 dark:group-hover/origin:text-violet-200"
         aria-hidden="true"
       />
       <span className="truncate decoration-current/30 underline-offset-2 group-hover/origin:underline">
         {sourceTitle}
       </span>
     </button>
+  );
+}
+
+const EMPTY_CROSS_THREAD_SENDS_BY_MESSAGE_ID: ReadonlyMap<
+  MessageId,
+  readonly CrossThreadSendRecord[]
+> = new Map();
+
+/** Most turns send once; anything beyond this stays collapsed behind a count. */
+const MAX_VISIBLE_CROSS_THREAD_SENDS = 3;
+
+function CrossThreadSendReceipts({ sends }: { sends: readonly CrossThreadSendRecord[] }) {
+  const visible = sends.slice(0, MAX_VISIBLE_CROSS_THREAD_SENDS);
+  const hiddenCount = sends.length - visible.length;
+  return (
+    <div className="mt-1 mr-2 flex max-w-[80%] flex-col items-end gap-0.5">
+      {visible.map((send) => (
+        <CrossThreadSendReceipt key={send.destinationMessageId} send={send} />
+      ))}
+      {hiddenCount > 0 && (
+        <span className="text-[length:var(--app-status-line-font-size)] text-muted-foreground/40">
+          +{hiddenCount} more thread{sends.length - visible.length === 1 ? "" : "s"}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Quiet receipt for a message this turn pushed into another thread. The
+ * destination side shows the source (`CrossThreadProvenance`); this is the
+ * matching half, linking to the message that was sent.
+ */
+function CrossThreadSendReceipt({ send }: { send: CrossThreadSendRecord }) {
+  const navigate = useNavigate();
+  const ctx = use(TimelineRowCtx);
+  // scopeThreadRef allocates a fresh object; memoize the ref on the primitives
+  // so the selector (and its subscription) stays stable across stream chunks.
+  const environmentId = ctx.activeThreadEnvironmentId;
+  const destinationThreadId = send.destinationThreadId;
+  const destinationSelector = useMemo(() => {
+    const ref = scopeThreadRef(environmentId, destinationThreadId);
+    return (state: AppState) => selectSidebarThreadSummaryByRef(state, ref);
+  }, [environmentId, destinationThreadId]);
+  const destinationThread = useStore(destinationSelector);
+  const destinationTitle = destinationThread?.title.trim() || send.destinationThreadTitle;
+
+  if (destinationThread === null || destinationThread === undefined) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[length:var(--app-status-line-font-size)] text-muted-foreground/40"
+        title={`Destination chat unavailable: ${destinationTitle}`}
+      >
+        <ArrowUpRightIcon className="size-2.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">Sent to {destinationTitle}</span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="group/send inline-flex max-w-full cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-muted-foreground/45 transition-colors hover:text-muted-foreground/85 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
+      title={`Open ${destinationTitle} at the sent message`}
+      aria-label={`Open thread ${destinationTitle} at the message sent from here`}
+      onClick={() => {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: destinationThreadId },
+          search: (previous) => ({ ...previous, message: send.destinationMessageId }),
+        });
+      }}
+    >
+      <ArrowUpRightIcon
+        className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300 transition-colors group-hover/send:text-violet-800 dark:group-hover/send:text-violet-200"
+        aria-hidden="true"
+      />
+      <span className="truncate">
+        Sent to{" "}
+        <span className="decoration-current/30 underline-offset-2 group-hover/send:underline">
+          {destinationTitle}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+type CollaborationMessageOrigin = Extract<
+  NonNullable<TimelineMessage["origin"]>,
+  { kind: "collaboration-request" | "collaboration-response" }
+>;
+
+function isCollaborationMessageOrigin(
+  origin: TimelineMessage["origin"],
+): origin is CollaborationMessageOrigin {
+  return origin?.kind === "collaboration-request" || origin?.kind === "collaboration-response";
+}
+
+function isInterThreadMessageOrigin(origin: TimelineMessage["origin"]): boolean {
+  return origin?.kind === "cross-thread" || isCollaborationMessageOrigin(origin);
+}
+
+function CollaborationProvenance({ origin }: { origin: CollaborationMessageOrigin }) {
+  return (
+    <span
+      className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-violet-700 dark:text-violet-300"
+      title={
+        origin.kind === "collaboration-request"
+          ? "Collaboration request from another thread"
+          : "Collaboration response from another thread"
+      }
+    >
+      <CornerDownRightIcon
+        className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300"
+        aria-hidden="true"
+      />
+      <span>From another thread</span>
+    </span>
   );
 }
 
@@ -1552,9 +1689,10 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   workspaceRoot: string | undefined;
 }) {
   if (!turnSummary) return null;
-  const snapshotFiles = turnSummary.files;
-  const turnFiles = turnSummary.turnFiles ?? [];
-  if (snapshotFiles.length === 0 && turnFiles.length === 0) return null;
+  // The turn's own transition set, matching the single-turn range the card opens.
+  // `files` is cumulative and would advertise earlier turns' changes here.
+  const turnFiles = turnSummary.transitionFiles ?? turnSummary.turnFiles ?? [];
+  if (turnFiles.length === 0) return null;
 
   return (
     <AssistantChangedFilesSectionInner
@@ -1580,8 +1718,7 @@ function AssistantChangedFilesSectionInner({
   workspaceRoot: string | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const turnFiles = turnSummary.turnFiles ?? [];
-  const visibleFiles = turnFiles;
+  const visibleFiles = turnSummary.transitionFiles ?? turnSummary.turnFiles ?? [];
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
   if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 
@@ -1666,6 +1803,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   rowId: string;
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  threadContexts?: ReadonlyArray<ThreadContextRecord> | undefined;
   collapsedLineLimit: MessagePreviewLineCount;
   forceExpanded: boolean;
 }) {
@@ -1738,7 +1876,11 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             style={{ height: `${props.collapsedLineLimit}lh` }}
           />
           <div ref={contentRef}>
-            <UserMessageBody text={props.text} terminalContexts={props.terminalContexts} />
+            <UserMessageBody
+              text={props.text}
+              terminalContexts={props.terminalContexts}
+              threadContexts={props.threadContexts}
+            />
           </div>
         </div>
       ) : null}
@@ -1763,6 +1905,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  threadContexts?: ReadonlyArray<ThreadContextRecord> | undefined;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -1785,7 +1928,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (matchIndex > cursor) {
           inlineNodes.push(
             <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {props.text.slice(cursor, matchIndex)}
+              <InlineThreadContextText
+                text={props.text.slice(cursor, matchIndex)}
+                records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+              />
             </span>,
           );
         }
@@ -1802,7 +1948,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (cursor < props.text.length) {
           inlineNodes.push(
             <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              {props.text.slice(cursor)}
+              <InlineThreadContextText
+                text={props.text.slice(cursor)}
+                records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+              />
             </span>,
           );
         }
@@ -1830,7 +1979,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     if (props.text.length > 0) {
-      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+      inlineNodes.push(
+        <InlineThreadContextText
+          key="user-message-terminal-context-inline-text"
+          text={props.text}
+          records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+        />,
+      );
     } else if (inlinePrefix.length === 0) {
       return null;
     }
@@ -1848,9 +2003,49 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
   return (
     <div className="chat-message-content whitespace-pre-wrap wrap-break-word text-foreground">
-      {props.text}
+      <InlineThreadContextText
+        text={props.text}
+        records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+      />
     </div>
   );
+});
+
+const InlineThreadContextText = memo(function InlineThreadContextText(props: {
+  text: string;
+  records: ReadonlyArray<ThreadContextRecord>;
+}) {
+  const occurrences = collectThreadContextReferences(props.text);
+  if (occurrences.length === 0) return props.text;
+  const chips = new Map(
+    selectTimelineThreadContextChips({ text: props.text, context: { records: props.records } }).map(
+      (chip) => [chip.key, chip],
+    ),
+  );
+  const records = new Map(props.records.map((record) => [record.contextId, record]));
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const occurrence of occurrences) {
+    nodes.push(props.text.slice(cursor, occurrence.start));
+    const record = records.get(occurrence.contextId);
+    const key = `${occurrence.contextId}:${occurrence.start}`;
+    nodes.push(
+      record ? (
+        <ThreadContextChip key={key} record={record} />
+      ) : (
+        <span
+          key={key}
+          className="inline-flex rounded border border-dashed border-border px-1 text-secondary-label"
+          title="Thread context is unavailable"
+        >
+          {chips.get(occurrence.contextId)?.title ?? occurrence.label}
+        </span>
+      ),
+    );
+    cursor = occurrence.end;
+  }
+  nodes.push(props.text.slice(cursor));
+  return <>{nodes}</>;
 });
 
 // ---------------------------------------------------------------------------
@@ -2136,7 +2331,7 @@ const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
   }, [activityId, environmentId, threadId]);
 
   return (
-    <div className="mt-2 space-y-1 text-xs">
+    <div className="mt-2 space-y-1">
       {evidence === null ? (
         <button
           type="button"

@@ -18,12 +18,15 @@ import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import { OpenLive } from "./open.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { GitActivityLedgerLive } from "./persistence/Layers/GitActivityLedger.ts";
+import { ProjectionThreadPullRequestRepositoryLive } from "./persistence/Layers/ProjectionThreadPullRequests.ts";
 import { ServerLifecycleEventsLive } from "./serverLifecycleEvents.ts";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { ProjectionWorkflowRepositoryLive } from "./persistence/Layers/ProjectionWorkflows.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
+import { ProviderRuntimeLivenessLive } from "./provider/Layers/ProviderRuntimeLiveness.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
@@ -40,6 +43,7 @@ import { GitManagerLive } from "./git/Layers/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup.ts";
 import { layer as automaticArchiveGuardRegistryLayer } from "./orchestration/Services/AutomaticArchiveGuardRegistry.ts";
+import { layer as settledAutoArchiveReactorLayer } from "./orchestration/Layers/SettledAutoArchiveReactor.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { TurnLifecycleRuntimeLayerLive } from "./orchestration/Layers/TurnLifecycleRuntime.ts";
@@ -140,6 +144,7 @@ import { layer as pullRequestMonitorReviewHandoffReactorLayer } from "./pullRequ
 import { layer as createdPullRequestReviewReactorLayer } from "./pullRequestMonitor/CreatedPullRequestReviewReactor.ts";
 import { layer as reviewThreadMergeArchiveReactorLayer } from "./pullRequestMonitor/ReviewThreadMergeArchiveReactor.ts";
 import { ProjectionStateRepositoryLive } from "./persistence/Layers/ProjectionState.ts";
+import { ServerShutdownMarkerRepositoryLive } from "./persistence/Layers/ServerShutdownMarker.ts";
 import { PullRequestCreationIntentRepositoryLive } from "./persistence/Layers/PullRequestCreationIntents.ts";
 import { CollaborativeAcceptanceRepositoryLive } from "./persistence/Layers/CollaborativeAcceptance.ts";
 import { CollaborativeAcceptanceCoordinatorLive } from "./collaborativeAcceptance/Coordinator.ts";
@@ -229,6 +234,12 @@ const ValidationLifecycleWiredLive = ValidationLifecycleLive.pipe(
 const ValidationCoordinatorWiredLive = ValidationCoordinatorReactorLive.pipe(
   Layer.provide(ValidationLifecycleWiredLive),
 );
+// Same guard-registry instance the engine reads (Effect layer memoization
+// shares it with reviewThreadMergeArchiveLayerLive below), so the settled
+// admission guard and the merge admission guard are consulted together.
+const settledAutoArchiveLayerLive = settledAutoArchiveReactorLayer.pipe(
+  Layer.provide(automaticArchiveGuardRegistryLayer),
+);
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(TurnLifecycleRuntimeLayerLive),
@@ -238,9 +249,11 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ValidationCoordinatorWiredLive),
   Layer.provideMerge(ReviewSnapshotVerifierLive),
   Layer.provideMerge(ProjectionWorkflowRepositoryLive),
+  Layer.provideMerge(ServerShutdownMarkerRepositoryLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
   Layer.provideMerge(createdPullRequestReviewReactorLayer),
+  Layer.provideMerge(settledAutoArchiveLayerLive),
 );
 
 const CheckpointingLayerLive = Layer.empty.pipe(
@@ -262,7 +275,11 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 );
 
 export const PersistenceLayerLive = PullRequestCreationIntentRepositoryLive.pipe(
+  Layer.provideMerge(ServerShutdownMarkerRepositoryLive),
   Layer.provideMerge(CollaborativeAcceptanceRepositoryLive),
+  Layer.provideMerge(
+    GitActivityLedgerLive.pipe(Layer.provideMerge(ProjectionThreadPullRequestRepositoryLive)),
+  ),
   Layer.provideMerge(SqlitePersistenceLayerLive),
 );
 
@@ -444,6 +461,11 @@ const AcceptanceOrchestrationLayerLive = OrchestrationLayerLive.pipe(
   Layer.provideMerge(CollaborativeAcceptanceCoordinatorLive),
 );
 
+const ProviderRuntimeSharedLayersLive = Layer.mergeAll(
+  ProviderEventLoggersLive,
+  ProviderRuntimeLivenessLive,
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
@@ -462,12 +484,19 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-  // Shared native/canonical NDJSON writers used by both the per-instance
-  // drivers (native stream, written from inside each `<X>Adapter`) and
+  // Shared provider runtime singletons. Both are provided once at the runtime
+  // level so every consumer sees the same instances.
+  //
+  // `ProviderEventLoggersLive` owns the native/canonical NDJSON writers used by
+  // the per-instance drivers (written from inside each `<X>Adapter`) and by
   // `ProviderService` (canonical stream, written after event normalization).
-  // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  Layer.provideMerge(ProviderEventLoggersLive),
+  //
+  // `ProviderRuntimeLivenessLive` records what the provider runtime has
+  // observed per thread ahead of the durable projection. `ProviderService`
+  // writes it on the runtime-event funnel and `ProviderSessionReaper` reads it
+  // to tell a genuinely lost session apart from a terminal event still queued
+  // for the projection.
+  Layer.provideMerge(ProviderRuntimeSharedLayersLive),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and

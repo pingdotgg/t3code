@@ -33,8 +33,10 @@ function queryError(message: string, cause: unknown): ProjectQueryError {
   return new ProjectQueryError({ message, cause });
 }
 
-function entriesKey(environmentId: EnvironmentId, cwd: string): string {
-  return [environmentId, cwd].map(encodeURIComponent).join("|");
+function entriesKey(environmentId: EnvironmentId, cwd: string, directoryPath?: string): string {
+  return [environmentId, cwd, ...(directoryPath !== undefined ? [directoryPath] : [])]
+    .map(encodeURIComponent)
+    .join("|");
 }
 
 function fileKey(environmentId: EnvironmentId, cwd: string, relativePath: string): string {
@@ -49,8 +51,15 @@ const projectEntriesQueryAtom = Atom.family((key: string) =>
   Atom.make(
     Effect.tryPromise({
       try: () => {
-        const [environmentId, cwd] = keyParts(key) as [EnvironmentId, string];
-        return ensureEnvironmentApi(environmentId).projects.listEntries({ cwd });
+        const [environmentId, cwd, directoryPath] = keyParts(key) as [
+          EnvironmentId,
+          string,
+          string?,
+        ];
+        return ensureEnvironmentApi(environmentId).projects.listEntries({
+          cwd,
+          ...(directoryPath !== undefined ? { directoryPath } : {}),
+        });
       },
       catch: (cause) => queryError("Could not load workspace files.", cause),
     }),
@@ -104,8 +113,12 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEntriesQueryAtom(entriesKey(environmentId, cwd));
+export function getProjectEntriesQueryAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  directoryPath?: string,
+) {
+  return projectEntriesQueryAtom(entriesKey(environmentId, cwd, directoryPath));
 }
 
 export function getProjectFileQueryAtom(
@@ -172,8 +185,9 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
+  directoryPath?: string,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const atom = getProjectEntriesQueryAtom(environmentId, cwd, directoryPath);
   const result = useAtomValue(atom);
   const refresh = useCallback(() => appAtomRegistry.refresh(atom), [atom]);
   return {
