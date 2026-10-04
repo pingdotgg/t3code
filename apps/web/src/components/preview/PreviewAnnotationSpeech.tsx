@@ -1,8 +1,9 @@
 import type {
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceEvent,
-  EnvironmentId,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -12,24 +13,34 @@ import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButto
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { previewBridge } from "./previewBridge";
 import { toastManager } from "~/components/ui/toast";
+import { useProject, useThreadShell } from "~/state/entities";
+import { useComposerDraftStore } from "~/composerDraftStore";
 
 /** The inspected page owns its draft; recording stays in the application renderer. */
 export function PreviewAnnotationSpeech({
-  environmentId,
+  threadRef,
   tabId,
   config,
 }: {
-  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
   tabId: string;
   config: DesktopPreviewAnnotationVoiceConfig;
 }) {
   const navigate = useNavigate();
+  const thread = useThreadShell(threadRef);
+  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const projectId = thread?.projectId ?? draftThread?.projectId;
+  const project = useProject(
+    projectId ? scopeProjectRef(threadRef.environmentId, projectId) : null,
+  );
   const draft = useRef({ text: "", cursor: 0, selectionEnd: 0 });
   const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
   const speech = useEnvironmentSpeechInput({
-    environmentId,
-    ownerKey: JSON.stringify([environmentId, tabId, config.sessionId]),
+    environmentId: threadRef.environmentId,
+    projectId,
+    projectName: project?.title,
+    ownerKey: JSON.stringify([threadRef, tabId, config.sessionId]),
     draftText: text,
     readDraft: () => ({
       text: draft.current.text,

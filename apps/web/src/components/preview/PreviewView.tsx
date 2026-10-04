@@ -892,7 +892,7 @@ export function PreviewView({
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
           key={JSON.stringify([annotationVoice.sessionId, threadRef])}
-          environmentId={threadRef.environmentId}
+          threadRef={threadRef}
           tabId={runtimeTabId}
           config={annotationVoice}
         />

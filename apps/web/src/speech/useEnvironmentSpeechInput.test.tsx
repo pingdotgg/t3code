@@ -8,6 +8,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
+  ThreadId,
   type ClientSettings,
   type ServerSettings,
   type SpeechTranscriptionOptions,
@@ -15,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotationSpeech";
 
 const mocks = vi.hoisted(() => ({
   postProcessingEnabled: false,
@@ -22,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   processedTranscript: null as Promise<string> | null,
   draft: "",
   disabled: false,
+  annotation: false,
+  draftThread: false,
   clientPreferences: {} as Partial<ClientSettings>,
   projectId: undefined as ProjectId | undefined,
   originSettings: null as ServerSettings | null,
@@ -40,6 +44,32 @@ const mocks = vi.hoisted(() => ({
   primaryEnvironmentId: "primary-environment" as EnvironmentId,
   transcriptionEnvironmentId: null as EnvironmentId | null,
 }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("../state/entities", () => ({
+  useThreadShell: () => (mocks.draftThread ? null : { projectId: mocks.projectId }),
+  useProject: () => ({ title: "Annotation project" }),
+}));
+vi.mock("../composerDraftStore", () => ({
+  useComposerDraftStore: (
+    selector: (store: {
+      getDraftThreadByRef: () => { projectId: ProjectId | undefined } | null;
+    }) => unknown,
+  ) =>
+    selector({
+      getDraftThreadByRef: () => (mocks.draftThread ? { projectId: mocks.projectId } : null),
+    }),
+}));
+vi.mock("./useDictationShortcut", () => ({
+  useDictationShortcut: (input: { speech: ReturnType<typeof useEnvironmentSpeechInput> }) => {
+    voice = input.speech;
+    return "Ctrl+Space";
+  },
+}));
+vi.mock("../components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
+vi.mock("../components/chat/ComposerSpeechButton", () => ({
+  resolveSpeechPresentation: () => ({ status: "Idle" }),
+}));
+vi.mock("../components/preview/previewBridge", () => ({ previewBridge: null }));
 vi.mock("../state/session", () => ({
   usePreparedConnection: (environmentId: EnvironmentId | null) => {
     mocks.preparedEnvironmentId = environmentId;
@@ -158,7 +188,22 @@ async function mountProbe() {
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia() {} } });
   vi.stubGlobal("MediaRecorder", function MediaRecorder() {});
   root = createRoot(container as unknown as HTMLElement);
-  await act(() => root!.render(<Probe />));
+  await act(() =>
+    root!.render(
+      mocks.annotation ? (
+        <PreviewAnnotationSpeech
+          threadRef={{
+            environmentId: "project-environment" as EnvironmentId,
+            threadId: ThreadId.make("annotation-thread"),
+          }}
+          tabId="annotation-tab"
+          config={{ sessionId: "annotation-session", keybindings: [] }}
+        />
+      ) : (
+        <Probe />
+      ),
+    ),
+  );
 }
 
 afterEach(async () => {
@@ -181,10 +226,40 @@ afterEach(async () => {
   mocks.processedTranscript = null;
   mocks.draft = "";
   mocks.disabled = false;
+  mocks.annotation = false;
+  mocks.draftThread = false;
   mocks.cleanup.mockClear();
   mocks.committed.mockClear();
   vi.unstubAllGlobals();
 });
+it.each([false, true])(
+  "includes project-only aliases in annotation transcription and cleanup (draft thread: %s)",
+  async (draftThread) => {
+    mocks.annotation = true;
+    mocks.draftThread = draftThread;
+    mocks.microphoneFailure = false;
+    mocks.postProcessingEnabled = true;
+    mocks.projectId = ProjectId.make("annotation-project");
+    const words = [{ term: "Effect", aliases: ["a fact"] }];
+    mocks.originSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [mocks.projectId]: { speechProjectCustomWords: words } },
+    };
+    await mountProbe();
+    await act(() => voice.start());
+    expect(mocks.recordingOptions).toMatchObject({
+      projectName: "Annotation project",
+      speechCustomWords: words,
+    });
+    await act(() => voice.stop());
+    expect(mocks.cleanup).toHaveBeenCalledWith(
+      mocks.originPrepared,
+      "Raw transcript",
+      { text: "", selection: { start: 0, end: 0 } },
+      expect.objectContaining({ speechCustomWords: words }),
+    );
+  },
+);
 it("queues a recording while the environment is transcribing and starts when it drains", async () => {
   vi.useFakeTimers();
   try {
