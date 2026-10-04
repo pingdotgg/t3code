@@ -12,11 +12,12 @@ export function SidebarThreadUndoNotice() {
 
   if (!notice) return null;
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
+  const noun = `${notice.action === "Discarded" ? "draft" : "thread"}${notice.count === 1 ? "" : "s"}`;
 
   return (
     <Alert role="status" variant="sidebar">
       <AlertDescription>
-        {notice.action} {notice.count} thread{notice.count === 1 ? "" : "s"},{" "}
+        {notice.action} {notice.count} {noun},{" "}
         <InlineButton onClick={undoLatestThreadAction}>
           {shortcut ? `${shortcut} to undo` : "Undo"}
         </InlineButton>
