@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import {
   Option,
   Predicate as P,
   Ref,
+  Redacted,
   Result,
   Scope,
   Stream,
@@ -115,6 +117,12 @@ export function resolveOpenCodeConfigContent(
 }
 export interface OpenCodeServerProcess {
   readonly url: string;
+  /**
+   * Whether the process is still up. A cached handle is never lent once this
+   * reads false, so a server that died between borrows is replaced instead of
+   * handed to a session that would fail on its first request.
+   */
+  readonly isRunning: Effect.Effect<boolean>;
   readonly exitCode: Effect.Effect<number, never>;
 }
 
@@ -506,27 +514,66 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
-  if (runtimeMode === "full-access") {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
-  }
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  threadId?: string,
+): PermissionRuleset {
+  const modeRules: PermissionRuleset =
+    runtimeMode === "full-access"
+      ? [{ permission: "*", pattern: "*", action: "allow" }]
+      : [
+          // "Auto-accept edits" is documented as "auto-approve edits, ask before other
+          // actions", so prompting for every edit ignores the mode the user picked.
+          { permission: "*", pattern: "*", action: "ask" },
+          { permission: "bash", pattern: "*", action: "ask" },
+          {
+            permission: "edit",
+            pattern: "*",
+            action: runtimeMode === "auto-accept-edits" ? "allow" : "ask",
+          },
+          { permission: "webfetch", pattern: "*", action: "ask" },
+          { permission: "websearch", pattern: "*", action: "ask" },
+          { permission: "codesearch", pattern: "*", action: "ask" },
+          { permission: "external_directory", pattern: "*", action: "ask" },
+          { permission: "doom_loop", pattern: "*", action: "ask" },
+          { permission: "question", pattern: "*", action: "allow" },
+        ];
 
-  // "Auto-accept edits" is documented as "auto-approve edits, ask before other
-  // actions", so prompting for every edit ignores the mode the user picked.
-  const editAction = runtimeMode === "auto-accept-edits" ? "allow" : "ask";
-
-  return [
-    { permission: "*", pattern: "*", action: "ask" },
-    { permission: "bash", pattern: "*", action: "ask" },
-    { permission: "edit", pattern: "*", action: editAction },
-    { permission: "webfetch", pattern: "*", action: "ask" },
-    { permission: "websearch", pattern: "*", action: "ask" },
-    { permission: "codesearch", pattern: "*", action: "ask" },
-    { permission: "external_directory", pattern: "*", action: "ask" },
-    { permission: "doom_loop", pattern: "*", action: "ask" },
-    { permission: "question", pattern: "*", action: "allow" },
-  ];
+  return threadId === undefined
+    ? modeRules
+    : [
+        ...modeRules,
+        // One shared server registers a T3 MCP server per thread, so a thread
+        // must not reach another thread's tools. The last matching rule wins,
+        // hence deny-then-allow in every runtime mode.
+        { permission: "t3-code-*", pattern: "*", action: "deny" },
+        { permission: `${openCodeT3McpServerName(threadId)}_*`, pattern: "*", action: "allow" },
+      ];
 }
+
+/**
+ * T3's MCP server is registered per directory on a shared OpenCode server, so
+ * each thread needs its own entry name and its own credential. OpenCode names
+ * an MCP tool's permission `<server>_<tool>`.
+ */
+export const openCodeT3McpServerName = (threadId: string) =>
+  `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+/**
+ * A fresh password for one spawned server. Without `OPENCODE_SERVER_PASSWORD`
+ * OpenCode generates one and prints it to stdout, which T3 would have to
+ * scrape — and log — to authenticate its client. The value stays redacted so it
+ * cannot reach a log or an event by accident.
+ */
+export const generateOpenCodeServerPassword = Effect.sync(() =>
+  Redacted.make(randomBytes(32).toString("base64url"), { label: "OPENCODE_SERVER_PASSWORD" }),
+);
+
+/** The environment of a spawned server, carrying the only copy of its password. */
+export const openCodeServerEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  password: Redacted.Redacted,
+): NodeJS.ProcessEnv => ({ ...environment, OPENCODE_SERVER_PASSWORD: Redacted.value(password) });
 
 export function toOpenCodePermissionReply(
   decision: ProviderApprovalDecision,
@@ -684,6 +731,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const stdoutRef = yield* Ref.make("");
       const stderrRef = yield* Ref.make("");
       const readyDeferred = yield* Deferred.make<string, OpenCodeRuntimeError>();
+      const running = yield* Ref.make(true);
 
       const setReadyFromStdoutChunk = (chunk: string) =>
         Ref.updateAndGet(stdoutRef, (stdout) => `${stdout}${chunk}`).pipe(
@@ -711,6 +759,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const exitFiber = yield* child.exitCode.pipe(
         Effect.flatMap((code) =>
           Effect.gen(function* () {
+            yield* Ref.set(running, false);
             const stdout = yield* Ref.get(stdoutRef);
             const stderr = yield* Ref.get(stderrRef);
             const exitCode = Number(code);
@@ -765,6 +814,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
       return {
         url: readyOption.value,
+        isRunning: Ref.get(running),
         exitCode: child.exitCode.pipe(
           Effect.map(Number),
           Effect.orElseSucceed(() => 0),

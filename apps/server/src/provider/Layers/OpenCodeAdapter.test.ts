@@ -3,7 +3,19 @@ import assert, * as NodeAssert from "node:assert/strict";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Context, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { beforeEach, vi } from "vitest";
@@ -92,7 +104,18 @@ const runtimeMock = {
     sessionChildren: new Map<string, Array<{ id: string }>>(),
     sessionChildrenCalls: [] as string[],
     mcpAddCalls: [] as Array<Record<string, unknown>>,
+    mcpDisconnectCalls: [] as Array<Record<string, unknown>>,
     mcpStatus: "connected" as "connected" | "failed" | "needs_auth",
+    /** Every SDK POST, with the directory it carried, for the scoping probes. */
+    postCalls: [] as Array<{ readonly op: string; readonly directory?: unknown }>,
+    /** Spawned servers, in order. `spawnCount` is never reset, so a test can
+     * count the spawns its own sessions caused across a shared adapter. */
+    spawnCount: 0,
+    spawned: [] as Array<{
+      readonly url: string;
+      readonly running: Ref.Ref<boolean>;
+      readonly exit: Deferred.Deferred<number>;
+    }>,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -131,7 +154,9 @@ const runtimeMock = {
     this.state.sessionChildren.clear();
     this.state.sessionChildrenCalls.length = 0;
     this.state.mcpAddCalls.length = 0;
+    this.state.mcpDisconnectCalls.length = 0;
     this.state.mcpStatus = "connected";
+    this.state.postCalls.length = 0;
   },
 };
 
@@ -139,7 +164,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
       runtimeMock.state.startCalls.push(binaryPath);
-      const url = "http://127.0.0.1:4301";
+      runtimeMock.state.spawnCount += 1;
+      const url = `http://127.0.0.1:${4300 + runtimeMock.state.spawnCount}`;
+      const running = yield* Ref.make(true);
+      const exit = yield* Deferred.make<number>();
+      runtimeMock.state.spawned.push({ url, running, exit });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           runtimeMock.state.closeCalls.push(url);
@@ -150,7 +179,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       );
       return {
         url,
-        exitCode: Effect.never,
+        isRunning: Ref.get(running),
+        exitCode: Deferred.await(exit),
       };
     }),
   connectToOpenCodeServer: ({ serverUrl }) =>
@@ -209,28 +239,40 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             },
           };
         },
-        create: async () => {
+        create: async (input: Record<string, unknown>) => {
           runtimeMock.state.sessionCreateUrls.push(baseUrl);
+          runtimeMock.state.postCalls.push({ op: "session.create", directory: input.directory });
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
           return { data: { id: `${baseUrl}/session` } };
         },
-        update: async ({ sessionID, permission }: { sessionID: string; permission: unknown }) => {
+        update: async ({
+          sessionID,
+          permission,
+          directory,
+        }: {
+          sessionID: string;
+          permission: unknown;
+          directory?: unknown;
+        }) => {
           runtimeMock.state.sessionUpdateCalls.push({ sessionID, permission });
+          runtimeMock.state.postCalls.push({ op: "session.update", directory });
           return { data: { id: sessionID } };
         },
         fork: async ({ sessionID, directory }: { sessionID: string; directory?: string }) => {
           // Fork clones history into a new session bound to the directory.
           const forkedId = `${sessionID}_fork`;
           runtimeMock.state.forkCalls.push({ sessionID, ...(directory ? { directory } : {}) });
+          runtimeMock.state.postCalls.push({ op: "session.fork", directory });
           if (directory) {
             runtimeMock.state.sessionDirectoryById.set(forkedId, directory);
           }
           return { data: { id: forkedId, ...(directory ? { directory } : {}) } };
         },
-        abort: async ({ sessionID }: { sessionID: string }) => {
+        abort: async ({ sessionID, directory }: { sessionID: string; directory?: unknown }) => {
           runtimeMock.state.abortCalls.push(sessionID);
+          runtimeMock.state.postCalls.push({ op: "session.abort", directory });
           runtimeMock.state.sessionStatus = "idle";
           if (runtimeMock.state.abortError) {
             throw runtimeMock.state.abortError;
@@ -240,14 +282,26 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           runtimeMock.state.sessionChildrenCalls.push(sessionID);
           return { data: runtimeMock.state.sessionChildren.get(sessionID) ?? [] };
         },
-        promptAsync: async (input: unknown) => {
+        promptAsync: async (input: Record<string, unknown>) => {
           runtimeMock.state.promptCalls.push(input);
+          runtimeMock.state.postCalls.push({
+            op: "session.promptAsync",
+            directory: input.directory,
+          });
           if (runtimeMock.state.promptAsyncError) {
             throw runtimeMock.state.promptAsyncError;
           }
           runtimeMock.state.sessionStatus = "busy";
         },
-        message: async ({ messageID }: { sessionID: string; messageID: string }) => {
+        message: async ({
+          messageID,
+          directory,
+        }: {
+          sessionID: string;
+          messageID: string;
+          directory?: unknown;
+        }) => {
+          runtimeMock.state.postCalls.push({ op: "session.message", directory });
           const message = runtimeMock.state.messages.find((entry) => entry.info.id === messageID);
           if (!message) {
             throw new Error("message not found");
@@ -260,14 +314,23 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             runtimeMock.state.sessionStatus === undefined
               ? {}
               : {
-                  "http://127.0.0.1:9999/session": { type: runtimeMock.state.sessionStatus },
+                  [`${baseUrl}/session`]: { type: runtimeMock.state.sessionStatus },
                 },
         }),
-        revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
+        revert: async ({
+          sessionID,
+          messageID,
+          directory,
+        }: {
+          sessionID: string;
+          messageID?: string;
+          directory?: unknown;
+        }) => {
           runtimeMock.state.revertCalls.push({
             sessionID,
             ...(messageID ? { messageID } : {}),
           });
+          runtimeMock.state.postCalls.push({ op: "session.revert", directory });
           if (!messageID) {
             throw new Error("Expected messageID");
           }
@@ -310,8 +373,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           if (runtimeMock.state.permissionListError) throw runtimeMock.state.permissionListError;
           return { data: runtimeMock.state.listedPermissions };
         },
-        reply: async (input: { requestID: string; reply: string }) => {
+        reply: async (input: { requestID: string; reply: string; directory?: unknown }) => {
           runtimeMock.state.permissionReplies.push(input);
+          runtimeMock.state.postCalls.push({
+            op: "permission.reply",
+            directory: input.directory,
+          });
           if (runtimeMock.state.permissionReplyError) {
             throw runtimeMock.state.permissionReplyError;
           }
@@ -322,8 +389,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           if (runtimeMock.state.questionListError) throw runtimeMock.state.questionListError;
           return { data: runtimeMock.state.listedQuestions };
         },
-        reply: async (input: { requestID: string; answers: string[][] }) => {
+        reply: async (input: { requestID: string; answers: string[][]; directory?: unknown }) => {
           runtimeMock.state.questionReplies.push(input);
+          runtimeMock.state.postCalls.push({
+            op: "question.reply",
+            directory: input.directory,
+          });
           if (runtimeMock.state.questionReplyError) {
             throw runtimeMock.state.questionReplyError;
           }
@@ -332,7 +403,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       mcp: {
         add: async (input: Record<string, unknown>) => {
           runtimeMock.state.mcpAddCalls.push(input);
-          return { data: { "t3-code": { status: runtimeMock.state.mcpStatus } } };
+          runtimeMock.state.postCalls.push({ op: "mcp.add", directory: input.directory });
+          return { data: { [String(input.name)]: { status: runtimeMock.state.mcpStatus } } };
+        },
+        disconnect: async (input: Record<string, unknown>) => {
+          runtimeMock.state.mcpDisconnectCalls.push(input);
+          return {};
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -433,6 +509,18 @@ beforeEach(() => {
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
+/** Poll a mock-state predicate so a background recovery path can settle. */
+const waitFor = (predicate: () => boolean, label: string) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (predicate()) {
+        return;
+      }
+      yield* sleep(25);
+    }
+    assert.fail(`timed out waiting for ${label}`);
+  });
+
 it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLayer))(
   "OpenCodeAdapterLive MCP routing",
   (it) => {
@@ -461,7 +549,9 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
           }
           assert.equal(yield* adapter.hasSession(threadId), false);
           assert.equal(runtimeMock.state.sessionCreateUrls.length, 0);
-          assert.equal(runtimeMock.state.closeCalls.length, 1);
+          // The shared server is released, not torn down: it keeps running for
+          // the other threads and idle-closes on its own afterwards.
+          assert.equal(runtimeMock.state.closeCalls.length, 0);
         }),
       );
     }
@@ -489,7 +579,7 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
         assert.equal(runtimeMock.state.mcpAddCalls.length, 1);
         const call = runtimeMock.state.mcpAddCalls[0];
         assert.equal(call?.directory, directory);
-        assert.equal(call?.name, "t3-code");
+        assert.equal(call?.name, "t3-code-thread-opencode-mcp-directory");
         const config = call?.config as
           | {
               type?: unknown;
@@ -502,6 +592,153 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
         assert.match(String(config?.url), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
         assert.match(String(config?.headers?.Authorization), /^Bearer \S+$/);
         assert.equal(config?.oauth, false);
+        yield* adapter.stopSession(threadId);
+      }),
+    );
+
+    it.effect("shares one spawned server across threads and keeps their MCP entries apart", () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threads = [
+          { threadId: asThreadId("thread-shared-a"), directory: "/tmp/shared-a" },
+          { threadId: asThreadId("thread-shared-b"), directory: "/tmp/shared-b" },
+        ] as const;
+
+        for (const { threadId, directory } of threads) {
+          yield* McpSessionRegistry.issueActiveMcpCredential({
+            threadId,
+            providerInstanceId: ProviderInstanceId.make("opencode"),
+          });
+          yield* adapter.startSession({
+            provider: ProviderDriverKind.make("opencode"),
+            threadId,
+            cwd: directory,
+            runtimeMode: "full-access",
+          });
+        }
+
+        // The second thread did not spawn anything: one `opencode serve` serves
+        // both, on the same base URL.
+        const sharedUrl = runtimeMock.state.sessionCreateUrls[0];
+        assert.deepEqual(runtimeMock.state.sessionCreateUrls, [sharedUrl, sharedUrl]);
+        assert.equal(runtimeMock.state.startCalls.length <= 1, true);
+
+        // Each thread's T3 tools are registered under its own name, for its own
+        // directory, with its own credential.
+        assert.deepEqual(
+          runtimeMock.state.mcpAddCalls.map((call) => [call?.name, call?.directory]),
+          [
+            ["t3-code-thread-shared-a", "/tmp/shared-a"],
+            ["t3-code-thread-shared-b", "/tmp/shared-b"],
+          ],
+        );
+        const [first, second] = runtimeMock.state.mcpAddCalls.map(
+          (call) => (call.config as { headers: { Authorization: string } }).headers.Authorization,
+        );
+        assert.ok(first);
+        assert.notEqual(first, second);
+
+        // Stopping one thread removes only its own entry, and the shared server
+        // survives for the rest.
+        yield* adapter.stopSession(threads[0].threadId);
+        assert.deepEqual(runtimeMock.state.mcpDisconnectCalls, [
+          { name: "t3-code-thread-shared-a", directory: "/tmp/shared-a" },
+        ]);
+        assert.equal(runtimeMock.state.closeCalls.length, 0);
+        assert.equal(yield* adapter.hasSession(threads[1].threadId), true);
+
+        yield* adapter.stopSession(threads[1].threadId);
+        assert.deepEqual(runtimeMock.state.mcpDisconnectCalls, [
+          { name: "t3-code-thread-shared-a", directory: "/tmp/shared-a" },
+          { name: "t3-code-thread-shared-b", directory: "/tmp/shared-b" },
+        ]);
+      }),
+    );
+
+    it.effect("scopes every POST to the thread directory on a shared server", () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-shared-directory");
+        const directory = "/tmp/shared-directory";
+        yield* McpSessionRegistry.issueActiveMcpCredential({
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+        });
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          cwd: directory,
+          runtimeMode: "full-access",
+        });
+        const turn = yield* adapter.sendTurn({
+          threadId,
+          input: "hello",
+          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "a/b"),
+        });
+        yield* adapter.interruptTurn(threadId, turn.turnId);
+
+        // The client's directory header only reaches GET/HEAD, so each POST has
+        // to carry the thread's own directory.
+        assert.deepEqual(
+          runtimeMock.state.postCalls.map((call) => call.op),
+          ["mcp.add", "session.create", "session.promptAsync", "session.abort"],
+        );
+        for (const call of runtimeMock.state.postCalls) {
+          assert.equal(call.directory, directory, `${call.op} lost the thread directory`);
+        }
+        yield* adapter.stopSession(threadId);
+      }),
+    );
+
+    it.effect("re-registers the thread MCP entry after the shared server restarts", () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-shared-restart");
+        const directory = "/tmp/shared-restart";
+        // One event per subscription, so the pump's stream really runs (and
+        // then ends) instead of completing without ever yielding.
+        runtimeMock.state.subscribedEventDelayMs = 5;
+        runtimeMock.state.subscribedEvents = [
+          { type: "session.updated", properties: { sessionID: "ses_unrelated" } },
+        ];
+        yield* McpSessionRegistry.issueActiveMcpCredential({
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+        });
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          cwd: directory,
+          runtimeMode: "full-access",
+        });
+        const spawnsBefore = runtimeMock.state.spawnCount;
+        const firstServer = runtimeMock.state.spawned.at(-1)!;
+
+        // The shared server dies under the session. Its event stream drops, the
+        // session re-borrows (which starts a new server) and re-adds its MCP
+        // entry, because a restarted server forgets it.
+        yield* Ref.set(firstServer.running, false);
+        yield* Deferred.succeed(firstServer.exit, 1);
+        yield* waitFor(
+          () =>
+            runtimeMock.state.spawnCount > spawnsBefore &&
+            runtimeMock.state.mcpAddCalls.filter(
+              (call) => call?.name === "t3-code-thread-shared-restart",
+            ).length === 2,
+          "the session to re-borrow a restarted server and re-add its MCP entry",
+        );
+
+        const restarted = runtimeMock.state.spawned.at(-1)!;
+        assert.notEqual(restarted.url, firstServer.url);
+        assert.equal(runtimeMock.state.closeCalls.includes(firstServer.url), true);
+        assert.deepEqual(
+          runtimeMock.state.mcpAddCalls.map((call) => [call?.name, call?.directory]),
+          [
+            ["t3-code-thread-shared-restart", directory],
+            ["t3-code-thread-shared-restart", directory],
+          ],
+        );
+        yield* adapter.stopSession(threadId);
       }),
     );
   },
@@ -566,8 +803,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         if (runtimeMode === "full-access") {
           assert.equal(requests.length, 0);
           assert.deepEqual(runtimeMock.state.permissionReplies, [
-            { requestID: "directory", reply: "once" },
-            { requestID: "next-directory", reply: "once" },
+            { requestID: "directory", reply: "once", directory: process.cwd() },
+            { requestID: "next-directory", reply: "once", directory: process.cwd() },
           ]);
         } else {
           assert.deepEqual(
@@ -581,7 +818,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           assert.equal(requests[0]?.payload.detail, "external_directory: /repo-worktree/*");
           yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("directory"), "accept");
           assert.deepEqual(runtimeMock.state.permissionReplies, [
-            { requestID: "directory", reply: "once" },
+            { requestID: "directory", reply: "once", directory: process.cwd() },
           ]);
         }
         yield* adapter.stopSession(threadId);
@@ -634,7 +871,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         [request.payload.questions[0]!.id]: "Local",
       });
       assert.deepEqual(runtimeMock.state.questionReplies, [
-        { requestID: "child-input", answers: [["Local"]] },
+        { requestID: "child-input", answers: [["Local"]], directory: process.cwd() },
       ]);
       assert.deepEqual(runtimeMock.state.permissionReplies, []);
       yield* adapter.stopSession(threadId);
@@ -721,7 +958,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       );
       assert.equal(request?.requestId, "doom-loop");
       assert.deepEqual(runtimeMock.state.permissionReplies, [
-        { requestID: "doom-loop", reply: "once" },
+        { requestID: "doom-loop", reply: "once", directory: process.cwd() },
       ]);
       runtimeMock.state.permissionReplyError = null;
       yield* adapter.stopSession(threadId);
@@ -767,7 +1004,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
 
       assert.deepEqual(runtimeMock.state.permissionReplies, [
-        { requestID: permission.id, reply: "once" },
+        { requestID: permission.id, reply: "once", directory: process.cwd() },
       ]);
       assert.equal(
         events.some(
@@ -952,8 +1189,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         "accept",
       );
       assert.deepEqual(runtimeMock.state.permissionReplies, [
-        { requestID: "retryable-permission", reply: "once" },
-        { requestID: "retryable-permission", reply: "once" },
+        { requestID: "retryable-permission", reply: "once", directory: process.cwd() },
+        { requestID: "retryable-permission", reply: "once", directory: process.cwd() },
       ]);
       yield* adapter.stopSession(threadId);
     }),
@@ -1656,6 +1893,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       delete promptCall.messageID;
       assert.deepEqual(promptCall, {
         sessionID: "http://127.0.0.1:9999/session",
+        directory: process.cwd(),
         model: {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
@@ -1691,6 +1929,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       delete promptCall.messageID;
       assert.deepEqual(promptCall, {
         sessionID: "http://127.0.0.1:9999/session",
+        directory: process.cwd(),
         model: {
           providerID: "openai",
           modelID: "gpt-5",
@@ -1740,6 +1979,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       delete promptCall.messageID;
       assert.deepEqual(promptCall, {
         sessionID: "http://127.0.0.1:9999/session",
+        directory: process.cwd(),
         model: {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
