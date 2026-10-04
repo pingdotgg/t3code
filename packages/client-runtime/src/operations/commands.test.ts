@@ -25,6 +25,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
@@ -44,6 +45,7 @@ import {
   editQueuedRun,
   forkThreadFromRun,
   interruptThreadTurn,
+  interruptSubagent,
   mergeThreadBack,
   promoteQueuedRun,
   reorderActiveThread,
@@ -78,6 +80,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly subagentInterrupt?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -125,6 +128,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.subagentInterrupt === undefined
+            ? {}
+            : { subagentInterrupt: input.subagentInterrupt }),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
@@ -148,6 +154,35 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect.each([undefined, false, true])(
+    "dispatches a subagent interrupt only when support is advertised as %s",
+    (supported) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(supported === undefined ? {} : { subagentInterrupt: supported }),
+        });
+        const commandId = CommandId.make("subagent-interrupt");
+        const subagentId = NodeId.make("subagent-1");
+        const result = yield* interruptSubagent({
+          commandId,
+          threadId: v2ThreadId,
+          subagentId,
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.result,
+        );
+        expect(Result.isSuccess(result)).toBe(supported === true);
+        expect(commands).toEqual(
+          supported === true
+            ? [{ type: "subagent.interrupt", commandId, threadId: v2ThreadId, subagentId }]
+            : [],
+        );
+      }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

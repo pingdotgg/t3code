@@ -6,9 +6,11 @@ import {
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
+  OrchestrationV2DispatchCommandError,
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
+  type NodeId,
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
@@ -184,6 +186,10 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly runId?: RunId;
   /** Temporary caller compatibility while UI naming moves from turns to runs. */
   readonly turnId?: string;
+}
+
+export interface InterruptSubagentInput extends ThreadCommandInput {
+  readonly subagentId: NodeId;
 }
 
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
@@ -802,6 +808,26 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     threadId: input.threadId,
     runId,
     holdQueue: true,
+  });
+});
+
+export const interruptSubagent = Effect.fn("EnvironmentCommands.interruptSubagent")(function* (
+  input: InterruptSubagentInput,
+) {
+  const config = yield* getInitialServerConfig();
+  const commandId = yield* allocateCommandId(input);
+  if (config.environment.capabilities.subagentInterrupt !== true) {
+    return yield* new OrchestrationV2DispatchCommandError({
+      commandId,
+      commandType: "subagent.interrupt",
+      message: "This server does not support stopping native subagents.",
+    });
+  }
+  return yield* dispatch({
+    type: "subagent.interrupt",
+    commandId,
+    threadId: input.threadId,
+    subagentId: input.subagentId,
   });
 });
 

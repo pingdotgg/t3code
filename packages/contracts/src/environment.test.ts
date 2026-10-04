@@ -14,6 +14,18 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it.each([undefined, false, true])("preserves subagent interrupt support as %s", (supported) => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          ...(supported === undefined ? {} : { subagentInterrupt: supported }),
+        },
+      }).capabilities.subagentInterrupt,
+    ).toBe(supported);
+  });
+
   it("requires an advertised required-worktree bootstrap capability", () => {
     expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
     expect(
