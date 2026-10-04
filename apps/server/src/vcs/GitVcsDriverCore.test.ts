@@ -2216,7 +2216,9 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
         const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
-        const sshWrapperPath = pathService.join(tempDir, "ssh-wrapper.sh");
+        const sshWrapperPath = yield* pathService.fromFileUrl(
+          new URL("./testing/GitVcsDriverCore.fixture.sh", import.meta.url),
+        );
         const envKeys = [
           "GCM_INTERACTIVE",
           "GIT_ASKPASS",
@@ -2228,20 +2230,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         ] as const;
         const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
 
-        yield* fileSystem.writeFileString(
-          sshWrapperPath,
-          [
-            "#!/bin/sh",
-            'printf "GCM_INTERACTIVE=%s\\n" "${GCM_INTERACTIVE:-}" > "$T3_TEST_SSH_ASKPASS_LOG"',
-            'printf "GIT_ASKPASS=%s\\n" "${GIT_ASKPASS:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
-            'printf "GIT_TERMINAL_PROMPT=%s\\n" "${GIT_TERMINAL_PROMPT:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
-            'printf "SSH_ASKPASS=%s\\n" "${SSH_ASKPASS:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
-            'printf "SSH_ASKPASS_REQUIRE=%s\\n" "${SSH_ASKPASS_REQUIRE:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
-            "exit 1",
-            "",
-          ].join("\n"),
-        );
-        yield* fileSystem.chmod(sshWrapperPath, 0o755);
         yield* git(cwd, ["remote", "add", "origin", "ssh://example.invalid/repo.git"]);
         yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
         yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);

@@ -78,32 +78,11 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
   yield* fileSystem.makeDirectory(toolchainBin, { recursive: true });
   yield* fileSystem.makeDirectory(globalPrefix, { recursive: true });
   yield* fileSystem.writeFileString(logPath, "");
-  yield* fileSystem.writeFileString(
+  yield* fileSystem.copyFile(
+    yield* path.fromFileUrl(
+      new URL("./testing/AcpRegistrySupport.npm.fixture.sh", import.meta.url),
+    ),
     npmPath,
-    [
-      "#!/bin/sh",
-      'printf \'%s\\n\' "$*" >> "$FAKE_NPM_LOG"',
-      'prefix="${npm_config_prefix:-$FAKE_NPM_PREFIX}"',
-      'if [ "$1" = "root" ] && [ "$2" = "--global" ]; then',
-      "  printf '%s\\n' \"$prefix/lib/node_modules\"",
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then',
-      "  printf '%s\\n' \"$prefix\"",
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "install" ] && [ "$2" = "--global" ]; then',
-      '  package_root="$prefix/lib/node_modules/@example/acp"',
-      '  executable="$prefix/bin/example-agent"',
-      '  mkdir -p "$package_root" "$prefix/bin"',
-      '  printf \'%s\' "$FAKE_NPM_MANIFEST" > "$package_root/package.json"',
-      "  printf '#!/bin/sh\\n' > \"$executable\"",
-      '  chmod 755 "$executable"',
-      "  exit 0",
-      "fi",
-      "exit 64",
-      "",
-    ].join("\n"),
   );
   yield* fileSystem.chmod(npmPath, 0o755);
   return {
@@ -137,33 +116,9 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
   const logPath = path.join(rootDirectory, "uv.log");
   yield* fileSystem.makeDirectory(toolchainBin, { recursive: true });
   yield* fileSystem.writeFileString(logPath, "");
-  yield* fileSystem.writeFileString(
+  yield* fileSystem.copyFile(
+    yield* path.fromFileUrl(new URL("./testing/AcpRegistrySupport.uv.fixture.sh", import.meta.url)),
     uvPath,
-    [
-      "#!/bin/sh",
-      'printf \'%s\\n\' "$*" >> "$FAKE_UV_LOG"',
-      'tool_bin="${UV_TOOL_BIN_DIR:-$FAKE_UV_BIN}"',
-      'executable="$tool_bin/fast-agent"',
-      'printf "tool-dir=%s bin-dir=%s\\n" "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" >> "$FAKE_UV_LOG"',
-      'if [ "$1" = "tool" ] && [ "$2" = "dir" ] && [ "$3" = "--bin" ]; then',
-      "  printf '%s\\n' \"$tool_bin\"",
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "tool" ] && [ "$2" = "list" ]; then',
-      '  if [ -x "$executable" ]; then',
-      "    printf 'fast-agent-acp v0.10.1\\n- fast-agent\\n'",
-      "  fi",
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "tool" ] && [ "$2" = "install" ] && [ "$3" = "--force" ]; then',
-      '  mkdir -p "$tool_bin"',
-      "  printf '#!/bin/sh\\n' > \"$executable\"",
-      '  chmod 755 "$executable"',
-      "  exit 0",
-      "fi",
-      "exit 64",
-      "",
-    ].join("\n"),
   );
   yield* fileSystem.chmod(uvPath, 0o755);
   return {

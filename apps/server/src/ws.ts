@@ -1796,11 +1796,16 @@ const makeWsRpcLayer = (
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
               .enqueueCommand(
-                ThreadMessageIntake.dispatchCommand(
-                  ThreadManagementService.withCreationProvenance(command, {
-                    createdBy: "user",
-                    creationSource: "creationSource" in command ? command.creationSource : "web",
-                  }),
+                // A retry also restarts the preparation work the launch owns.
+                (command.type === "prepared-run.retry"
+                  ? threadLaunch.retryPreparation(command)
+                  : ThreadMessageIntake.dispatchCommand(
+                      ThreadManagementService.withCreationProvenance(command, {
+                        createdBy: "user",
+                        creationSource:
+                          "creationSource" in command ? command.creationSource : "web",
+                      }),
+                    )
                 ).pipe(Effect.provide(intakeContext)),
               )
               .pipe(

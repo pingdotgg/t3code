@@ -508,6 +508,29 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("root"),
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+    startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+/** Failure code on the error item a failed workspace preparation leaves. */
+export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -549,6 +572,8 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
+  /** How a launch prepares this run's workspace; prepared-run.retry repeats it. */
+  workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1726,6 +1751,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
+  /**
+   * The last message the user wrote. Wakes and agent messages also use the
+   * user role, so they move latestUserMessageAt but not this.
+   */
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
   // Normalized post-settlement background work for sidebar Waiting pills.
   // Empty when the latest root run is still active or no pending work remains.
@@ -2252,6 +2282,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2699,7 +2730,10 @@ export const OrchestrationV2Command = Schema.Union([
       }),
     ),
     dispatchMode: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("defer_start") }),
+      Schema.Struct({
+        type: Schema.Literal("defer_start"),
+        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+      }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("queue_after_active") }),
@@ -2732,6 +2766,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     failure: OrchestrationV2ProviderFailure,
+  }),
+  /** Puts a run whose workspace preparation failed back into preparation. */
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.retry"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
@@ -2969,26 +3010,6 @@ export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
 ]);
 export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
-
-export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
-]);
-export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
-  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   commandId: CommandId,

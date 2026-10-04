@@ -22,6 +22,8 @@ When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
+To step a new thread to the next machine instead of opening the menu, bind
+**Composer: Cycle Host** in Keybindings. It has no default shortcut.
 Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
 current checkout, a new worktree, and the previous worktree when available.
@@ -52,6 +54,8 @@ displayed threads. The shortcuts follow the current list filters and order.
 Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
 choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
 to show only actions.
+
+In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
 also sends. To make Return insert a new line instead, change the Return key
@@ -120,7 +124,8 @@ a shortcut.
 shortcut; assign one in **Settings → Keybindings**.
 
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
-bottom of the sidebar, such as unpin, settle, snooze, or archive. Consecutive
+bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
+draft. Consecutive
 actions of the same kind undo together. The notice remains available for five
 seconds after the latest action. The default shortcut skips text fields and
 terminals so native undo keeps working there.
