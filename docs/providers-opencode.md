@@ -11,13 +11,26 @@ external servers are contacted through the SDK.
   historical parts are not cached or rescanned.
 - Full-access approval auto-replies are guarded by resolved-request IDs and apply to descendant
   sessions owned by the thread.
+- One `opencode serve` process serves a whole provider instance. Sessions borrow it through
+  `OpenCodeServerOwner` (borrower refcount, 30s idle TTL after the last release, restart on the next
+  borrow when it died), so N threads cost one server instead of N. The instance's layer owns the
+  process; a configured `serverUrl` is never started or stopped by T3.
+- Each spawned server gets a random `OPENCODE_SERVER_PASSWORD` that T3's SDK client authenticates
+  with; the value is redacted in memory and never logged.
+- Because the server is shared, every thread registers its own `t3-code-<thread>` MCP entry with its
+  own credential, its session rules deny every other `t3-code-*` tool, and the entry is withdrawn
+  when the thread stops. A restarted server forgets the entries, so a reconnecting session re-adds
+  its own before resubscribing.
 - Locally launched OpenCode servers belong to the backend's lifetime. A subprocess guard watches a
   backend-owned pipe and terminates the server's process tree when that pipe closes, including
   after abrupt backend death; normal scope closure also terminates the tree. Configured external
   servers remain externally managed.
 - Local session startup requires the directory-scoped `t3-code` MCP registration to report
-  `connected`. A failed or missing registration fails startup and closes the runtime rather than
-  admitting a session without working T3 tools.
+  `connected`. A failed or missing registration fails startup and releases the session's borrow
+  rather than admitting a session without working T3 tools.
+- A lost event stream reconnects with bounded retries, re-borrowing the shared server (which starts
+  a new one if it died) and reconciling pending approvals, questions, and the active turn. Only
+  exhausted retries fail the session.
 - Backend restarts invalidate in-memory MCP credentials. Interrupted executions stop instead of
   continuing with stale credentials; send a new turn to resume persisted conversation history
   with fresh credentials. Delegation mutations are never automatically replayed after an

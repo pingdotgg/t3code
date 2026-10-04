@@ -21,6 +21,7 @@ import {
   Fiber,
   Path,
   Queue,
+  Redacted,
   Ref,
   Scope,
   Semaphore,
@@ -41,13 +42,17 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { appendT3ExecutionContext } from "../executionContext.ts";
+import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   buildOpenCodePermissionRules,
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
+  generateOpenCodeServerPassword,
   openCodeQuestionId,
   openCodeRuntimeErrorDetail,
+  openCodeServerEnvironment,
+  openCodeT3McpServerName,
+  OpenCodeRuntime,
+  OpenCodeRuntimeError,
   parseOpenCodeModelSlug,
   runOpenCodeSdk,
   toOpenCodeFileParts,
@@ -59,6 +64,13 @@ import {
 const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_CONNECTION_TIMEOUT = "5 seconds";
 const OPENCODE_INITIAL_SUBSCRIBE_ATTEMPTS = 5;
+/**
+ * A lost event stream is resubscribed this many times, with a doubling backoff
+ * starting at this delay, before the session is failed. A shared server that
+ * restarted is picked up by the first attempt, which re-borrows it.
+ */
+const OPENCODE_RECONNECT_ATTEMPTS = 5;
+const OPENCODE_RECONNECT_DELAY_MS = 250;
 const OPENCODE_RECOVERY_DELAY_MS = 250;
 const OPENCODE_RECOVERY_MAX_DELAY_MS = 5_000;
 const OPENCODE_ADMISSION_ATTEMPTS = 5;
@@ -195,10 +207,34 @@ type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" 
   completed: boolean;
 };
 
+/** One thread's T3 MCP entry on the shared server. */
+interface OpenCodeThreadMcpRegistration {
+  readonly name: string;
+  readonly directory: string;
+  readonly endpoint: string;
+  readonly credential: string;
+}
+
+/** A held reference to the provider instance's shared server. */
+interface OpenCodeServerBorrow {
+  readonly connection: OpenCodeServerConnection;
+  /** Gives the reference back; the server stops once its idle period elapses. */
+  readonly release: Effect.Effect<void>;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
-  readonly client: OpencodeClient;
-  readonly server: OpenCodeServerConnection;
+  /** Replaced when the session reconnects to a restarted shared server. */
+  client: OpencodeClient;
+  server: OpenCodeServerConnection;
+  /**
+   * The thread's MCP entry, when T3 owns the server. Removed when the session
+   * stops, and re-added after the shared server restarts.
+   */
+  mcp: OpenCodeThreadMcpRegistration | undefined;
+  readonly mcpServerName: string;
+  /** The session's live reference to the shared server; swapped on reconnect. */
+  serverBorrow: OpenCodeServerBorrow;
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly descendantSessionIds: Set<string>;
@@ -234,7 +270,8 @@ interface OpenCodeSessionContext {
    *     (cancels the in-flight `event.subscribe` fetch),
    *   - interrupts the event-pump and server-exit fibers forked
    *     via `Effect.forkIn(sessionScope)`,
-   *   - tears down the OpenCode server process for scope-owned servers.
+   *   - gives back this session's reference to the shared server, which stops
+   *     once its last borrower has released it and its idle period elapses.
    */
   readonly sessionScope: Scope.Closeable;
 }
@@ -557,6 +594,21 @@ function updateProviderSession(
   return nextSession;
 }
 
+/**
+ * Withdraw one thread's T3 MCP entry from the shared server. Best-effort: the
+ * credential it carried is already revoked with the thread, so a failure here
+ * must not fail a stop. OpenCode 1.x has no `mcp.remove`; disconnecting drops the
+ * server's live connection to T3's MCP endpoint, and any leftover entry dies
+ * with the shared server.
+ */
+const withdrawOpenCodeMcp = (
+  client: OpencodeClient,
+  mcp: OpenCodeThreadMcpRegistration,
+): Effect.Effect<void> =>
+  runOpenCodeSdk("mcp.disconnect", () =>
+    client.mcp.disconnect({ name: mcp.name, directory: mcp.directory }),
+  ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
+
 const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function* (
   context: OpenCodeSessionContext,
 ) {
@@ -597,7 +649,10 @@ const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function*
           requests
             .withPermit(
               runOpenCodeSdk("session.abort", () =>
-                context.client.session.abort({ sessionID: child.id }),
+                context.client.session.abort({
+                  sessionID: child.id,
+                  directory: context.directory,
+                }),
               ),
             )
             .pipe(
@@ -637,13 +692,25 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
   // but we still want to tell OpenCode that this session is done.
   yield* runOpenCodeSdk("session.abort", () =>
-    context.client.session.abort({ sessionID: context.openCodeSessionId }),
+    context.client.session.abort({
+      sessionID: context.openCodeSessionId,
+      directory: context.directory,
+    }),
   ).pipe(Effect.ignore({ log: true }));
   yield* abortOpenCodeDescendants(context).pipe(Effect.ignore({ log: true }));
 
+  // Withdraw this thread's MCP entry from the shared server. Its bearer
+  // credential dies with the thread, and the entry is per directory, so the
+  // other threads on the same server keep theirs.
+  const mcp = context.mcp;
+  if (mcp !== undefined) {
+    context.mcp = undefined;
+    yield* withdrawOpenCodeMcp(context.client, mcp);
+  }
+
   // Closing the session scope interrupts every fiber forked into it and
   // runs each finalizer we registered — the `AbortController.abort()` call,
-  // the child-process termination, etc.
+  // the shared-server release, etc.
   yield* Scope.close(context.sessionScope, Exit.void);
   return true;
 });
@@ -660,6 +727,79 @@ export function makeOpenCodeAdapter(
     const path = yield* Path.Path;
     const sameDirectory = (left: string, right: string) =>
       isSameOpenCodeDirectory(fileSystem, path, left, right);
+
+    /**
+     * One `opencode serve` per provider instance, shared by every thread. A
+     * configured `serverUrl` is somebody else's server: T3 connects to it and
+     * never starts or stops it.
+     */
+    const externalServerUrl = openCodeSettings.serverUrl?.trim() ?? "";
+    const ownedServerPassword = externalServerUrl
+      ? undefined
+      : yield* generateOpenCodeServerPassword;
+    const serverOwner = externalServerUrl
+      ? undefined
+      : yield* OpenCodeServerOwner.make({
+          binaryPath: openCodeSettings.binaryPath,
+          environment: openCodeServerEnvironment(
+            options?.environment ?? process.env,
+            ownedServerPassword!,
+          ),
+        });
+    /** The password T3's own SDK client authenticates with. */
+    const clientServerPassword =
+      ownedServerPassword === undefined
+        ? openCodeSettings.serverPassword
+        : Redacted.value(ownedServerPassword);
+
+    /**
+     * Holds one reference to the instance's server for the caller's lifetime.
+     * Sessions keep it for as long as they run, so a long tool call cannot idle
+     * the server out from under them.
+     */
+    const borrowServer = Effect.fn("borrowServer")(function* () {
+      const lent = yield* Deferred.make<OpenCodeServerConnection, OpenCodeRuntimeError>();
+      // The hold ends when this signal completes, so releasing never waits on
+      // the holder's own teardown. Completing an already-completed signal is a
+      // no-op, so release is idempotent.
+      const released = yield* Deferred.make<void>();
+      const hold = (connection: OpenCodeServerConnection) =>
+        Deferred.succeed(lent, connection).pipe(Effect.andThen(Deferred.await(released)));
+      const release = Deferred.succeed(released, undefined).pipe(Effect.asVoid);
+      // Detached on purpose: the hold outlives this call and ends only when it
+      // is released, never because an enclosing scope closed.
+      yield* Effect.forkDetach(
+        (serverOwner
+          ? serverOwner.withServer((server) =>
+              hold({
+                url: server.url,
+                exitCode: server.exitCode,
+                external: false,
+              }),
+            )
+          : Effect.scoped(
+              openCodeRuntime
+                .connectToOpenCodeServer({
+                  binaryPath: openCodeSettings.binaryPath,
+                  serverUrl: externalServerUrl,
+                  ...(options?.environment ? { environment: options.environment } : {}),
+                })
+                .pipe(Effect.flatMap(hold)),
+            )
+        ).pipe(Effect.catchCause((cause) => Deferred.failCause(lent, cause))),
+      );
+      // An interrupted startup must not strand the reference.
+      const connection = yield* Deferred.await(lent).pipe(Effect.onInterrupt(() => release));
+      return { connection, release } satisfies OpenCodeServerBorrow;
+    });
+
+    const createSessionClient = (connection: OpenCodeServerConnection, directory: string) =>
+      openCodeRuntime.createOpenCodeSdkClient({
+        baseUrl: connection.url,
+        directory,
+        ...(clientServerPassword ? { serverPassword: clientServerPassword } : {}),
+      });
+
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -676,11 +816,13 @@ export function makeOpenCodeAdapter(
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
 
     // Layer-level finalizer: when the adapter layer shuts down, stop every
-    // session. Each session's `Scope.close` tears down its spawned OpenCode
-    // server (via the `ChildProcessSpawner` finalizer installed in
-    // `startOpenCodeServerProcess`) and interrupts the forked event/exit
-    // fibers. Consumers that can't reason about Effect scopes therefore
-    // cannot leak OpenCode child processes by forgetting to call `stopAll`.
+    // session. Each session's `Scope.close` releases its reference to the
+    // shared server and interrupts the forked event/exit fibers, and the owner's
+    // own finalizer then stops the server process (through the
+    // `ChildProcessSpawner` finalizer installed in
+    // `startOpenCodeServerProcess`). Consumers that can't reason about Effect
+    // scopes therefore cannot leak OpenCode child processes by forgetting to
+    // call `stopAll`.
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         isShuttingDown = true;
@@ -771,9 +913,14 @@ export function makeOpenCodeAdapter(
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
       yield* runOpenCodeSdk("session.abort", () =>
-        context.client.session.abort({ sessionID: context.openCodeSessionId }),
+        context.client.session.abort({
+          sessionID: context.openCodeSessionId,
+          directory: context.directory,
+        }),
       ).pipe(Effect.ignore({ log: true }));
       yield* abortOpenCodeDescendants(context).pipe(Effect.ignore({ log: true }));
+      // Closing the session scope releases the shared-server reference and
+      // interrupts the pump.
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
@@ -1053,7 +1200,11 @@ export function makeOpenCodeAdapter(
             context.resolvedRequestIds.add(event.properties.id);
             context.autoRepliedRequestIds.add(event.properties.id);
             const replyResult = yield* runOpenCodeSdk("permission.reply", () =>
-              context.client.permission.reply({ requestID: event.properties.id, reply: "once" }),
+              context.client.permission.reply({
+                requestID: event.properties.id,
+                reply: "once",
+                directory: context.directory,
+              }),
             ).pipe(Effect.result);
             if (replyResult._tag === "Success") {
               break;
@@ -1418,6 +1569,7 @@ export function makeOpenCodeAdapter(
           context.client.session.message({
             sessionID: context.openCodeSessionId,
             messageID: promptMessageId,
+            directory: context.directory,
           }),
         ).pipe(Effect.result);
         if (
@@ -1497,7 +1649,7 @@ export function makeOpenCodeAdapter(
       yield* Deferred.succeed(context.connectionReady, undefined);
       yield* Effect.gen(function* () {
         let subscription = initialSubscription;
-        let reconnectDelayMs = 100;
+        let reconnectDelayMs = OPENCODE_RECONNECT_DELAY_MS;
         while (!(yield* Ref.get(context.stopped)) && !eventsAbortController.signal.aborted) {
           const exit = yield* Effect.exit(
             Stream.fromAsyncIterable(
@@ -1539,53 +1691,47 @@ export function makeOpenCodeAdapter(
           let nextSubscription:
             | Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>>
             | undefined;
-          while (
-            nextSubscription === undefined &&
-            !(yield* Ref.get(context.stopped)) &&
-            !eventsAbortController.signal.aborted
-          ) {
-            yield* sleepOpenCode(reconnectDelayMs);
+          for (let attempt = 1; attempt <= OPENCODE_RECONNECT_ATTEMPTS; attempt += 1) {
             if (yield* Ref.get(context.stopped) || eventsAbortController.signal.aborted) {
               return;
             }
+            yield* sleepOpenCode(reconnectDelayMs);
             const nextExit = yield* Effect.exit(
-              runOpenCodeSdk("event.subscribe", () =>
-                context.client.event.subscribe(undefined, {
-                  signal: eventsAbortController.signal,
+              reconnectEventStream(context, eventsAbortController.signal).pipe(
+                Effect.map((next) => {
+                  nextSubscription = next;
                 }),
               ),
             );
             if (Exit.isSuccess(nextExit)) {
-              nextSubscription = nextExit.value;
-              reconnectDelayMs = 100;
+              reconnectDelayMs = OPENCODE_RECONNECT_DELAY_MS;
               break;
             }
             yield* Effect.logWarning("OpenCode event resubscribe failed; retrying.", {
               threadId: context.session.threadId,
+              attempt,
               detail: openCodeRuntimeErrorDetail(Cause.squash(nextExit.cause)),
             });
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, 2_000);
           }
           if (nextSubscription === undefined) {
+            if (yield* Ref.get(context.stopped) || eventsAbortController.signal.aborted) {
+              return;
+            }
+            yield* emitUnexpectedExit(
+              context,
+              "The OpenCode event stream was lost and could not reconnect.",
+            );
             return;
           }
           subscription = nextSubscription;
         }
       }).pipe(Effect.forkIn(context.sessionScope));
 
-      if (!context.server.external && context.server.exitCode !== null) {
-        yield* context.server.exitCode.pipe(
-          Effect.flatMap((code) =>
-            Effect.gen(function* () {
-              if (yield* Ref.get(context.stopped)) {
-                return;
-              }
-              yield* emitUnexpectedExit(context, `OpenCode server exited unexpectedly (${code}).`);
-            }),
-          ),
-          Effect.forkIn(context.sessionScope),
-        );
-      }
+      // A server T3 started is shared and restartable: when it dies the stream
+      // above drops and `reconnectEventStream` borrows a fresh one, so the
+      // session survives instead of every thread on the instance failing at
+      // once. An externally configured server keeps its own lifetime.
     });
 
     const recoverPendingRequests = Effect.fn("recoverPendingRequests")(function* (
@@ -1649,11 +1795,112 @@ export function makeOpenCodeAdapter(
       );
     });
 
+    /**
+     * T3's MCP server for one thread on the shared server: registered under the
+     * thread's own name and credential (the session's rules allow only it), and
+     * removed when the thread unloads or the session closes.
+     */
+    const addThreadMcp = Effect.fn("addThreadMcp")(function* (input: {
+      readonly client: OpencodeClient;
+      readonly directory: string;
+      readonly name: string;
+      readonly mcp: { readonly endpoint: string; readonly authorizationHeader: string };
+    }) {
+      const registration = yield* runOpenCodeSdk("mcp.add", () =>
+        input.client.mcp.add({
+          directory: input.directory,
+          name: input.name,
+          config: {
+            type: "remote",
+            url: input.mcp.endpoint,
+            headers: { Authorization: input.mcp.authorizationHeader },
+            oauth: false,
+          },
+        }),
+      );
+      // The named status must read `connected`: HTTP success alone does not mean
+      // the MCP server is usable.
+      const status = registration.data?.[input.name]?.status;
+      if (status !== "connected") {
+        return yield* new OpenCodeRuntimeError({
+          operation: "mcp.add",
+          detail: `T3 Code MCP registration did not connect (status: ${status ?? "missing"}). Restart the session to reconnect T3 tools.`,
+        });
+      }
+      return {
+        name: input.name,
+        directory: input.directory,
+        endpoint: input.mcp.endpoint,
+        credential: input.mcp.authorizationHeader,
+      } satisfies OpenCodeThreadMcpRegistration;
+    });
+
+    /**
+     * Resubscribes after a lost event stream. A shared server that restarted is
+     * picked up here: the re-borrow starts a new one, the session takes a client
+     * for it, and the thread's MCP entry is registered again because a restarted
+     * server forgot it. Pending approvals/questions and an active turn are then
+     * reconciled, because the events that would have reported them were lost.
+     */
+    const reconnectEventStream = Effect.fn("reconnectEventStream")(function* (
+      context: OpenCodeSessionContext,
+      signal: AbortSignal,
+    ) {
+      // An externally configured server keeps its URL and its own lifetime, so
+      // there is nothing to re-borrow; only a server T3 started can have been
+      // replaced while the stream was down.
+      if (!context.server.external) {
+        const previous = context.serverBorrow;
+        const borrow = yield* borrowServer();
+        yield* Scope.addFinalizer(context.sessionScope, borrow.release);
+        context.serverBorrow = borrow;
+        context.server = borrow.connection;
+        context.client = createSessionClient(borrow.connection, context.directory);
+        // The old borrow is given back only once the new reference is held, so
+        // the shared server is never unowned in between.
+        yield* previous.release;
+      }
+
+      const subscription = yield* runOpenCodeSdk("event.subscribe", () =>
+        context.client.event.subscribe(undefined, { signal }),
+      );
+
+      const mcp = context.mcp;
+      if (mcp !== undefined) {
+        // T3's tools are an addition: a server that will not take them again
+        // still runs the turn, it just loses T3 Code's own tools.
+        yield* addThreadMcp({
+          client: context.client,
+          directory: mcp.directory,
+          name: mcp.name,
+          mcp: { endpoint: mcp.endpoint, authorizationHeader: mcp.credential },
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not re-add T3 Code's MCP server to OpenCode.", {
+              threadId: context.session.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+
+      yield* recoverPendingRequests(context);
+      const turnId = context.activeTurnId;
+      const promptMessageId = context.activePromptMessageId;
+      if (
+        turnId !== undefined &&
+        promptMessageId !== undefined &&
+        context.recoveryFiber === undefined
+      ) {
+        context.recoveryFiber = yield* reconcileTurn(context, turnId, promptMessageId).pipe(
+          Effect.forkIn(context.sessionScope),
+        );
+      }
+      return subscription;
+    });
+
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
       function* (input) {
-        const binaryPath = openCodeSettings.binaryPath;
-        const serverUrl = openCodeSettings.serverUrl;
-        const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
@@ -1666,23 +1913,19 @@ export function makeOpenCodeAdapter(
           const sessionScope = yield* Scope.make();
           const startedExit = yield* Effect.exit(
             Effect.gen(function* () {
-              // The runtime binds the server's lifetime to the Scope.Scope
-              // we provide below — closing `sessionScope` kills the child
-              // process automatically. No manual `server.close()` needed.
-              const server = yield* openCodeRuntime.connectToOpenCodeServer({
-                binaryPath,
-                serverUrl,
-                ...(options?.environment ? { environment: options.environment } : {}),
-              });
-              const client = openCodeRuntime.createOpenCodeSdkClient({
-                baseUrl: server.url,
-                directory,
-                ...(server.external && serverPassword ? { serverPassword } : {}),
-              });
+              // The provider instance's shared server, borrowed for as long as
+              // this session runs. Closing `sessionScope` gives the reference
+              // back, and the owner stops the server once its last borrower has
+              // released it and its idle period elapses.
+              const borrow = yield* borrowServer();
+              yield* Scope.addFinalizer(sessionScope, borrow.release);
+              const server = borrow.connection;
+              const client = createSessionClient(server, directory);
               const mcpSession = yield* McpSessionRegistry.readActiveMcpProviderSession(
                 input.threadId,
                 boundInstanceId,
               );
+              let mcpRegistration: OpenCodeThreadMcpRegistration | undefined;
               if (mcpSession) {
                 if (server.external) {
                   // External OpenCode servers share MCP configuration across clients,
@@ -1692,27 +1935,12 @@ export function makeOpenCodeAdapter(
                     boundInstanceId,
                   );
                 } else {
-                  const registration = yield* runOpenCodeSdk("mcp.add", () =>
-                    client.mcp.add({
-                      directory,
-                      name: "t3-code",
-                      config: {
-                        type: "remote",
-                        url: mcpSession.endpoint,
-                        headers: {
-                          Authorization: mcpSession.authorizationHeader,
-                        },
-                        oauth: false,
-                      },
-                    }),
-                  );
-                  const status = registration.data?.["t3-code"]?.status;
-                  if (status !== "connected") {
-                    return yield* new OpenCodeRuntimeError({
-                      operation: "mcp.add",
-                      detail: `T3 Code MCP registration did not connect (status: ${status ?? "missing"}). Restart the session to reconnect T3 tools.`,
-                    });
-                  }
+                  mcpRegistration = yield* addThreadMcp({
+                    client,
+                    directory,
+                    name: openCodeT3McpServerName(input.threadId),
+                    mcp: mcpSession,
+                  });
                 }
               }
               // Resume: re-adopt the session named by the durable cursor —
@@ -1747,7 +1975,8 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, input.threadId),
+                      directory,
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -1774,7 +2003,8 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, input.threadId),
+                      directory,
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -1788,7 +2018,8 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     title: `T3 Code ${input.threadId}`,
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: buildOpenCodePermissionRules(input.runtimeMode, input.threadId),
+                    directory,
                   }),
                 );
                 if (!createdSession.data) {
@@ -1804,6 +2035,8 @@ export function makeOpenCodeAdapter(
                 sessionScope,
                 server,
                 client,
+                borrow,
+                mcpRegistration,
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
               };
@@ -1827,6 +2060,7 @@ export function makeOpenCodeAdapter(
             yield* runOpenCodeSdk("session.abort", () =>
               started.client.session.abort({
                 sessionID: started.openCodeSession.id,
+                directory,
               }),
             ).pipe(Effect.ignore);
           }
@@ -1858,6 +2092,9 @@ export function makeOpenCodeAdapter(
           session,
           client: started.client,
           server: started.server,
+          mcp: started.mcpRegistration,
+          mcpServerName: openCodeT3McpServerName(input.threadId),
+          serverBorrow: started.borrow,
           directory,
           openCodeSessionId: started.openCodeSession.id,
           descendantSessionIds: new Set(),
@@ -2025,6 +2262,7 @@ export function makeOpenCodeAdapter(
           context.client.session.promptAsync({
             sessionID: context.openCodeSessionId,
             messageID: promptMessageId,
+            directory: context.directory,
             model: parsedModel,
             ...(context.activeAgent ? { agent: context.activeAgent } : {}),
             ...(context.activeVariant ? { variant: context.activeVariant } : {}),
@@ -2099,7 +2337,10 @@ export function makeOpenCodeAdapter(
         context.interruptedTurnId = interruptedTurnId;
         context.awaitingBusyAfterInterruption = true;
         yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
+          context.client.session.abort({
+            sessionID: context.openCodeSessionId,
+            directory: context.directory,
+          }),
         ).pipe(
           Effect.mapError(toRequestError),
           Effect.tapError(() =>
@@ -2148,6 +2389,7 @@ export function makeOpenCodeAdapter(
         context.client.permission.reply({
           requestID: requestId,
           reply: toOpenCodePermissionReply(decision),
+          directory: context.directory,
         }),
       ).pipe(Effect.mapError(toRequestError));
       const shouldEmitResolution = context.pendingPermissions.delete(requestId);
@@ -2180,6 +2422,7 @@ export function makeOpenCodeAdapter(
         context.client.question.reply({
           requestID: requestId,
           answers: toOpenCodeQuestionAnswers(request, answers),
+          directory: context.directory,
         }),
       ).pipe(Effect.mapError(toRequestError));
       const shouldEmitResolution = context.pendingQuestions.delete(requestId);
@@ -2270,6 +2513,7 @@ export function makeOpenCodeAdapter(
           context.client.session.revert({
             sessionID: context.openCodeSessionId,
             messageID: target.id,
+            directory: context.directory,
           }),
         ).pipe(Effect.mapError(toRequestError));
 
