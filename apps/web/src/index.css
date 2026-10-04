@@ -223,8 +223,14 @@
   --muted: --alpha(var(--color-black) / 4%);
   /* Recessed well: darker than the page in both modes, so a contained region
      reads as sunk rather than raised. Never paired with a border or shadow —
-     the fill alone declares the elevation. */
-  --sunken: --alpha(var(--color-black) / 4%);
+     the fill alone declares the elevation.
+
+     Opaque, not an alpha: the diff renderer paints this colour on the host,
+     the gutter, the content column and the sticky file header, so a
+     translucent value compounds once per layer and the well ends up roughly
+     twice as dark as intended in light mode. Mixing against the canvas keeps
+     stacking idempotent. */
+  --sunken: color-mix(in srgb, var(--color-black) 4%, var(--chat-background));
   --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
   --accent: --alpha(var(--color-black) / 4%);
   --accent-foreground: var(--color-neutral-800);
@@ -263,7 +269,7 @@
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
-    --sunken: --alpha(var(--color-black) / 32%);
+    --sunken: color-mix(in srgb, var(--color-black) 32%, var(--chat-background));
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
