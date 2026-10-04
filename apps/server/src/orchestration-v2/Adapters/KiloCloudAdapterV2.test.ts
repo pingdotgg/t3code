@@ -2189,7 +2189,7 @@ it.live(
   20_000,
 );
 
-it.live.each(["accepted", "storage", "storage-accepted"] as const)(
+it.live.each(["accepted", "storage", "storage-accepted", "storage-interrupted"] as const)(
   "keeps a rejected follow-up safe during concurrent %s handling",
   (mode) =>
     Effect.gen(function* () {
@@ -2251,9 +2251,14 @@ it.live.each(["accepted", "storage", "storage-accepted"] as const)(
         assert.include(stopped.message, "No remote interrupt was sent");
         assert.equal(remote.control.interruptPosts, 0);
         db.exec("DROP TRIGGER reject_followup");
-        if (mode === "storage-accepted") {
-          yield* other.save({ ...(yield* other.read)[1]!, remoteState: "running" });
+        if (mode === "storage-accepted" || mode === "storage-interrupted") {
+          yield* other.save({
+            ...(yield* other.read)[1]!,
+            remoteState: "running",
+            interruptRequested: mode === "storage-interrupted",
+          });
           remote.control.interruptAccepted = true;
+          if (mode === "storage-interrupted") remote.control.status = "interrupted";
         }
         yield* second.runtime.interruptTurn({
           providerThread: second.thread,
@@ -2262,7 +2267,7 @@ it.live.each(["accepted", "storage", "storage-accepted"] as const)(
         const final = (yield* other.read)[1]!;
         assert.equal(final.state, mode === "storage" ? "failed" : "interrupted");
         assert.equal(final.submissionRejected === true, mode === "storage");
-        assert.equal(remote.control.interruptPosts, mode === "storage" ? 0 : 1);
+        assert.equal(remote.control.interruptPosts, mode === "storage-accepted" ? 1 : 0);
       } else {
         assert.equal(saved.remoteState, "running");
       }

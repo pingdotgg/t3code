@@ -1513,7 +1513,13 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                     "Cloud admission has no confirmed session ID. Remote Stop is unavailable; task and billing status remain unknown.",
                   );
                 yield* watch;
-                if (active.interruptRequested) return true;
+                if (active.interruptRequested) {
+                  // Another observer already persisted Stop. Resume observation
+                  // without sending a duplicate interrupt.
+                  admissionStoragePaused = false;
+                  admissionFailures = 0;
+                  return true;
+                }
                 yield* save({ ...active, interruptRequested: true });
                 // A successful write retires the local storage pause so this
                 // explicit Stop can observe remote confirmation. Keep durable
