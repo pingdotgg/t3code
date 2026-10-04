@@ -1,5 +1,5 @@
-import { rewindToMessage } from "./chat/chatViewSend";
-import * as session from "../state/session";
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   environmentContextRecord,
   environmentContextReference,
@@ -66,6 +66,8 @@ import {
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
+  shouldApplyProactiveChangesScope,
+  shouldResetDiffSelectionToChanges,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
@@ -444,82 +446,86 @@ describe("deriveCommittedServerUserMessageIds", () => {
   });
 });
 
-describe("hasCompactableConversation", () => {
-  const at = DateTime.makeUnsafe("2026-10-26T08:00:00.000Z");
-  const runId = RunId.make("run:thread:thread-1:ordinal:1");
-  const itemBase = (id: string, ordinal: number) => ({
-    id: TurnItemId.make(id),
-    threadId,
-    runId,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal,
-    status: "completed" as const,
-    title: null,
-    startedAt: at,
-    completedAt: at,
-    updatedAt: at,
-  });
-  const userMessage = (text: string): OrchestrationV2ProjectedTurnItem => ({
-    position: 0,
-    visibility: "local",
-    sourceThreadId: threadId,
-    sourceItemId: TurnItemId.make("turn-item:user"),
-    item: {
-      ...itemBase("turn-item:user", 1),
-      createdBy: "user",
-      creationSource: "web",
-      type: "user_message",
-      messageId: MessageId.make("message-user"),
-      inputIntent: "turn_start",
-      text,
-      attachments: [],
-    },
-  });
-  const assistantMessage: OrchestrationV2ProjectedTurnItem = {
-    position: 1,
-    visibility: "local",
-    sourceThreadId: threadId,
-    sourceItemId: TurnItemId.make("turn-item:assistant"),
-    item: {
-      ...itemBase("turn-item:assistant", 2),
-      type: "assistant_message",
-      messageId: MessageId.make("message-assistant"),
-      text: "done",
-      streaming: false,
-    },
-  };
+describe("diff selection across agent turns", () => {
+  const threadRef = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
+  const otherThreadRef = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-2"));
+  const openThread = { threadKey: "env-1:thread-1", diffOpen: true };
 
-  it("counts a user message beyond the loaded page", () => {
+  it("keeps Uncommitted when the same thread refreshes", () => {
     expect(
-      hasCompactableConversation({
-        visibleTurnItems: [assistantMessage],
-        hasMoreHistory: true,
-        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
-      }),
-    ).toBe(true);
-  });
-
-  it("stays unavailable when the thread never had a user message", () => {
-    expect(
-      hasCompactableConversation({
-        visibleTurnItems: [assistantMessage],
-        hasMoreHistory: true,
-        latestUserMessageAt: null,
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: threadRef,
+        explicitThreadRef: null,
+        previous: openThread,
+        threadKey: "env-1:thread-1",
       }),
     ).toBe(false);
   });
 
-  it("does not count a lone /compact on a fully loaded thread", () => {
+  it("shows Changes when the diff opens or the thread changes", () => {
     expect(
-      hasCompactableConversation({
-        visibleTurnItems: [userMessage("/compact"), assistantMessage],
-        hasMoreHistory: false,
-        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: threadRef,
+        explicitThreadRef: null,
+        previous: { threadKey: "env-1:thread-1", diffOpen: false },
+        threadKey: "env-1:thread-1",
       }),
+    ).toBe(true);
+    expect(
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: otherThreadRef,
+        explicitThreadRef: null,
+        previous: openThread,
+        threadKey: "env-1:thread-2",
+      }),
+    ).toBe(true);
+    expect(
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: threadRef,
+        explicitThreadRef: null,
+        previous: null,
+        threadKey: "env-1:thread-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves a timeline turn selection in place", () => {
+    expect(
+      shouldResetDiffSelectionToChanges({
+        diffOpen: true,
+        activeThreadRef: threadRef,
+        explicitThreadRef: threadRef,
+        previous: { threadKey: "env-1:thread-1", diffOpen: false },
+        threadKey: "env-1:thread-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("does nothing while the diff is closed", () => {
+    expect(
+      shouldResetDiffSelectionToChanges({
+        diffOpen: false,
+        activeThreadRef: threadRef,
+        explicitThreadRef: null,
+        previous: openThread,
+        threadKey: "env-1:thread-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("shows Changes only when a completed turn newly opens the diff", () => {
+    expect(
+      shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: false }),
+    ).toBe(true);
+    expect(shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: true })).toBe(
+      false,
+    );
+    expect(
+      shouldApplyProactiveChangesScope({ openedDiff: false, alreadyReviewingDiff: false }),
     ).toBe(false);
   });
 });

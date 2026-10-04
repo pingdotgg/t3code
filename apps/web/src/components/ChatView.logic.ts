@@ -203,6 +203,42 @@ export function shouldRetargetThreadPullRequestPanel(
   );
 }
 
+export interface DiffPanelOpenContext {
+  readonly threadKey: string | null;
+  readonly diffOpen: boolean;
+}
+
+/**
+ * Generic openings show Changes: the first time the diff is on screen, a tab
+ * fallback, or a switch to another thread. A timeline click passes the same
+ * thread ref it just selected and keeps that turn. An agent turn replaces the
+ * thread shell without closing the diff, and that refresh must leave Uncommitted
+ * or the selected turn alone.
+ */
+export function shouldResetDiffSelectionToChanges(input: {
+  readonly diffOpen: boolean;
+  readonly activeThreadRef: ScopedThreadRef | null;
+  readonly explicitThreadRef: ScopedThreadRef | null;
+  readonly previous: DiffPanelOpenContext | null;
+  readonly threadKey: string | null;
+}): boolean {
+  if (!input.diffOpen || input.activeThreadRef === null) return false;
+  if (input.explicitThreadRef === input.activeThreadRef) return false;
+  return !(
+    input.previous !== null &&
+    input.previous.diffOpen &&
+    input.previous.threadKey === input.threadKey
+  );
+}
+
+/** Opening the diff for a completed turn shows Changes. A review already on screen stays put. */
+export function shouldApplyProactiveChangesScope(input: {
+  readonly openedDiff: boolean;
+  readonly alreadyReviewingDiff: boolean;
+}): boolean {
+  return input.openedDiff && !input.alreadyReviewingDiff;
+}
+
 export function shouldOpenProactiveTurnDiff(input: {
   previousRunningTurnId: RunId | null | undefined;
   runningTurnId: RunId | null;
