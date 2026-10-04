@@ -54,6 +54,9 @@ const clockAt = (clock: Clock.Clock, millis: number): Clock.Clock => ({
   sleep: clock.sleep.bind(clock),
 });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeIntent = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.toCodecJson(Journal.CloudIntent)),
+);
 const fixture = Effect.acquireRelease(
   Effect.promise(async () => {
     let submissions = 0;
@@ -1985,7 +1988,7 @@ it.live(
       );
       db.prepare("UPDATE intents SET state = ?, body = ? WHERE operation_key = ?").run(
         "interrupted",
-        JSON.stringify({
+        yield* encodeIntent({
           ...saved,
           revision: saved.revision + 1,
           state: "interrupted",
