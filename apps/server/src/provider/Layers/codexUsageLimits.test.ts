@@ -110,6 +110,32 @@ describe("codexRateLimitsToLimits", () => {
       }).windows,
     ).toEqual([]);
   });
+
+  it("shows a workspace member's monthly credit cap when Codex reports no windows", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {
+          limitId: "codex",
+          planType: "business",
+          primary: null,
+          secondary: null,
+          individualLimit: {
+            remainingPercent: 99,
+            resetsAt: 1_793_491_200,
+          },
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "individual",
+        kind: "monthly",
+        label: "Monthly",
+        usedPercent: 1,
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      },
+    ]);
+  });
 });
 
 describe("codexRateLimitsToUpdate", () => {
@@ -244,6 +270,21 @@ describe("codexUsageLimitMessage", () => {
       ),
     ).toBe(
       "Codex usage limit reached. The session limit resets in 3h 20m. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
+    );
+  });
+
+  it("names the monthly credit cap a workspace member exhausted", () => {
+    expect(
+      codexUsageLimitMessage(
+        {
+          limitId: "codex",
+          rateLimitReachedType: "workspace_member_usage_limit_reached",
+          individualLimit: { remainingPercent: 0, resetsAt: atSeconds + 12 * 86_400 },
+        },
+        at,
+      ),
+    ).toBe(
+      "Codex usage limit reached. The monthly limit resets in 12d. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
     );
   });
 

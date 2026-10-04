@@ -24,6 +24,12 @@ interface CodexRateLimitWindow {
   readonly windowDurationMins?: number | null;
 }
 
+/** A workspace admin's per-member spend cap, counted in credits. */
+interface CodexSpendControlLimit {
+  readonly remainingPercent: number;
+  readonly resetsAt: number;
+}
+
 /** Structural view of the generated `RateLimitSnapshot`; both messages satisfy it. */
 export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
@@ -31,6 +37,7 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+  readonly individualLimit?: CodexSpendControlLimit | null;
 }
 
 /** Structural view of the read response's `rateLimitResetCredits`. */
@@ -65,7 +72,9 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
 /**
  * `primary` / `secondary` are positions, not durations. Codex usually sends
  * `windowDurationMins`; when it does not, paid plans expose the 5-hour and
- * weekly pair and Free/Go expose one monthly allowance.
+ * weekly pair and Free/Go expose one monthly allowance. Business and
+ * Enterprise workspaces can instead cap each member's monthly credits, which
+ * Codex reports as `individualLimit` with both positions null.
  */
 function codexRateLimitsToWindows(
   snapshot: CodexRateLimitSnapshot,
@@ -91,6 +100,17 @@ function codexRateLimitsToWindows(
       label: labelForKind(kind),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
+      ...(resetsAt ? { resetsAt } : {}),
+    });
+  }
+  const individual = snapshot.individualLimit;
+  if (individual && Number.isFinite(individual.remainingPercent)) {
+    const resetsAt = isoFromEpochSeconds(individual.resetsAt);
+    windows.push({
+      id: "individual",
+      kind: "monthly",
+      label: "Monthly",
+      usedPercent: clampPercent(100 - individual.remainingPercent),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
@@ -182,6 +202,7 @@ export function mergeCodexRateLimits(
       : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
+    ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),
   };
 }
 
