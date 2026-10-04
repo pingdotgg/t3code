@@ -12,8 +12,7 @@ export async function canonicalizeWorktreePath(worktreePath: string): Promise<st
   }
 }
 
-export async function resolveGitWorktreeRoot(worktreePath: string): Promise<string | null> {
-  const canonicalPath = await canonicalizeWorktreePath(worktreePath);
+async function readGitWorktreeRoot(canonicalPath: string): Promise<string | null> {
   try {
     const result = await runProcess("git", ["-C", canonicalPath, "rev-parse", "--show-toplevel"], {
       allowNonZeroExit: true,
@@ -27,4 +26,27 @@ export async function resolveGitWorktreeRoot(worktreePath: string): Promise<stri
   } catch {
     return null;
   }
+}
+
+export interface GitWorktreeIdentity {
+  /** Canonical path of the requested location. */
+  readonly canonicalPath: string;
+  /** Canonical Git top level for it, or null when it is not inside a worktree. */
+  readonly gitRoot: string | null;
+}
+
+/**
+ * Both values from one pass, so admission stops canonicalizing the path twice.
+ * Deliberately not cached across decisions: a memo keyed on a path cannot tell a
+ * replaced checkout from the one it replaced.
+ */
+export async function resolveGitWorktreeIdentity(
+  worktreePath: string,
+): Promise<GitWorktreeIdentity> {
+  const canonicalPath = await canonicalizeWorktreePath(worktreePath);
+  return { canonicalPath, gitRoot: await readGitWorktreeRoot(canonicalPath) };
+}
+
+export async function resolveGitWorktreeRoot(worktreePath: string): Promise<string | null> {
+  return (await resolveGitWorktreeIdentity(worktreePath)).gitRoot;
 }

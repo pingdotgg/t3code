@@ -389,6 +389,12 @@ describe("decider project scripts", () => {
               updatedAt: "2026-05-16T18:00:00.000Z",
             },
           ],
+          // Accepted but not yet acknowledged: this is the window the invariant
+          // must cover, and it is now stated rather than inferred from timestamps.
+          pendingTurnStart: {
+            messageId: asMessageId("message-user-1"),
+            requestedAt: "2026-05-16T18:00:00.000Z",
+          },
         },
       ],
     };

@@ -127,6 +127,7 @@ function finish(
     files: [],
     agentTouchedPaths: [],
     turnFiles: [],
+    transitionFiles: [],
     checkpointTurnCount: 1,
   };
 }
@@ -1997,6 +1998,9 @@ describe("child nudging", () => {
           ? entry
           : {
               ...entry,
+              // The provider acknowledged the steer before completing it, which
+              // is what retires `pendingTurnStart`.
+              pendingTurnStart: null,
               latestTurn: {
                 turnId: steeredTurnId,
                 state: "completed",
@@ -2837,6 +2841,8 @@ describe("child nudging", () => {
     state = failureWake.readModel;
 
     state = withParent(state, {
+      // The parent's dispatched turn was acknowledged and completed.
+      pendingTurnStart: null,
       latestTurn: {
         turnId: TurnId.make("parent-response"),
         state: "completed",

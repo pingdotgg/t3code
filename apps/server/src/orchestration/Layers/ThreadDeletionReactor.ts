@@ -481,11 +481,17 @@ const make = Effect.gen(function* () {
       return Option.none();
     }
 
-    const reservation = yield* worktreeCleanupJobs.tryReserveForRemoval({
-      threadId,
-      canonicalWorktreePath: canonicalPath,
-      reservedAt: now,
-    });
+    // Under the per-checkout lock a turn start also holds while checking, so
+    // "observe no reservation" and "create it" are mutually exclusive. The
+    // global lock no longer covers this since turn starts stopped taking it.
+    const reservation = yield* checkoutCoordinator.withCheckout(
+      canonicalPath,
+      worktreeCleanupJobs.tryReserveForRemoval({
+        threadId,
+        canonicalWorktreePath: canonicalPath,
+        reservedAt: now,
+      }),
+    );
     if (Option.isNone(reservation)) {
       return Option.none();
     }

@@ -106,6 +106,9 @@ export function projectionImpactForEvent(event: OrchestrationEvent): ProjectionI
     case "thread.queued-turn-deleted":
     case "thread.queued-turn-dispatched":
     case "thread.queued-turn-failed":
+    case "thread.queued-turn-reordered":
+    case "thread.queue-held":
+    case "thread.queue-released":
     case "thread.session-set":
     case "thread.turn-diff-completed":
       shellThreadIds.add(event.payload.threadId);

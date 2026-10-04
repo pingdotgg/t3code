@@ -192,6 +192,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./devProxy": {
+      "types": "./src/devProxy.ts",
+      "import": "./src/devProxy.ts"
+    },
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
@@ -296,6 +300,10 @@
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
     },
+    "./threadContext": {
+      "types": "./src/threadContext.ts",
+      "import": "./src/threadContext.ts"
+    },
     "./themePreview": {
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
@@ -312,6 +320,10 @@
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"
     },
+    "./threadBusyState": {
+      "types": "./src/threadBusyState.ts",
+      "import": "./src/threadBusyState.ts"
+    },
     "./threadEnvMode": {
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"
@@ -327,6 +339,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./queuedTurnOrder": {
+      "types": "./src/queuedTurnOrder.ts",
+      "import": "./src/queuedTurnOrder.ts"
     }
   },
   "scripts": {

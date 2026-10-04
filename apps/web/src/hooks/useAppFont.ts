@@ -4,6 +4,7 @@ import {
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_COMPOSER_META_FONT_SIZE,
+  DEFAULT_FILE_PREVIEW_LINE_SPACING,
   DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
@@ -15,6 +16,8 @@ import {
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
+  FILE_PREVIEW_LINE_SPACING_VALUES,
+  type FilePreviewLineSpacing,
   type CodeFont,
   type FontSize,
   type SidebarRowSpacing,
@@ -70,6 +73,13 @@ function normalizeFontSize(value: unknown, fallback: FontSize): FontSize {
   return fallback;
 }
 
+function normalizeFilePreviewLineSpacing(value: unknown): FilePreviewLineSpacing {
+  return (
+    FILE_PREVIEW_LINE_SPACING_VALUES.find((spacing) => spacing === value) ??
+    DEFAULT_FILE_PREVIEW_LINE_SPACING
+  );
+}
+
 export function applyAppFont(font: UiFont): void {
   if (typeof document === "undefined") {
     return;
@@ -113,6 +123,14 @@ export function applyFontSizes(sizes: {
   style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
   style.setProperty("--pr-body-font-size", `${sizes.pullRequestsBodyFontSize}px`);
+}
+
+export function applyFilePreviewLineSpacing(spacing: FilePreviewLineSpacing): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.style.setProperty("--app-file-preview-line-height", String(spacing));
 }
 
 export function applySidebarRowSpacing(spacing: SidebarRowSpacing): void {
@@ -249,12 +267,16 @@ if (typeof document !== "undefined") {
       DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
     ),
   });
+  applyFilePreviewLineSpacing(
+    normalizeFilePreviewLineSpacing(storedSettings?.filePreviewLineSpacing),
+  );
 }
 
 export function useAppFont() {
   const uiFont = useSettings((settings) => settings.uiFont);
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
+  const filePreviewLineSpacing = useSettings((settings) => settings.filePreviewLineSpacing);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
   const composerMetaFontSize = useSettings((settings) => settings.composerMetaFontSize);
   const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
@@ -275,6 +297,10 @@ export function useAppFont() {
   useEffect(() => {
     applyCodeFont(codeFont);
   }, [codeFont]);
+
+  useEffect(() => {
+    applyFilePreviewLineSpacing(filePreviewLineSpacing);
+  }, [filePreviewLineSpacing]);
 
   useEffect(() => {
     applyFontSizes({
@@ -337,6 +363,7 @@ export function useAppFont() {
     uiFont,
     codeFont,
     codeFontSize,
+    filePreviewLineSpacing,
     chatFontSize,
     composerMetaFontSize,
     statusLineFontSize,

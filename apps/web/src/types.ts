@@ -3,6 +3,7 @@ import type {
   GitPullRequestAssociation,
   ModelSelection,
   OrchestrationLatestTurn,
+  OrchestrationPendingTurnStart,
   OrchestrationBackgroundAgentRunShell,
   OrchestrationQueuedTurn,
   OrchestrationProposedPlanId,
@@ -15,6 +16,7 @@ import type {
   TurnId,
   MessageId,
   MessageOrigin,
+  OrchestrationMessageContext,
   ProviderDriverKind,
   ProviderInstanceId,
   CheckpointRef,
@@ -59,6 +61,7 @@ export interface ChatMessage {
   text: string;
   attachments?: ChatAttachment[];
   origin?: MessageOrigin | undefined;
+  context?: OrchestrationMessageContext | undefined;
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;
@@ -89,6 +92,7 @@ export interface TurnDiffSummary {
   files: TurnDiffFileChange[];
   agentTouchedPaths?: string[] | undefined;
   turnFiles?: TurnDiffFileChange[] | undefined;
+  transitionFiles?: TurnDiffFileChange[] | undefined;
   checkpointRef?: CheckpointRef | undefined;
   assistantMessageId?: MessageId | undefined;
   checkpointTurnCount?: number | undefined;
@@ -124,6 +128,8 @@ export interface Thread {
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
   queuedTurns?: OrchestrationQueuedTurn[];
+  /** Set while crash recovery holds the queue; cleared on explicit resume. */
+  queueHeldAt?: string | null;
   error: string | null;
   createdAt: string;
   archivedAt: string | null;
@@ -133,6 +139,8 @@ export interface Thread {
   snoozedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
@@ -171,6 +179,11 @@ export interface ThreadShell {
   settledAt?: string | null;
   snoozedUntil?: string | null;
   snoozedAt?: string | null;
+  /**
+   * Set while crash recovery holds the queue. The thread selectors rebuild from
+   * the shell slice, so this must live here or the Resume control never sees it.
+   */
+  queueHeldAt?: string | null;
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
@@ -182,6 +195,8 @@ export interface ThreadShell {
 
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
 }
 
@@ -201,6 +216,8 @@ export interface SidebarThreadSummary {
   snoozedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   branch: string | null;
   worktreePath: string | null;
   pullRequest?: GitPullRequestAssociation | null;

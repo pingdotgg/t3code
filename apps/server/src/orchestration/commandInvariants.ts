@@ -1,5 +1,7 @@
+import { deriveThreadBusyState } from "@t3tools/shared/threadBusyState";
 import type {
   OrchestrationCommand,
+  OrchestrationMessage,
   OrchestrationQueuedTurn,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -8,6 +10,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+export { nextQueuePosition } from "@t3tools/shared/queuedTurnOrder";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -120,19 +123,41 @@ export function requireThread(input: {
 }
 
 export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
-  if (thread.latestTurn?.state === "running") {
+  return deriveThreadBusyState(thread) !== "idle";
+}
+
+/**
+ * Deliberately broader than {@link threadHasInFlightTurn}: unanswered work blocks
+ * a checkout rewrite even when it does not block a new turn start. File-system
+ * safety, not turn admission.
+ */
+export function threadCheckoutHasUnsettledWork(thread: OrchestrationThread): boolean {
+  if (threadHasInFlightTurn(thread)) {
     return true;
   }
-
-  if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
-    return true;
-  }
-
   const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
   if (!latestUserMessage) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
+  // Excluding a failed start here blocked checkout rewrites forever on a thread
+  // that never got a turn, which is exactly when an unanswered message matters.
+  if (thread.latestTurn?.completedAt == null) {
+    return true;
+  }
+  return latestUserMessage.createdAt > thread.latestTurn.completedAt;
+}
+
+// Shared by the probes below, which must agree on which messages count as "the
+// provider never got a turn". Takes the caller's resolved message rather than
+// re-scanning `thread.messages`.
+function hasFailedTurnStart(
+  thread: OrchestrationThread,
+  latestUserMessage: OrchestrationMessage | undefined,
+): boolean {
+  if (!latestUserMessage) {
+    return false;
+  }
+  return thread.activities.some((activity) => {
     if (
       activity.kind !== "provider.turn.start.failed" ||
       activity.createdAt < latestUserMessage.createdAt
@@ -148,13 +173,6 @@ export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
         : null;
     return messageId === null || messageId === latestUserMessage.id;
   });
-  if (failedTurnStart) {
-    return false;
-  }
-  if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
-    return true;
-  }
-  return latestUserMessage.createdAt > thread.latestTurn.completedAt;
 }
 
 export function threadHasQueuedTurnStart(
@@ -174,23 +192,7 @@ export function threadHasQueuedTurnStart(
   ) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
-    if (
-      activity.kind !== "provider.turn.start.failed" ||
-      activity.createdAt < latestUserMessage.createdAt
-    ) {
-      return false;
-    }
-    const messageId =
-      typeof activity.payload === "object" &&
-      activity.payload !== null &&
-      "messageId" in activity.payload &&
-      typeof activity.payload.messageId === "string"
-        ? activity.payload.messageId
-        : null;
-    return messageId === null || messageId === latestUserMessage.id;
-  });
-  if (failedTurnStart) {
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   return thread.latestTurn === null || thread.latestTurn.completedAt === null
@@ -246,8 +248,21 @@ export function threadHasPendingInteraction(thread: OrchestrationThread): boolea
   );
 }
 
+/**
+ * A held queue is never ready: crash recovery holds it so no queued prompt
+ * fires unprompted, and only an explicit release clears that. Every admission
+ * path goes through this predicate so the hold cannot be bypassed.
+ */
+export function threadQueueIsHeld(thread: OrchestrationThread): boolean {
+  return thread.queueHeldAt != null;
+}
+
 export function isThreadReadyForQueuedDispatch(thread: OrchestrationThread): boolean {
-  return !threadHasInFlightTurn(thread) && !threadHasPendingInteraction(thread);
+  return (
+    !threadQueueIsHeld(thread) &&
+    !threadHasInFlightTurn(thread) &&
+    !threadHasPendingInteraction(thread)
+  );
 }
 
 export function findQueuedTurnById(

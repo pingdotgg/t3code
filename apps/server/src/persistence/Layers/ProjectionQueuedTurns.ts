@@ -1,4 +1,9 @@
-import { ChatAttachment, MessageOrigin, ModelSelection } from "@t3tools/contracts";
+import {
+  ChatAttachment,
+  MessageOrigin,
+  ModelSelection,
+  OrchestrationMessageContext,
+} from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -17,6 +22,7 @@ const ProjectionQueuedTurnDbRowSchema = ProjectionQueuedTurn.mapFields(
     attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
     origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
     modelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
 );
 
@@ -26,6 +32,7 @@ function toProjectionQueuedTurn(
   return {
     ...row,
     attachments: [...row.attachments],
+    ...(row.context === null ? { context: undefined } : { context: row.context }),
   };
 }
 
@@ -42,6 +49,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         text,
         attachments_json,
         origin_json,
+        context_json,
         model_selection_json,
         title_seed,
         runtime_mode,
@@ -50,6 +58,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id,
         created_at,
         updated_at,
+        queue_position,
         failed_at,
         failure_message
       )
@@ -60,6 +69,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         ${row.text},
         ${JSON.stringify(row.attachments)},
         ${row.origin === null ? null : JSON.stringify(row.origin)},
+        ${row.context === undefined ? null : JSON.stringify(row.context)},
         ${row.modelSelection === null ? null : JSON.stringify(row.modelSelection)},
         ${row.titleSeed},
         ${row.runtimeMode},
@@ -68,6 +78,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         ${row.sourceProposedPlanId},
         ${row.createdAt},
         ${row.updatedAt},
+        ${row.queuePosition},
         ${row.failedAt},
         ${row.failureMessage}
       )
@@ -78,6 +89,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         text = excluded.text,
         attachments_json = excluded.attachments_json,
         origin_json = excluded.origin_json,
+        context_json = excluded.context_json,
         model_selection_json = excluded.model_selection_json,
         title_seed = excluded.title_seed,
         runtime_mode = excluded.runtime_mode,
@@ -86,6 +98,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id = excluded.source_proposed_plan_id,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
+        queue_position = excluded.queue_position,
         failed_at = excluded.failed_at,
         failure_message = excluded.failure_message
     `,
@@ -102,6 +115,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         text,
         attachments_json AS "attachments",
         origin_json AS "origin",
+        context_json AS "context",
         model_selection_json AS "modelSelection",
         title_seed AS "titleSeed",
         runtime_mode AS "runtimeMode",
@@ -110,6 +124,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id AS "sourceProposedPlanId",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
+        queue_position AS "queuePosition",
         failed_at AS "failedAt",
         failure_message AS "failureMessage"
       FROM projection_queued_turns
@@ -129,6 +144,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         text,
         attachments_json AS "attachments",
         origin_json AS "origin",
+        context_json AS "context",
         model_selection_json AS "modelSelection",
         title_seed AS "titleSeed",
         runtime_mode AS "runtimeMode",
@@ -137,11 +153,12 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id AS "sourceProposedPlanId",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
+        queue_position AS "queuePosition",
         failed_at AS "failedAt",
         failure_message AS "failureMessage"
       FROM projection_queued_turns
       WHERE thread_id = ${threadId}
-      ORDER BY created_at ASC, queued_turn_id ASC
+      ORDER BY queue_position IS NULL, queue_position ASC, created_at ASC, queued_turn_id ASC
     `,
   });
 

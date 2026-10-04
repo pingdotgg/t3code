@@ -8,7 +8,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Effect } from "effect";
 
-import { canonicalizeWorktreePath, resolveGitWorktreeRoot } from "../git/worktreePaths.ts";
+import { canonicalizeWorktreePath, resolveGitWorktreeIdentity } from "../git/worktreePaths.ts";
 import { runProcess } from "../processRunner.ts";
 import { WorkspaceOwnershipConflict } from "../persistence/Services/WorkspaceOwnership.ts";
 import type { WorkspaceOwnershipRepositoryShape } from "../persistence/Services/WorkspaceOwnership.ts";
@@ -94,6 +94,18 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     command.type === "thread.create" ||
     command.type === "thread.turn.start" ||
     command.type === "thread.queued-turn.dispatch";
+  // handoff/meta.update keep the full path below: their project-checkout
+  // rejection depends on the Git probing. Every other non-execution command
+  // (notably high-volume activity appends) ignores all probed values, so
+  // return before any filesystem/Git work: each probe costs a subprocess,
+  // and under load those subprocesses serialize on the dispatch path.
+  const needsWorkspacePreparation =
+    isExecutionCommand ||
+    command.type === "thread.workspace.handoff" ||
+    command.type === "thread.meta.update";
+  if (!needsWorkspacePreparation) {
+    return { command, worktreePath: null, branch: null, honoredProjectCheckout: false };
+  }
   const createThread =
     command.type === "thread.create"
       ? command
@@ -116,19 +128,18 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         : command.type === "thread.meta.update"
           ? command.worktreePath
           : undefined);
-  const projectRoot =
+  const projectIdentity =
     projectWorkspaceRoot === undefined
-      ? undefined
-      : yield* Effect.promise(() => canonicalizeWorktreePath(projectWorkspaceRoot));
-  const gitRoot =
-    projectRoot === undefined
       ? null
-      : yield* Effect.promise(() => resolveGitWorktreeRoot(projectRoot));
+      : yield* Effect.promise(() => resolveGitWorktreeIdentity(projectWorkspaceRoot));
+  const projectRoot = projectIdentity?.canonicalPath;
+  const gitRoot = projectIdentity?.gitRoot ?? null;
 
-  const canonicalRequested =
+  const requestedIdentity =
     requestedPath === null || requestedPath === undefined
       ? null
-      : yield* Effect.promise(() => canonicalizeWorktreePath(requestedPath));
+      : yield* Effect.promise(() => resolveGitWorktreeIdentity(requestedPath));
+  const canonicalRequested = requestedIdentity?.canonicalPath ?? null;
   // An explicit project-checkout path in the current creation request (the
   // client sent a concrete directory instead of null) means the user chose
   // "Current checkout": honor it instead of allocating an isolated
@@ -141,8 +152,8 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     createThread === undefined &&
     (command.type === "thread.turn.start" || command.type === "thread.queued-turn.dispatch") &&
     thread?.workspaceBinding?.workspaceScope === "project-checkout";
-  if (canonicalRequested !== null) {
-    const requestedRoot = yield* Effect.promise(() => resolveGitWorktreeRoot(canonicalRequested));
+  if (requestedIdentity !== null) {
+    const requestedRoot = requestedIdentity.gitRoot;
     const isProjectCheckout =
       (requestedRoot !== null && requestedRoot === gitRoot) ||
       (requestedRoot === null && projectRoot === canonicalRequested);
@@ -161,7 +172,9 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     if (isProjectCheckout && isExecutionCommand && gitRoot !== null) {
       // Treat legacy/root bindings as an isolation request. This preserves
       // the user's turn and recovery path while ensuring the human checkout
-      // is never admitted as the writer's workspace.
+      // is never admitted as the writer's workspace. Non-execution commands
+      // (handoff/meta.update) keep the rejection below: they must never
+      // claim the human's main checkout.
     } else if (isProjectCheckout) {
       return yield* new OrchestrationCommandInvariantError({
         commandType: command.type,
@@ -179,6 +192,9 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
   }
 
   if (!isExecutionCommand) {
+    // handoff/meta.update without a path involved: nothing to allocate,
+    // honor, or reject. Execution commands always carry a threadId and
+    // continue to isolated allocation below.
     return {
       command,
       worktreePath: null,
@@ -187,17 +203,7 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     };
   }
 
-  let threadId: string | undefined;
-  switch (command.type) {
-    case "thread.create":
-    case "thread.turn.start":
-    case "thread.queued-turn.dispatch":
-      threadId = command.threadId;
-      break;
-  }
-  if (threadId === undefined) {
-    return { command, worktreePath: null, branch: null, honoredProjectCheckout: false };
-  }
+  const threadId: string = command.threadId;
   if (gitRoot === null) {
     return yield* new OrchestrationCommandInvariantError({
       commandType: command.type,
@@ -249,12 +255,14 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         if (existingCommonDir.code !== 0 || existingBranch.code !== 0) {
           throw new Error("existing workspace is not a checked-out Git worktree");
         }
-        const canonicalCommonDir = await canonicalizeWorktreePath(
-          path.resolve(worktreePath, existingCommonDir.stdout.trim()),
-        );
-        const canonicalExpectedCommonDir = await canonicalizeWorktreePath(
-          path.resolve(gitRoot, expectedCommonDir.stdout.trim()),
-        );
+        const canonicalCommonDir = (
+          await resolveGitWorktreeIdentity(
+            path.resolve(worktreePath, existingCommonDir.stdout.trim()),
+          )
+        ).canonicalPath;
+        const canonicalExpectedCommonDir = (
+          await resolveGitWorktreeIdentity(path.resolve(gitRoot, expectedCommonDir.stdout.trim()))
+        ).canonicalPath;
         if (
           canonicalCommonDir !== canonicalExpectedCommonDir ||
           existingBranch.stdout.trim() !== branch

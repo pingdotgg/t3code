@@ -63,6 +63,7 @@ const clientSettings: ClientSettings = {
   statusLineFontSize: 14,
   codeFontSize: 12,
   composerMetaFontSize: 11,
+  filePreviewLineSpacing: 1.5,
   inputFontSize: 14,
   messagePreviewLineLimits: {
     normal: 10,

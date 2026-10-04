@@ -31,6 +31,7 @@ import {
   CollaborativeAcceptanceRequestTransportContext,
 } from "./collaborativeAcceptance.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestrationMessageContext } from "./threadContext.ts";
 import { DelegationAuditCommandContext } from "./delegationAudit.ts";
 import { ReviewResult, ReviewSnapshot } from "./review.ts";
 import { GitPullRequestAssociation } from "./git.ts";
@@ -605,6 +606,7 @@ export const OrchestrationMessage = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   workspaceBinding: Schema.optional(WorkspaceBinding),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
@@ -639,6 +641,7 @@ const QueuedTurnMessage = Schema.Struct({
   role: Schema.Literal("user"),
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
+  context: Schema.optional(OrchestrationMessageContext),
 });
 export type QueuedTurnMessage = typeof QueuedTurnMessage.Type;
 
@@ -647,6 +650,7 @@ const UploadQueuedTurnMessage = Schema.Struct({
   role: Schema.Literal("user"),
   text: Schema.String,
   attachments: Schema.Array(UploadChatAttachment),
+  context: Schema.optional(OrchestrationMessageContext),
 });
 
 export const OrchestrationQueuedTurn = Schema.Struct({
@@ -664,6 +668,13 @@ export const OrchestrationQueuedTurn = Schema.Struct({
   workspaceBinding: Schema.optional(WorkspaceBinding),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /**
+   * Monotonic per-thread delivery order. Assigned at creation (max existing
+   * position + 1) so enqueue order is preserved, and rewritten by explicit
+   * reorder. Absent means "order by createdAt", which is what every turn
+   * created before this field existed does.
+   */
+  queuePosition: Schema.optional(NonNegativeInt),
   failedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   failureMessage: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -725,6 +736,9 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -813,6 +827,18 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * A `thread.turn.start` accepted but not yet acknowledged — the only busy signal
+ * in that window. Set only by `thread.turn-start-requested`, never by imported or
+ * forked history, so a forked thread is immediately sendable.
+ */
+export const OrchestrationPendingTurnStart = Schema.Struct({
+  messageId: MessageId,
+  requestedAt: IsoDateTime,
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+});
+export type OrchestrationPendingTurnStart = typeof OrchestrationPendingTurnStart.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -897,6 +923,8 @@ export const OrchestrationThread = Schema.Struct({
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),
   validationRun: Schema.optionalKey(Schema.NullOr(ValidationRun)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  /** See {@link OrchestrationPendingTurnStart}. */
+  pendingTurnStart: Schema.optionalKey(Schema.NullOr(OrchestrationPendingTurnStart)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -917,6 +945,13 @@ export const OrchestrationThread = Schema.Struct({
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * When non-null the thread's queue will not drain until the user releases
+   * it. Set by crash recovery so a queued prompt never fires unprompted after
+   * the server died mid-flight; a clean shutdown leaves it null so a planned
+   * restart resumes normally.
+   */
+  queueHeldAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   queuedTurns: Schema.optionalKey(Schema.Array(OrchestrationQueuedTurn)),
   activities: Schema.Array(OrchestrationThreadActivity),
   activityContext: Schema.optionalKey(Schema.Array(OrchestrationThreadActivity)),
@@ -985,6 +1020,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),
   validationRun: Schema.optionalKey(Schema.NullOr(ValidationRun)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  pendingTurnStart: Schema.optionalKey(Schema.NullOr(OrchestrationPendingTurnStart)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -992,6 +1028,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   settledAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  queueHeldAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
@@ -1485,6 +1522,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1511,6 +1549,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
+    context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1578,6 +1617,7 @@ const ThreadQueuedTurnUpdateCommand = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
@@ -1587,6 +1627,7 @@ const ClientThreadQueuedTurnUpdateCommand = Schema.Struct({
   threadId: ThreadId,
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
@@ -1614,6 +1655,33 @@ const ThreadQueuedTurnFailCommand = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   failureMessage: TrimmedNonEmptyString,
   failedAt: IsoDateTime,
+});
+
+const ThreadQueueHoldCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.hold"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  heldAt: IsoDateTime,
+});
+
+const ThreadQueueReleaseCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.release"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  releasedAt: IsoDateTime,
+});
+
+const ClientThreadQueuedTurnReorderCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-turn.reorder"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  /**
+   * The complete new delivery order for this thread's queue. Must be a
+   * permutation of the currently queued turn ids: a partial order would leave
+   * the omitted turns with ambiguous positions across a restart.
+   */
+  orderedQueuedTurnIds: Schema.Array(QueuedTurnId),
+  reorderedAt: IsoDateTime,
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
@@ -1920,6 +1988,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnUpdateCommand,
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
+  ClientThreadQueuedTurnReorderCommand,
+  ThreadQueueReleaseCommand,
   ThreadTurnInterruptCommand,
   ThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,
@@ -1970,6 +2040,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ClientThreadQueuedTurnUpdateCommand,
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
+  ClientThreadQueuedTurnReorderCommand,
+  ThreadQueueReleaseCommand,
   ThreadTurnInterruptCommand,
   ClientThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,
@@ -2051,6 +2123,9 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.optional(MessageId),
   checkpointTurnCount: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -2122,6 +2197,8 @@ export const InternalOrchestrationCommand = Schema.Union([
   ThreadTitleRegenerationCompleteCommand,
   ThreadQueuedTurnDispatchCommand,
   ThreadQueuedTurnFailCommand,
+  ThreadQueueHoldCommand,
+  ThreadQueueReleaseCommand,
   ThreadChildWaitDeadlineExpireCommand,
   WorkflowRunRequestCommand,
   WorkflowNodeWorkerStartCommand,
@@ -2178,6 +2255,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.queued-turn-deleted",
   "thread.queued-turn-dispatched",
   "thread.queued-turn-failed",
+  "thread.queue-held",
+  "thread.queue-released",
+  "thread.queued-turn-reordered",
   "thread.provider-fork-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -2429,6 +2509,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   replaceExisting: Schema.optional(Schema.Boolean),
@@ -2456,6 +2537,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   delegationTransition: Schema.optional(Schema.Literals(["assigned", "continued", "replaced"])),
   executionAuthority: Schema.optional(CollaborationExecutionAuthority),
   workspaceBinding: Schema.optional(WorkspaceBinding),
+  context: Schema.optional(OrchestrationMessageContext),
   createdAt: IsoDateTime,
 });
 
@@ -2476,6 +2558,7 @@ export const ThreadQueuedTurnUpdatedPayload = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
@@ -2497,6 +2580,22 @@ export const ThreadQueuedTurnFailedPayload = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   failureMessage: TrimmedNonEmptyString,
   failedAt: IsoDateTime,
+});
+
+export const ThreadQueueHeldPayload = Schema.Struct({
+  threadId: ThreadId,
+  heldAt: IsoDateTime,
+});
+
+export const ThreadQueueReleasedPayload = Schema.Struct({
+  threadId: ThreadId,
+  releasedAt: IsoDateTime,
+});
+
+export const ThreadQueuedTurnReorderedPayload = Schema.Struct({
+  threadId: ThreadId,
+  orderedQueuedTurnIds: Schema.Array(QueuedTurnId),
+  reorderedAt: IsoDateTime,
 });
 
 export const ThreadProviderForkRequestedPayload = Schema.Struct({
@@ -2609,6 +2708,9 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -2839,6 +2941,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.queued-turn-failed"),
     payload: ThreadQueuedTurnFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queue-held"),
+    payload: ThreadQueueHeldPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queue-released"),
+    payload: ThreadQueueReleasedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-turn-reordered"),
+    payload: ThreadQueuedTurnReorderedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -3221,6 +3338,9 @@ const ProjectionCheckpointRow = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });

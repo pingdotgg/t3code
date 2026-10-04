@@ -5,6 +5,7 @@ import type {
   OrchestrationEvent,
   OrchestrationLatestTurn,
   OrchestrationMessage,
+  OrchestrationPendingTurnStart,
   OrchestrationProposedPlan,
   OrchestrationQueuedTurn,
   OrchestrationReadModel,
@@ -35,10 +36,12 @@ import {
 } from "@t3tools/client-runtime/validation-lifecycle";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import {
   childLifecycleNotificationToActivity,
   crossThreadSendRecordToActivity,
 } from "@t3tools/shared/orchestrationActivity";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import {
   sameThreadPullRequest,
   seedLegacyThreadPullRequestLink,
@@ -269,6 +272,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     id: message.id,
     role: message.role,
     text: message.text,
+    ...(message.context !== undefined ? { context: message.context } : {}),
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
@@ -301,6 +305,7 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     files: checkpoint.files.map((file) => ({ ...file })),
     agentTouchedPaths: [...(checkpoint.agentTouchedPaths ?? [])],
     turnFiles: (checkpoint.turnFiles ?? []).map((file) => ({ ...file })),
+    transitionFiles: (checkpoint.transitionFiles ?? []).map((file) => ({ ...file })),
   };
 }
 
@@ -343,7 +348,10 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map((message) => mapMessage(environmentId, message)),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
-    queuedTurns: (thread.queuedTurns ?? []).map((queuedTurn) => ({ ...queuedTurn })),
+    queuedTurns: (thread.queuedTurns ?? [])
+      .map((queuedTurn) => ({ ...queuedTurn }))
+      .toSorted(compareQueuedTurns),
+    queueHeldAt: thread.queueHeldAt ?? null,
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -353,6 +361,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -402,6 +411,7 @@ export function mapThreadShell(
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    queueHeldAt: thread.queueHeldAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -435,6 +445,7 @@ export function mapThreadShell(
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequest: thread.pullRequest ?? null,
@@ -481,6 +492,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    queueHeldAt: thread.queueHeldAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -498,6 +510,8 @@ function toThreadShell(thread: Thread): ThreadShell {
 function toThreadTurnState(thread: Thread): ThreadTurnState {
   return {
     latestTurn: thread.latestTurn,
+    // The only place the pending start is persisted.
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
@@ -709,6 +723,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.settledAt === right.settledAt &&
     left.snoozedUntil === right.snoozedUntil &&
     left.snoozedAt === right.snoozedAt &&
+    left.queueHeldAt === right.queueHeldAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
@@ -723,7 +738,26 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    pendingTurnStartsEqual(left.pendingTurnStart ?? null, right.pendingTurnStart ?? null) &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
+  );
+}
+
+function pendingTurnStartsEqual(
+  left: OrchestrationPendingTurnStart | null,
+  right: OrchestrationPendingTurnStart | null,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left === null || right === null) {
+    return false;
+  }
+  return (
+    left.messageId === right.messageId &&
+    left.requestedAt === right.requestedAt &&
+    left.sourceProposedPlan?.planId === right.sourceProposedPlan?.planId &&
+    left.sourceProposedPlan?.threadId === right.sourceProposedPlan?.threadId
   );
 }
 
@@ -1556,6 +1590,7 @@ function updateThreadMessageState(
               : {}),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
           ...(incoming.origin !== undefined ? { origin: incoming.origin } : {}),
+          ...(incoming.context !== undefined ? { context: incoming.context } : {}),
         };
 
   let nextMessageIds = messageIds;
@@ -2224,6 +2259,13 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        pendingTurnStart: {
+          messageId: event.payload.messageId,
+          requestedAt: event.payload.createdAt,
+          ...(event.payload.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+            : {}),
+        },
         hasMoreCurrentTurnActivities: false,
         updatedAt: event.occurredAt,
       }));
@@ -2269,17 +2311,23 @@ function applyEnvironmentOrchestrationEvent(
       }));
 
     case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        session: mapSession(event.payload.session),
-        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn: latestTurnFromSessionUpdate(
-          thread.latestTurn,
-          event.payload.session,
-          thread.pendingSourceProposedPlan,
-        ),
-        updatedAt: event.occurredAt,
-      }));
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        return {
+          ...thread,
+          session: mapSession(event.payload.session),
+          error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+          latestTurn: latestTurnFromSessionUpdate(
+            thread.latestTurn,
+            event.payload.session,
+            thread.pendingSourceProposedPlan,
+          ),
+          // Shared with the projector, its SQL projection, and both reducers.
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
+          updatedAt: event.occurredAt,
+        };
+      });
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>
@@ -2340,6 +2388,7 @@ function applyEnvironmentOrchestrationEvent(
           files: event.payload.files,
           agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
           turnFiles: event.payload.turnFiles ?? [],
+          transitionFiles: event.payload.transitionFiles ?? [],
           assistantMessageId: event.payload.assistantMessageId,
           completedAt: event.payload.completedAt,
         });
@@ -2466,7 +2515,6 @@ function applyEnvironmentOrchestrationEvent(
                 : crossThreadSendRecordToActivity({
                     eventId: event.eventId,
                     payload: event.payload,
-                    turnId: event.payload.sourceTurnId,
                     sequence: event.sequence,
                   });
           const tailActivity = thread.activities.at(-1);
@@ -2522,9 +2570,22 @@ function applyEnvironmentOrchestrationEvent(
             exceededActivityLimit = allActivities.length > MAX_THREAD_ACTIVITIES;
           }
 
+          const failureMessageId =
+            nextActivity.payload != null &&
+            typeof nextActivity.payload === "object" &&
+            "messageId" in nextActivity.payload &&
+            typeof nextActivity.payload.messageId === "string"
+              ? nextActivity.payload.messageId
+              : null;
+          const clearsPendingStart =
+            nextActivity.kind === "provider.turn.start.failed" &&
+            thread.pendingTurnStart != null &&
+            (failureMessageId === null || failureMessageId === thread.pendingTurnStart.messageId);
+
           return {
             ...thread,
             activities,
+            ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
             hasMoreActivities: (thread.hasMoreActivities ?? false) || exceededActivityLimit,
             hasMoreCurrentTurnActivities:
               (thread.hasMoreCurrentTurnActivities ?? false) || evictedCurrentTurnActivity,
@@ -2552,7 +2613,13 @@ function applyEnvironmentOrchestrationEvent(
           queuedTurn.id === event.payload.queuedTurnId
             ? {
                 ...queuedTurn,
-                message: { ...queuedTurn.message, text: event.payload.text },
+                message: {
+                  ...queuedTurn.message,
+                  text: event.payload.text,
+                  ...(event.payload.context !== undefined
+                    ? { context: event.payload.context }
+                    : {}),
+                },
                 updatedAt: event.payload.updatedAt,
                 failedAt: null,
                 failureMessage: null,
@@ -2587,6 +2654,38 @@ function applyEnvironmentOrchestrationEvent(
         ),
         updatedAt: event.occurredAt,
       }));
+
+    case "thread.queue-held":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queueHeldAt: event.payload.heldAt,
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.queue-released":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queueHeldAt: null,
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.queued-turn-reordered": {
+      const positions = new Map(
+        event.payload.orderedQueuedTurnIds.map((queuedTurnId, index) => [queuedTurnId, index]),
+      );
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queuedTurns: (thread.queuedTurns ?? [])
+          .map((queuedTurn) => {
+            const queuePosition = positions.get(queuedTurn.id);
+            return queuePosition === undefined
+              ? queuedTurn
+              : { ...queuedTurn, queuePosition, updatedAt: event.payload.reorderedAt };
+          })
+          .toSorted(compareQueuedTurns),
+        updatedAt: event.occurredAt,
+      }));
+    }
 
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":

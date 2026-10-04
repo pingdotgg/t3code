@@ -1,9 +1,11 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ThreadContextId,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
@@ -108,6 +110,62 @@ function createReadModel(): OrchestrationReadModel {
 }
 
 describe("decider thread.fork", () => {
+  it("preserves reference records in fork events and the forked read model", async () => {
+    const readModel = createReadModel();
+    const source = readModel.threads[0]!;
+    const context = {
+      version: 1 as const,
+      records: [
+        {
+          version: 1 as const,
+          kind: "thread" as const,
+          contextId: ThreadContextId.make("ctx-fork"),
+          label: "Reference",
+          environmentId: EnvironmentId.make("env-fork"),
+          threadId: ThreadId.make("reference-thread"),
+          title: "Reference",
+        },
+      ],
+    };
+    const input = {
+      ...readModel,
+      threads: [
+        {
+          ...source,
+          messages: source.messages.map((message) =>
+            message.id === "user-1"
+              ? { ...message, text: "see [Reference](t3-context://v1/thread/ctx-fork)", context }
+              : message,
+          ),
+        },
+      ],
+    };
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: input,
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("fork-context"),
+          sourceThreadId,
+          threadId: forkThreadId,
+          targetMessageId: MessageId.make("assistant-1"),
+          createdAt: "2025-01-01T00:01:00.000Z",
+        },
+      }),
+    );
+    const events = Array.isArray(result) ? result : [result];
+    const sent = events.filter((event) => event.type === "thread.message-sent");
+    expect(sent[0]?.payload).toMatchObject({ context });
+    let projected: OrchestrationReadModel = input;
+    for (const [index, event] of events.entries()) {
+      projected = await Effect.runPromise(
+        projectEvent(projected, { ...event, sequence: index + 1 }),
+      );
+    }
+    expect(
+      projected.threads.find((thread) => thread.id === forkThreadId)?.messages[0]?.context,
+    ).toEqual(context);
+  });
   it("clones history only through the selected assistant response", async () => {
     const readModel = createReadModel();
     const command: Extract<OrchestrationCommand, { type: "thread.fork" }> = {

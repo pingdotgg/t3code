@@ -342,6 +342,7 @@ describe("decider thread lifecycle", () => {
             checkpointRef: CheckpointRef.make(`checkpoint-${status}`),
             status,
             files: [],
+            transitionFiles: [],
             agentTouchedPaths: [],
             turnFiles: [],
             checkpointTurnCount: 1,

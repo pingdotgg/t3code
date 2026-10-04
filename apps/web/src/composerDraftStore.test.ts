@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  ThreadContextId,
   type ModelSelection,
   type ProviderOptionSelection,
   type PreviewAnnotationPayload,
@@ -19,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
+import { formatThreadContextReference } from "@t3tools/shared/threadContext";
 
 // The composer draft's `modelSelectionByProvider` and
 // `stickyModelSelectionByProvider` maps are keyed by `ProviderInstanceId`
@@ -34,6 +36,26 @@ const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
+
+it("re-inserts a retained thread reference even when no new context record is added", () => {
+  resetComposerDraftStore();
+  const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("reinsert-target"));
+  const record = {
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId: ThreadContextId.make("reinsert-record"),
+    environmentId: TEST_ENVIRONMENT_ID,
+    threadId: ThreadId.make("reinsert-source"),
+    title: "Reference",
+    label: "Reference",
+  };
+  const store = useComposerDraftStore.getState();
+  store.addThreadContexts(target, formatThreadContextReference(record), [record]);
+  store.setPrompt(target, "Compare ");
+  store.addThreadContexts(target, `Compare ${formatThreadContextReference(record)}`, []);
+  expect(store.getComposerDraft(target)?.prompt).toContain("t3-context://");
+  expect(store.getComposerDraft(target)?.threadContexts).toEqual([record]);
+});
 type ProviderOptionSelectionsByProvider = Partial<Record<string, ProviderOptionSelectionBag>>;
 
 function toSelections(

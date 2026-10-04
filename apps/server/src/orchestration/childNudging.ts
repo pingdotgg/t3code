@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CHILD_RESULT_COLLECTION_MS } from "@t3tools/shared/childFollowUp";
+import { nextQueuePosition } from "@t3tools/shared/queuedTurnOrder";
 import {
   MessageId,
   QueuedTurnId,
@@ -162,6 +163,7 @@ export function queueChildNudgeBatch(
             interactionMode: parent.interactionMode,
             createdAt: enqueuedAt,
             updatedAt: enqueuedAt,
+            queuePosition: nextQueuePosition(parent.queuedTurns ?? []),
             failedAt: null,
             failureMessage: null,
           },

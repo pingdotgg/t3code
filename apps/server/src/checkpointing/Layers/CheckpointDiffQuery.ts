@@ -20,16 +20,6 @@ import {
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
-function addDiffPath(
-  paths: Set<string>,
-  file: { readonly path: string; readonly previousPath?: string | null },
-) {
-  paths.add(file.path);
-  if (file.previousPath !== undefined && file.previousPath !== null) {
-    paths.add(file.previousPath);
-  }
-}
-
 function resolveCheckpointRange(input: {
   readonly threadId: OrchestrationGetFullThreadDiffInput["threadId"];
   readonly fromTurnCount: number;
@@ -44,8 +34,10 @@ function resolveCheckpointRange(input: {
   let toCheckpointRef:
     | ProjectionThreadCheckpointContext["checkpoints"][number]["checkpointRef"]
     | undefined;
-  const diffPaths = new Set<string>();
-
+  // Diffs are never path-filtered. A checkpoint range already contains exactly
+  // the changes made between its two commits, so filtering it by a narrower
+  // per-turn file list can only hide changes. Attribution metadata
+  // (turnFiles/agentTouchedPaths) remains available for validation targeting.
   for (const checkpoint of input.threadContext.checkpoints) {
     maxTurnCount = Math.max(maxTurnCount, checkpoint.checkpointTurnCount);
     if (
@@ -56,20 +48,6 @@ function resolveCheckpointRange(input: {
     }
     if (checkpoint.checkpointTurnCount === input.toTurnCount && toCheckpointRef === undefined) {
       toCheckpointRef = checkpoint.checkpointRef;
-      if (input.scope === "turn") {
-        for (const file of checkpoint.turnFiles) {
-          addDiffPath(diffPaths, file);
-        }
-      }
-    }
-    if (
-      input.scope === "snapshot" &&
-      checkpoint.checkpointTurnCount > input.fromTurnCount &&
-      checkpoint.checkpointTurnCount <= input.toTurnCount
-    ) {
-      for (const file of checkpoint.turnFiles) {
-        addDiffPath(diffPaths, file);
-      }
     }
   }
 
@@ -92,7 +70,6 @@ function resolveCheckpointRange(input: {
         ? undefined
         : fallbackFromCheckpointRef,
     toCheckpointRef,
-    diffPaths: [...diffPaths],
   };
 }
 
@@ -199,7 +176,6 @@ const make = Effect.gen(function* () {
           ...(input.ignoreWhitespace === undefined
             ? {}
             : { ignoreWhitespace: input.ignoreWhitespace }),
-          paths: range.diffPaths,
           ...(threadContext.value.workspaceBinding == null
             ? {}
             : { workspaceBinding: threadContext.value.workspaceBinding }),

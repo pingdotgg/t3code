@@ -49,6 +49,7 @@ export const ProjectionTurn = Schema.Struct({
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
   checkpointAgentTouchedPaths: Schema.Array(TrimmedNonEmptyString),
   checkpointTurnFiles: Schema.Array(OrchestrationCheckpointFile),
+  checkpointTransitionFiles: Schema.Array(OrchestrationCheckpointFile),
 });
 export type ProjectionTurn = typeof ProjectionTurn.Type;
 
@@ -69,6 +70,7 @@ export const ProjectionTurnById = Schema.Struct({
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
   checkpointAgentTouchedPaths: Schema.Array(TrimmedNonEmptyString),
   checkpointTurnFiles: Schema.Array(OrchestrationCheckpointFile),
+  checkpointTransitionFiles: Schema.Array(OrchestrationCheckpointFile),
 });
 export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 
@@ -136,6 +138,15 @@ export interface ProjectionTurnRepositoryShape {
    */
   readonly deletePendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Deletes every pending-start placeholder across all threads. Only valid at
+   * startup: a placeholder means a start was accepted but never acknowledged, and
+   * after a restart nothing is working on one.
+   */
+  readonly deleteAllPendingTurnStarts: (
+    input: void,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**

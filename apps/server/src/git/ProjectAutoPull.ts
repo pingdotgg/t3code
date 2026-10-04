@@ -1,7 +1,7 @@
 import { Clock, Context, Effect, FileSystem, Layer, PubSub, Stream } from "effect";
 import type { Scope } from "effect";
 import type { OrchestrationProject, ProjectId } from "@t3tools/contracts";
-import { threadHasInFlightTurn } from "../orchestration/commandInvariants.ts";
+import { threadCheckoutHasUnsettledWork } from "../orchestration/commandInvariants.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { GitCore, type GitStatusDetails } from "./Services/GitCore.ts";
 import { CheckoutCoordinator, CheckoutCoordinatorLive } from "./CheckoutCoordinator.ts";
@@ -98,8 +98,10 @@ export const ProjectAutoPullLive = Layer.effect(
         }
         if (!enabled) return false;
         for (const thread of model.threads) {
+          // Broader than turn admission: a message waiting for a turn that never
+          // started still means the branch must not move under this thread.
           if (
-            !threadHasInFlightTurn(thread) &&
+            !threadCheckoutHasUnsettledWork(thread) &&
             !thread.session?.activeTurnId &&
             !(thread.queuedTurns ?? []).some((turn) => turn.failedAt === null)
           )
@@ -114,7 +116,8 @@ export const ProjectAutoPullLive = Layer.effect(
         const threads = new Map(model.threads.map((thread) => [thread.id, thread]));
         for (const session of yield* provider.listSessions()) {
           const thread = threads.get(session.threadId);
-          if (!session.activeTurnId && (!thread || !threadHasInFlightTurn(thread))) continue;
+          if (!session.activeTurnId && (!thread || !threadCheckoutHasUnsettledWork(thread)))
+            continue;
           if (!session.cwd || (yield* fs.realPath(session.cwd)) === cwd) return false;
         }
         return true;

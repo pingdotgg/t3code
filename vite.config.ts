@@ -2,6 +2,8 @@ import "vite-plus/test/config";
 import * as NodeURL from "node:url";
 import { defineConfig } from "vite-plus";
 
+import { vitestWebWorkerAlias } from "./scripts/lib/vitestWebWorkerAlias.ts";
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -10,6 +12,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    alias: vitestWebWorkerAlias,
     exclude: [
       "**/node_modules/**",
       "**/dist/**",

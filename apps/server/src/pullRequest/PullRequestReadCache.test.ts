@@ -57,12 +57,104 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(started);
-      const invalidate = yield* cache.invalidate.pipe(Effect.forkChild({ startImmediately: true }));
+      const invalidate = yield* cache
+        .invalidate()
+        .pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(read);
       yield* Fiber.join(invalidate);
       const restarted = yield* cacheLayer(directory);
       assert.strictEqual(yield* restarted.get("summary", Effect.succeed("new")), "new");
+    }),
+  );
+
+  it.effect("invalidates only one persisted read key", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+      let firstReads = 0;
+      let secondReads = 0;
+      const first = yield* cacheLayer(directory);
+      const firstKey = "detail:project-1:acme/web:42";
+      const secondKey = "detail:project-1:acme/web:43";
+
+      assert.strictEqual(
+        yield* first.get(
+          firstKey,
+          Effect.sync(() => `first-${++firstReads}`),
+        ),
+        "first-1",
+      );
+      assert.strictEqual(
+        yield* first.get(
+          secondKey,
+          Effect.sync(() => `second-${++secondReads}`),
+        ),
+        "second-1",
+      );
+
+      yield* first.invalidate([firstKey]);
+      assert.strictEqual(
+        yield* first.get(
+          firstKey,
+          Effect.sync(() => `first-${++firstReads}`),
+        ),
+        "first-2",
+      );
+
+      const restarted = yield* cacheLayer(directory);
+      assert.strictEqual(
+        yield* restarted.get(
+          firstKey,
+          Effect.sync(() => `first-${++firstReads}`),
+        ),
+        "first-2",
+      );
+      assert.strictEqual(
+        yield* restarted.get(
+          secondKey,
+          Effect.sync(() => `second-${++secondReads}`),
+        ),
+        "second-1",
+      );
+      assert.strictEqual(firstReads, 2);
+      assert.strictEqual(secondReads, 1);
+    }),
+  );
+
+  it.effect("keeps no-key invalidation as a global persisted refresh", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+      let firstReads = 0;
+      let secondReads = 0;
+      const first = yield* cacheLayer(directory);
+      yield* first.get(
+        "first",
+        Effect.sync(() => `first-${++firstReads}`),
+      );
+      yield* first.get(
+        "second",
+        Effect.sync(() => `second-${++secondReads}`),
+      );
+
+      yield* first.invalidate();
+
+      const restarted = yield* cacheLayer(directory);
+      assert.strictEqual(
+        yield* restarted.get(
+          "first",
+          Effect.sync(() => `first-${++firstReads}`),
+        ),
+        "first-2",
+      );
+      assert.strictEqual(
+        yield* restarted.get(
+          "second",
+          Effect.sync(() => `second-${++secondReads}`),
+        ),
+        "second-2",
+      );
     }),
   );
 

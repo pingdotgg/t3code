@@ -10,6 +10,7 @@ import {
   HttpServerRequest,
 } from "effect/unstable/http";
 import { OtlpTracer } from "effect/unstable/observability";
+import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import {
@@ -283,6 +284,10 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     }
 
     const config = yield* ServerConfig;
+    if (config.devUrl && isDevProxiedPath(url.value.pathname)) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
     if (config.devUrl && isLoopbackHostname(url.value.hostname)) {
       return HttpServerResponse.redirect(resolveDevRedirectUrl(config.devUrl, url.value), {
         status: 302,

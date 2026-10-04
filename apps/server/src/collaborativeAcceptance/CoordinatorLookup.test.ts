@@ -86,6 +86,7 @@ const repository = {
   getByCaseId: () => Effect.succeed(Option.some(currentRecord)),
   listByAssignmentId: () => Effect.succeed([currentRecord]),
   listByParentThreadId: () => Effect.succeed([currentRecord]),
+  listByPullRequest: () => Effect.succeed([currentRecord]),
   listAll: () => Effect.succeed([currentRecord]),
 };
 
@@ -110,6 +111,7 @@ it.effect("uses deterministic and parent-thread lookups instead of scanning all 
         parentThreadLookupCount += 1;
         return [];
       }),
+    listByPullRequest: () => Effect.succeed([]),
     listAll: () => Effect.die("automatic reconciliation must not scan all cases"),
   };
   const targetedLayer = CollaborativeAcceptanceCoordinatorLive.pipe(
@@ -152,6 +154,7 @@ it.effect("preserves ambiguity detection for deterministic and legacy cases", ()
   const ambiguityRepository = {
     ...repository,
     listByParentThreadId: () => Effect.succeed([legacyRecord]),
+    listByPullRequest: () => Effect.succeed([currentRecord, legacyRecord]),
   };
   const ambiguityLayer = CollaborativeAcceptanceCoordinatorLive.pipe(
     Layer.provideMerge(
@@ -192,3 +195,91 @@ it.effect("resolves the current case and includes its durable status", () =>
     assert.equal(result.status.record?.case.currentCandidate.headSha, "head-service-current");
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("resolves by PR identity and returns the case's actual parent thread", () => {
+  const actualParent = ThreadId.make("case-parent-not-the-lookup-thread");
+  const record = {
+    ...currentRecord,
+    case: { ...currentRecord.case, parentThreadId: actualParent },
+  } as CollaborativeAcceptanceRecord;
+  let lookupInput: unknown;
+  const indexedRepository = {
+    ...repository,
+    getByCaseId: () => Effect.succeed(Option.some(record)),
+    listByPullRequest: (input: { projectId: string; repository: string; number: number }) =>
+      Effect.sync(() => {
+        lookupInput = input;
+        return [record];
+      }),
+    listAll: () => Effect.die("PR lookup must use the indexed PR identity query"),
+  };
+  const indexedLayer = CollaborativeAcceptanceCoordinatorLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(CollaborativeAcceptanceRepository, indexedRepository),
+        Layer.succeed(OrchestrationEngineService, {} as OrchestrationEngineShape),
+        Layer.succeed(ProjectionSnapshotQuery, {} as ProjectionSnapshotQueryShape),
+        ServerSettingsService.layerTest(),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const coordinator = yield* CoordinatorService;
+    const result = yield* coordinator.resolveForPullRequest({
+      threadId: ThreadId.make("active-associated-lookup-thread"),
+      pullRequest,
+    });
+
+    assert.deepStrictEqual(lookupInput, pullRequest);
+    assert.equal(result.caseId, record.case.caseId);
+    assert.equal(result.status.record?.case.parentThreadId, actualParent);
+  }).pipe(Effect.provide(indexedLayer));
+});
+
+it.effect("fails closed when an associated PR has multiple active acceptance parents", () => {
+  const records = ["parent-a", "parent-b"].map(
+    (parentThreadId, index) =>
+      ({
+        ...currentRecord,
+        case: {
+          ...currentRecord.case,
+          caseId: CollaborativeAcceptanceCaseId.make(`case-${index}`),
+          parentThreadId: ThreadId.make(parentThreadId),
+        },
+        projection: {
+          ...currentRecord.projection,
+          caseId: CollaborativeAcceptanceCaseId.make(`case-${index}`),
+        },
+      }) as CollaborativeAcceptanceRecord,
+  );
+  const ambiguousRepository = {
+    ...repository,
+    listByPullRequest: () => Effect.succeed(records),
+    listAll: () => Effect.die("PR lookup must use the indexed PR identity query"),
+  };
+  const ambiguousLayer = CollaborativeAcceptanceCoordinatorLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(CollaborativeAcceptanceRepository, ambiguousRepository),
+        Layer.succeed(OrchestrationEngineService, {} as OrchestrationEngineShape),
+        Layer.succeed(ProjectionSnapshotQuery, {} as ProjectionSnapshotQueryShape),
+        ServerSettingsService.layerTest(),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const coordinator = yield* CoordinatorService;
+    const result = yield* Effect.exit(
+      coordinator.resolveForPullRequest({
+        threadId: ThreadId.make("active-associated-lookup-thread"),
+        pullRequest,
+      }),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.match(String(result.cause), /Multiple active acceptance cases/);
+    }
+  }).pipe(Effect.provide(ambiguousLayer));
+});

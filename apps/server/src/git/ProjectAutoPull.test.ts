@@ -418,6 +418,9 @@ describe("ProjectAutoPull", () => {
                       state: "completed",
                       completedAt: f.now,
                     },
+                    // A user message with no accepted turn start is not a busy
+                    // checkout: the turn never began, so auto-pull may proceed.
+                    pendingTurnStart: null,
                     messages: [
                       {
                         id: "pending-user",

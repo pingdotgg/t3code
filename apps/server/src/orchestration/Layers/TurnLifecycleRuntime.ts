@@ -47,6 +47,8 @@ const TurnLifecycleWorkersLive = Layer.mergeAll(
   ProviderRuntimeIngestionLive,
   ProviderCommandReactorLive,
   CheckpointReactorLive.pipe(Layer.provide(ProviderRuntimeIngestionLive)),
+  // `ProviderRuntimeLivenessLive` is provided at the runtime level (shared with
+  // `ProviderService`, which writes the ledger on the runtime-event funnel).
   ProviderSessionReaperLive,
 );
 

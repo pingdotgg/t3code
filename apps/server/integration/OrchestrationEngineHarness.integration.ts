@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
@@ -40,8 +41,10 @@ import { ProjectionPendingApprovalRepository } from "../src/persistence/Services
 import { WorkspaceOwnershipRepository } from "../src/persistence/Services/WorkspaceOwnership.ts";
 import { makeInstanceRegistryMock } from "../src/provider/testUtils/providerInstanceRegistryMock.ts";
 import { ProviderInstanceRegistry } from "../src/provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderRuntimeLivenessLive } from "../src/provider/Layers/ProviderRuntimeLiveness.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
+import { ServerEnvironment } from "../src/environment/Services/ServerEnvironment.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
 import {
@@ -294,12 +297,14 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(realCodexRegistry),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
+          Layer.provide(ProviderRuntimeLivenessLive),
         )
       : makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(fakeRegistry!),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
+          Layer.provide(ProviderRuntimeLivenessLive),
         );
 
     const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
@@ -310,6 +315,9 @@ export const makeOrchestrationIntegrationHarness = (
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
       checkpointStoreLayer,
+      // Shared by `ProviderService` (writes the ledger) and
+      // `ProviderSessionReaper` (reads it), mirroring the runtime-level wiring.
+      ProviderRuntimeLivenessLive,
       providerLayer,
       RuntimeReceiptBusTest,
     );
@@ -326,6 +334,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(serverSettingsLayer),
+      Layer.provideMerge(
+        Layer.succeed(ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env-integration-harness")),
+          getDescriptor: Effect.die("ServerEnvironment.getDescriptor is unused in this harness"),
+        }),
+      ),
       Layer.provideMerge(
         Layer.succeed(ReviewSnapshotVerifier, {
           currentSnapshot: (input) => Effect.succeed(input.snapshot),

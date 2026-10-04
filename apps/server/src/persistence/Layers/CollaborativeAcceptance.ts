@@ -23,11 +23,17 @@ import {
   CollaborativeAcceptanceProviderEvidence,
   CollaborativeAcceptanceProjection,
   CollaborativeAcceptanceRecord,
+  ProjectId,
 } from "@t3tools/contracts";
 
 const caseIdInput = Schema.Struct({ caseId: CollaborativeAcceptanceCaseId });
 const assignmentIdInput = Schema.Struct({ assignmentId: Schema.String });
 const parentThreadIdInput = Schema.Struct({ parentThreadId: Schema.String });
+const pullRequestInput = Schema.Struct({
+  projectId: ProjectId,
+  repository: Schema.String,
+  number: Schema.Int,
+});
 const isCollaborativeAcceptanceRepositoryConflict = Schema.is(
   CollaborativeAcceptanceRepositoryConflict,
 );
@@ -47,7 +53,8 @@ const makeRepository = Effect.gen(function* () {
       INSERT INTO collaborative_acceptance_cases (
         case_id, assignment_id, parent_thread_id, contract_revision,
         current_candidate_id, current_head_sha, case_json, projection_json,
-        provider_evidence_json, obligations_json, revision, created_at, updated_at
+        provider_evidence_json, obligations_json, pull_request_project_id,
+        pull_request_repository, pull_request_number, revision, created_at, updated_at
       ) VALUES (
         ${acceptanceCase.caseId}, ${acceptanceCase.assignmentId}, ${acceptanceCase.parentThreadId},
         ${acceptanceCase.contractRevision}, ${acceptanceCase.currentCandidate.candidateId},
@@ -55,7 +62,9 @@ const makeRepository = Effect.gen(function* () {
         ${JSON.stringify(projection)}, ${
           providerEvidence === null ? null : JSON.stringify(providerEvidence)
         },
-        ${JSON.stringify(obligations)}, ${revision}, ${acceptanceCase.createdAt},
+        ${JSON.stringify(obligations)}, ${acceptanceCase.pullRequest.projectId},
+        ${acceptanceCase.pullRequest.repository}, ${acceptanceCase.pullRequest.number},
+        ${revision}, ${acceptanceCase.createdAt},
         ${acceptanceCase.updatedAt}
       )
     `,
@@ -91,6 +100,9 @@ const makeRepository = Effect.gen(function* () {
           providerEvidence === null ? null : JSON.stringify(providerEvidence)
         },
         obligations_json = ${JSON.stringify(obligations)},
+        pull_request_project_id = ${acceptanceCase.pullRequest.projectId},
+        pull_request_repository = ${acceptanceCase.pullRequest.repository},
+        pull_request_number = ${acceptanceCase.pullRequest.number},
         revision = ${revision},
         updated_at = ${acceptanceCase.updatedAt}
       WHERE case_id = ${acceptanceCase.caseId}
@@ -238,6 +250,32 @@ const makeRepository = Effect.gen(function* () {
         obligations_json AS obligations
       FROM collaborative_acceptance_cases
       WHERE parent_thread_id = ${parentThreadId}
+      ORDER BY updated_at DESC, case_id ASC
+    `,
+  });
+
+  const listCaseRowsByPullRequest = SqlSchema.findAll({
+    Request: pullRequestInput,
+    Result: Schema.Struct({
+      caseId: CollaborativeAcceptanceCaseId,
+      revision: Schema.Number,
+      case: CollaborativeAcceptanceCaseDbRow.fields.case,
+      projection: CollaborativeAcceptanceCaseDbRow.fields.projection,
+      providerEvidence: CollaborativeAcceptanceCaseDbRow.fields.providerEvidence,
+      obligations: CollaborativeAcceptanceCaseDbRow.fields.obligations,
+    }),
+    execute: ({ projectId, repository, number }) => sql`
+      SELECT
+        case_id AS "caseId",
+        revision,
+        case_json AS "case",
+        projection_json AS projection,
+        provider_evidence_json AS "providerEvidence",
+        obligations_json AS obligations
+      FROM collaborative_acceptance_cases
+      WHERE pull_request_project_id = ${projectId}
+        AND pull_request_repository = ${repository}
+        AND pull_request_number = ${number}
       ORDER BY updated_at DESC, case_id ASC
     `,
   });
@@ -453,13 +491,26 @@ const makeRepository = Effect.gen(function* () {
       ),
     );
 
+  const listByPullRequest: CollaborativeAcceptanceRepositoryShape["listByPullRequest"] = (input) =>
+    listCaseRowsByPullRequest(input).pipe(
+      Effect.flatMap((rows) => Effect.all(rows.map((row) => loadRecord(row)))),
+      Effect.mapError(toPersistenceSqlError("CollaborativeAcceptanceRepository.listByPullRequest")),
+    );
+
   const listAll: CollaborativeAcceptanceRepositoryShape["listAll"] = () =>
     listAllCaseRows({}).pipe(
       Effect.flatMap((rows) => Effect.all(rows.map((row) => loadRecord(row)))),
       Effect.mapError(toPersistenceSqlError("CollaborativeAcceptanceRepository.listAll")),
     );
 
-  return { save, getByCaseId, listByAssignmentId, listByParentThreadId, listAll };
+  return {
+    save,
+    getByCaseId,
+    listByAssignmentId,
+    listByParentThreadId,
+    listByPullRequest,
+    listAll,
+  };
 });
 
 export const CollaborativeAcceptanceRepositoryLive = Layer.effect(

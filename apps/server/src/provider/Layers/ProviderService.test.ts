@@ -48,7 +48,9 @@ import {
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeProviderServiceLive as makeProviderServiceLiveBase } from "./ProviderService.ts";
+import { ProviderRuntimeLiveness } from "../Services/ProviderRuntimeLiveness.ts";
+import { ProviderRuntimeLivenessLive } from "./ProviderRuntimeLiveness.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -68,6 +70,10 @@ import {
 } from "../testUtils/providerInstanceRegistryMock.ts";
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
+
+// Production provides this from the runtime layer; standalone tests supply it.
+const makeProviderServiceLive = (options?: Parameters<typeof makeProviderServiceLiveBase>[0]) =>
+  makeProviderServiceLiveBase(options).pipe(Layer.provide(ProviderRuntimeLivenessLive));
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
@@ -2467,10 +2473,122 @@ function makePiProviderServiceLayer() {
     ),
     directoryLayer,
     runtimeRepositoryLayer,
+    ProviderRuntimeLivenessLive,
     NodeServices.layer,
   );
   return { pi, providerLayer };
 }
+
+it.effect("ProviderServiceLive records runtime liveness before publishing events", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const liveness = yield* ProviderRuntimeLiveness;
+      const threadId = asThreadId("thread-liveness-recorded");
+      const turnId = asTurnId("pi-turn-liveness");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-liveness",
+        runtimeMode: "full-access",
+      });
+      const settledAtDelivery = yield* Ref.make<ReadonlySet<string> | null>(null);
+      const collector = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "turn.completed") {
+            // The ledger must know the turn is settled before any subscriber
+            // sees the terminal event.
+            const observation = yield* liveness.observe(threadId);
+            yield* Ref.set(settledAtDelivery, new Set(observation?.settledTurns.keys() ?? []));
+          }
+        }),
+      ).pipe(Effect.forkScoped);
+      // Let the service subscription attach before publishing: an unbounded
+      // PubSub drops messages published with zero subscribers.
+      yield* sleep(50);
+      pi.emit({
+        eventId: asEventId("evt-liveness-recorded"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId,
+        payload: { state: "completed" },
+      });
+      yield* sleep(50);
+      yield* Fiber.interrupt(collector);
+      assert.isTrue((yield* Ref.get(settledAtDelivery))?.has(turnId) ?? false);
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// Regression: recording inline in the sequential per-adapter consumer meant a
+// publish suspended on event N also blocked event N+1 from being recorded, so a
+// terminal event could stay unrecorded as long as the backlog lasted. Liveness
+// must record on its own fiber, even while a subscriber wedges delivery.
+it.effect("ProviderServiceLive records terminal liveness while a subscriber wedges delivery", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const liveness = yield* ProviderRuntimeLiveness;
+      const threadId = asThreadId("thread-liveness-backpressure");
+      const turnId = asTurnId("pi-turn-backpressure");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-backpressure",
+        runtimeMode: "full-access",
+      });
+      // A subscriber that attaches but never takes, so the bounded bus fills
+      // and `publish` blocks on delivery.
+      yield* Stream.runForEach(provider.streamEvents, () => Effect.never).pipe(Effect.forkScoped);
+      yield* sleep(50);
+
+      // Non-terminal lifecycle events deliberately: streaming events are
+      // filtered before the ledger, so only lifecycle traffic can both wedge
+      // delivery and still need recording. A delta burst would let this test
+      // pass even against the coupled implementation it disproves.
+      for (let index = 0; index < 8_000; index += 1) {
+        pi.emit({
+          eventId: asEventId(`evt-liveness-burst-${index}`),
+          provider: piDriver,
+          threadId,
+          createdAt: new Date().toISOString(),
+          type: "turn.started",
+          turnId,
+          payload: {},
+        });
+      }
+      pi.emit({
+        eventId: asEventId("evt-liveness-backpressure-terminal"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId,
+        payload: { state: "completed" },
+      });
+
+      // The ledger must record the settle regardless of how far behind
+      // delivery is.
+      yield* sleep(200);
+      const observation = yield* liveness.observe(threadId);
+      assert.isTrue(observation?.settledTurns.has(turnId) ?? false);
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles", () =>
   Effect.gen(function* () {

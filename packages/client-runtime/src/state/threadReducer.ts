@@ -17,6 +17,7 @@ import {
   childLifecycleNotificationToActivity,
   crossThreadSendRecordToActivity,
 } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -266,6 +267,14 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // Must match the server projector: `createdAt`, not `occurredAt`.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.payload.createdAt,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -437,6 +446,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };
@@ -591,7 +603,6 @@ export function applyThreadDetailEvent(
             : crossThreadSendRecordToActivity({
                 eventId: event.eventId,
                 payload: event.payload,
-                turnId: event.payload.sourceTurnId,
                 sequence: event.sequence,
               });
       const ids = activityIdIndex.get(thread.activities);

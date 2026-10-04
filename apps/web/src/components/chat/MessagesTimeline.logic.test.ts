@@ -14,6 +14,7 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveExternalActionUrl,
+  selectTimelineThreadContextChips,
   shouldHandleInternalActionClick,
   stabilizeReadonlyStringSet,
   stabilizeResponseMetaByTurnId,
@@ -1761,5 +1762,53 @@ describe("deriveRevertTurnCountByUserMessageId", () => {
       { "turn-1": 1 },
     );
     expect([...result]).toEqual([[MessageId.make("user-1"), 0]]);
+  });
+});
+
+describe("timeline thread context chips", () => {
+  const record = (contextId: string, threadId: string, title: string) => ({
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId,
+    label: `Label ${threadId}`,
+    environmentId: "env-a",
+    threadId,
+    title,
+  });
+
+  it("keys chips by context identity with live record titles in first-reference order", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "see [Beta](t3-context://v1/thread/ctx-b) and [Alpha](t3-context://v1/thread/ctx-a)",
+      context: {
+        records: [
+          record("ctx-a", "thread-a", "Alpha live"),
+          record("ctx-b", "thread-b", "Beta live"),
+        ] as never,
+      },
+    });
+    expect(chips.map((chip) => chip.key)).toEqual(["ctx-b", "ctx-a"]);
+    expect(chips.map((chip) => chip.title)).toEqual(["Beta live", "Alpha live"]);
+    expect(chips.every((chip) => chip.unavailable === false)).toBe(true);
+  });
+
+  it("marks dangling references unavailable instead of rendering misleading titles", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "see [Ghost](t3-context://v1/thread/ctx-ghost)",
+      context: { records: [] },
+    });
+    expect(chips).toEqual([{ key: "ctx-ghost", title: "Ghost", unavailable: true }]);
+  });
+
+  it("dedups repeated references and never surfaces unreferenced records", () => {
+    const chips = selectTimelineThreadContextChips({
+      text: "[A](t3-context://v1/thread/ctx-a) then [A](t3-context://v1/thread/ctx-a)",
+      context: {
+        records: [
+          record("ctx-a", "thread-a", "A live"),
+          record("ctx-unreferenced", "thread-u", "Unreferenced"),
+        ] as never,
+      },
+    });
+    expect(chips).toEqual([{ key: "ctx-a", title: "A live", unavailable: false }]);
   });
 });

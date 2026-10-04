@@ -25,7 +25,10 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.queued-turn-updated"
       | "thread.queued-turn-deleted"
       | "thread.queued-turn-dispatched"
-      | "thread.queued-turn-failed";
+      | "thread.queued-turn-failed"
+      | "thread.queued-turn-reordered"
+      | "thread.queue-held"
+      | "thread.queue-released";
   }
 > {
   switch (event.type) {
@@ -51,6 +54,9 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     case "thread.queued-turn-deleted":
     case "thread.queued-turn-dispatched":
     case "thread.queued-turn-failed":
+    case "thread.queued-turn-reordered":
+    case "thread.queue-held":
+    case "thread.queue-released":
       return true;
     default:
       return false;

@@ -15,6 +15,7 @@ import {
   childLifecycleNotificationToActivity,
   crossThreadSendRecordToActivity,
 } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 /**
  * Retention limits for collections within a thread.
@@ -372,6 +373,14 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // Must match the server projector: `createdAt`, not `occurredAt`.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.payload.createdAt,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -527,6 +536,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };
@@ -577,6 +589,7 @@ export function applyThreadDetailEvent(
         files: event.payload.files,
         agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
         turnFiles: event.payload.turnFiles ?? [],
+        transitionFiles: event.payload.transitionFiles ?? [],
         assistantMessageId: event.payload.assistantMessageId,
         completedAt: event.payload.completedAt,
       };
@@ -688,7 +701,6 @@ export function applyThreadDetailEvent(
             : crossThreadSendRecordToActivity({
                 eventId: event.eventId,
                 payload: event.payload,
-                turnId: event.payload.sourceTurnId,
                 sequence: event.sequence,
               });
       const activities = pipe(

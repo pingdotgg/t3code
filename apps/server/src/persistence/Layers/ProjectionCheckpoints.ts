@@ -18,6 +18,7 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
     agentTouchedPaths: Schema.fromJsonString(Schema.Array(TrimmedNonEmptyString)),
     turnFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    transitionFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
 
@@ -42,7 +43,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_status = NULL,
           checkpoint_files_json = '[]',
           checkpoint_agent_touched_paths_json = '[]',
-          checkpoint_turn_files_json = '[]'
+          checkpoint_turn_files_json = '[]',
+          checkpoint_transition_files_json = '[]'
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count = ${checkpointTurnCount}
       `,
@@ -66,7 +68,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_status,
           checkpoint_files_json,
           checkpoint_agent_touched_paths_json,
-          checkpoint_turn_files_json
+          checkpoint_turn_files_json,
+          checkpoint_transition_files_json
         )
         VALUES (
           ${row.threadId},
@@ -82,7 +85,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           ${row.status},
           ${row.files},
           ${row.agentTouchedPaths},
-          ${row.turnFiles}
+          ${row.turnFiles},
+          ${row.transitionFiles}
         )
         ON CONFLICT (thread_id, turn_id)
         DO UPDATE SET
@@ -94,7 +98,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_status = excluded.checkpoint_status,
           checkpoint_files_json = excluded.checkpoint_files_json,
           checkpoint_agent_touched_paths_json = excluded.checkpoint_agent_touched_paths_json,
-          checkpoint_turn_files_json = excluded.checkpoint_turn_files_json
+          checkpoint_turn_files_json = excluded.checkpoint_turn_files_json,
+          checkpoint_transition_files_json = excluded.checkpoint_transition_files_json
       `,
   });
 
@@ -112,6 +117,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -135,6 +141,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -154,7 +161,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_status = NULL,
           checkpoint_files_json = '[]',
           checkpoint_agent_touched_paths_json = '[]',
-          checkpoint_turn_files_json = '[]'
+          checkpoint_turn_files_json = '[]',
+          checkpoint_transition_files_json = '[]'
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count IS NOT NULL
       `,
