@@ -176,3 +176,28 @@ export function planReviewThreadAutoArchive(
 export function reviewThreadMergeArchiveCommandId(candidate: ReviewThreadMergeArchiveCandidate) {
   return `${candidate.threadId}:auto-archive-merge:${candidate.pullRequestKey}` as CommandId;
 }
+
+// Eager trigger so a merge observed on the event stream archives without
+// waiting for the next periodic sweep. Only merged pull request writes qualify;
+// everything else stays on the timer to avoid a sweep per chat event.
+export function shouldTriggerMergeArchiveSweep(event: {
+  readonly type: string;
+  readonly payload?: unknown;
+}): boolean {
+  const payload = event.payload as
+    | {
+        readonly link?: { readonly pullRequest?: { readonly state?: unknown } } | undefined;
+        readonly pullRequest?: { readonly state?: unknown } | null | undefined;
+      }
+    | undefined;
+  switch (event.type) {
+    case "thread.pull-request-linked":
+    case "thread.pull-request-rekeyed":
+      return payload?.link?.pullRequest?.state === "merged";
+    case "thread.meta-updated":
+    case "thread.created":
+      return payload?.pullRequest?.state === "merged";
+    default:
+      return false;
+  }
+}
