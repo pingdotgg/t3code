@@ -2345,3 +2345,184 @@ it.each(["provider_error", "usage_limit"] as const)(
     });
   },
 );
+
+describe("unread boundary row", () => {
+  const at = (time: string) => `2026-06-20T${time}.000Z`;
+  const tool = (id: string, time: string) => ({ ...command(at(time)), id: TurnItemId.make(id) });
+  const visibleTurnItems = [
+    projected(userMessage(at("09:58:00")), 0),
+    projected(tool("item-command-1", "10:01:00"), 1),
+    projected(tool("item-command-2", "10:02:00"), 2),
+    projected(assistantMessage(at("10:04:00")), 3),
+  ];
+  const feed = buildThreadFeed(visibleTurnItems);
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: at("09:58:00"),
+    completedAt: at("10:05:00"),
+  };
+  const snapshot = { visitedAt: at("10:00:00"), runId, completedAt: at("10:05:00") };
+  const rowTypes = (
+    options: {
+      readonly feed?: ReadonlyArray<ThreadFeedEntry>;
+      readonly expanded?: boolean;
+      readonly visitedAt?: string;
+      readonly hasMoreHistory?: boolean;
+    } = {},
+  ) =>
+    deriveThreadFeedPresentation(
+      options.feed ?? feed,
+      latestRun,
+      new Set(options.expanded ? [runId] : []),
+      new Set(),
+      null,
+      false,
+      {
+        snapshot: { ...snapshot, visitedAt: options.visitedAt ?? snapshot.visitedAt },
+        hasMoreHistory: options.hasMoreHistory ?? false,
+      },
+    ).map((entry) => entry.type);
+
+  it("sits above the fold header while the first unread work is folded away", () => {
+    expect(rowTypes()).toEqual(["message", "unread-boundary", "run-fold", "message"]);
+  });
+
+  it("moves to the first unread row once the fold is expanded", () => {
+    expect(rowTypes({ expanded: true })).toEqual([
+      "message",
+      "run-fold",
+      "unread-boundary",
+      "work-toggle",
+      "message",
+    ]);
+  });
+
+  it("counts a work group as unread when only its later call is", () => {
+    expect(rowTypes({ expanded: true, visitedAt: at("10:01:30") })).toEqual([
+      "message",
+      "run-fold",
+      "unread-boundary",
+      "work-toggle",
+      "message",
+    ]);
+  });
+
+  it.each([
+    ["an answer that was streaming at the last visit", at("10:04:30")],
+    ["Mark unread", "2026-06-20T10:04:59.999Z"],
+  ])("sits above the final answer for %s", (_label, visitedAt) => {
+    expect(rowTypes({ visitedAt })).toEqual(["message", "run-fold", "unread-boundary", "message"]);
+  });
+
+  it("renders nothing without an unread window", () => {
+    expect(
+      deriveThreadFeedPresentation(feed, latestRun, new Set()).map((entry) => entry.type),
+    ).toEqual(["message", "run-fold", "message"]);
+  });
+
+  it("holds its place and its row when a later turn arrives", () => {
+    const laterRunId = RunId.make("run-2");
+    const laterFeed = buildThreadFeed([
+      ...visibleTurnItems,
+      projected({ ...userMessage(at("10:30:00")), id: TurnItemId.make("item-user-2") }, 4),
+      projected(
+        {
+          ...assistantMessage(at("10:31:00")),
+          id: TurnItemId.make("item-assistant-2"),
+          messageId: MessageId.make("message-assistant-2"),
+          runId: laterRunId,
+        },
+        5,
+      ),
+    ]);
+    const unread = { snapshot, hasMoreHistory: false };
+    const opened = deriveThreadFeedPresentation(
+      feed,
+      latestRun,
+      new Set(),
+      new Set(),
+      null,
+      false,
+      unread,
+    );
+    const later = deriveThreadFeedPresentation(
+      laterFeed,
+      latestRun,
+      new Set(),
+      new Set(),
+      null,
+      false,
+      unread,
+    );
+    expect(later.map((entry) => entry.type).slice(0, 3)).toEqual([
+      "message",
+      "unread-boundary",
+      "run-fold",
+    ]);
+    expect(later.filter((entry) => entry.type === "unread-boundary")).toHaveLength(1);
+    expect(later[1]).toBe(opened[1]);
+  });
+
+  it("does not fall onto a later prompt when the unread entry renders nothing", () => {
+    // The only unread entry is a call that never finished, which shows no row
+    // of its own. Collapsed, the fold header stands in for it.
+    const laterFeed = buildThreadFeed([
+      projected(userMessage(at("09:58:00")), 0),
+      projected({ ...tool("item-unfinished", "10:01:00"), status: "running" as const }, 1),
+      projected(
+        {
+          ...userMessage(at("10:30:00")),
+          id: TurnItemId.make("item-user-2"),
+          messageId: MessageId.make("message-user-2"),
+        },
+        2,
+      ),
+    ]);
+    expect(rowTypes({ feed: laterFeed })).toEqual([
+      "message",
+      "unread-boundary",
+      "run-fold",
+      "message",
+    ]);
+    // Expanded, nothing unread is on screen, and the later prompt is not unread.
+    expect(rowTypes({ feed: laterFeed, expanded: true })).toEqual([
+      "message",
+      "run-fold",
+      "message",
+    ]);
+  });
+
+  it("keeps a work group unread when the same run adds a call after it completed", () => {
+    const opened = visibleTurnItems.slice(0, 3);
+    const lateCall = projected(tool("item-command-late", "10:20:00"), 3);
+    const expected = ["message", "unread-boundary", "run-fold"];
+    expect(rowTypes({ feed: buildThreadFeed(opened) })).toEqual(expected);
+    expect(rowTypes({ feed: buildThreadFeed([...opened, lateCall]) })).toEqual(expected);
+  });
+
+  it("never marks a message only this device has", () => {
+    // Its local clock can land inside the unread window; it is still not unread.
+    const localFeed = buildThreadFeed([projected(userMessage(at("09:58:00")), 0)], {
+      anchoredMessages: [
+        {
+          id: MessageId.make("message-local"),
+          role: "user",
+          text: "Sent from here",
+          streaming: false,
+          createdAt: at("10:02:00"),
+          updatedAt: at("10:02:00"),
+        },
+      ],
+    });
+    expect(rowTypes({ feed: localFeed })).toEqual(["message", "message"]);
+  });
+
+  it("waits for older pages instead of guessing at the top of a partial history", () => {
+    const page = buildThreadFeed(visibleTurnItems.slice(1));
+    expect(rowTypes({ feed: page, hasMoreHistory: true })).not.toContain("unread-boundary");
+    expect(rowTypes({ feed: page, hasMoreHistory: false })[0]).toBe("unread-boundary");
+    // The older page arrives and the boundary resolves against the full run.
+    expect(rowTypes({ hasMoreHistory: true }).slice(0, 2)).toEqual(["message", "unread-boundary"]);
+  });
+});

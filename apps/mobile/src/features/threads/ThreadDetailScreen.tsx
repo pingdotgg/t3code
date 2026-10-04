@@ -33,6 +33,10 @@ import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thre
 import { presentPendingBackgroundWork } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import {
+  resolveThreadUnreadSession,
+  type ThreadUnreadSession,
+} from "@t3tools/client-runtime/state/thread-unread";
+import {
   formatModelSelectionEffort,
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -90,6 +94,7 @@ import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentShellReadiness } from "../../state/shell";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -804,6 +809,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
 
+  // The unread window behind the feed's "New" divider. It is copied during
+  // render, so the visit effect below cannot mark the thread read first. It
+  // stays frozen while this thread is on screen and ends when the screen
+  // hides, so coming back to a newer completion starts a fresh one.
+  const shellIsLive = useEnvironmentShellReadiness(props.environmentId).status === "live";
+  const [storedUnreadSession, setUnreadSession] = useState<ThreadUnreadSession | null>(null);
+  const unreadSession = resolveThreadUnreadSession(storedUnreadSession, {
+    threadKey: showContent ? selectedThreadKey : null,
+    thread: props.selectedThread,
+    synchronized: shellIsLive,
+  });
+  if (unreadSession !== storedUnreadSession) {
+    setUnreadSession(unreadSession);
+  }
+
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchRef = useRef({ threadKey: selectedThreadKey, at: 0 });
@@ -1098,6 +1118,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
+              unreadSnapshot={unreadSession?.snapshot ?? null}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}

@@ -7,6 +7,10 @@ describe("resolveThreadFeedFixedItemSize", () => {
     expect(resolveThreadFeedFixedItemSize("activity-group")).toBeUndefined();
   });
 
+  it("measures the unread divider, whose height follows the text size", () => {
+    expect(resolveThreadFeedFixedItemSize("unread-boundary")).toBeUndefined();
+  });
+
   it("keeps fixed timeline chrome on the premeasured path", () => {
     expect(resolveThreadFeedFixedItemSize("run-fold")).toBe(42);
     expect(resolveThreadFeedFixedItemSize("work-toggle")).toBe(28);
