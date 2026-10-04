@@ -235,7 +235,27 @@ const UNPRICEABLE_MODELS = new Set([
   "fable",
 ]);
 
+/**
+ * Lookups per table, by raw model name. A scan prices every record twice
+ * against a few dozen models, and tables are never mutated once built.
+ */
+const resolvedRates = new WeakMap<RateTable, Map<string, ModelRate | null>>();
+
 export function lookupRate(table: RateTable, model: string): ModelRate | null {
+  let resolved = resolvedRates.get(table);
+  if (resolved === undefined) {
+    resolved = new Map();
+    resolvedRates.set(table, resolved);
+  }
+  let rate = resolved.get(model);
+  if (rate === undefined) {
+    rate = resolveRate(table, model);
+    resolved.set(model, rate);
+  }
+  return rate;
+}
+
+function resolveRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
   if (bareName.length === 0 || UNPRICEABLE_MODELS.has(bareName)) return null;

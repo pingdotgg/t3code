@@ -54,16 +54,6 @@ function parseTimestampMs(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-export function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
-  return {
-    uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
-    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
-    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
-  };
-}
-
 export function totalTokens(totals: UsageTokenTotals): number {
   // reasoningTokens is a subset of outputTokens and must not be added again.
   return (
