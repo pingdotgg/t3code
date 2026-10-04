@@ -208,6 +208,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
+  sortWorkingThreadsBySend,
   useThreadJumpHintVisibility,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -1711,11 +1712,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               type="button"
               aria-label="Unpin thread"
               onClick={handleUnpinClick}
-              className="inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
           }
         >
-          <PinIcon aria-hidden className="size-3 shrink-0" />
+          {/* Pin marks the pinned state at rest; hover and focus swap in pin-off so the
+              icon reads as the action the button performs. */}
+          <PinIcon
+            aria-hidden
+            className="size-3 shrink-0 group-hover/unpin:hidden group-focus-visible/unpin:hidden"
+          />
+          <PinOffIcon
+            aria-hidden
+            className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
+          />
         </TooltipTrigger>
         <TooltipPopup>Unpin thread</TooltipPopup>
       </Tooltip>
@@ -2784,8 +2794,8 @@ export default function Sidebar() {
               preferredIds: optimisticDrop.order,
               getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
             }),
-      // Newest work first, by the same clock as the inbox.
-      workingThreads: sortInboxThreadsByReturn(working),
+      // Newest send first; finishing and waking again do not move a row.
+      workingThreads: sortWorkingThreadsBySend(working),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>

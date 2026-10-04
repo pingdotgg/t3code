@@ -1049,6 +1049,7 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/c
 export {
   isThreadWorking as isSidebarThreadWorking,
   sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
