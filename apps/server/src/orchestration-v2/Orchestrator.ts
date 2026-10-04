@@ -2925,6 +2925,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : link,
             );
           }
+          // Tombstones only block re-adding a stack layer, and clients hide them.
+          // Host metadata on them is dead weight copied into every thread event.
+          pullRequests = pullRequests.map((link) =>
+            link.source === "stack-dismissed" && (link.snapshot !== null || link.stack !== null)
+              ? { ...link, snapshot: null, stack: null }
+              : link,
+          );
           return {
             ...thread,
             pullRequests,

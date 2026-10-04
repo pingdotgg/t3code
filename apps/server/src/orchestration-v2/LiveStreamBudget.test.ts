@@ -1,4 +1,5 @@
 import { it } from "@effect/vitest";
+import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -9,6 +10,7 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   bufferLiveStream,
+  bufferLatestLiveStream,
   makeLiveStreamBudget,
   replayAndBufferLiveEvents,
   type RetainedLiveItem,
@@ -76,6 +78,68 @@ it.effect("stops draining a slow subscriber when its unacknowledged tail fills",
 );
 
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
+
+describe("bufferLatestLiveStream", () => {
+  it.effect(
+    "replaces queued payloads across batches without replacing the unacknowledged batch",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const input = yield* Queue.unbounded<Event, Cause.Done>();
+          const drained = yield* Deferred.make<void>();
+          const first = { sequence: 1, threadId: "a", text: "x".repeat(1000) };
+          const pull = yield* Stream.toPull(
+            bufferLatestLiveStream(
+              Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(drained, undefined))),
+              (event) => event.threadId!,
+              { maxItems: 3, maxSerializedBytes: 3300 },
+            ),
+          );
+          yield* Queue.offer(input, first);
+          expect(yield* pull).toEqual([first]);
+          const updates = Array.from({ length: 300 }, (_, index) => ({
+            sequence: index + 2,
+            threadId: index % 2 === 0 ? "a" : "b",
+            text: "x".repeat(1000),
+          }));
+          yield* Queue.offerAll(input, updates);
+          yield* Queue.end(input);
+          // No ACK/pull while all 300 updates pass through the producer.
+          yield* Deferred.await(drained);
+          expect(yield* pull).toEqual(updates.slice(-2));
+        }),
+      ),
+  );
+
+  for (const limit of ["items", "bytes"] as const) {
+    it.effect(
+      `keeps an in-flight update charged to the ${limit} budget when the same key updates`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const input = yield* Queue.unbounded<Event>();
+            const closed = yield* Deferred.make<void>();
+            const first = { sequence: 1, text: "first" };
+            const pull = yield* Stream.toPull(
+              bufferLatestLiveStream(
+                Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(closed, undefined))),
+                () => "same-key",
+                limit === "items" ? { maxItems: 1 } : { maxSerializedBytes: 32 },
+              ),
+            );
+            yield* Queue.offer(input, first);
+            expect(yield* pull).toEqual([first]);
+            yield* Queue.offer(input, { sequence: 2, text: "next" });
+            yield* Deferred.await(closed);
+            const result = yield* pull.pipe(Effect.result);
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure")
+              expect(result.failure._tag).toBe("LiveStreamBufferError");
+          }),
+        ),
+    );
+  }
+});
 
 describe("replayAndBufferLiveEvents", () => {
   it.effect.each(["high-water", "replay"] as const)(

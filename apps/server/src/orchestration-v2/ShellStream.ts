@@ -12,6 +12,32 @@ import { OrchestrationProjectShell as ProjectShellSchema } from "@t3tools/contra
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+
+type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
+
+/** Full shell deltas replace earlier queued state; snapshots and sync markers stay outside this buffer. */
+export const bufferShellLiveStream = <E, R>(
+  source: Stream.Stream<ShellDelta, E, R>,
+  limits?: { readonly maxItems?: number; readonly maxSerializedBytes?: number },
+) =>
+  bufferLatestLiveStream(
+    source,
+    (item) => {
+      switch (item.kind) {
+        case "project.updated":
+          return `project:${item.project.id}`;
+        case "project.removed":
+          return `project:${item.projectId}`;
+        case "thread.updated":
+          return `thread:${item.location}:${item.thread.id}`;
+        case "thread.removed":
+          return `thread:${item.location}:${item.threadId}`;
+      }
+    },
+    limits,
+  );
+
 /** Build the regular navigation shell without duplicating the archive dataset. */
 export function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
@@ -208,7 +234,10 @@ export function coalesceStoredThreadEvents(
 export function shellStreamItemFromThreadShell(input: {
   readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
   readonly shell: OrchestrationV2ThreadShell | null;
-}): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
+}): Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread.updated" | "thread.removed" }
+> {
   if (input.shell !== null) {
     if (input.shell.archivedAt !== null) {
       return {
