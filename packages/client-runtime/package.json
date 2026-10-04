@@ -183,6 +183,14 @@
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"
     },
+    "./state/plugins": {
+      "types": "./src/state/plugins.ts",
+      "default": "./src/state/plugins.ts"
+    },
+    "./state/pluginPresentation": {
+      "types": "./src/state/pluginPresentation.ts",
+      "default": "./src/state/pluginPresentation.ts"
+    },
     "./state/pluginActions": {
       "types": "./src/state/pluginActions.ts",
       "default": "./src/state/pluginActions.ts"

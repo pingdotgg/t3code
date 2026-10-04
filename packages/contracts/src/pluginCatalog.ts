@@ -106,7 +106,7 @@ export const PluginInstallation = Schema.Struct({
 });
 export type PluginInstallation = typeof PluginInstallation.Type;
 
-type PluginInstallationStatus = "unavailable" | "needs-consent" | "enabled" | "disabled";
+export type PluginInstallationStatus = "unavailable" | "needs-consent" | "enabled" | "disabled";
 
 /** What the user can do next with an installation. */
 export const pluginInstallationStatus = (

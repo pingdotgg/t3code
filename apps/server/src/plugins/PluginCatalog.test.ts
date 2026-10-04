@@ -267,6 +267,8 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
           expect((yield* catalog.enable({ installationId })).installation.generation).toBe(2);
           expect(yield* catalog.remove({ installationId })).toEqual({ installationId });
           expect((yield* catalog.list).installations).toEqual([]);
+          // Settings promises that removing an added directory leaves it in place.
+          expect(yield* fs.exists(plugin.directory)).toBe(true);
           expect(yield* sql`SELECT installation_id FROM plugin_installations`).toEqual([]);
         }),
       ),
