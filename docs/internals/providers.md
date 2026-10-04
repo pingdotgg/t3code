@@ -19,8 +19,11 @@ directory must not share one T3 MCP entry.
   connection. Catalog and text-generation work can share the
   [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
   after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
-- **2.x** serves every directory from one
-  [server per instance](../../apps/server/src/provider/opencode2/OpenCode2Server.ts). Each thread
+- **2.x** connects to the
+  [shared managed service](../../apps/server/src/provider/opencode2/OpenCode2Server.ts), starting it
+  if needed. This lets CLI commands reuse the same owner instead of recovering sessions still
+  running in a private T3 process. T3 disconnects without stopping the service and interrupts only
+  its own active turns. Each thread
   registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
   thread's entry. See the [2.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.ts).
 

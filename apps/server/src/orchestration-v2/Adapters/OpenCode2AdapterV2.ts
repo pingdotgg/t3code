@@ -1,6 +1,6 @@
 /**
  * The OpenCode 2 runtime behind the `opencode` driver. It talks to the
- * instance's `opencode serve` process through the HTTP client and reads that
+ * OpenCode server through the HTTP client and reads that
  * server's `/api/event` stream, routed here by session id.
  *
  * A turn is one `session.prompt` (or `session.command`, or `session.compact`
@@ -2833,8 +2833,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     );
 
     let currentScope = initial.scope;
-    // The borrow in use when the session closes is returned with it, so a
-    // spawned server can still reach its idle shutdown.
+    // Release the event-stream connection when the session closes.
     yield* Effect.addFinalizer(() => Scope.close(currentScope, Exit.void));
     const follow = (stream: Stream.Stream<OpenCode2StreamEvent, unknown>): Effect.Effect<void> =>
       stream.pipe(
@@ -2870,20 +2869,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Subscribed before any session or prompt call, so no event of theirs is missed.
     yield* follow(yield* connection.events).pipe(Effect.forkScoped);
 
-    // A server T3 did not start keeps running after T3 stops, so stop the turns
-    // it would otherwise finish unseen. A spawned server stops with its owner.
-    if (connection.external) {
-      yield* Effect.addFinalizer(() =>
-        Effect.forEach(
-          [...threads].filter(([, state]) => state.active !== undefined),
-          ([sessionId]) =>
-            client.session
-              .interrupt({ sessionID: Session.ID.make(sessionId) })
-              .pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
-          { concurrency: 8, discard: true },
-        ),
-      );
-    }
+    // Both local managed and external servers outlive T3. Stop only this
+    // runtime's active turns before releasing its connection.
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach(
+        [...threads].filter(([, state]) => state.active !== undefined),
+        ([sessionId]) =>
+          client.session
+            .interrupt({ sessionID: Session.ID.make(sessionId) })
+            .pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
+        { concurrency: 8, discard: true },
+      ),
+    );
 
     // Context windows come from the server's model list for a directory, read
     // when the session opens, before a thread first runs in another directory,
@@ -3204,8 +3201,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
       ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
 
-    // T3's MCP registrations outlive a session only on an external server; a
-    // spawned one forgets them when it stops.
+    // Both managed and external servers outlive this runtime's registrations.
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
         [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),

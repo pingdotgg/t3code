@@ -1,18 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as HttpHeaders from "effect/unstable/http/Headers";
 import { describe } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
@@ -165,89 +161,347 @@ describe("OpenCode2Server error details", () => {
   );
 });
 
-describe("OpenCode2Server passwords", () => {
-  it.effect("generates a distinct 256-bit password per server", () =>
+describe("OpenCode2Server managed service", () => {
+  it.effect("shares a cold managed-service acquisition between concurrent callers", () =>
     Effect.gen(function* () {
-      const first = yield* OpenCode2Server.generatePassword;
-      const second = yield* OpenCode2Server.generatePassword;
-      assert.match(Redacted.value(first), /^[A-Za-z0-9_-]{43}$/);
-      assert.notStrictEqual(Redacted.value(first), Redacted.value(second));
-      assert.notInclude(String(first), Redacted.value(first));
-    }).pipe(Effect.provide(NodeServices.layer)),
+      const startEntered = yield* Deferred.make<void>();
+      const releaseStart = yield* Deferred.make<void>();
+      const firstUseEntered = yield* Deferred.make<void>();
+      const releaseFirstUse = yield* Deferred.make<void>();
+      const secondUseEntered = yield* Deferred.make<void>();
+      const reconnectStartEntered = yield* Deferred.make<void>();
+      const releaseReconnectStart = yield* Deferred.make<void>();
+      const staleVerifications = yield* Deferred.make<void>();
+      const commands: Array<ReadonlyArray<string>> = [];
+      let starts = 0;
+      let rejectVerifications = false;
+      let failedVerifications = 0;
+      const runtime = {
+        runOpenCodeCommand: (input: { readonly args: ReadonlyArray<string> }) =>
+          Effect.gen(function* () {
+            commands.push(input.args);
+            if (input.args[1] === "start") {
+              starts += 1;
+              if (starts === 1) {
+                yield* Deferred.succeed(startEntered, undefined);
+                yield* Deferred.await(releaseStart);
+              } else if (starts === 2) {
+                yield* Deferred.succeed(reconnectStartEntered, undefined);
+                yield* Deferred.await(releaseReconnectStart);
+              }
+            }
+            return {
+              stdout:
+                input.args[2] === "disabled"
+                  ? "false\n"
+                  : input.args[1] === "start"
+                    ? "http://127.0.0.1:4096\n"
+                    : "managed-password\n",
+              stderr: "",
+              code: 0,
+            };
+          }),
+      } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+      const http = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            let status = 200;
+            if (rejectVerifications && failedVerifications < 2) {
+              failedVerifications += 1;
+              status = 500;
+              if (failedVerifications === 2) yield* Deferred.succeed(staleVerifications, undefined);
+              yield* Deferred.await(staleVerifications);
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(INFO_BODY, {
+                status,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }),
+        ),
+      );
+      const server = yield* OpenCode2Server.make({
+        binaryPath: "/configured/opencode",
+        serverUrl: "",
+        serverPassword: "",
+        directory: "/project",
+        environment: {},
+      }).pipe(
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+        Effect.provide(
+          Layer.mergeAll(OpenCode2Client.layer.pipe(Layer.provide(http)), NodeServices.layer),
+        ),
+      );
+      const bothReady = yield* Deferred.make<void>();
+      let readyCount = 0;
+      let useCount = 0;
+      const borrow = Effect.sync(() => {
+        readyCount += 1;
+        if (readyCount === 2) return Deferred.succeed(bothReady, undefined);
+        return Effect.void;
+      }).pipe(
+        Effect.flatten,
+        Effect.andThen(
+          server.withConnection((connection) =>
+            Effect.suspend(() => {
+              useCount += 1;
+              return useCount === 1
+                ? Deferred.succeed(firstUseEntered, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFirstUse)),
+                    Effect.as(connection),
+                  )
+                : Deferred.succeed(secondUseEntered, undefined).pipe(Effect.as(connection));
+            }),
+          ),
+        ),
+      );
+      const first = yield* borrow.pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* borrow.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(bothReady);
+      yield* Deferred.await(startEntered);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseStart, undefined);
+      yield* Deferred.await(firstUseEntered);
+      yield* Deferred.await(secondUseEntered);
+      yield* Deferred.succeed(releaseFirstUse, undefined);
+      const coldConnections = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      assert.strictEqual(coldConnections[0], coldConnections[1]);
+      assert.deepStrictEqual(commands, [
+        ["service", "get", "disabled"],
+        ["service", "start"],
+        ["service", "get", "password"],
+      ]);
+
+      rejectVerifications = true;
+      readyCount = 0;
+      const bothReconnectReady = yield* Deferred.make<void>();
+      const reconnect = Effect.sync(() => {
+        readyCount += 1;
+        if (readyCount === 2) return Deferred.succeed(bothReconnectReady, undefined);
+        return Effect.void;
+      }).pipe(
+        Effect.flatten,
+        Effect.andThen(server.withConnection((connection) => Effect.succeed(connection))),
+      );
+      const reconnectOne = yield* reconnect.pipe(Effect.forkChild({ startImmediately: true }));
+      const reconnectTwo = yield* reconnect.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(bothReconnectReady);
+      yield* Deferred.await(staleVerifications);
+      yield* Deferred.await(reconnectStartEntered);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseReconnectStart, undefined);
+      yield* Effect.all([Fiber.join(reconnectOne), Fiber.join(reconnectTwo)]);
+      assert.deepStrictEqual(commands, [
+        ["service", "get", "disabled"],
+        ["service", "start"],
+        ["service", "get", "password"],
+        ["service", "get", "disabled"],
+        ["service", "start"],
+        ["service", "get", "password"],
+      ]);
+    }),
   );
 
-  it("hands the spawned server only the T3 password", () => {
-    const password = Redacted.make("t3-generated");
-    const environment = OpenCode2Server.serverEnvironment(
-      { PATH: "/bin", OPENCODE_SERVER_PASSWORD: "ambient", OPENCODE_PASSWORD: "ambient" },
-      password,
-    );
-    assert.deepStrictEqual(environment, { PATH: "/bin", OPENCODE_PASSWORD: "t3-generated" });
-  });
-});
-
-// Serves /api/info only with the password from OPENCODE_PASSWORD, like 2.x, and
-// prints the 2.x banner (plus the generated-password line 2.x prints when no
-// password is set, which T3 must never need).
-const FAKE_SERVER = `import { createServer } from "node:http";
-const expected = "Basic " + Buffer.from("opencode:" + process.env.OPENCODE_PASSWORD).toString("base64");
-const server = createServer((request, response) => {
-  if (request.headers.authorization !== expected) {
-    response.writeHead(401, { "content-type": "application/json", "www-authenticate": "Basic" });
-    response.end(${JSON.stringify(UNAUTHORIZED_BODY)});
-    return;
-  }
-  response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ version: "2.0.18", pid: process.pid, urls: [], paths: { tmp: "/tmp" } }));
-});
-server.listen(0, "127.0.0.1", () => {
-  process.stdout.write("server listening on http://127.0.0.1:" + server.address().port + "\\n");
-  process.stdout.write("server password not-the-t3-password\\n");
-});
-`;
-
-describe("OpenCode2Server spawned server", () => {
-  it.live(
-    "is ready once /api/info accepts the generated password",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const platform = yield* HostProcessPlatform;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
-        const isWindows = platform === "win32";
-        const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
-        const scriptPath = path.join(directory, "opencode.mjs");
-        yield* fs.writeFileString(scriptPath, FAKE_SERVER);
-        yield* fs.writeFileString(
-          binaryPath,
-          isWindows
-            ? `@echo off\r\n"${yield* HostProcessExecutablePath}" "${scriptPath}" %*\r\n`
-            : `#!/bin/sh\nexec "${yield* HostProcessExecutablePath}" "${scriptPath}" "$@"\n`,
-        );
-        if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
-
-        const server = yield* OpenCode2Server.make({
-          binaryPath,
-          serverUrl: "",
-          serverPassword: "",
-          directory,
-          environment: { ...(yield* HostProcessEnvironment), OPENCODE_SERVER_PASSWORD: "ambient" },
-        });
-        const first = yield* server.withConnection((connection) => Effect.succeed(connection));
-        const second = yield* server.withConnection((connection) => Effect.succeed(connection));
-        assert.strictEqual(first.version, "2.0.18");
-        assert.strictEqual(first.external, false);
-        assert.strictEqual(second.client, first.client);
+  it.effect("releases the acquisition permit after a failed start so a waiter can retry", () =>
+    Effect.gen(function* () {
+      const startEntered = yield* Deferred.make<void>();
+      const releaseStart = yield* Deferred.make<void>();
+      const commands: Array<ReadonlyArray<string>> = [];
+      let starts = 0;
+      const runtime = {
+        runOpenCodeCommand: (input: { readonly args: ReadonlyArray<string> }) =>
+          Effect.gen(function* () {
+            commands.push(input.args);
+            if (input.args[1] === "start") {
+              starts += 1;
+              if (starts === 1) {
+                yield* Deferred.succeed(startEntered, undefined);
+                yield* Deferred.await(releaseStart);
+                return { stdout: "", stderr: "failed", code: 1 };
+              }
+            }
+            return {
+              stdout:
+                input.args[2] === "disabled"
+                  ? "false\n"
+                  : input.args[1] === "start"
+                    ? "http://127.0.0.1:4096\n"
+                    : "managed-password\n",
+              stderr: "",
+              code: 0,
+            };
+          }),
+      } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+      const http = serverReplying({
+        status: 200,
+        contentType: "application/json",
+        body: INFO_BODY,
+      });
+      const server = yield* OpenCode2Server.make({
+        binaryPath: "/configured/opencode",
+        serverUrl: "",
+        serverPassword: "",
+        directory: "/project",
+        environment: {},
       }).pipe(
-        Effect.scoped,
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
         Effect.provide(
-          Layer.mergeAll(
-            OpenCode2Client.layer,
-            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+          Layer.mergeAll(OpenCode2Client.layer.pipe(Layer.provide(http)), NodeServices.layer),
+        ),
+      );
+      const bothReady = yield* Deferred.make<void>();
+      let readyCount = 0;
+      const borrow = Effect.sync(() => {
+        readyCount += 1;
+        if (readyCount === 2) return Deferred.succeed(bothReady, undefined);
+        return Effect.void;
+      }).pipe(
+        Effect.flatten,
+        Effect.andThen(
+          Effect.exit(server.withConnection((connection) => Effect.succeed(connection))),
+        ),
+      );
+      const first = yield* borrow.pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* borrow.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(bothReady);
+      yield* Deferred.await(startEntered);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseStart, undefined);
+      const outcomes = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      assert.isTrue(outcomes.some(Exit.isFailure));
+      assert.isTrue(outcomes.some(Exit.isSuccess));
+      assert.deepStrictEqual(commands, [
+        ["service", "get", "disabled"],
+        ["service", "start"],
+        ["service", "get", "disabled"],
+        ["service", "start"],
+        ["service", "get", "password"],
+      ]);
+    }),
+  );
+
+  it.effect("uses OpenCode's channel-aware managed service and persisted password", () => {
+    const managedPassword = "managed password ";
+    const commands: Array<{
+      readonly args: ReadonlyArray<string>;
+      readonly binaryPath: string;
+      readonly cwd?: string;
+      readonly environment?: NodeJS.ProcessEnv;
+    }> = [];
+    const runtime = {
+      runOpenCodeCommand: (input: (typeof commands)[number]) =>
+        Effect.sync(() => {
+          commands.push(input);
+          return {
+            stdout:
+              input.args[2] === "disabled"
+                ? "false\n"
+                : input.args[1] === "start"
+                  ? "http://127.0.0.1:4096\n"
+                  : `${managedPassword}\n`,
+            stderr: "",
+            code: 0,
+          };
+        }),
+    } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+    const authorizations: Array<string | null> = [];
+    let requestCount = 0;
+    const statuses = [200, 500, 200, 200];
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          authorizations.push(Option.getOrNull(HttpHeaders.get("authorization")(request.headers)));
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(INFO_BODY, {
+              status: statuses[requestCount++] ?? 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const server = yield* OpenCode2Server.make({
+        binaryPath: "/configured/opencode",
+        serverUrl: "",
+        serverPassword: "",
+        directory: "/project",
+        environment: { XDG_STATE_HOME: "/isolated/state" },
+      });
+      const connection = yield* server.withConnection((value) => Effect.succeed(value));
+      const second = yield* server.withConnection((value) => Effect.succeed(value));
+      const third = yield* server.withConnection((value) => Effect.succeed(value));
+      assert.strictEqual(connection.version, "2.0.18");
+      assert.isFalse(connection.external);
+      assert.notStrictEqual(second.client, connection.client);
+      assert.strictEqual(third.client, second.client);
+      assert.deepStrictEqual(authorizations, [
+        `Basic ${Buffer.from(`opencode:${managedPassword}`, "utf8").toString("base64")}`,
+        `Basic ${Buffer.from(`opencode:${managedPassword}`, "utf8").toString("base64")}`,
+        `Basic ${Buffer.from(`opencode:${managedPassword}`, "utf8").toString("base64")}`,
+        `Basic ${Buffer.from(`opencode:${managedPassword}`, "utf8").toString("base64")}`,
+      ]);
+      assert.deepStrictEqual(
+        commands.map((command) => command.args),
+        [
+          ["service", "get", "disabled"],
+          ["service", "start"],
+          ["service", "get", "password"],
+          ["service", "get", "disabled"],
+          ["service", "start"],
+          ["service", "get", "password"],
+        ],
+      );
+      assert.isTrue(commands.every((command) => command.binaryPath === "/configured/opencode"));
+      assert.isTrue(commands.every((command) => command.cwd === "/project"));
+      assert.isTrue(
+        commands.every((command) => command.environment?.XDG_STATE_HOME === "/isolated/state"),
+      );
+    }).pipe(
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      Effect.provide(
+        Layer.mergeAll(OpenCode2Client.layer.pipe(Layer.provide(http)), NodeServices.layer),
+      ),
+    );
+  });
+
+  it.effect("explains when the OpenCode managed service is disabled without starting it", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const runtime = {
+      runOpenCodeCommand: (input: { readonly args: ReadonlyArray<string> }) =>
+        Effect.sync(() => {
+          commands.push(input.args);
+          return { stdout: "true\n", stderr: "", code: 0 };
+        }),
+    } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+    return Effect.gen(function* () {
+      const server = yield* OpenCode2Server.make({
+        binaryPath: "/configured/opencode",
+        serverUrl: "",
+        serverPassword: "",
+        directory: "/project",
+        environment: {},
+      });
+      const error = yield* server.withConnection(() => Effect.void).pipe(Effect.flip);
+      assert.include(error.detail, "background service is disabled");
+      assert.deepStrictEqual(commands, [["service", "get", "disabled"]]);
+    }).pipe(
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      Effect.provide(
+        Layer.mergeAll(
+          OpenCode2Client.layer.pipe(
+            Layer.provide(
+              serverReplying({ status: 200, contentType: "application/json", body: INFO_BODY }),
+            ),
+          ),
+          NodeServices.layer,
         ),
       ),
-    15_000,
-  );
+    );
+  });
 });

@@ -1,22 +1,21 @@
 /**
- * The OpenCode 2 server behind one provider instance. A 2.x server serves every
- * location from one process, so an instance shares one server across all of its
- * threads and directories.
+ * T3's connection to the OpenCode 2 managed service. That process serves every
+ * location and is shared with OpenCode CLI commands as well as provider threads.
  *
  * @module provider/opencode2/OpenCode2Server
  */
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import { OpenCodeRuntimeError } from "../opencodeRuntime.ts";
-import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
 const INFO_TIMEOUT = "5 seconds";
@@ -30,36 +29,12 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
 export class OpenCode2Server extends Context.Service<
   OpenCode2Server,
   {
-    /** Runs `use` against the instance's server, spawning it first when T3 owns it. */
+    /** Runs `use` against the configured server or the user's managed local service. */
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntimeError, R>;
   }
 >()("t3/provider/opencode2/OpenCode2Server") {}
-
-/**
- * A fresh password for a spawned server. OpenCode 2 always requires one and
- * prints a generated one to stdout otherwise, so T3 supplies its own and keeps
- * it in memory.
- */
-export const generatePassword = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const bytes = yield* crypto.randomBytes(32).pipe(Effect.orDie);
-  return Redacted.make(Encoding.encodeBase64Url(bytes), { label: "OPENCODE_PASSWORD" });
-});
-
-/**
- * The environment for a spawned 2.x server. `OPENCODE_PASSWORD` wins over
- * `OPENCODE_SERVER_PASSWORD` in OpenCode 2, so the inherited 1.x variable is
- * dropped to keep the T3 password the only one in play.
- */
-export const serverEnvironment = (
-  environment: NodeJS.ProcessEnv,
-  password: Redacted.Redacted,
-): NodeJS.ProcessEnv => {
-  const { OPENCODE_SERVER_PASSWORD: _inherited, ...rest } = environment;
-  return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
-};
 
 /** The client wraps HTTP failures in a `ClientError`; this unwraps either shape. */
 const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
@@ -135,11 +110,10 @@ export const verifyServer = (client: OpenCodeClient) =>
   );
 
 /**
- * One server per provider instance. With a `serverUrl` it connects to that
- * server with the configured password; otherwise it spawns `binaryPath serve`
- * with a generated password through {@link OpenCodeServerOwner}, which shares
- * the process between borrowers and stops it after an idle period. Clients are
- * built once per server; a failed check is not remembered.
+ * With a `serverUrl` it connects to that server with the configured password.
+ * Otherwise, the OpenCode CLI ensures its channel-specific managed service is
+ * running and supplies its persisted service password. That process is shared
+ * with CLI commands and outlives this provider instance.
  */
 export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly binaryPath: string;
@@ -175,24 +149,114 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     });
   }
 
-  const password = yield* generatePassword;
-  const owner = yield* OpenCodeServerOwner.make({
-    binaryPath: input.binaryPath,
-    directory: input.directory,
-    environment: serverEnvironment(input.environment, password),
-    verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
+  const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+  const serviceCommand = (args: ReadonlyArray<string>, operation: string) =>
+    runtime
+      .runOpenCodeCommand({
+        binaryPath: input.binaryPath,
+        args,
+        cwd: input.directory,
+        environment: input.environment,
+      })
+      .pipe(
+        Effect.timeoutOption("30 seconds"),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(
+                new OpenCodeRuntimeError({
+                  operation,
+                  detail: "Timed out while connecting to the OpenCode service.",
+                }),
+              ),
+            onSome: (result) =>
+              result.code === 0
+                ? Effect.succeed(result.stdout.replace(/\r?\n$/, ""))
+                : Effect.fail(
+                    new OpenCodeRuntimeError({
+                      operation,
+                      detail: "The OpenCode service command failed.",
+                    }),
+                  ),
+          }),
+        ),
+        Effect.mapError((cause) =>
+          OpenCodeRuntimeError.is(cause)
+            ? cause
+            : new OpenCodeRuntimeError({
+                operation,
+                detail: "The OpenCode service command failed.",
+                cause,
+              }),
+        ),
+      );
+
+  const ensureManagedConnection = Effect.gen(function* () {
+    const disabled = yield* serviceCommand(["service", "get", "disabled"], "service.disabled");
+    if (disabled === "true") {
+      return yield* new OpenCodeRuntimeError({
+        operation: "service.disabled",
+        detail:
+          "OpenCode's background service is disabled. Enable it with opencode service set disabled false before connecting locally.",
+      });
+    }
+    if (disabled !== "false") {
+      return yield* new OpenCodeRuntimeError({
+        operation: "service.disabled",
+        detail: "OpenCode returned an invalid background service setting.",
+      });
+    }
+
+    const urlOutput = yield* serviceCommand(["service", "start"], "service.start");
+    const url = yield* Effect.try({
+      try: () => {
+        const parsed = new URL(urlOutput.trim());
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+        return parsed.origin;
+      },
+      catch: (cause) =>
+        new OpenCodeRuntimeError({
+          operation: "service.start",
+          detail: "The OpenCode service returned an invalid URL.",
+          cause,
+        }),
+    });
+    const password = yield* serviceCommand(["service", "get", "password"], "service.password");
+    if (password.length === 0) {
+      return yield* new OpenCodeRuntimeError({
+        operation: "service.password",
+        detail: "The OpenCode service did not provide a password.",
+      });
+    }
+    const connection = yield* connectTo(url, Redacted.make(password), false);
+    yield* remember(connection);
+    return connection;
   });
+  const acquisitionLock = yield* Semaphore.make(1);
+  const acquireManagedConnection = (observed: OpenCode2Connection | undefined) =>
+    acquisitionLock.withPermits(1)(
+      Effect.suspend(() => {
+        const cached = latest;
+        return cached !== observed && cached !== undefined
+          ? Effect.succeed(cached)
+          : ensureManagedConnection;
+      }),
+    );
+
   return OpenCode2Server.of({
     withConnection: (use) =>
-      owner.withServer((server) =>
-        // The owner verifies every server it starts before lending it out.
-        latest?.url === server.url
-          ? use(latest)
-          : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
-      ),
+      Effect.suspend(() => {
+        const cached = latest;
+        return cached === undefined
+          ? acquireManagedConnection(undefined)
+          : verifyServer(cached.client).pipe(
+              Effect.as(cached),
+              Effect.catch(() => acquireManagedConnection(cached)),
+            );
+      }).pipe(Effect.flatMap(use)),
   });
 });
 
-/** Built once per provider instance from its settings; closing it stops a spawned server. */
+/** Built once per provider instance from its settings; local service lifetime belongs to OpenCode. */
 export const layer = (input: Parameters<typeof make>[0]) =>
   Layer.effect(OpenCode2Server, make(input));

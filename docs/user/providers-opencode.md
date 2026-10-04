@@ -24,10 +24,17 @@ Plan mode uses OpenCode's `plan` agent.
 
 ## Local or external server
 
-Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in
-provider settings applies to both that server and T3 Code's connection. With no
-password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+Leave **Server URL** empty to let T3 Code connect to or start OpenCode locally.
+OpenCode 2 uses its shared background service, so T3 Code and OpenCode CLI commands
+use the same process and session database. The service manages its own password
+and stays running after T3 Code disconnects. Instances using the same OpenCode
+state directory share that service's configuration and credentials.
+If the background service is disabled, enable it with
+`opencode service set disabled false` before connecting locally.
+
+On OpenCode 1.x, a password in provider settings applies to both the local server
+and T3 Code's connection. With no password setting, the local server uses
+`OPENCODE_SERVER_PASSWORD` from its environment.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. T3 Code uses only that configured password for an external server; it
@@ -57,9 +64,10 @@ in the thread settings. Reconnecting also refreshes the catalog; periodic provid
 health checks do not.
 
 Credential changes are read on refresh. Native OpenCode configuration can remain
-cached while the local helper is running. Let it sit for 30 seconds without model
+cached while the server is running. On OpenCode 2, use `opencode reload` before
+refreshing in T3 Code. On 1.x, let the local helper sit for 30 seconds without model
 refreshes or text-generation work, then refresh again to reload the files. Repeated
-refreshes keep the helper alive. An external server may need its own reload or
+refreshes keep that helper alive. An external server may need its own reload or
 restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears

@@ -6,9 +6,8 @@
  * per-instance `OpenCodeSettings`.
  *
  * Two instances with different `serverUrl`s therefore talk to independent
- * OpenCode servers; when no `serverUrl` is set, the adapter + text-generation
- * shares spin up their own scoped child processes, and those child
- * processes are released when the registry scope closes.
+ * OpenCode servers. Without a `serverUrl`, OpenCode 1 uses scoped child
+ * processes and OpenCode 2 connects to the CLI's shared managed service.
  *
  * @module provider/Drivers/OpenCodeDriver
  */
@@ -275,7 +274,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
             }),
         ),
       );
-      // One OpenCode 2 server per instance, spawned on first use or reached at `serverUrl`.
+      // OpenCode 2 uses its managed service or the explicitly configured `serverUrl`.
       const openCode2Server = yield* OpenCode2Server.make({
         binaryPath: effectiveConfig.binaryPath,
         serverUrl: effectiveConfig.serverUrl,

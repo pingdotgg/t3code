@@ -29,6 +29,7 @@ import {
 import { OpenCodeDriver, openCodeUpdateFor } from "./OpenCodeDriver.ts";
 
 const serverStarts: Array<string> = [];
+const serviceCommands: Array<ReadonlyArray<string>> = [];
 const reachedServer = (operation: string) =>
   Effect.sync(() => serverStarts.push(operation)).pipe(
     Effect.andThen(
@@ -42,7 +43,19 @@ const reachedServer = (operation: string) =>
   );
 // Reports OpenCode 2 from `--version`; any attempt to reach a server is recorded and refused.
 const openCode2Runtime = {
-  runOpenCodeCommand: () => Effect.succeed({ stdout: "opencode v2.0.18\n", stderr: "", code: 0 }),
+  runOpenCodeCommand: ({ args }: { readonly args: ReadonlyArray<string> }) =>
+    args[0] === "--version"
+      ? Effect.succeed({ stdout: "opencode v2.0.18\n", stderr: "", code: 0 })
+      : Effect.sync(() => serviceCommands.push(args)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new OpenCodeRuntime.OpenCodeRuntimeError({
+                operation: "service",
+                detail: "reached the managed service path",
+              }),
+            ),
+          ),
+        ),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
@@ -74,8 +87,9 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
+      serviceCommands.length = 0;
       const instance = yield* create({}, noHttp);
-      // Text generation goes to the instance's 2.x server, which this test refuses to start.
+      // Text generation uses the managed 2.x service, which this test refuses to start.
       yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
@@ -83,7 +97,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
         }),
       );
-      assert.deepStrictEqual(serverStarts, ["start"]);
+      assert.deepStrictEqual(serverStarts, []);
+      assert.deepStrictEqual(serviceCommands, [["service", "get", "disabled"]]);
     }).pipe(Effect.scoped),
   );
 

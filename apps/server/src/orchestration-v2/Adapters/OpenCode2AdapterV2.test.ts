@@ -1481,6 +1481,9 @@ describe("OpenCode2 adapter", () => {
         promptAccepted,
         out("session.interrupt", { sessionID: SESSION }),
         reply("session.interrupt", { interrupted: false }),
+        // T3 still owns the active turn, so disconnecting stops it again.
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: false }),
       ]);
       yield* runtime.startTurn(turnInput(thread));
       const failed = yield* runtime
@@ -1690,6 +1693,23 @@ describe("OpenCode2 adapter", () => {
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops an active turn on the local shared server when T3 disconnects", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        shellAskEvent,
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.isDefined(yield* Fiber.join(requested));
+      // Closing this scope must consume the recorded interrupt, since the
+      // managed server stays running after T3 releases its connection.
     }).pipe(Effect.scoped),
   );
 
@@ -1945,6 +1965,9 @@ describe("OpenCode2 adapter", () => {
           failedReply,
           // The subagent's session is the one waiting on the answer.
           out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          // The parent stays active until T3 disconnects.
+          out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: true }),
         ],
         { supervised: true },
@@ -3564,10 +3587,12 @@ describe("OpenCode2 adapter", () => {
 
   it.effect("refuses to fork a session while its turn runs", () =>
     Effect.gen(function* () {
-      // The replay fails on a fork request: only the running turn's prompt is expected.
+      // The replay fails on a fork request; the active turn stops on disconnect.
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
       ]);
       yield* runtime.startTurn(turnInput(thread));
       const refused = yield* runtime
