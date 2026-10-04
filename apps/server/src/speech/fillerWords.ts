@@ -15,7 +15,7 @@ const UNIVERSAL_FILLER_WORDS = [
 ] as const;
 
 const LANGUAGE_FILLER_WORDS: Readonly<Record<string, readonly string[]>> = {
-  en: ["um", "ah", "eh", "ha"],
+  en: ["um", "ah", "eh"],
   de: ["äh", "ähm"],
   fr: ["euh"],
 };
