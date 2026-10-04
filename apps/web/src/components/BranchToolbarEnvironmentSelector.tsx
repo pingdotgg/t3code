@@ -27,7 +27,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
-  availableEnvironments: readonly Omit<EnvironmentOption, "projectId">[];
+  availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   displayMode?: "toolbar" | "panel";
 }

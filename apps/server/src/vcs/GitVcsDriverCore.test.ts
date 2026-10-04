@@ -26,6 +26,7 @@ import {
   GitCommandError,
   ReviewDiffPreviewInput,
   type ReviewDiffFileContentsInput,
+  type ReviewDiffPreviewResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
@@ -1128,6 +1129,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const mergeBase = yield* git(cwd, ["rev-parse", "HEAD"]);
         yield* writeTextFile(cwd, "untracked.txt", "untracked content\n");
         const paths = Array.from({ length: 5000 }, (_, index) => `${"a".repeat(220)}-${index}.txt`);
         const stats = paths.map((path) => `1\t0\t${path}\0`).join("");
@@ -1138,10 +1140,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawner = ChildProcessSpawner.make((command) => {
           if (ChildProcess.isStandardCommand(command)) {
-            if (
-              command.args.includes("--numstat") &&
-              command.args.includes(`${initialBranch}...HEAD`)
-            ) {
+            if (command.args.includes("--numstat") && command.args.includes(mergeBase)) {
               return Effect.succeed(makeSuccessfulHandle(stats));
             }
             if (command.args.includes("ls-files") && command.args.includes("--others")) {
@@ -1566,6 +1565,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.deepStrictEqual(branch.files, [
           { path: "a-large.txt", previousPath: null, additions: 4000, deletions: 0 },
+          { path: "untracked.txt", previousPath: null, additions: 4000, deletions: 0 },
           { path: "z-last.txt", previousPath: null, additions: 1, deletions: 0 },
         ]);
         assert.deepStrictEqual(dirty.files, [
@@ -1740,7 +1740,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("loads merge-base and head contents for branch diff expansion", () =>
+    it.effect("loads merge-base and disk contents for Changes expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -1749,6 +1749,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "README.md", "# branch change\nunchanged context\n");
         yield* git(cwd, ["add", "README.md"]);
         yield* git(cwd, ["commit", "-m", "change readme"]);
+        yield* writeTextFile(cwd, "README.md", "# dirty change\nunchanged context\n");
 
         const contents = yield* driver.getReviewDiffFileContents(
           makeReviewDiffFileContentsInput(cwd, {
@@ -1759,12 +1760,184 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
 
         assert.strictEqual(contents.oldContents, "# test\n");
-        assert.strictEqual(contents.newContents, "# branch change\nunchanged context\n");
+        assert.strictEqual(contents.newContents, "# dirty change\nunchanged context\n");
+      }),
+    );
+
+    it.effect("Changes combines commits, uncommitted edits, and untracked files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const sourceFiles = (
+          preview: ReviewDiffPreviewResult,
+          kind: "working-tree" | "branch-range",
+        ) => preview.sources.find((source) => source.kind === kind)!.files;
+        yield* git(cwd, ["checkout", "-b", "feature/combined"]);
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\n");
+        yield* git(cwd, ["commit", "-am", "commit edit"]);
+
+        // A fully committed branch has no uncommitted work, but Changes still shows it.
+        const clean = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        assert.deepStrictEqual(sourceFiles(clean, "working-tree"), []);
+        assert.deepStrictEqual(sourceFiles(clean, "branch-range"), [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\ndirty\n");
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        const dirty = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        const changes = dirty.sources.find((source) => source.kind === "branch-range")!;
+        assert.deepStrictEqual(changes.files, [
+          { path: "README.md", previousPath: null, additions: 2, deletions: 0 },
+          { path: "new.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.strictEqual(changes.diff.match(/^diff --git a\/README\.md /gm)?.length, 1);
+        assert.include(changes.diff, "+dirty");
+        assert.deepStrictEqual(sourceFiles(dirty, "working-tree"), [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+          { path: "new.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+      }),
+    );
+
+    it.effect("Changes on the default branch compares with its remote copy", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* writeTextFile(cwd, "unpushed.txt", "unpushed\n");
+        yield* git(cwd, ["add", "unpushed.txt"]);
+        yield* git(cwd, ["commit", "-m", "unpushed"]);
+
+        // Without a remote there is no base, so Changes equals Uncommitted.
+        const local = yield* driver.getReviewDiffPreview({ cwd });
+        const localChanges = local.sources.find((source) => source.kind === "branch-range")!;
+        assert.isNull(localChanges.baseRef);
+        assert.deepStrictEqual(localChanges.files, []);
+
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "HEAD~1:refs/heads/main"]);
+        yield* git(cwd, ["fetch", "origin"]);
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.strictEqual(changes.baseRef, "origin/main");
+        assert.deepStrictEqual(changes.files, [
+          { path: "unpushed.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+      }),
+    );
+
+    it.effect("Changes accepts an explicit base on a detached HEAD and rejects a bad one", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "--detach"]);
+        yield* writeTextFile(cwd, "detached.txt", "detached\n");
+        yield* git(cwd, ["add", "detached.txt"]);
+        yield* git(cwd, ["commit", "-m", "detached work"]);
+
+        const explicit = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        assert.deepStrictEqual(
+          explicit.sources.find((source) => source.kind === "branch-range")!.files,
+          [{ path: "detached.txt", previousPath: null, additions: 1, deletions: 0 }],
+        );
+        const implicit = yield* driver.getReviewDiffPreview({ cwd });
+        assert.deepStrictEqual(
+          implicit.sources.find((source) => source.kind === "branch-range")!.files,
+          [],
+        );
+        const error = yield* driver
+          .getReviewDiffPreview({ cwd, baseRef: "missing-base" })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.operation, "GitVcsDriver.resolveReviewMergeBase");
+      }),
+    );
+
+    it.effect("Changes compares with the empty tree before the first commit", () =>
+      Effect.gen(function* () {
+        const upstream = yield* makeTmpDir();
+        yield* initRepoWithCommit(upstream);
+        yield* git(upstream, ["branch", "-M", "main"]);
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // An unborn main whose remote copy exists must not fail on merge-base.
+        yield* git(cwd, ["init", "-b", "main"]);
+        yield* git(cwd, ["remote", "add", "origin", upstream]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* writeTextFile(cwd, "new.txt", "one\ntwo\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.isNull(changes.baseRef);
+        assert.deepStrictEqual(changes.files, [
+          { path: "new.txt", previousPath: null, additions: 2, deletions: 0 },
+        ]);
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: null,
+          insertions: 2,
+          deletions: 0,
+        });
+      }),
+    );
+
+    it.effect("Changes does not show newer base commits as deletions", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/rebased"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature work"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
+        yield* git(cwd, ["add", "upstream.txt"]);
+        yield* git(cwd, ["commit", "-m", "base moves"]);
+        yield* git(cwd, ["checkout", "feature/rebased"]);
+
+        for (const rebase of [false, true]) {
+          if (rebase) yield* git(cwd, ["rebase", initialBranch]);
+          const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+          assert.deepStrictEqual(
+            preview.sources.find((source) => source.kind === "branch-range")!.files,
+            [{ path: "feature.txt", previousPath: null, additions: 1, deletions: 0 }],
+          );
+        }
       }),
     );
   });
 
   describe("repository status", () => {
+    it.effect("reads Changes totals with untracked files when requested", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["checkout", "-b", "feature/totals"]);
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\n");
+        yield* git(cwd, ["commit", "-am", "commit edit"]);
+        yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
+
+        const status = yield* driver.statusDetailsLocal(pathService.join(cwd, "nested"), {
+          includeBranchChanges: true,
+        });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: "main",
+          insertions: 3,
+          deletions: 0,
+        });
+        assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
+      }),
+    );
+
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

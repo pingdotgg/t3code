@@ -3,7 +3,7 @@
 Orchestration records intent and state without knowing which provider runs a thread. Provider
 protocols, account ownership, permissions, and capabilities belong at the
 [adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
-instead of spreading provider checks through reactors and clients.
+instead of spreading provider checks through orchestration and clients.
 
 A driver kind identifies an integration; an instance identifies one configuration and account
 lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
@@ -11,16 +11,23 @@ session or catalog state.
 
 ## Process and account isolation
 
-T3-managed OpenCode chat uses one server per thread. Its MCP registrations are directory-scoped, while
-T3's MCP connection is thread-scoped. Sharing a chat server between threads in one directory would
-let them replace each other's connection. Catalog and text-generation work can share the
-[instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
-after an idle period. External OpenCode servers remain externally owned and can require an
-external restart to pick up configuration changes.
+The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP
+registrations are directory-scoped, while T3's MCP connection is thread-scoped, so threads in one
+directory must not share one T3 MCP entry.
 
-OpenCode also stores persistent approval grants per directory. Automatic full-access replies use
-`once` so they cannot widen a supervised thread's permissions on a shared external server.
-See the [adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+- **1.x** uses one T3-managed chat server per thread, so threads cannot replace each other's
+  connection. Catalog and text-generation work can share the
+  [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
+  after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+- **2.x** serves every directory from one
+  [server per instance](../../apps/server/src/provider/opencode2/OpenCode2Server.ts). Each thread
+  registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
+  thread's entry. See the [2.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.ts).
+
+External OpenCode servers remain externally owned and can require an external restart to pick up
+configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
+full-access replies use `once` so they cannot widen a supervised thread's permissions on a shared
+server. On 2.x, a session-wide approval also replies `once` and becomes T3's own rule on that session.
 
 Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
 trust discovery. T3 injects only its namespaced MCP bridge, so a Pi session behaves as it does in

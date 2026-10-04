@@ -4815,6 +4815,33 @@ it.effect("does not let a still-cached detail overwrite a fresher linked summary
   }),
 );
 
+it.effect("tells the client when the host has no pull request under that number", () =>
+  Effect.gen(function* () {
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 121 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "github",
+                operation: "getChangeRequest",
+                reason: "not-found",
+                detail: "Pull request not found. Check the PR number or URL and try again.",
+              }),
+            ),
+        }),
+      ],
+    });
+
+    const error = yield* Effect.flip(service.detail(reference));
+
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(error._tag === "PullRequestOperationError" && error.reason, "not-found");
+  }),
+);
+
 it.effect("keeps recent detail on a transient refresh failure but not after invalidation", () =>
   Effect.gen(function* () {
     let failing = false;

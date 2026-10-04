@@ -1,3 +1,4 @@
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
@@ -159,15 +160,19 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Park runtime at idle when the post-settlement background roster is nonempty
-// so #4415 waiting-presentation Waiting (session.idle) can consume CTM runtime.
+// Park runtime at idle when the post-settlement background roster holds the
+// run's completion, so #4415 waiting-presentation Waiting (session.idle) can
+// consume CTM runtime. Only work that wakes the agent holds it: commands it
+// left running, such as a dev server, present the run's own status (#14872).
 // The server suppresses the roster while an interruptible activity run exists,
 // so a remaining roster is stronger than checkpoint-oriented waiting.
 // latestRun keeps the latest run's status for history presentation.
 // A failed latest run outranks the roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
-  const parkAtIdle = (thread.pendingBackgroundTasks?.length ?? 0) > 0 && thread.status !== "failed";
+  const parkAtIdle =
+    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
+    thread.status !== "failed";
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
     status,
@@ -296,7 +301,10 @@ export function resolveThreadProviderStack(
   return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }
 
-/** Both shell and detail timers use the activity-owning run, never last activity. */
+/**
+ * Both shell and detail timers count from the activity-owning run's work
+ * start, never last activity. A wake keeps the start of the work it continues.
+ */
 export function resolveThreadWorkingStartedAt(input: {
   readonly latestRun: Pick<
     ThreadRunSummary,

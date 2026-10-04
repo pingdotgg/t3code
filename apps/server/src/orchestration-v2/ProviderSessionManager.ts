@@ -17,11 +17,13 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -360,7 +362,29 @@ export const layerWithOptions = (
         },
       );
       const layerScope = yield* Effect.scope;
+      // Ctrl+C, or a stop that signals the whole process group, reaches the
+      // provider CLIs with the server. They report their own background work
+      // stopped before shutdown captures restart continuations, so provider
+      // events after the signal are dropped; restart recovery owns that state.
+      const shutdownSignal = { received: false };
+      const onShutdownSignal = () => {
+        shutdownSignal.received = true;
+      };
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          process.on("SIGINT", onShutdownSignal);
+          process.on("SIGTERM", onShutdownSignal);
+        }),
+        () =>
+          Effect.sync(() => {
+            process.off("SIGINT", onShutdownSignal);
+            process.off("SIGTERM", onShutdownSignal);
+          }),
+      );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      // One retry per released entry, so a later release with the same id
+      // cannot drop cleanup for threads only the earlier session served.
+      const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
@@ -608,6 +632,8 @@ export const layerWithOptions = (
       const writeReleasedRuntimeRequestEvents = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
+        /** Requests created later belong to a replacement session with the same id. */
+        readonly releasedAt: DateTime.Utc;
       }) =>
         Effect.gen(function* () {
           const providerSessionId = input.entry.runtime.providerSessionId;
@@ -629,7 +655,8 @@ export const layerWithOptions = (
               (request) =>
                 request.status === "pending" &&
                 request.responseCapability.type === "live" &&
-                request.responseCapability.providerSessionId === providerSessionId,
+                request.responseCapability.providerSessionId === providerSessionId &&
+                DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt),
             );
 
             for (const request of releasedRequests) {
@@ -708,6 +735,125 @@ export const layerWithOptions = (
           }
         });
 
+      // Records a released session as stopped and resolves the live runtime
+      // requests it left. Each write runs even if the other fails. Once a
+      // replacement session opens with the same id, it owns the session status,
+      // so only the requests are settled.
+      const writeReleaseRecords = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly detail?: string;
+        readonly releasedAt: DateTime.Utc;
+        readonly replaced: boolean;
+      }) =>
+        Effect.all(
+          [
+            input.replaced
+              ? Effect.succeed(Exit.void)
+              : Effect.exit(writeReleasedSessionEvents(input)),
+            Effect.exit(
+              writeReleasedRuntimeRequestEvents(input).pipe(
+                input.entry.requestEventPermit.withPermits(1),
+              ),
+            ),
+          ],
+          { concurrency: 1 },
+        ).pipe(Effect.flatMap(Exit.asVoidAll));
+
+      // The session already left the live map, so a later release finds
+      // nothing to do. Without a retry the UI would keep a ready session and
+      // answerable approvals until a server restart. Each attempt holds the
+      // session's open lock, so it sees a replacement that opened meanwhile.
+      const retryReleaseRecords = (
+        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
+      ) => {
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const attempt = Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            sessionOpen.withLock(
+              providerSessionId,
+              Effect.gen(function* () {
+                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
+                yield* writeReleaseRecords({ ...input, replaced });
+              }),
+            ),
+          );
+          if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
+          yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
+            providerSessionId,
+            cause: exit.cause,
+          });
+          // A failed SQL commit is a defect, so every failure but interruption
+          // is retried.
+          return yield* Effect.fail(exit.cause);
+        });
+        return attempt.pipe(
+          Effect.retry({
+            schedule: Schedule.exponential("1 second").pipe(
+              Schedule.modifyDelay(({ duration }) =>
+                Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+              ),
+            ),
+          }),
+          Effect.delay("1 second"),
+          FiberSet.run(releaseRecordRetries),
+        );
+      };
+
+      const logReleaseFailure =
+        (providerSessionId: ProviderSessionId) =>
+        <E, R>(release: Effect.Effect<void, E, R>) =>
+          release.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.provider-session-release-failed", {
+                providerSessionId,
+                cause,
+              }),
+            ),
+          );
+
+      // Removes the live entry and reads the request cleanup cutoff while
+      // holding the entry's request permit. A request the event pump is
+      // persisting for this runtime lands before the cutoff, and once the
+      // entry is gone the pump persists no more for it. A replacement's
+      // requests come after its own open.
+      const removeLiveEntry = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly onlyIfIdleGeneration?: number;
+      }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
+        Effect.gen(function* () {
+          const key = sessionKey(input.providerSessionId);
+          const candidate = (yield* Ref.get(sessions)).get(key);
+          if (candidate === undefined) {
+            return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
+          }
+          const removed = yield* Effect.zip(
+            Ref.modify(sessions, (current) => {
+              const existing = current.get(key);
+              if (existing !== candidate) {
+                return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (
+                input.onlyIfIdleGeneration !== undefined &&
+                (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+              ) {
+                return ["kept", current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(key);
+              return ["removed", updated] as const;
+            }),
+            DateTime.now,
+          ).pipe(candidate.requestEventPermit.withPermits(1));
+          const [outcome, releasedAt] = removed;
+          // Another entry took this id while the permit was held; release it instead.
+          if (outcome === "changed") return yield* removeLiveEntry(input);
+          return [
+            outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
+            releasedAt,
+          ] as const;
+        });
+
       const releaseEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
@@ -717,23 +863,8 @@ export const layerWithOptions = (
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
-          Ref.modify(sessions, (current) => {
-            const key = sessionKey(input.providerSessionId);
-            const existing = current.get(key);
-            if (existing === undefined) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            if (
-              input.onlyIfIdleGeneration !== undefined &&
-              (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-            ) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(key);
-            return [Option.some(existing), updated] as const;
-          }),
-          (entry) =>
+          removeLiveEntry(input),
+          ([entry, releasedAt]) =>
             Option.match(entry, {
               onNone: () => Effect.void,
               onSome: (entry) =>
@@ -794,21 +925,25 @@ export const layerWithOptions = (
                       Effect.forkDetach,
                     );
                   }
-                  yield* writeReleasedSessionEvents({
+                  const records = {
                     entry,
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
-                  });
-                  yield* writeReleasedRuntimeRequestEvents({
-                    entry,
-                    reason: input.reason,
-                  }).pipe(entry.requestEventPermit.withPermits(1));
+                    releasedAt,
+                  };
+                  const recorded = yield* Effect.exit(
+                    writeReleaseRecords({ ...records, replaced: false }),
+                  );
+                  if (Exit.isFailure(recorded)) {
+                    yield* retryReleaseRecords(records);
+                    return yield* recorded;
+                  }
                   if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
                     return yield* Effect.failCause(closeExit.value.cause);
                   }
                 }),
             }),
-          (entry) =>
+          ([entry]) =>
             Option.match(entry, {
               onNone: () => Effect.void,
               onSome: (entry) =>
@@ -1426,6 +1561,7 @@ export const layerWithOptions = (
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
+            if (shutdownSignal.received) return Effect.void;
             if (
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped"
@@ -1484,6 +1620,8 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
+              // A provider that exits on the shutdown signal is released by shutdown.
+              if (shutdownSignal.received) return;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
               );
@@ -1495,7 +1633,7 @@ export const layerWithOptions = (
                   providerSessionId: entry.runtime.providerSessionId,
                   reason: "manual_shutdown",
                   gracefulSubscribers: true,
-                }).pipe(Effect.ignore);
+                }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
                 return;
               }
               const cause = Exit.isFailure(exit)
@@ -1516,7 +1654,7 @@ export const layerWithOptions = (
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
                 detail: Cause.pretty(cause),
-              }).pipe(Effect.ignore);
+              }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }),
           ),
           Effect.forkIn(layerScope),
@@ -1705,7 +1843,7 @@ export const layerWithOptions = (
                     providerSessionId: input.providerSessionId,
                     reason: "runtime_error",
                     detail: "Failed to persist the provider-session attachment.",
-                  }).pipe(Effect.ignore),
+                  }).pipe(logReleaseFailure(input.providerSessionId)),
                 ),
               );
               yield* startEventPump(entry);

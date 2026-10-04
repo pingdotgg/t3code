@@ -114,7 +114,7 @@
     "react-native": "0.88.0-rc.3",
     "react-native-gesture-handler": "~3.2.1",
     "react-native-image-viewing": "^0.2.2",
-    "react-native-keyboard-controller": "1.22.4",
+    "react-native-keyboard-controller": "1.22.6",
     "react-native-nitro-markdown": "^0.5.0",
     "react-native-nitro-modules": "0.35.9",
     "react-native-reanimated": "4.7.0",

@@ -13,9 +13,13 @@ import {
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
+  orchestrationV2RunWorkStartedAt,
   type ThreadId,
 } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +29,7 @@ import {
   type ThreadRunSummary,
   type ThreadRuntimeSummary,
 } from "./models.ts";
+import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -140,6 +145,18 @@ export function deriveProviderSubagentStatus(
   };
 }
 
+/** The observed selection belongs to the active provider thread, never a previous handoff. */
+export function deriveReportedModelSelection(
+  projection: OrchestrationV2ThreadProjection,
+): ModelSelection | null {
+  const providerThread = projection.providerThreads.find(
+    (candidate) =>
+      candidate.id === projection.thread.activeProviderThreadId &&
+      candidate.providerInstanceId === projection.thread.modelSelection.instanceId,
+  );
+  return providerThread?.nativeMetadata?.modelSelection ?? null;
+}
+
 // Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 
@@ -153,6 +170,7 @@ const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "
 export function formatModelSelectionEffort(
   selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> = [],
+  reportedSelection?: ModelSelection | null,
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
@@ -160,7 +178,7 @@ export function formatModelSelectionEffort(
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = descriptors.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const label = getProviderOptionCurrentLabel(descriptor);
+    const label = getProviderOptionCurrentLabel(descriptor, selection, reportedSelection);
     if (label) return label;
   }
   return null;
@@ -212,28 +230,34 @@ export function deriveThreadRuntime(
   const usageLimitedRun = presentedUsageLimitRun(projection);
   const latestRunProjection = presentedLatestRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
+  const liveActivityRun = latestMatchingRun(projection, (run) =>
+    ACTIVITY_RUN_STATUSES.has(run.status),
+  );
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
-  const hasPendingBackgroundTasks =
+  // Same rule as the shell runtime: only background work that holds the
+  // completion parks the thread at idle; a dev server left running does not.
+  const backgroundWorkHoldsRun = backgroundWorkHoldsCompletion(
     derivePendingBackgroundWork({
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
-    }).length > 0;
+    }),
+  );
   return {
     status: usageLimitedRun
       ? "failed"
-      : hasPendingBackgroundTasks && latestRunProjection?.status !== "failed"
+      : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
         : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
-      activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)
-        ? (activityRun.startedAt ?? activityRun.requestedAt)
-        : null,
+      liveActivityRun === null
+        ? null
+        : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
@@ -277,9 +301,17 @@ export interface PendingBackgroundWorkItem {
 }
 
 export interface PendingBackgroundWorkPresentation {
-  /** "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command". */
+  /**
+   * "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command",
+   * or "Running: Start the dev server" when only commands remain.
+   */
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+  /**
+   * True when the work will wake the agent (subagents, monitors). False when
+   * only commands remain, such as a dev server: the agent is done.
+   */
+  readonly waiting: boolean;
 }
 
 function joinWithAnd(parts: ReadonlyArray<string>): string {
@@ -287,21 +319,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-/** Names what a settled thread is still waiting on, grouped by kind, for the composer strip. */
+/** Names what a settled thread still runs, grouped by kind, for the composer strip. */
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
+  const waiting = backgroundWorkHoldsCompletion(tasks);
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
+      const label =
+        task.kind === "subagent" && description !== undefined
+          ? formatSubagentDisplayTitle(description).trim()
+          : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
         label:
-          description === undefined || description.length === 0
+          label === undefined || label.length === 0
             ? BACKGROUND_WORK_KINDS[task.kind].singular
-            : description,
+            : label,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
     })
@@ -313,10 +350,15 @@ export function presentPendingBackgroundWork(
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
-    return {
-      title: only.label === noun ? `Waiting on a ${noun}` : `Waiting on ${noun} ${only.label}`,
-      items,
-    };
+    const named = only.label !== noun;
+    const title = waiting
+      ? named
+        ? `Waiting on ${noun} ${only.label}`
+        : `Waiting on a ${noun}`
+      : named
+        ? `Running: ${only.label}`
+        : `Running a ${noun}`;
+    return { title, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -324,7 +366,7 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `Waiting on ${joinWithAnd(groups)}`, items };
+  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
 }
 
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */

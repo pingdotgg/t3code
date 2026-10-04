@@ -5,7 +5,10 @@ import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  projectedSubagentsToRuntime,
+  type RuntimeSubagent,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
@@ -23,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -97,7 +101,7 @@ export function ThreadLineageRowList(props: {
         <button
           type="button"
           onClick={props.onShowMore}
-          className={`flex h-9 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
+          className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
           Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
@@ -160,6 +164,30 @@ function relationshipThreadTitle(input: {
 }): string {
   if (!input.isSubagent) return input.title;
   return formatSubagentDisplayTitle(input.title);
+}
+
+/**
+ * A delegated task settles with its first run, but the parent can keep sending
+ * the child follow-ups. While the child thread has a live run, the row's timer
+ * and hover card follow that run instead of the settled task.
+ */
+function liveSubagent<Agent extends RuntimeSubagent>(
+  agent: Agent | undefined,
+  childThread: OrchestrationV2ThreadShell | null | undefined,
+): Agent | undefined {
+  const liveStatus = childThread?.activityRunStatus;
+  if (!agent || !liveStatus) return agent;
+  const startedAt = childThread.activityRunStartedAt;
+  return {
+    ...agent,
+    status: liveStatus === "running" || liveStatus === "waiting" ? liveStatus : "pending",
+    startedAt: startedAt ? DateTime.formatIso(startedAt) : null,
+    completedAt: null,
+    // The settled task's output belongs to its first run, not this one.
+    progress: null,
+    result: null,
+    error: null,
+  };
 }
 
 export function ThreadRelationshipsPanel(props: {
@@ -239,9 +267,11 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: active, expanded: true },
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
+  // Subagents without a child thread yet have no row, so count them separately.
   const runningCount =
-    projection?.subagents.filter((agent) => agent.status === "running").length ??
-    active.filter(({ edge }) => edge.status === "running").length;
+    (projection?.subagents.filter(
+      (agent) => agent.childThreadId === null && agent.status === "running",
+    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
     return null;
@@ -330,7 +360,10 @@ export function ThreadRelationshipsPanel(props: {
                   ? BotIcon
                   : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
-              const agent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
+              const agent = liveSubagent(
+                isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined,
+                node?.thread,
+              );
               const threadTitle = relationshipThreadTitle({
                 title: node?.thread?.title ?? agent?.title ?? threadId,
                 isSubagent,
@@ -394,7 +427,7 @@ export function ThreadRelationshipsPanel(props: {
                 </>
               );
               return (
-                <li key={threadId} className="group flex h-9 items-center rounded-lg">
+                <li key={threadId} className="group flex h-8 items-center rounded-lg">
                   {isMergeTarget ? (
                     <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
                       <Tooltip>
