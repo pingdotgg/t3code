@@ -81,9 +81,10 @@ export function useGlobalVoiceInput() {
 }
 
 function useVoiceInputRuntime() {
-  const [{ state, ownerKey }, setState] = useState({
+  const [{ state, ownerKey, label }, setState] = useState({
     state: INITIAL_STATE,
     ownerKey: null as string | null,
+    label: null as string | null,
   });
   const [focusedOwners, setFocusedOwners] = useState<ReadonlySet<string>>(new Set());
   const setOwnerFocused = useCallback((key: string, focused: boolean) => {
@@ -123,7 +124,11 @@ function useVoiceInputRuntime() {
       releaseRecording: releaseVoiceRecordingAudio,
       deleteRecording: (uri) => new File(uri).delete(),
       onStateChange: (nextState) =>
-        setState({ state: nextState, ownerKey: sessionRef.current?.ownerKey ?? null }),
+        setState({
+          state: nextState,
+          ownerKey: sessionRef.current?.ownerKey ?? null,
+          label: sessionRef.current?.label ?? null,
+        }),
     });
   }
 
@@ -207,6 +212,7 @@ function useVoiceInputRuntime() {
     elapsedSeconds,
     isBusy: voiceInputBlocksSubmission(state),
     ownerKey,
+    label,
     focusedOwners,
     setOwnerFocused,
     session,

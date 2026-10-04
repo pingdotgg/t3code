@@ -13,6 +13,8 @@ const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: n
 
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
+  /** Shown by the global dictation pill when this composer is off screen. */
+  readonly label: string;
   readonly readDraftMessage: () => string | null;
   readonly subscribeToDraftChanges: (onChange: () => void) => () => void;
   readonly selection: ComposerEditorSelection;
@@ -44,8 +46,8 @@ export function useVoiceInputController(input: {
   const start = useCallback(() => {
     const captured = latestInput.current;
     if (!captured.ownerKey || captured.disabled) return;
-    void session.start(
-      createVoiceInputTarget(
+    void session.start({
+      ...createVoiceInputTarget(
         captured.ownerKey,
         captured.readDraftMessage,
         (text, selection) => {
@@ -57,7 +59,8 @@ export function useVoiceInputController(input: {
         captured.selection,
         captured.subscribeToDraftChanges,
       ),
-    );
+      label: captured.label,
+    });
   }, [session]);
   const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;
   const isBusy = voiceInputBlocksSubmission(state);

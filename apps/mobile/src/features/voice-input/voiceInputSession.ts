@@ -7,6 +7,8 @@ import {
 
 export type VoiceInputTarget = {
   readonly ownerKey: string;
+  /** Names the draft being dictated into while its composer is off screen. */
+  readonly label?: string;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
   readonly subscribe: () => () => void;
@@ -63,6 +65,10 @@ export class VoiceInputSession {
 
   get ownerKey(): string | null {
     return this.target?.ownerKey ?? null;
+  }
+
+  get label(): string | null {
+    return this.target?.label ?? null;
   }
 
   cancel(ownerKey: string | null): void {
