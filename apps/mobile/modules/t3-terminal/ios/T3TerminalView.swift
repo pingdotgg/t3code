@@ -201,6 +201,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private let inputField = TerminalInputField()
   private let focusTapGesture = UITapGestureRecognizer()
   private let scrollPanGesture = UIPanGestureRecognizer()
+  private let selectTextGesture = UILongPressGestureRecognizer()
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
@@ -219,15 +220,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   var captureRequest: Double = 0 {
     didSet {
       guard captureRequest > 0, captureRequest != oldValue else { return }
-      guard let surface else { onCapture(["text": ""]); return }
-      let selection = ghostty_selection_s(
-        top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-        bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
-        rectangle: false)
-      var captured = ghostty_text_s()
-      guard ghostty_surface_read_text(surface, selection, &captured) else { onCapture(["text": ""]); return }
-      defer { ghostty_surface_free_text(surface, &captured) }
-      let text = captured.text.flatMap { String(bytes: UnsafeBufferPointer(start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: Int(captured.text_len)), encoding: .utf8) } ?? ""
+      let text = readViewportText() ?? ""
       // Android joins snapshot rows with "\n" and trims each row's trailing whitespace, so do
       // the same here: identical terminal content must capture identically on both platforms.
       let normalized = text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -355,6 +348,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     scrollPanGesture.maximumNumberOfTouches = 1
     scrollPanGesture.cancelsTouchesInView = false
     terminalViewport.addGestureRecognizer(scrollPanGesture)
+    selectTextGesture.addTarget(self, action: #selector(handleSelectText(_:)))
+    terminalViewport.addGestureRecognizer(selectTextGesture)
+    focusTapGesture.require(toFail: selectTextGesture)
 
     addSubview(terminalViewport)
     addSubview(inputField)
@@ -424,6 +420,40 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   @objc
   private func handleViewportTap() {
     requestKeyboardFocus()
+  }
+
+  @objc
+  private func handleSelectText(_ gesture: UILongPressGestureRecognizer) {
+    guard gesture.state == .began,
+      let presenter = appContext?.utilities?.currentViewController(),
+      let text = readViewportText(),
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return }
+
+    // Capture before dismissing the keyboard: doing so can resize the remote PTY.
+    // UIKit owns selection in this snapshot, so live output cannot move its endpoints.
+    inputField.resignFirstResponder()
+    let controller = TerminalTextSelectionViewController(text: text, fontSize: fontSize)
+    let navigation = UINavigationController(rootViewController: controller)
+    navigation.modalPresentationStyle = .pageSheet
+    presenter.present(navigation, animated: !UIAccessibility.isReduceMotionEnabled)
+  }
+
+  private func readViewportText() -> String? {
+    guard let surface else { return nil }
+    let selection = ghostty_selection_s(
+      top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+      bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+      rectangle: false)
+    var captured = ghostty_text_s()
+    guard ghostty_surface_read_text(surface, selection, &captured) else { return nil }
+    defer { ghostty_surface_free_text(surface, &captured) }
+    guard let text = captured.text else { return nil }
+    return String(
+      bytes: UnsafeBufferPointer(
+        start: UnsafeRawPointer(text).assumingMemoryBound(to: UInt8.self),
+        count: Int(captured.text_len)),
+      encoding: .utf8)
   }
 
   @objc
