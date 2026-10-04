@@ -111,6 +111,14 @@ Treat the overall testing or implementation loop—not an assistant turn or one 
 - On a later turn, verify that the existing process is alive and reuse its printed ports and base directory. If it exited, restart with the same base directory; create a new pairing token only when the browser session is no longer valid.
 - Tell the user when a test environment remains available, including its non-secret web URL when useful. Include a pairing token only when the user still needs to pair (see below).
 
+## Keep test loops fast
+
+- Batch open+navigate+snapshot with `preview_open_and_snapshot` instead of three separate calls.
+- Navigate straight to the complete pairing URL as the first navigation; do not type the token into the masked pairing input.
+- Reuse the warm env and tabs across turns instead of fresh `mktemp` envs; restart with the same base directory when the process exited.
+- Freeze the checkout during a loop; branch switches and reinstalls invalidate Vite's optimizer cache and force a cold recompile.
+- Snapshot at checkpoints only and trust void-tool `ok` results; shrink `maxScreenshotEdge` when detail is not needed.
+
 ## Authenticate the browser on the first navigation
 
 1. Wait for the server log that says authentication is required and includes a URL ending in `/pair#token=...`.
