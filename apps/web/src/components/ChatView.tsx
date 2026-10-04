@@ -99,6 +99,7 @@ import {
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
   selectSidebarThreadSummaryByRef,
+  selectThreadByRef,
   selectWorkflowRunsForParentThread,
   useStore,
 } from "../store";
@@ -114,6 +115,7 @@ import {
   hasServerAcknowledgedPendingTurn,
   revokeUserMessagePreviewUrls,
   usePendingTurnStore,
+  type OptimisticQueuedTurn,
 } from "../pendingTurnStore";
 import {
   buildPlanImplementationThreadTitle,
@@ -297,6 +299,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const RightPanelDiff = lazy(() => import("./RightPanelDiff"));
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_OPTIMISTIC_USER_MESSAGES: ChatMessage[] = [];
+const EMPTY_OPTIMISTIC_QUEUED_TURNS: OptimisticQueuedTurn[] = [];
 const EMPTY_OLDER_ACTIVITY_STATE = {
   historyKey: null,
   activities: EMPTY_ACTIVITIES as ReadonlyArray<OrchestrationThreadActivity>,
@@ -924,6 +927,10 @@ function ChatViewBody(
     (state) =>
       state.optimisticMessagesByThreadKey[routeThreadKey] ?? EMPTY_OPTIMISTIC_USER_MESSAGES,
   );
+  const optimisticQueuedTurns = usePendingTurnStore(
+    (state) =>
+      state.optimisticQueuedTurnsByThreadKey[routeThreadKey] ?? EMPTY_OPTIMISTIC_QUEUED_TURNS,
+  );
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
@@ -1073,6 +1080,38 @@ function ChatViewBody(
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const queuePresentation = useMemo(() => {
+    const serverQueue = activeThread?.queuedTurns ?? [];
+    if (optimisticQueuedTurns.length === 0) {
+      return { turns: serverQueue, statuses: undefined, submitting: false };
+    }
+    const serverIds = new Set(serverQueue.map((turn) => turn.id));
+    const messageIds = new Set(
+      isServerThread ? serverMessageIds : activeThread?.messages.map((message) => message.id),
+    );
+    const pending = optimisticQueuedTurns.filter(
+      (entry) => !serverIds.has(entry.turn.id) && !messageIds.has(entry.turn.message.messageId),
+    );
+    return {
+      turns:
+        pending.length === 0
+          ? serverQueue
+          : [...serverQueue, ...pending.map((entry) => entry.turn)],
+      statuses: new Map(
+        pending.map((entry) => [
+          entry.turn.id,
+          entry.submitting ? ("submitting" as const) : ("accepted" as const),
+        ]),
+      ),
+      submitting: pending.some((entry) => entry.submitting),
+    };
+  }, [
+    activeThread?.queuedTurns,
+    activeThread?.messages,
+    isServerThread,
+    serverMessageIds,
+    optimisticQueuedTurns,
+  ]);
   const activeValidationRun =
     activeThread?.validationRun ?? serverThreadSummary?.validationRun ?? null;
   const workflowRuns = useStore(
@@ -3529,6 +3568,10 @@ function ChatViewBody(
     if (!activeProject) return;
     if (phase === "running") {
       sendInFlightRef.current = true;
+      const queuedTurnId = newQueuedTurnId();
+      const messageId = newMessageId();
+      const createdAt = new Date().toISOString();
+      const originalDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       try {
         const composerImagesSnapshot = [...composerImages];
         const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -3547,6 +3590,40 @@ function ChatViewBody(
             titleSeed = "Queued message";
           }
         }
+        const outgoingText = formatOutgoingPrompt({
+          provider: ctxSelectedProvider,
+          model: ctxSelectedModel,
+          models: ctxSelectedProviderModels,
+          effort: ctxSelectedPromptEffort,
+          text: messageTextForQueue || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+        });
+        // Keep the editable draft until acceptance, but acknowledge the click
+        // before attachment reading or a server round trip. Stable IDs dedupe
+        // against either a queued row or an already-dispatched message.
+        usePendingTurnStore.getState().addOptimisticQueuedTurn(routeThreadRef, {
+          id: queuedTurnId,
+          threadId: activeThread.id,
+          message: {
+            messageId,
+            role: "user",
+            text: outgoingText,
+            attachments: composerImagesSnapshot.map(({ id, name, mimeType, sizeBytes }) => ({
+              type: "image",
+              id,
+              name,
+              mimeType,
+              sizeBytes,
+            })),
+            ...(threadContextForSend ? { context: threadContextForSend } : {}),
+          },
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          createdAt,
+          updatedAt: createdAt,
+          failedAt: null,
+          failureMessage: null,
+        });
         const queuedAttachments = await Promise.all(
           composerImagesSnapshot.map(async (image) => ({
             type: "image" as const,
@@ -3560,17 +3637,11 @@ function ChatViewBody(
           type: "thread.queued-turn.create",
           commandId: newCommandId(),
           threadId: activeThread.id,
-          queuedTurnId: newQueuedTurnId(),
+          queuedTurnId,
           message: {
-            messageId: newMessageId(),
+            messageId,
             role: "user",
-            text: formatOutgoingPrompt({
-              provider: ctxSelectedProvider,
-              model: ctxSelectedModel,
-              models: ctxSelectedProviderModels,
-              effort: ctxSelectedPromptEffort,
-              text: messageTextForQueue || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-            }),
+            text: outgoingText,
             attachments: queuedAttachments,
             ...(threadContextForSend ? { context: threadContextForSend } : {}),
           },
@@ -3578,8 +3649,9 @@ function ChatViewBody(
           titleSeed: truncate(titleSeed),
           runtimeMode,
           interactionMode,
-          createdAt: new Date().toISOString(),
+          createdAt,
         });
+        usePendingTurnStore.getState().acceptOptimisticQueuedTurn(routeThreadRef, queuedTurnId);
         if (expiredTerminalContextCount > 0) {
           const toastCopy = buildExpiredTerminalContextToastCopy(
             expiredTerminalContextCount,
@@ -3593,10 +3665,31 @@ function ChatViewBody(
             }),
           );
         }
-        promptRef.current = "";
-        clearComposerDraftContent(composerDraftTarget);
-        composerRef.current?.resetCursorState();
+        const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        if (
+          currentDraft?.prompt === originalDraft?.prompt &&
+          currentDraft?.images === originalDraft?.images &&
+          currentDraft?.terminalContexts === originalDraft?.terminalContexts &&
+          currentDraft?.threadContexts === originalDraft?.threadContexts &&
+          currentDraft?.previewAnnotations === originalDraft?.previewAnnotations
+        ) {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        }
       } catch (err) {
+        const authoritative = selectThreadByRef(useStore.getState(), routeThreadRef);
+        // A lost receipt after the event arrived is not a rejected queue.
+        if (
+          authoritative?.queuedTurns?.some((turn) => turn.id === queuedTurnId) ||
+          authoritative?.messages.some((message) => message.id === messageId)
+        ) {
+          usePendingTurnStore.getState().acceptOptimisticQueuedTurn(routeThreadRef, queuedTurnId);
+          return;
+        }
+        usePendingTurnStore
+          .getState()
+          .removeOptimisticQueuedTurns(routeThreadRef, new Set([queuedTurnId]));
         setThreadError(
           activeThread.id,
           err instanceof Error ? err.message : "Failed to queue message.",
@@ -5528,12 +5621,13 @@ function ChatViewBody(
                     isLocalDraftThread={isLocalDraftThread}
                     phase={phase}
                     isConnecting={isConnecting}
-                    isSendBusy={isSendBusy}
+                    isSendBusy={isSendBusy || queuePresentation.submitting}
                     isPreparingWorktree={isPreparingWorktree}
                     activePendingApproval={activePendingApproval}
                     pendingApprovals={pendingApprovals}
                     pendingUserInputs={pendingUserInputs}
-                    queuedTurns={activeThread.queuedTurns ?? []}
+                    queuedTurns={queuePresentation.turns}
+                    queuedTurnStatuses={queuePresentation.statuses}
                     queueHeldAt={activeThread.queueHeldAt ?? null}
                     activePendingProgress={activePendingProgress}
                     activePendingResolvedAnswers={activePendingResolvedAnswers}

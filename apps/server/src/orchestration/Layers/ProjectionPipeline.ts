@@ -2027,7 +2027,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         projectors.map((projector) => [projector.name, event.sequence - 1]),
       );
       return runProjectorsForEventBatch([event], cursors).pipe(
-        Effect.as({ reconcile: reconciler.drain }),
+        Effect.map((impact) => ({
+          // Queue/message rows and their shell fields already committed. An
+          // event with no deferred work must not await another thread's drain.
+          reconcile:
+            impact.shellThreadIds.size > 0 || impact.attachmentThreadIds.size > 0
+              ? reconciler.drain
+              : Effect.void,
+        })),
         Effect.catchTag("SqlError", (sqlError) =>
           Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
         ),

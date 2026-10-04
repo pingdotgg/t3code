@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 
 interface QueuedMessagesPanelProps {
+  queuedTurnStatuses?: ReadonlyMap<QueuedTurnId, "submitting" | "accepted"> | undefined;
   policyBlocks?: ReadonlyMap<QueuedTurnId, string> | undefined;
   queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>;
   /**
@@ -14,7 +15,7 @@ interface QueuedMessagesPanelProps {
   queueHeldAt: string | null;
   editingQueuedTurnId: QueuedTurnId | null;
   editingText: string;
-  onStartEditingQueuedTurn: (queuedTurn: OrchestrationQueuedTurn) => void;
+  onStartEditingQueuedTurn?: ((queuedTurn: OrchestrationQueuedTurn) => void) | undefined;
   onCancelEditingQueuedTurn: () => void;
   onSaveEditingQueuedTurn: () => void;
   onDeleteQueuedTurn: (queuedTurnId: QueuedTurnId) => void;
@@ -51,6 +52,7 @@ function attachmentLabel(queuedTurn: OrchestrationQueuedTurn): string | null {
 
 export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   policyBlocks,
+  queuedTurnStatuses,
   queuedTurns,
   queueHeldAt,
   editingQueuedTurnId,
@@ -80,15 +82,20 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
       <ul className="flex flex-col gap-0.5">
         {visibleQueuedTurns.map(({ queuedTurn, queueIndex }) => {
-          const isEditing = editingQueuedTurnId === queuedTurn.id;
+          const isEditing =
+            onStartEditingQueuedTurn !== undefined && editingQueuedTurnId === queuedTurn.id;
           const isFailed = queuedTurn.failedAt !== null;
+          const isPending = queuedTurnStatuses?.has(queuedTurn.id) === true;
+          const isSubmitting = queuedTurnStatuses?.get(queuedTurn.id) === "submitting";
           const policyBlock = policyBlocks?.get(queuedTurn.id);
           const meta = attachmentLabel(queuedTurn);
-          const label = policyBlock
-            ? "Pending"
-            : queuedTurn.id === nextEligibleId
-              ? "Up next"
-              : `Queued ${queueIndex + 1}`;
+          const label = isSubmitting
+            ? "Queuing…"
+            : policyBlock
+              ? "Pending"
+              : queuedTurn.id === nextEligibleId
+                ? "Up next"
+                : `Queued ${queueIndex + 1}`;
           return (
             <li
               key={queuedTurn.id}
@@ -129,6 +136,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
               ) : (
                 <div className="flex items-center gap-2.5">
                   <span
+                    role={isSubmitting ? "status" : undefined}
                     className={cn(
                       "composer-input-font-secondary w-16 shrink-0 font-medium text-muted-foreground",
                       isFailed ? "text-destructive" : null,
@@ -149,7 +157,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       type="button"
                       size="icon-xs"
                       variant="ghost"
-                      disabled={queueIndex === 0}
+                      disabled={queueIndex === 0 || (queuedTurnStatuses?.size ?? 0) > 0}
                       aria-label="Move queued message up"
                       title="Move up"
                       onClick={() => onMoveQueuedTurn(queuedTurn.id, -1)}
@@ -160,7 +168,9 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       type="button"
                       size="icon-xs"
                       variant="ghost"
-                      disabled={queueIndex === queuedTurns.length - 1}
+                      disabled={
+                        queueIndex === queuedTurns.length - 1 || (queuedTurnStatuses?.size ?? 0) > 0
+                      }
                       aria-label="Move queued message down"
                       title="Move down"
                       onClick={() => onMoveQueuedTurn(queuedTurn.id, 1)}
@@ -172,8 +182,9 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       size="icon-xs"
                       variant="ghost"
                       aria-label="Edit queued message"
+                      disabled={isPending || onStartEditingQueuedTurn === undefined}
                       title="Edit"
-                      onClick={() => onStartEditingQueuedTurn(queuedTurn)}
+                      onClick={() => onStartEditingQueuedTurn?.(queuedTurn)}
                     >
                       <Pencil />
                     </Button>
@@ -182,6 +193,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       size="icon-xs"
                       variant="ghost"
                       aria-label="Delete queued message"
+                      disabled={isPending}
                       title="Delete"
                       onClick={() => onDeleteQueuedTurn(queuedTurn.id)}
                     >

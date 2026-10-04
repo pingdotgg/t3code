@@ -3,6 +3,8 @@ import type {
   MessageId,
   OrchestrationPendingTurnStart,
   OrchestrationSessionStatus,
+  OrchestrationQueuedTurn,
+  QueuedTurnId,
   ScopedThreadRef,
   TurnId,
 } from "@t3tools/contracts";
@@ -23,9 +25,21 @@ export interface PendingTurnSnapshot {
   sessionUpdatedAt: string | null;
 }
 
+export interface OptimisticQueuedTurn {
+  readonly turn: OrchestrationQueuedTurn;
+  readonly submitting: boolean;
+}
+
 interface PendingTurnStoreState {
   pendingByThreadKey: Record<string, PendingTurnSnapshot>;
   optimisticMessagesByThreadKey: Record<string, ChatMessage[]>;
+  optimisticQueuedTurnsByThreadKey: Record<string, OptimisticQueuedTurn[]>;
+  addOptimisticQueuedTurn: (threadRef: ScopedThreadRef, turn: OrchestrationQueuedTurn) => void;
+  acceptOptimisticQueuedTurn: (threadRef: ScopedThreadRef, id: QueuedTurnId) => void;
+  removeOptimisticQueuedTurns: (
+    threadRef: ScopedThreadRef,
+    ids?: ReadonlySet<QueuedTurnId>,
+  ) => void;
   beginPendingTurn: (
     threadRef: ScopedThreadRef,
     thread: Thread | undefined,
@@ -183,6 +197,44 @@ export function isPendingTurnActive(
 export const usePendingTurnStore = create<PendingTurnStoreState>((set, get) => ({
   pendingByThreadKey: {},
   optimisticMessagesByThreadKey: {},
+  optimisticQueuedTurnsByThreadKey: {},
+  addOptimisticQueuedTurn: (threadRef, turn) => {
+    const key = scopedThreadKey(threadRef);
+    set((state) => ({
+      optimisticQueuedTurnsByThreadKey: {
+        ...state.optimisticQueuedTurnsByThreadKey,
+        [key]: [...(state.optimisticQueuedTurnsByThreadKey[key] ?? []), { turn, submitting: true }],
+      },
+    }));
+  },
+  acceptOptimisticQueuedTurn: (threadRef, id) => {
+    const key = scopedThreadKey(threadRef);
+    set((state) => {
+      const entries = state.optimisticQueuedTurnsByThreadKey[key];
+      if (!entries?.some((entry) => entry.turn.id === id && entry.submitting)) return state;
+      return {
+        optimisticQueuedTurnsByThreadKey: {
+          ...state.optimisticQueuedTurnsByThreadKey,
+          [key]: entries.map((entry) =>
+            entry.turn.id === id ? { ...entry, submitting: false } : entry,
+          ),
+        },
+      };
+    });
+  },
+  removeOptimisticQueuedTurns: (threadRef, ids) => {
+    const key = scopedThreadKey(threadRef);
+    set((state) => {
+      const entries = state.optimisticQueuedTurnsByThreadKey[key];
+      if (!entries) return state;
+      const remaining = ids === undefined ? [] : entries.filter((entry) => !ids.has(entry.turn.id));
+      if (remaining.length === entries.length) return state;
+      const optimisticQueuedTurnsByThreadKey = { ...state.optimisticQueuedTurnsByThreadKey };
+      if (remaining.length === 0) delete optimisticQueuedTurnsByThreadKey[key];
+      else optimisticQueuedTurnsByThreadKey[key] = remaining;
+      return { optimisticQueuedTurnsByThreadKey };
+    });
+  },
   beginPendingTurn: (threadRef, thread, options) => {
     const threadKey = scopedThreadKey(threadRef);
     set((state) => {
@@ -259,6 +311,7 @@ export const usePendingTurnStore = create<PendingTurnStoreState>((set, get) => (
     }
   },
   clearThreadState: (threadRef) => {
+    get().removeOptimisticQueuedTurns(threadRef);
     get().discardOptimisticMessages(threadRef);
     get().clearPendingTurn(threadRef);
   },

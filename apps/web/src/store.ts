@@ -2515,6 +2515,7 @@ function applyEnvironmentOrchestrationEvent(
                 : crossThreadSendRecordToActivity({
                     eventId: event.eventId,
                     payload: event.payload,
+                    turnId: event.payload.sourceTurnId,
                     sequence: event.sequence,
                   });
           const tailActivity = thread.activities.at(-1);

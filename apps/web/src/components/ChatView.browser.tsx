@@ -6,6 +6,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   EnvironmentId,
   type EnvironmentApi,
+  type ClientOrchestrationCommand,
   type MessageId,
   type OrchestrationReadModel,
   type PreviewSessionSnapshot,
@@ -2821,6 +2822,160 @@ describe("ChatView timeline estimator parity (full app)", () => {
             request._tag === WS_METHODS.terminalWrite && request.data === "bun install\r",
         ),
       ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  // Network delay must not hide local intent. The pending row must dedupe
+  // against live delivery and a rejection must not erase newer draft edits.
+  it.each([
+    { outcome: "accepted", editDraft: true },
+    { outcome: "accepted", editDraft: false },
+    { outcome: "rejected", editDraft: true },
+    { outcome: "rejected", editDraft: false },
+  ] as const)(
+    "shows a queued message immediately before a delayed $outcome receipt (editDraft=$editDraft)",
+    async ({ outcome, editDraft }) => {
+      let resolveDispatch!: (value: { sequence: number }) => void;
+      let rejectDispatch!: (error: Error) => void;
+      const dispatchPromise = new Promise<{ sequence: number }>((resolve, reject) => {
+        resolveDispatch = resolve;
+        rejectDispatch = reject;
+      });
+      const baseSnapshot = createSnapshotForTargetUser({
+        targetMessageId: "queue-latency-user" as MessageId,
+        targetText: "Running task",
+        sessionStatus: "running",
+      });
+      const runningTurnId = "queue-latency-running" as TurnId;
+      const snapshot: OrchestrationReadModel = {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          latestTurn: {
+            turnId: runningTurnId,
+            state: "running",
+            requestedAt: NOW_ISO,
+            startedAt: NOW_ISO,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: thread.session ? { ...thread.session, activeTurnId: runningTurnId } : null,
+        })),
+      };
+      const mounted = await mountChatView({
+        viewport: DEFAULT_VIEWPORT,
+        snapshot,
+        resolveRpc: (body) =>
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand ? dispatchPromise : undefined,
+      });
+      try {
+        const editor = page.getByTestId("composer-editor");
+        await editor.fill("Immediate follow-up");
+        (await waitForButtonByText("Queue")).click();
+        await vi.waitFor(
+          () => {
+            expect(
+              [...document.querySelectorAll("li")].some((li) =>
+                li.textContent?.includes("Immediate follow-up"),
+              ),
+            ).toBe(true);
+          },
+          { timeout: 2_000, interval: 16 },
+        );
+        await expect.element(page.getByText("Queuing…", { exact: true })).toBeVisible();
+        await expect
+          .element(page.getByRole("button", { name: "Steer", exact: true }))
+          .toBeDisabled();
+        expect(composerDraftFor(THREAD_ID)?.prompt).toBe("Immediate follow-up");
+
+        // Keep a newer draft safe while the older submission is in flight.
+        if (editDraft) await editor.fill("Newer draft must survive");
+        if (outcome === "rejected") {
+          rejectDispatch(new Error("Queue rejected for test"));
+          await expect.element(page.getByText("Queuing…", { exact: true })).not.toBeInTheDocument();
+          await expect
+            .element(editor)
+            .toHaveTextContent(editDraft ? "Newer draft must survive" : "Immediate follow-up");
+          return;
+        }
+        resolveDispatch({ sequence: snapshot.snapshotSequence + 1 });
+        await expect.element(page.getByText("Queuing…", { exact: true })).not.toBeInTheDocument();
+        const request = wsRequests.find(
+          (request) => request.type === "thread.queued-turn.create",
+        ) as unknown as Extract<ClientOrchestrationCommand, { type: "thread.queued-turn.create" }>;
+        rpcHarness.emitStreamValue(ORCHESTRATION_WS_METHODS.subscribeThread, {
+          kind: "event",
+          event: {
+            sequence: snapshot.snapshotSequence + 1,
+            eventId: EventId.make("queue-latency-created"),
+            aggregateKind: "thread",
+            aggregateId: THREAD_ID,
+            occurredAt: NOW_ISO,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.queued-turn-created",
+            payload: {
+              threadId: THREAD_ID,
+              queuedTurn: {
+                id: request.queuedTurnId as QueuedTurnId,
+                threadId: THREAD_ID,
+                message: {
+                  messageId: request.message.messageId,
+                  role: "user",
+                  text: "Immediate follow-up",
+                  attachments: [],
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                createdAt: NOW_ISO,
+                updatedAt: NOW_ISO,
+                queuePosition: 0,
+                failedAt: null,
+                failureMessage: null,
+              },
+            },
+          },
+        });
+        await expect
+          .element(page.getByRole("listitem").filter({ hasText: "Immediate follow-up" }))
+          .toBeVisible();
+        expect(
+          [...document.querySelectorAll("li")].filter((li) =>
+            li.textContent?.includes("Immediate follow-up"),
+          ),
+        ).toHaveLength(1);
+        await expect.element(editor).toHaveTextContent(editDraft ? "Newer draft must survive" : "");
+        expect(composerDraftFor(THREAD_ID)?.prompt ?? "").toBe(
+          editDraft ? "Newer draft must survive" : "",
+        );
+      } finally {
+        resolveDispatch({ sequence: snapshot.snapshotSequence + 1 });
+        usePendingTurnStore.getState().clearThreadState(THREAD_REF);
+        await mounted.cleanup();
+      }
+    },
+  );
+
+  it("keeps incoming queued work visible while a user-input request blocks dispatch", async () => {
+    const inputSnapshot = createSnapshotWithPendingUserInput();
+    const queuedTurns = createSnapshotWithQueuedTurn().threads[0]!.queuedTurns ?? [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...inputSnapshot,
+        threads: inputSnapshot.threads.map((thread) => ({ ...thread, queuedTurns })),
+      },
+    });
+    try {
+      await expect.element(page.getByText("Original queued text", { exact: true })).toBeVisible();
+      await expect
+        .element(page.getByText("What should this change cover?", { exact: true }))
+        .toBeVisible();
+      await expect.element(page.getByLabelText("Edit queued message")).toBeDisabled();
     } finally {
       await mounted.cleanup();
     }
