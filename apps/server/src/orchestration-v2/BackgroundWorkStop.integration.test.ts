@@ -41,7 +41,7 @@ const modelSelection = { instanceId, model: "test-model" };
 // Codex turns leave commands running, then the thread moves to another
 // provider thread (a provider switch). Stop on the newer, settled run must
 // reach both provider threads and end all of the Codex work.
-it.effect("Stop reaches background work an earlier provider thread still runs", () =>
+const stopEarlierBackgroundWork = (failedStart: boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("background-work-stop");
@@ -233,7 +233,10 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         const settledRun = (input: {
           readonly ordinal: number;
           readonly providerThreadId: ProviderThreadId;
-          readonly runningItem?: { readonly id: TurnItemId; readonly kind: "command" | "subagent" };
+          readonly runningItem?: {
+            readonly id: TurnItemId;
+            readonly kind: "command" | "subagent";
+          };
         }) => {
           const runId = RunId.make(`run:${input.ordinal}`);
           const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
@@ -407,11 +410,41 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
           ],
         });
 
+        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        if (failedStart) {
+          yield* sink.write({
+            events: failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
+              switch (event.type) {
+                case "provider-turn.updated":
+                  return [];
+                case "run.created":
+                  return [{ ...event, payload: { ...event.payload, status: "failed" } }];
+                case "node.updated":
+                  return [
+                    {
+                      ...event,
+                      payload: { ...event.payload, status: "failed", providerTurnId: null },
+                    },
+                  ];
+                case "run-attempt.created":
+                  return [
+                    {
+                      ...event,
+                      payload: { ...event.payload, status: "failed", providerTurnId: null },
+                    },
+                  ];
+                default:
+                  return [event];
+              }
+            }),
+          });
+        }
+
         yield* orchestrator.dispatch({
           type: "run.interrupt",
           commandId: CommandId.make("stop-background-work"),
           threadId,
-          runId: latestRun.runId,
+          runId: failedStart ? failedRun.runId : latestRun.runId,
         });
         yield* worker.drain();
 
@@ -442,5 +475,13 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         ),
       );
     }),
-  ),
+  );
+
+it.effect("Stop reaches background work an earlier provider thread still runs", () =>
+  stopEarlierBackgroundWork(false),
+);
+
+it.effect(
+  "Stop reaches earlier background work after the newest run fails before provider start",
+  () => stopEarlierBackgroundWork(true),
 );

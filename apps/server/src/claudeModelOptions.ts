@@ -37,7 +37,7 @@ export function compileClaudeModelSelection(
   const resolvedEffort = resolveClaudeCatalogEffort(catalog, selection.model, rawEffort);
   const effort = normalizeClaudeCatalogEffort(catalog, resolvedEffort, selection.model);
   const fastMode = supportsBoolean("fastMode")
-    ? getModelSelectionBooleanOptionValue(selection, "fastMode")
+    ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
