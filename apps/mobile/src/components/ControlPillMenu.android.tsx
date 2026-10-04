@@ -9,7 +9,10 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
   // an injected onLongPress (mirroring the iOS context-menu interaction)
   // so its own tap handling still works.
   if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
-    const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+    const child = props.children as ReactElement<{
+      onLongPress?: () => void;
+      delayLongPress?: number;
+    }>;
     return (
       <AndroidAnchoredMenu
         actions={props.actions}
@@ -20,6 +23,7 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
       >
         {(open) =>
           cloneElement(child, {
+            delayLongPress: props.longPressDuration,
             onLongPress: () => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               open();
