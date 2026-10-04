@@ -1371,6 +1371,25 @@ describe("composer and pull request shortcuts", () => {
         command,
       );
     });
+
+    it(`renames the thread with mod+shift+r outside the terminal on ${platform}`, () => {
+      const input = event({
+        key: "r",
+        shiftKey: true,
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+        "thread.rename",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    });
   }
 
   const altEffortBindings = compileResolvedKeybindingsConfig([

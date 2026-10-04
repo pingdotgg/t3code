@@ -130,6 +130,10 @@ actions of the same kind undo together. The notice remains available for five
 seconds after the latest action. The default shortcut skips text fields and
 terminals so native undo keeps working there.
 
+`thread.rename` (`mod+shift+r` by default) edits the open thread's title in the
+header. Enter saves and Escape cancels. On desktop, this replaces the Force Reload
+shortcut while a thread is open; Force Reload stays in the View menu.
+
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
