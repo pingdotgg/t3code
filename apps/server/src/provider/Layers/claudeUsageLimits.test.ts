@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import { describe, expect, it } from "@effect/vitest";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+  recordClaudeUsageResponse,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -103,6 +109,17 @@ describe("claudeUsageResponseToLimits", () => {
       }).limits,
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "probeFailed" } });
   });
+
+  it.effect("keeps the scoped names from the last read when a later read comes back empty", () =>
+    Effect.gen(function* () {
+      const namesRef = yield* Ref.make({ overageIncluded: "Fable" as string | undefined });
+      yield* recordClaudeUsageResponse(namesRef, {
+        checkedAt,
+        response: { rate_limits_available: true, rate_limits: null },
+      });
+      expect(yield* Ref.get(namesRef)).toEqual({ overageIncluded: "Fable" });
+    }),
+  );
 
   it("skips a window the endpoint reports without a utilization", () => {
     expect(

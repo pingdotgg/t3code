@@ -200,5 +200,7 @@ export const recordClaudeUsageResponse = (
   input: Parameters<typeof claudeUsageResponseToLimits>[0],
 ): Effect.Effect<ServerProviderUsageLimits> => {
   const { limits, names } = claudeUsageResponseToLimits(input);
+  // A failed read names no buckets; keep the last ones so events still land.
+  if (limits.unavailable?.reason === "probeFailed") return Effect.succeed(limits);
   return Ref.set(namesRef, names).pipe(Effect.as(limits));
 };
