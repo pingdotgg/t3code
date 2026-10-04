@@ -1,5 +1,7 @@
 import type { BusyBarSettings, ThreadId } from "@t3tools/contracts";
 import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
@@ -16,6 +18,13 @@ import {
   shouldPublishAgentAwarenessEvent,
 } from "../relay/AgentAwarenessRelay.ts";
 import { forkParked } from "../serverActivation.ts";
+import {
+  BUSY_BAR_TRANSIENT_IDS,
+  type BusyBarCard,
+  busyBarCardElements,
+  busyBarIntroFrames,
+  LOGO_PATH,
+} from "./BusyBarMotion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export type BusyBarAlert = "completed" | "failed" | "waiting_for_approval" | "waiting_for_input";
@@ -100,78 +109,10 @@ const LOGO_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOklEQVR4nGNgYGD4TyEeNgbgAoTkqGcAukG4nIxFnngDcMgRZwAO55PuBSxq6GAAnhggz4BBmpTJxQCvpq9f5bqLtAAAAABJRU5ErkJggg==",
   "base64",
 );
-const LOGO_PATH = "logo.png";
-const LOGO_SIZE = 16;
-const LOGO_CENTER_X = (72 - LOGO_SIZE) / 2;
-/** Logo positions for the slide from center to the left edge. */
-const LOGO_SLIDE = Array.from(
-  { length: LOGO_CENTER_X / 2 },
-  (_, index) => LOGO_CENTER_X - 2 * (index + 1),
-);
-
-const logoBody = (x: number, timeoutSeconds: number) => ({
-  application_name: APPLICATION_NAME,
-  elements: [
-    {
-      id: "logo",
-      type: "image",
-      path: LOGO_PATH,
-      display: "front",
-      x,
-      y: 0,
-      timeout: timeoutSeconds,
-    },
-  ],
-});
-
-interface BusyBarCard {
-  readonly label: string;
-  readonly color: string;
-  readonly title: string;
-  readonly timeoutSeconds: number;
-}
-
-/** The locked logo with a colored status label over a scrolling title. */
-export function busyBarCardBody(card: BusyBarCard) {
-  const contentX = LOGO_SIZE;
-  const { elements } = logoBody(0, card.timeoutSeconds);
-  return {
-    application_name: APPLICATION_NAME,
-    led_notification_color: card.color,
-    elements: [
-      ...elements,
-      ...[
-        {
-          id: "label",
-          type: "text",
-          text: card.label,
-          font: "tiny",
-          color: card.color,
-          align: "top_left",
-          x: contentX,
-          y: 0,
-        },
-        {
-          id: "title",
-          type: "text",
-          text: toDeviceText(card.title),
-          font: "small",
-          color: "#FFFFFFFF",
-          align: "bottom_left",
-          x: contentX,
-          y: 15,
-          width: 72 - contentX,
-          scroll_rate: 1500,
-          scroll_start_delay: 1500,
-        },
-      ].map((element) => ({ ...element, display: "front", timeout: card.timeoutSeconds })),
-    ],
-  };
-}
 
 export const busyBarAlertCard = (alert: BusyBarAlert, threadTitle: string): BusyBarCard => {
   const { label, color, timeoutSeconds } = ALERTS[alert];
-  return { label, color, title: threadTitle, timeoutSeconds };
+  return { label, color, title: toDeviceText(threadTitle), timeoutSeconds };
 };
 
 // One failed request ends a sequence, so an unreachable device costs one timeout.
@@ -194,22 +135,31 @@ export function makeBusyBarDevice(httpClient: HttpClient.HttpClient) {
       )
       .pipe(Effect.timeout("3 seconds"), Effect.asVoid);
   };
-  const drawRequest = (body: unknown) =>
-    HttpClientRequest.post("/display/draw").pipe(HttpClientRequest.bodyJsonUnsafe(body));
+  const draw = (card: BusyBarCard, elements: ReadonlyArray<object>, extra?: object) =>
+    HttpClientRequest.post("/display/draw").pipe(
+      HttpClientRequest.bodyJsonUnsafe({
+        application_name: APPLICATION_NAME,
+        ...extra,
+        elements: elements.map((element) => ({
+          display: "front",
+          timeout: card.timeoutSeconds,
+          ...element,
+        })),
+      }),
+    );
 
-  const clear = (settings: BusyBarSettings) =>
+  const clear = (settings: BusyBarSettings, elementIds?: ReadonlyArray<string>) =>
     send(
       settings,
       HttpClientRequest.delete("/display/draw").pipe(
-        HttpClientRequest.bodyJsonUnsafe({ application_name: APPLICATION_NAME }),
+        HttpClientRequest.bodyJsonUnsafe({
+          application_name: APPLICATION_NAME,
+          ...(elementIds ? { element_ids: elementIds } : {}),
+        }),
       ),
     );
 
-  /**
-   * The logo appears centered, slides to the left edge, and locks before the
-   * card fills in. Element timeouts on the device only resolve whole seconds,
-   * so the server drives the slide by moving the logo one step per draw.
-   */
+  /** Plays the intro on its schedule, then leaves the settled card with its LED blink. */
   const play = (settings: BusyBarSettings, card: BusyBarCard) =>
     Effect.gen(function* () {
       // Draws add to what is on screen, so start from a clean slate.
@@ -221,14 +171,17 @@ export function makeBusyBarDevice(httpClient: HttpClient.HttpClient) {
           HttpClientRequest.bodyUint8Array(LOGO_PNG, "application/octet-stream"),
         ),
       );
-      yield* send(settings, drawRequest(logoBody(LOGO_CENTER_X, card.timeoutSeconds)));
-      yield* Effect.sleep("800 millis");
-      for (const x of LOGO_SLIDE) {
-        yield* send(settings, drawRequest(logoBody(x, card.timeoutSeconds)));
-        yield* Effect.sleep("15 millis");
+      const startedAt = yield* Clock.currentTimeMillis;
+      for (const frame of busyBarIntroFrames(card)) {
+        const wait = startedAt + frame.atMs - (yield* Clock.currentTimeMillis);
+        if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+        if (frame.elements.length > 0) yield* send(settings, draw(card, frame.elements));
       }
-      yield* Effect.sleep("250 millis");
-      yield* send(settings, drawRequest(busyBarCardBody(card)));
+      yield* clear(settings, BUSY_BAR_TRANSIENT_IDS);
+      yield* send(
+        settings,
+        draw(card, busyBarCardElements(card), { led_notification_color: card.color }),
+      );
     });
 
   return { clear, play };
