@@ -18,6 +18,7 @@ import {
 } from "./timelineMinimapItems";
 import {
   COMPOSER_CONTEXT_KINDS,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
@@ -34,6 +35,7 @@ import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/en
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { repairMarkdownFileLinks } from "@t3tools/client-runtime/repair-markdown-file-links";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
@@ -44,6 +46,10 @@ import {
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import {
+  turnItemHasDetail,
+  turnItemNeedsDetailFetch,
+} from "@t3tools/client-runtime/work-log/item-detail";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   subagentGroupSummary,
@@ -139,6 +145,7 @@ import {
   WrenchIcon,
   XIcon,
   ZapIcon,
+  RotateCcwIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import type {
@@ -214,7 +221,7 @@ import {
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -258,13 +265,14 @@ import {
   formatDayAwareTimestamp,
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
-import { V2ItemInspector } from "./V2ItemInspector";
+import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
   isV2LifecycleItem,
   SubagentAvatar,
   SubagentElapsed,
+  SubagentNotificationLink,
   V2LifecycleRow,
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
@@ -324,6 +332,8 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
   onCancelWorktreeSetup: (() => void) | null;
+  retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
+  onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
@@ -382,6 +392,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
+const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 // Streamed text lands a paragraph at a time. A smooth scroll to the end
 // turns each landing into a short glide instead of a jump. Thread switches
 // and layout settles keep the instant variant so nothing visibly travels.
@@ -415,6 +426,9 @@ interface MessagesTimelineProps {
   activeTurnStartedAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
+  /** Runs whose failed workspace preparation can be retried, keyed by run id. */
+  retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
+  onRetryWorkspacePreparation?: (runId: RunId) => void;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   isPreparingWorktree?: boolean;
@@ -498,6 +512,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt = null,
   worktreeSetup = null,
   onCancelWorktreeSetup,
+  retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
+  onRetryWorkspacePreparation,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
@@ -1163,6 +1179,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
+      retryableWorkspacePreparationRunIds,
+      onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
@@ -1196,6 +1214,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup,
+      retryableWorkspacePreparationRunIds,
+      onRetryWorkspacePreparation,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
@@ -1306,7 +1326,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div
+        <TooltipScrollDismissArea
           ref={setTimelineViewportElement}
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
@@ -1375,7 +1395,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               });
             }}
           />
-        </div>
+        </TooltipScrollDismissArea>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -2475,6 +2495,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const renderedText = useMemo(() => repairMarkdownFileLinks(messageText), [messageText]);
 
   return (
     <>
@@ -2488,7 +2509,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           listRef={ctx.listRef}
         >
           <ChatMarkdown
-            text={messageText}
+            text={renderedText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}
@@ -4946,15 +4967,40 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   );
 }
 
-const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+type WorkEntryRowProps = {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
-}) {
+};
+
+const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
+  const ctx = use(TimelineRowCtx);
+  const item = props.workEntry.projectedItem?.item;
+  const childThreadId =
+    item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
+  if (item?.type !== "notification" || childThreadId === undefined) {
+    return <WorkEntryLogRow {...props} />;
+  }
+  return (
+    <SubagentNotificationLink
+      parentRef={scopeThreadRef(ctx.activeThreadEnvironmentId, item.threadId)}
+      childThreadId={childThreadId}
+      outcome={item.outcome}
+      createdAt={props.workEntry.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      providerStatuses={ctx.providerStatuses}
+      onOpenThread={ctx.onOpenThread}
+      fallback={<WorkEntryLogRow {...props} />}
+    />
+  );
+});
+
+function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
+  const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -4986,6 +5032,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     const label = warning
       ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : workEntry.label;
+    const retryRunId =
+      failureItem.runId !== null &&
+      retryableWorkspacePreparationRunIds.has(failureItem.runId) &&
+      failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE
+        ? failureItem.runId
+        : null;
     return (
       <WorkLogRow
         data-v2-item-type="error"
@@ -5015,6 +5067,19 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
             {failureItem.failure.message}
           </p>
+        ) : null}
+        {retryRunId !== null && onRetryWorkspacePreparation ? (
+          <div className="ms-7 pb-1">
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => onRetryWorkspacePreparation(retryRunId)}
+            >
+              <RotateCcwIcon aria-hidden />
+              Retry
+            </Button>
+          </div>
         ) : null}
       </WorkLogRow>
     );
@@ -5092,10 +5157,25 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             viewedImage ? viewedImagePath : null,
           )
       : null;
+  // Projected rows expand to the item inspector, so only offer a disclosure
+  // when it has something to show, even if that output still has to load.
+  // Reads and skills still fetch the output the timeline withheld.
+  const plainOutputFetches =
+    plainOutput !== undefined &&
+    workEntry.projectedItem !== undefined &&
+    turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
     plainOutput !== undefined
-      ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer)
-      : canExpand || workEntry.projectedItem !== undefined;
+      ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
+      : workEntry.projectedItem === undefined
+        ? canExpand
+        : isReasoning
+          ? Boolean(workEntry.detail?.trim())
+          : Boolean(
+              viewedImage ||
+              workEntry.questionAnswer ||
+              turnItemHasDetail(workEntry.projectedItem.item),
+            );
   // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
@@ -5266,7 +5346,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       !isReasoning &&
       !workEntry.questionAnswer &&
       canExpandProjectedItem &&
-      (expandedBody || (workEntry.projectedItem && plainOutput === undefined)) ? (
+      (expandedBody ||
+        plainOutputFetches ||
+        (workEntry.projectedItem && plainOutput === undefined)) ? (
         <WorkLogDetails kind="panel">
           {workEntry.projectedItem && plainOutput === undefined ? (
             <V2ItemInspector
@@ -5278,14 +5360,24 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
             />
-          ) : expandedBody ? (
-            <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
-          ) : null}
+          ) : (
+            <>
+              {expandedBody ? (
+                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+              ) : null}
+              {plainOutputFetches && workEntry.projectedItem ? (
+                <FetchedToolOutput
+                  projectedItem={workEntry.projectedItem}
+                  environmentId={ctx.activeThreadEnvironmentId}
+                />
+              ) : null}
+            </>
+          )}
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
   );
-});
+}
 
 function QuestionAnswerHistory({
   answer,
