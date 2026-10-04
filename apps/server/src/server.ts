@@ -26,6 +26,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { ProjectionWorkflowRepositoryLive } from "./persistence/Layers/ProjectionWorkflows.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
+import { layer as providerLogRetentionLayer } from "./provider/Layers/ProviderLogRetention.ts";
 import { ProviderRuntimeLivenessLive } from "./provider/Layers/ProviderRuntimeLiveness.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
@@ -251,6 +252,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProjectionWorkflowRepositoryLive),
   Layer.provideMerge(ServerShutdownMarkerRepositoryLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(providerLogRetentionLayer),
   Layer.provideMerge(RuntimeReceiptBusLive),
   Layer.provideMerge(createdPullRequestReviewReactorLayer),
   Layer.provideMerge(settledAutoArchiveLayerLive),

@@ -55,6 +55,8 @@ const settingsByPage: ReadonlyArray<{
       "Chat export details",
       "Archive review chats on merge",
       "Auto-archive settled threads",
+      "Provider log retention days",
+      "Provider log total size cap",
       "Archive confirmation",
       "Delete confirmation",
       "Keybindings",
@@ -171,6 +173,8 @@ const relatedTerms: Readonly<Record<string, string>> = {
   "Archived threads": "archive restore delete",
   "Archive review chats on merge": "review pull request merged cleanup",
   "Auto-archive settled threads": "settled archive cleanup days",
+  "Provider log retention days": "provider logs cleanup old age keep files",
+  "Provider log total size cap": "provider logs cleanup disk space maximum megabytes",
 };
 
 export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [

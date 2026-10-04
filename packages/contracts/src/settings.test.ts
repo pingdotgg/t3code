@@ -108,6 +108,30 @@ describe("ServerSettings.autoArchiveSettledAfterDays", () => {
   });
 });
 
+describe("provider log retention settings", () => {
+  it("defaults the age and total-size policies", () => {
+    expect(DEFAULT_SERVER_SETTINGS.providerLogRetentionDays).toBe(14);
+    expect(DEFAULT_SERVER_SETTINGS.providerLogMaxTotalMb).toBe(5120);
+    expect(decodeServerSettings({}).providerLogRetentionDays).toBe(14);
+    expect(decodeServerSettings({}).providerLogMaxTotalMb).toBe(5120);
+  });
+
+  it("preserves null as disabled and accepts numeric patch values", () => {
+    expect(
+      decodeServerSettingsPatch({ providerLogRetentionDays: null }).providerLogRetentionDays,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ providerLogMaxTotalMb: null }).providerLogMaxTotalMb,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ providerLogRetentionDays: 30 }).providerLogRetentionDays,
+    ).toBe(30);
+    expect(decodeServerSettingsPatch({ providerLogMaxTotalMb: 2048 }).providerLogMaxTotalMb).toBe(
+      2048,
+    );
+  });
+});
+
 describe("ServerSettings.pullRequestMonitoring", () => {
   it("defaults automatic monitoring and maintenance chats on", () => {
     expect(DEFAULT_SERVER_SETTINGS.autoMonitorPullRequestsOnCreate).toBe(true);

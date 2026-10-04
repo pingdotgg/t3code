@@ -155,6 +155,14 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 
+function parseOptionalNonNegativeNumber(draft: string): number | null | undefined {
+  const trimmed = draft.trim();
+  if (trimmed === "") return null;
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export const THEME_OPTIONS = [
   {
     value: "system",
@@ -1663,7 +1671,38 @@ export function GeneralSettingsPanel() {
     (days: number | null) => updateSettings({ autoArchiveSettledAfterDays: days }),
     [updateSettings],
   );
-
+  const updateProviderLogRetentionDays = useCallback(
+    (draft: string) => {
+      const days = parseOptionalNonNegativeNumber(draft);
+      if (days === undefined) {
+        toastManager.add({
+          type: "warning",
+          title: "Enter a non-negative number of days, or leave blank to turn age cleanup off",
+        });
+        return;
+      }
+      if (days !== settings.providerLogRetentionDays) {
+        updateSettings({ providerLogRetentionDays: days });
+      }
+    },
+    [settings.providerLogRetentionDays, updateSettings],
+  );
+  const updateProviderLogMaxTotalMb = useCallback(
+    (draft: string) => {
+      const megabytes = parseOptionalNonNegativeNumber(draft);
+      if (megabytes === undefined) {
+        toastManager.add({
+          type: "warning",
+          title: "Enter a non-negative size in MB, or leave blank to turn the size cap off",
+        });
+        return;
+      }
+      if (megabytes !== settings.providerLogMaxTotalMb) {
+        updateSettings({ providerLogMaxTotalMb: megabytes });
+      }
+    },
+    [settings.providerLogMaxTotalMb, updateSettings],
+  );
   return (
     <SettingsPageContainer>
       <SettingsSection title="Pull request monitoring">
@@ -2520,6 +2559,62 @@ export function GeneralSettingsPanel() {
                 updateSettings({ confirmThreadDelete: Boolean(checked) })
               }
               aria-label="Confirm thread deletion"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Storage & cleanup">
+        <SettingsRow
+          title="Provider log retention days"
+          description="Remove provider logs older than this. Leave blank to disable age-based cleanup; recent and active thread heads are protected."
+          resetAction={
+            settings.providerLogRetentionDays !==
+            DEFAULT_UNIFIED_SETTINGS.providerLogRetentionDays ? (
+              <SettingResetButton
+                label="provider log retention"
+                onClick={() =>
+                  updateSettings({
+                    providerLogRetentionDays: DEFAULT_UNIFIED_SETTINGS.providerLogRetentionDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-28"
+              value={settings.providerLogRetentionDays?.toString() ?? ""}
+              inputMode="decimal"
+              placeholder="Off"
+              onCommit={updateProviderLogRetentionDays}
+              aria-label="Provider log retention in days"
+            />
+          }
+        />
+        <SettingsRow
+          title="Provider log total size cap"
+          description="After age cleanup, remove the oldest rotations first until logs are under this limit in MB. Leave blank to disable the size cap."
+          resetAction={
+            settings.providerLogMaxTotalMb !== DEFAULT_UNIFIED_SETTINGS.providerLogMaxTotalMb ? (
+              <SettingResetButton
+                label="provider log size cap"
+                onClick={() =>
+                  updateSettings({
+                    providerLogMaxTotalMb: DEFAULT_UNIFIED_SETTINGS.providerLogMaxTotalMb,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-28"
+              value={settings.providerLogMaxTotalMb?.toString() ?? ""}
+              inputMode="decimal"
+              placeholder="Off"
+              onCommit={updateProviderLogMaxTotalMb}
+              aria-label="Provider log total size cap in megabytes"
             />
           }
         />
