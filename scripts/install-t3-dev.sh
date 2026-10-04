@@ -193,8 +193,8 @@ INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionStri
 log "Installed ${APP_NAME} v${INSTALLED_VERSION}"
 
 if [[ "$DO_LAUNCH" -eq 1 ]]; then
-  log "Launching..."
-  open "$INSTALL_DEST"
+  log "Launching and activating..."
+  bash "${REPO_ROOT}/scripts/activate-macos-app.sh" "$INSTALL_DEST" "$APP_NAME"
 fi
 
 log "Done."
