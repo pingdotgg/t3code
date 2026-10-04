@@ -10,6 +10,7 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { repairMarkdownFileLinks } from "@t3tools/client-runtime/repair-markdown-file-links";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   type OrchestrationMessageContext,
@@ -907,7 +908,17 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    () =>
+      splitCodexArtifactTemplateMarkdown(props.markdown).map((segment) =>
+        segment.kind === "markdown"
+          ? {
+              ...segment,
+              markdown: renderCodexFileCitationsAsMarkdown(
+                repairMarkdownFileLinks(segment.markdown),
+              ),
+            }
+          : segment,
+      ),
     [props.markdown],
   );
 
@@ -923,7 +934,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    const markdown = segment.markdown;
     return hasNativeSelectableMarkdownText() ? (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}
