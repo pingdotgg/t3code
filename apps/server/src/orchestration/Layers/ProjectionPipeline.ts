@@ -4,6 +4,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import {
   applyValidationEvent,
   isValidationLifecycleEvent,
@@ -1089,6 +1090,32 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             createdAt: event.payload.activity.createdAt,
           });
+          // Must match the projector exactly: a late failure for an older
+          // message must not delete a newer start's row.
+          if (event.payload.activity.kind === "provider.turn.start.failed") {
+            const pending = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+              threadId: event.payload.threadId,
+            });
+            // Matches the projector's narrowing. `payload` is Schema.Unknown,
+            // so it may be null; a non-string `messageId` would desync the two.
+            const activityPayload = event.payload.activity.payload;
+            const failureMessageId =
+              typeof activityPayload === "object" &&
+              activityPayload !== null &&
+              "messageId" in activityPayload &&
+              typeof activityPayload.messageId === "string"
+                ? activityPayload.messageId
+                : undefined;
+            if (
+              Option.isNone(pending) ||
+              failureMessageId === undefined ||
+              failureMessageId === pending.value.messageId
+            ) {
+              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+                threadId: event.payload.threadId,
+              });
+            }
+          }
           return;
         case "thread.child-lifecycle-notified": {
           const activity = childLifecycleNotificationToActivity({
@@ -1327,6 +1354,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
+            // Must match the in-memory projector exactly.
+            if (turnId === null && sessionResolvesPendingTurnStart(event.payload.session)) {
+              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+                threadId: event.payload.threadId,
+              });
+            }
             const existingSession = yield* projectionThreadSessionRepository.getByThreadId({
               threadId: event.payload.threadId,
             });
@@ -1932,6 +1965,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }),
         ),
       );
+
+      // After a restart no provider request is working on any pending start, so
+      // every surviving placeholder is orphaned. Left in place it reports the
+      // thread busy forever and every send is rejected as a duplicate, since no
+      // further event will arrive to retire it. Runs after replay so a start
+      // accepted just before shutdown still cleans up.
+      yield* projectionTurnRepository.deleteAllPendingTurnStarts();
     }).pipe(
       Effect.asVoid,
       Effect.tap(() =>

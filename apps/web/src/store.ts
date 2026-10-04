@@ -5,6 +5,7 @@ import type {
   OrchestrationEvent,
   OrchestrationLatestTurn,
   OrchestrationMessage,
+  OrchestrationPendingTurnStart,
   OrchestrationProposedPlan,
   OrchestrationQueuedTurn,
   OrchestrationReadModel,
@@ -35,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/validation-lifecycle";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
 import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import {
@@ -356,6 +358,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -439,6 +442,7 @@ export function mapThreadShell(
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequest: thread.pullRequest ?? null,
@@ -503,6 +507,8 @@ function toThreadShell(thread: Thread): ThreadShell {
 function toThreadTurnState(thread: Thread): ThreadTurnState {
   return {
     latestTurn: thread.latestTurn,
+    // The only place the pending start is persisted.
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
@@ -729,7 +735,26 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    pendingTurnStartsEqual(left.pendingTurnStart ?? null, right.pendingTurnStart ?? null) &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
+  );
+}
+
+function pendingTurnStartsEqual(
+  left: OrchestrationPendingTurnStart | null,
+  right: OrchestrationPendingTurnStart | null,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left === null || right === null) {
+    return false;
+  }
+  return (
+    left.messageId === right.messageId &&
+    left.requestedAt === right.requestedAt &&
+    left.sourceProposedPlan?.planId === right.sourceProposedPlan?.planId &&
+    left.sourceProposedPlan?.threadId === right.sourceProposedPlan?.threadId
   );
 }
 
@@ -2231,6 +2256,13 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        pendingTurnStart: {
+          messageId: event.payload.messageId,
+          requestedAt: event.payload.createdAt,
+          ...(event.payload.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+            : {}),
+        },
         hasMoreCurrentTurnActivities: false,
         updatedAt: event.occurredAt,
       }));
@@ -2276,17 +2308,23 @@ function applyEnvironmentOrchestrationEvent(
       }));
 
     case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        session: mapSession(event.payload.session),
-        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn: latestTurnFromSessionUpdate(
-          thread.latestTurn,
-          event.payload.session,
-          thread.pendingSourceProposedPlan,
-        ),
-        updatedAt: event.occurredAt,
-      }));
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        return {
+          ...thread,
+          session: mapSession(event.payload.session),
+          error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+          latestTurn: latestTurnFromSessionUpdate(
+            thread.latestTurn,
+            event.payload.session,
+            thread.pendingSourceProposedPlan,
+          ),
+          // Shared with the projector, its SQL projection, and both reducers.
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
+          updatedAt: event.occurredAt,
+        };
+      });
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>
@@ -2520,9 +2558,22 @@ function applyEnvironmentOrchestrationEvent(
             exceededActivityLimit = allActivities.length > MAX_THREAD_ACTIVITIES;
           }
 
+          const failureMessageId =
+            nextActivity.payload != null &&
+            typeof nextActivity.payload === "object" &&
+            "messageId" in nextActivity.payload &&
+            typeof nextActivity.payload.messageId === "string"
+              ? nextActivity.payload.messageId
+              : null;
+          const clearsPendingStart =
+            nextActivity.kind === "provider.turn.start.failed" &&
+            thread.pendingTurnStart != null &&
+            (failureMessageId === null || failureMessageId === thread.pendingTurnStart.messageId);
+
           return {
             ...thread,
             activities,
+            ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
             hasMoreActivities: (thread.hasMoreActivities ?? false) || exceededActivityLimit,
             hasMoreCurrentTurnActivities:
               (thread.hasMoreCurrentTurnActivities ?? false) || evictedCurrentTurnActivity,

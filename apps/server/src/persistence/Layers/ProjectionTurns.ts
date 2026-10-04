@@ -119,6 +119,17 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteAllPendingProjectionTurns = SqlSchema.void({
+    Request: Schema.Void,
+    execute: () =>
+      sql`
+        DELETE FROM projection_turns
+        WHERE turn_id IS NULL
+          AND state = 'pending'
+          AND checkpoint_turn_count IS NULL
+      `,
+  });
+
   const insertPendingProjectionTurn = SqlSchema.void({
     Request: ProjectionPendingTurnStart,
     execute: (row) =>
@@ -314,6 +325,15 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const deleteAllPendingTurnStarts: ProjectionTurnRepositoryShape["deleteAllPendingTurnStarts"] = (
+    input,
+  ) =>
+    deleteAllPendingProjectionTurns(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionTurnRepository.deleteAllPendingTurnStarts:query"),
+      ),
+    );
+
   const deletePendingTurnStartByThreadId: ProjectionTurnRepositoryShape["deletePendingTurnStartByThreadId"] =
     (input) =>
       clearPendingProjectionTurnsByThread(input).pipe(
@@ -367,6 +387,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     upsertByTurnId,
     replacePendingTurnStart,
     getPendingTurnStartByThreadId,
+    deleteAllPendingTurnStarts,
     deletePendingTurnStartByThreadId,
     listByThreadId,
     getByTurnId,

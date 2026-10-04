@@ -8,7 +8,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Effect } from "effect";
 
-import { canonicalizeWorktreePath, resolveGitWorktreeRoot } from "../git/worktreePaths.ts";
+import { canonicalizeWorktreePath, resolveGitWorktreeIdentity } from "../git/worktreePaths.ts";
 import { runProcess } from "../processRunner.ts";
 import { WorkspaceOwnershipConflict } from "../persistence/Services/WorkspaceOwnership.ts";
 import type { WorkspaceOwnershipRepositoryShape } from "../persistence/Services/WorkspaceOwnership.ts";
@@ -128,19 +128,18 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         : command.type === "thread.meta.update"
           ? command.worktreePath
           : undefined);
-  const projectRoot =
+  const projectIdentity =
     projectWorkspaceRoot === undefined
-      ? undefined
-      : yield* Effect.promise(() => canonicalizeWorktreePath(projectWorkspaceRoot));
-  const gitRoot =
-    projectRoot === undefined
       ? null
-      : yield* Effect.promise(() => resolveGitWorktreeRoot(projectRoot));
+      : yield* Effect.promise(() => resolveGitWorktreeIdentity(projectWorkspaceRoot));
+  const projectRoot = projectIdentity?.canonicalPath;
+  const gitRoot = projectIdentity?.gitRoot ?? null;
 
-  const canonicalRequested =
+  const requestedIdentity =
     requestedPath === null || requestedPath === undefined
       ? null
-      : yield* Effect.promise(() => canonicalizeWorktreePath(requestedPath));
+      : yield* Effect.promise(() => resolveGitWorktreeIdentity(requestedPath));
+  const canonicalRequested = requestedIdentity?.canonicalPath ?? null;
   // An explicit project-checkout path in the current creation request (the
   // client sent a concrete directory instead of null) means the user chose
   // "Current checkout": honor it instead of allocating an isolated
@@ -153,8 +152,8 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     createThread === undefined &&
     (command.type === "thread.turn.start" || command.type === "thread.queued-turn.dispatch") &&
     thread?.workspaceBinding?.workspaceScope === "project-checkout";
-  if (canonicalRequested !== null) {
-    const requestedRoot = yield* Effect.promise(() => resolveGitWorktreeRoot(canonicalRequested));
+  if (requestedIdentity !== null) {
+    const requestedRoot = requestedIdentity.gitRoot;
     const isProjectCheckout =
       (requestedRoot !== null && requestedRoot === gitRoot) ||
       (requestedRoot === null && projectRoot === canonicalRequested);
@@ -256,12 +255,14 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         if (existingCommonDir.code !== 0 || existingBranch.code !== 0) {
           throw new Error("existing workspace is not a checked-out Git worktree");
         }
-        const canonicalCommonDir = await canonicalizeWorktreePath(
-          path.resolve(worktreePath, existingCommonDir.stdout.trim()),
-        );
-        const canonicalExpectedCommonDir = await canonicalizeWorktreePath(
-          path.resolve(gitRoot, expectedCommonDir.stdout.trim()),
-        );
+        const canonicalCommonDir = (
+          await resolveGitWorktreeIdentity(
+            path.resolve(worktreePath, existingCommonDir.stdout.trim()),
+          )
+        ).canonicalPath;
+        const canonicalExpectedCommonDir = (
+          await resolveGitWorktreeIdentity(path.resolve(gitRoot, expectedCommonDir.stdout.trim()))
+        ).canonicalPath;
         if (
           canonicalCommonDir !== canonicalExpectedCommonDir ||
           existingBranch.stdout.trim() !== branch

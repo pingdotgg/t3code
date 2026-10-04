@@ -41,6 +41,7 @@ import {
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import { isTerminalOrchestrationSessionStatus } from "@t3tools/shared/threadBusyState";
 import { projectThreadContextForProvider } from "@t3tools/shared/threadContext";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import { WorkspaceOwnershipRepositoryLive } from "../../persistence/Layers/WorkspaceOwnership.ts";
@@ -1141,6 +1142,12 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         session: {
           ...sessionBeforeTurn.session,
+          // A terminal status here describes the *previous* turn, and every
+          // reader treats terminal-with-no-active-turn as settled — so keeping it
+          // retired this start before the provider was called.
+          status: isTerminalOrchestrationSessionStatus(sessionBeforeTurn.session.status)
+            ? "starting"
+            : sessionBeforeTurn.session.status,
           activeMessageId: event.payload.messageId,
           updatedAt: event.payload.createdAt,
         },

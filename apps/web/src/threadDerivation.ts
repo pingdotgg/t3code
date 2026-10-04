@@ -237,6 +237,8 @@ export function getThreadCoreFromEnvironmentState(
     ...shell,
     session,
     latestTurn: turnState?.latestTurn ?? null,
+    // Must match `toThreadTurnState`.
+    pendingTurnStart: turnState?.pendingTurnStart ?? null,
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages: EMPTY_MESSAGES,
     activities,
@@ -315,6 +317,10 @@ export function getThreadFromEnvironmentState(
     ...shell,
     session,
     latestTurn: turnState?.latestTurn ?? null,
+    // Read back from turn state, matching `toThreadTurnState`. Without this the
+    // derived thread never reports a pending start and the composer offers a send
+    // the server rejects with "already has a turn in flight".
+    pendingTurnStart: turnState?.pendingTurnStart ?? null,
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages,
     activities,

@@ -3,6 +3,7 @@ import type {
   GitPullRequestAssociation,
   ModelSelection,
   OrchestrationLatestTurn,
+  OrchestrationPendingTurnStart,
   OrchestrationBackgroundAgentRunShell,
   OrchestrationQueuedTurn,
   OrchestrationProposedPlanId,
@@ -138,6 +139,8 @@ export interface Thread {
   snoozedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
@@ -192,6 +195,8 @@ export interface ThreadShell {
 
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
 }
 
@@ -211,6 +216,8 @@ export interface SidebarThreadSummary {
   snoozedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   branch: string | null;
   worktreePath: string | null;
   pullRequest?: GitPullRequestAssociation | null;

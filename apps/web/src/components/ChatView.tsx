@@ -1431,10 +1431,13 @@ function ChatViewBody(
     () => formatProviderDisplayName(selectedProvider),
     [selectedProvider],
   );
-  const rawPhase = derivePhase(activeThread?.session ?? null);
+  const hasPendingTurnStart = activeThread?.pendingTurnStart != null;
+  const rawPhase = derivePhase(activeThread?.session ?? null, activeThread?.pendingTurnStart);
+  // The downgrade corrects a stale `running` session, so an unacknowledged start
+  // must survive it.
   const phase: SessionPhase = sessionActivelyWorking
     ? "running"
-    : rawPhase === "running"
+    : rawPhase === "running" && !hasPendingTurnStart
       ? "ready"
       : rawPhase;
   const isConnecting = phase === "connecting";

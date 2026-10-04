@@ -12,6 +12,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 /**
  * Retention limits for collections within a thread.
@@ -369,6 +370,14 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // Must match the server projector: `createdAt`, not `occurredAt`.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.payload.createdAt,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -524,6 +533,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };

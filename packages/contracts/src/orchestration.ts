@@ -809,6 +809,18 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * A `thread.turn.start` accepted but not yet acknowledged — the only busy signal
+ * in that window. Set only by `thread.turn-start-requested`, never by imported or
+ * forked history, so a forked thread is immediately sendable.
+ */
+export const OrchestrationPendingTurnStart = Schema.Struct({
+  messageId: MessageId,
+  requestedAt: IsoDateTime,
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+});
+export type OrchestrationPendingTurnStart = typeof OrchestrationPendingTurnStart.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -893,6 +905,8 @@ export const OrchestrationThread = Schema.Struct({
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),
   validationRun: Schema.optionalKey(Schema.NullOr(ValidationRun)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  /** See {@link OrchestrationPendingTurnStart}. */
+  pendingTurnStart: Schema.optionalKey(Schema.NullOr(OrchestrationPendingTurnStart)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -988,6 +1002,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),
   validationRun: Schema.optionalKey(Schema.NullOr(ValidationRun)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  pendingTurnStart: Schema.optionalKey(Schema.NullOr(OrchestrationPendingTurnStart)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),

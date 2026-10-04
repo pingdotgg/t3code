@@ -39,6 +39,7 @@ import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  isThreadOutboxThreadBusy,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -1101,7 +1102,7 @@ export function useThreadOutboxDrain(): void {
         threadExists: thread !== undefined,
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
-        threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        threadBusy: thread !== undefined && isThreadOutboxThreadBusy(thread),
       });
       // The delivery action resolves first; capability checks apply only to
       // a message that will send. Checking earlier would restore a
@@ -1207,8 +1208,7 @@ export function useThreadOutboxDrain(): void {
             appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
             nextQueuedMessage,
           );
-          const liveThreadBusy =
-            liveThread?.session?.status === "running" || liveThread?.session?.status === "starting";
+          const liveThreadBusy = liveThread !== undefined && isThreadOutboxThreadBusy(liveThread);
           const liveDeliveryAction = resolveThreadOutboxDeliveryAction({
             isCreation: creation !== undefined,
             threadExists: liveThread !== undefined,

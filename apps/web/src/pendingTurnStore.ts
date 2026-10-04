@@ -1,6 +1,7 @@
 import { scopedThreadKey } from "@t3tools/client-runtime";
 import type {
   MessageId,
+  OrchestrationPendingTurnStart,
   OrchestrationSessionStatus,
   ScopedThreadRef,
   TurnId,
@@ -166,7 +167,11 @@ export function isPendingTurnActive(
   }
   return !hasServerAcknowledgedPendingTurn({
     pendingTurn,
-    phase: derivePhase(thread.session),
+    phase: derivePhase(
+      thread.session,
+      (thread as { readonly pendingTurnStart?: OrchestrationPendingTurnStart | null })
+        .pendingTurnStart ?? null,
+    ),
     latestTurn: thread.latestTurn,
     session: thread.session,
     hasPendingApproval: "hasPendingApprovals" in thread && thread.hasPendingApprovals,

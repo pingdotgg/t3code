@@ -4,6 +4,7 @@ import {
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import { hasPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import {
   CommandId,
   EnvironmentId,
@@ -15,6 +16,7 @@ import {
   RuntimeMode,
   ThreadId,
   type ModelSelection as ModelSelectionType,
+  type OrchestrationPendingTurnStart,
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
@@ -165,6 +167,25 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
+/**
+ * A running turn is steerable, so it still reaches the send path. What blocks is
+ * an accepted-but-unacknowledged start: there is no turn id yet, so the message
+ * can be neither steered nor sent.
+ */
+export function isThreadOutboxThreadBusy(thread: {
+  readonly session?: { readonly status: string; readonly activeTurnId?: string | null } | null;
+  readonly pendingTurnStart?: OrchestrationPendingTurnStart | null;
+}): boolean {
+  if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+    return false;
+  }
+  return (
+    hasPendingTurnStart(thread.pendingTurnStart) ||
+    thread.session?.status === "running" ||
+    thread.session?.status === "starting"
+  );
+}
+
 export function resolveThreadOutboxDeliveryAction(input: {
   readonly isCreation: boolean;
   readonly threadExists: boolean;
@@ -186,7 +207,12 @@ export function resolveThreadOutboxDeliveryAction(input: {
   if (!input.threadExists) {
     return input.shellStatus === "live" ? "remove" : "wait";
   }
-  return input.environmentConnected ? "send" : "wait";
+  // An unsteerable accepted start must wait: sending draws the duplicate
+  // rejection and falls into the restore path.
+  if (input.environmentConnected && !input.threadBusy) {
+    return "send";
+  }
+  return "wait";
 }
 
 export type ThreadOutboxDispatchStep =

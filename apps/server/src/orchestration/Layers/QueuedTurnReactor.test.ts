@@ -1275,6 +1275,9 @@ describe("QueuedTurnReactor", () => {
                   updatedAt: continuationAt,
                 },
               ],
+              // What the projector records for the steer continuation below:
+              // accepted, provider not yet acknowledged.
+              pendingTurnStart: { messageId: continuationMessageId, requestedAt: continuationAt },
             },
       ),
     };
@@ -1410,21 +1413,28 @@ describe("QueuedTurnReactor", () => {
     },
     {
       name: "projected in-flight continuation",
-      update: (thread: OrchestrationReadModel["threads"][number]) => ({
-        ...thread,
-        messages: [
-          ...thread.messages,
-          {
-            id: MessageId.make("child-in-flight-continuation"),
-            role: "user" as const,
-            text: "Continue after the failed queued turn",
-            turnId: null,
-            streaming: false,
-            createdAt: new Date(Date.parse(now) + 1_000).toISOString(),
-            updatedAt: new Date(Date.parse(now) + 1_000).toISOString(),
-          },
-        ],
-      }),
+      update: (thread: OrchestrationReadModel["threads"][number]) => {
+        const requestedAt = new Date(Date.parse(now) + 1_000).toISOString();
+        const messageId = MessageId.make("child-in-flight-continuation");
+        return {
+          ...thread,
+          messages: [
+            ...thread.messages,
+            {
+              id: messageId,
+              role: "user" as const,
+              text: "Continue after the failed queued turn",
+              turnId: null,
+              streaming: false,
+              createdAt: requestedAt,
+              updatedAt: requestedAt,
+            },
+          ],
+          // The continuation is accepted but not acknowledged, which is what
+          // `pendingTurnStart` records.
+          pendingTurnStart: { messageId, requestedAt },
+        };
+      },
     },
   ])("does not report a failed queued turn while a $name can make progress", async ({ update }) => {
     const stalled = delegatedReadModel({ blockedItems: true });

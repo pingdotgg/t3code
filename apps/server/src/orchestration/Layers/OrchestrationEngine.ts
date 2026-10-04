@@ -654,21 +654,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   ),
                 );
             }
-            for (const [index, event] of committedCommand.committedEvents.entries()) {
-              yield* PubSub.publish(eventPubSub, event);
-              if (index === 0) {
-                yield* Metric.update(
-                  Metric.withAttributes(
-                    orchestrationCommandAckDuration,
-                    metricAttributes({
-                      ...baseMetricAttributes,
-                      ackEventType: event.type,
-                    }),
-                  ),
-                  Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
-                );
-              }
-            }
+            // Committed, so an interrupt mid-loop would strand events nothing
+            // re-publishes. Pure in-memory fan-out, so atomicity is free.
+            yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                for (const [index, event] of committedCommand.committedEvents.entries()) {
+                  yield* PubSub.publish(eventPubSub, event);
+                  if (index === 0) {
+                    yield* Metric.update(
+                      Metric.withAttributes(
+                        orchestrationCommandAckDuration,
+                        metricAttributes({
+                          ...baseMetricAttributes,
+                          ackEventType: event.type,
+                        }),
+                      ),
+                      Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
+                    );
+                  }
+                }
+              }),
+            );
             return {
               result: dispatchResult(
                 admittedCommand,
@@ -981,12 +987,18 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     );
     const command = envelope.command;
     const cleanupPath = cleanupWorktreePath(command, readModel.threads);
-    const requiresWorktreeLock =
-      cleanupPath !== null ||
+    // Admission claims ownership and runs read-only Git, so taking the single
+    // global permit for it serialized every thread's start behind every other's
+    // — the dominant commit latency under load. Removal still takes both this
+    // lock and the per-checkout reservation below, and reserving a cleanup now
+    // takes that reservation too, so either blocks admission.
+    const mutatesCheckoutOnDisk =
       command.type === "thread.archive" ||
       command.type === "thread.unarchive" ||
-      command.type === "thread.delete";
-    const worktreeProcess = requiresWorktreeLock ? withWorktreeLock(process) : process;
+      command.type === "thread.delete" ||
+      command.type === "thread.workspace.handoff" ||
+      (command.type === "thread.create" && cleanupPath !== null);
+    const worktreeProcess = mutatesCheckoutOnDisk ? withWorktreeLock(process) : process;
     if (command.type !== "thread.turn.start" && command.type !== "thread.queued-turn.dispatch") {
       return worktreeProcess;
     }

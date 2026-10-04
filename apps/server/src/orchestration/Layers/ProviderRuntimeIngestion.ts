@@ -1754,7 +1754,19 @@ const make = Effect.gen(function* () {
       const isDuplicateCompletionAfterInterruption =
         event.type === "turn.completed" && wasTurnAborted;
 
+      // A graceful exit is deliberate — a session replacement or a user stop —
+      // and during replacement the turn has not been dispatched yet, so applying
+      // it would retire the pending start mid-flight. A crash ("error") does end
+      // it. A user stop still retires the start via the terminal session it
+      // dispatches.
+      const isCrashExit = event.type === "session.exited" && event.payload.exitKind === "error";
+      const isReplacementExit =
+        event.type === "session.exited" && !isCrashExit && thread.pendingTurnStart != null;
       const shouldApplyThreadLifecycle = (() => {
+        // Not behind the strict guard: this would permit a duplicate turn.
+        if (isReplacementExit) {
+          return false;
+        }
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }

@@ -11,6 +11,7 @@ import {
   OrchestrationThread,
 } from "@t3tools/contracts";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { Effect, Schema } from "effect";
@@ -74,6 +75,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
   WorkflowArtifactCreatedPayload,
   WorkflowNodeWorkerStartedPayload,
   WorkflowRunFinalizedPayload,
@@ -881,6 +883,8 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             latestTurn: latestTurnFromSession(thread, session),
+            // Shared with the SQL projection and both client reducers.
+            ...(sessionResolvesPendingTurnStart(session) ? { pendingTurnStart: null } : {}),
             updatedAt: event.occurredAt,
           }),
         };
@@ -951,6 +955,28 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            pendingTurnStart: {
+              messageId: payload.messageId,
+              requestedAt: payload.createdAt,
+              ...(payload.sourceProposedPlan !== undefined
+                ? { sourceProposedPlan: payload.sourceProposedPlan }
+                : {}),
+            },
+            updatedAt: event.occurredAt,
+          }),
+        })),
       );
 
     case "thread.queued-turn-created":
@@ -1273,10 +1299,28 @@ export function projectEvent(
             return nextBase;
           }
 
+          // Only the pending message's own failure clears it. `payload` is
+          // Schema.Unknown and this runs for every appended activity, so an
+          // unguarded read threw a TypeError that failed the whole transaction.
+          const pending = thread.pendingTurnStart;
+          const activityPayload = payload.activity.payload;
+          const failureMessageId =
+            typeof activityPayload === "object" &&
+            activityPayload !== null &&
+            "messageId" in activityPayload &&
+            typeof activityPayload.messageId === "string"
+              ? activityPayload.messageId
+              : undefined;
+          const clearsPendingStart =
+            payload.activity.kind === "provider.turn.start.failed" &&
+            pending != null &&
+            (failureMessageId === undefined || failureMessageId === pending.messageId);
+
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities: appendThreadActivity(thread, payload.activity),
+              ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
               updatedAt: event.occurredAt,
             }),
           };
