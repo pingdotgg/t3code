@@ -9,7 +9,7 @@
  * @module DrainableWorker
  */
 import type { Scope } from "effect";
-import { Effect, TxQueue, TxRef } from "effect";
+import { Deferred, Effect, TxQueue, TxRef } from "effect";
 
 export interface DrainableWorker<A> {
   /**
@@ -91,6 +91,59 @@ export const makeDrainableWorker = <A, E, R>(
         Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
         Effect.tx,
       );
+
+    return { enqueue, drain } satisfies DrainableWorker<A>;
+  });
+
+/**
+ * Create a drainable worker that runs items in enqueue order per key while
+ * items for different keys run concurrently. An item naming several keys waits
+ * for the earlier work of every key it names, and later work on any of those
+ * keys waits for it. A failed or defective item never wedges its keys.
+ *
+ * Enqueue order must be deterministic (a single producer fiber) for per-key
+ * ordering to be meaningful.
+ */
+export const makeKeyedDrainableWorker = <A, K, E, R>(
+  process: (item: A) => Effect.Effect<void, E, R>,
+  keysOf: (item: A) => ReadonlyArray<K>,
+): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
+  Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const context = yield* Effect.context<R>();
+    const tails = new Map<K, Deferred.Deferred<void>>();
+    const outstanding = yield* TxRef.make(0);
+
+    const enqueue = (item: A): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const done = yield* Deferred.make<void>();
+        const keys = [...new Set(keysOf(item))];
+        const previous = keys.flatMap((key) => {
+          const tail = tails.get(key);
+          tails.set(key, done);
+          return tail === undefined ? [] : [tail];
+        });
+        yield* TxRef.update(outstanding, (n) => n + 1).pipe(Effect.tx);
+        yield* Effect.forEach(previous, Deferred.await, { discard: true }).pipe(
+          Effect.andThen(Effect.exit(Effect.provideContext(process(item), context))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              for (const key of keys) {
+                if (tails.get(key) === done) tails.delete(key);
+              }
+            }).pipe(
+              Effect.andThen(Deferred.succeed(done, undefined)),
+              Effect.andThen(TxRef.update(outstanding, (n) => n - 1).pipe(Effect.tx)),
+            ),
+          ),
+          Effect.forkIn(scope),
+        );
+      });
+
+    const drain: DrainableWorker<A>["drain"] = TxRef.get(outstanding).pipe(
+      Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),
+      Effect.tx,
+    );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
   });

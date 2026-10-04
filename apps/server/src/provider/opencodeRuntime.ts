@@ -266,6 +266,38 @@ export function buildOpenCodeServeArgs(input: {
   return ["serve", `--hostname=${input.hostname}`, `--port=${input.port}`];
 }
 
+// The watchdog holds the only copy of T3's stdin pipe. The kernel closes it
+// whenever T3 exits — including crashes and SIGKILL, where no finalizer runs —
+// so `read` returns and the watchdog takes down the whole process group.
+// `opencode serve` is an HTTP server that never reads stdin, so without this
+// it outlives every T3 restart that skips the scope finalizer.
+const PARENT_LIFETIME_SCRIPT = [
+  "exec 3<&0 </dev/null",
+  '"$0" "$@" 3<&- &',
+  "server=$!",
+  "{ trap '' TERM; read -r line <&3; kill -TERM 0; sleep 2; kill -KILL 0; } >/dev/null 2>&1 &",
+  "watchdog=$!",
+  "exec 3<&-",
+  'wait "$server"',
+  "status=$?",
+  'kill -KILL "$watchdog" 2>/dev/null',
+  'exit "$status"',
+].join("\n");
+
+/**
+ * Wrap a long-lived child so it exits when the spawning process dies. Spawn the
+ * result detached (its own process group) with a stdin pipe that is never
+ * written to or closed.
+ *
+ * @internal
+ */
+export function bindToParentLifetime(
+  command: string,
+  args: ReadonlyArray<string>,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return { command: "/bin/sh", args: ["-c", PARENT_LIFETIME_SCRIPT, command, ...args] };
+}
+
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
 // does not expose the hidden flag. Keep in sync with OpenCode agent
 // definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
@@ -571,9 +603,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const { command: serverTarget, shell: serverShell } = resolveWindowsSpawn(input.binaryPath, {
         env: serverEnv,
       });
+      // ponytail: Windows has no process groups or /bin/sh; a crashed T3 can
+      // still orphan `opencode serve` there. Upgrade path: a Job Object.
+      const spawnCommand =
+        process.platform === "win32"
+          ? { command: serverTarget, args }
+          : bindToParentLifetime(serverTarget, args);
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(serverTarget, args, {
+          ChildProcess.make(spawnCommand.command, [...spawnCommand.args], {
             detached: process.platform !== "win32",
             shell: serverShell,
             env: serverEnv,
