@@ -5475,12 +5475,24 @@ export function makeClaudeAdapterV2(
             if (blocked) {
               context.rejectedRateLimitTypes.add(limitType);
               const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
-              context.rateLimitResetTimes.set(
-                limitType,
+              const previousResetAt = context.rateLimitResetTimes.get(limitType);
+              let resetAt =
                 Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
                   ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null,
-              );
+                  : null;
+              // Sparse events can repeat a window without its reset. Keep only
+              // that named window's future timestamp until an allowed event clears it.
+              if (
+                rateLimitInfo.rateLimitType !== undefined &&
+                rateLimitInfo.resetsAt === undefined &&
+                previousResetAt !== undefined &&
+                previousResetAt !== null &&
+                DateTime.toEpochMillis(DateTime.makeUnsafe(previousResetAt)) >
+                  DateTime.toEpochMillis(now)
+              ) {
+                resetAt = previousResetAt;
+              }
+              context.rateLimitResetTimes.set(limitType, resetAt);
             } else if (
               rateLimitInfo.status === "allowed" ||
               rateLimitInfo.status === "allowed_warning" ||

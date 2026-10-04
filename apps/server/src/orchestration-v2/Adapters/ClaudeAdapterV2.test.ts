@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import type {
   Query as ClaudeQuery,
   SDKMessage,
+  SDKRateLimitInfo,
   SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -43,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/unstable/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -2581,6 +2583,139 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, expected);
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  const limitResetAt = "2026-10-04T14:00:00.000Z";
+  const limitResetsAt = DateTime.toEpochMillis(DateTime.makeUnsafe(limitResetAt)) / 1000;
+  it.effect.each([
+    {
+      name: "a repeated window omits its reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: limitResetAt,
+    },
+    {
+      name: "a repeated window follows an updated reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "another exhausted window has no reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the unknown-reset window recovers",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day" },
+        { status: "allowed", rateLimitType: "seven_day" },
+      ],
+      expectedResetAt: limitResetAt,
+    },
+    {
+      name: "a recovered window is rejected again without a reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "allowed", rateLimitType: "five_hour" },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the previous reset has expired",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt - 10800 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "a repeated window reports an invalid reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: NaN },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the window cannot be identified",
+      updates: [{ status: "rejected", resetsAt: limitResetsAt }, { status: "rejected" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "several exhausted windows have known resets",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day", resetsAt: limitResetsAt + 3600 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "only the assistant reports the limit",
+      updates: [],
+      expectedResetAt: null,
+    },
+  ] satisfies ReadonlyArray<{
+    readonly name: string;
+    readonly updates: ReadonlyArray<SDKRateLimitInfo>;
+    readonly expectedResetAt: string | null;
+  }>)("retains a trustworthy usage-limit reset when $name", ({ updates, expectedResetAt }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+      );
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-limit-reset"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      for (const [index, rate_limit_info] of updates.entries()) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info,
+            uuid: `00000000-0000-4000-8000-00000000066${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000668",
+          error: "rate_limit",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000669",
+          result: "You've hit your session limit · resets 4:40pm (Europe/London)",
+          isError: true,
+          apiErrorStatus: 429,
+          terminalReason: "api_error",
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.resetAt, expectedResetAt);
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
