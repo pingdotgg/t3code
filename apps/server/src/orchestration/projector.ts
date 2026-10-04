@@ -19,6 +19,7 @@ import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { Effect, Schema } from "effect";
 
+import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
   applyValidationEvent,
@@ -407,12 +408,18 @@ export function projectEvent(
         };
       });
 
+    // Archived and deleted threads stay in the read model forever, so they keep only the
+    // projected activity payloads; the raw tool output remains in SQL. Retaining it for
+    // every dormant thread exhausted the backend heap.
     case "thread.deleted":
       return decodeForEvent(ThreadDeletedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             deletedAt: payload.deletedAt,
+            activities: (
+              nextBase.threads.find((entry) => entry.id === payload.threadId)?.activities ?? []
+            ).map(projectActivityPayload),
             updatedAt: payload.deletedAt,
           }),
         })),
@@ -424,6 +431,9 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             archivedAt: payload.archivedAt,
+            activities: (
+              nextBase.threads.find((entry) => entry.id === payload.threadId)?.activities ?? []
+            ).map(projectActivityPayload),
             titleRegeneration: null,
             updatedAt: payload.updatedAt,
           }),
@@ -1323,7 +1333,12 @@ export function projectEvent(
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
-              activities: appendThreadActivity(thread, payload.activity),
+              activities: appendThreadActivity(
+                thread,
+                thread.archivedAt != null || thread.deletedAt !== null
+                  ? projectActivityPayload(payload.activity)
+                  : payload.activity,
+              ),
               ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
               updatedAt: event.occurredAt,
             }),

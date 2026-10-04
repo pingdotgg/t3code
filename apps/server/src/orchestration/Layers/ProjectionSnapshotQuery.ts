@@ -1903,10 +1903,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
             // Seek each thread's retained window instead of ranking its entire history.
-            // Keep archived and soft-deleted threads, just like the other snapshot rows.
-            Effect.forEach(threadRows, ({ threadId }) =>
+            // Keep archived and soft-deleted threads, just like the other snapshot rows, but
+            // project their payloads per window (as the projector does on archive/delete) so
+            // their raw tool output never accumulates in the heap.
+            Effect.forEach(threadRows, ({ threadId, archivedAt, deletedAt }) =>
               listThreadActivityRowsByThread({ threadId, limit: MAX_THREAD_ACTIVITIES }).pipe(
-                Effect.map((rows) => rows.toReversed()),
+                Effect.map((rows) =>
+                  archivedAt == null && deletedAt === null
+                    ? rows.toReversed()
+                    : rows.toReversed().map((row) => {
+                        const { summary, payload } = projectActivityPayload(
+                          mapThreadActivityRow(row),
+                        );
+                        return { ...row, summary, payload };
+                      }),
+                ),
               ),
             ).pipe(
               Effect.map((windows) => windows.flat()),

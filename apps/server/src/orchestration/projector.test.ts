@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -942,6 +943,69 @@ describe("orchestration projector", () => {
     );
     expect(cleared.threads[0]?.worktreePath).toBeNull();
     expect(cleared.threads[0]).not.toHaveProperty("workspaceBinding");
+  });
+
+  it("drops raw tool output from activities once a thread is archived or deleted", async () => {
+    const createdAt = "2026-10-04T12:00:00.000Z";
+    const threadId = "thread-dormant-activity";
+    const toolActivity = (eventSequence: number, activityId: string) =>
+      makeEvent({
+        sequence: eventSequence,
+        type: "thread.activity-appended",
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: `cmd-${activityId}`,
+        payload: {
+          threadId,
+          activity: {
+            id: activityId,
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Ran ls",
+            payload: {
+              itemType: "command_execution",
+              data: { command: "ls", rawOutput: { stdout: "first line\nmegabytes of output" } },
+            },
+            turnId: null,
+            createdAt,
+          },
+        },
+      });
+    const run = (model: OrchestrationReadModel, event: OrchestrationEvent) =>
+      Effect.runPromise(projectEvent(model, event));
+    const withRawOutput = (rawOutput: unknown) => ({ payload: { data: { rawOutput } } });
+
+    const live = await run(await createThreadModel(threadId, createdAt), toolActivity(2, "a-1"));
+    expect(live.threads[0]?.activities).toMatchObject([
+      withRawOutput({ stdout: "first line\nmegabytes of output" }),
+    ]);
+
+    for (const dormantEvent of [
+      {
+        type: "thread.archived",
+        payload: { threadId, archivedAt: createdAt, updatedAt: createdAt },
+      },
+      { type: "thread.deleted", payload: { threadId, deletedAt: createdAt } },
+    ] as const) {
+      const dormant = await run(
+        live,
+        makeEvent({
+          sequence: 3,
+          type: dormantEvent.type,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: `cmd-${dormantEvent.type}`,
+          payload: dormantEvent.payload,
+        }),
+      );
+      const appended = await run(dormant, toolActivity(4, "a-2"));
+      expect(appended.threads[0]?.activities).toMatchObject([
+        withRawOutput({ content: "first line" }),
+        withRawOutput({ content: "first line" }),
+      ]);
+    }
   });
 
   it("applies queued turn lifecycle events", async () => {

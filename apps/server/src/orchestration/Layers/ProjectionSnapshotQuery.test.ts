@@ -1152,6 +1152,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         const query = yield* ProjectionSnapshotQuery;
         const sql = yield* SqlClient.SqlClient;
         const now = "2026-09-24T00:00:00.000Z";
+        const rawToolPayload = {
+          itemType: "command_execution",
+          data: { command: "ls", rawOutput: { stdout: "first line\nmegabytes of output" } },
+        };
         yield* sql`
         INSERT INTO projection_projects
           (project_id, title, workspace_root, scripts_json, created_at, updated_at)
@@ -1178,7 +1182,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           )
           SELECT
             ${threadId} || printf('-%04d', value), ${threadId}, 'info', 'runtime.note', 'Activity',
-            CASE WHEN value <= 2 THEN 'invalid old payload' ELSE '{}' END,
+            CASE
+              WHEN value <= 2 THEN 'invalid old payload'
+              WHEN value = 502 THEN ${JSON.stringify(rawToolPayload)}
+              ELSE '{}'
+            END,
             CASE WHEN value % 2 = 0 THEN NULL ELSE 503 - value END,
             ${now}
           FROM entries
@@ -1203,6 +1211,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           );
           assert.equal(thread.archivedAt, state === "archived" ? now : null);
           assert.equal(thread.deletedAt, state === "deleted" ? now : null);
+          // Dormant threads hydrate only the client projection of raw tool output.
+          assert.deepStrictEqual(
+            thread.activities.at(-1)?.payload,
+            state === "active"
+              ? rawToolPayload
+              : {
+                  itemType: "command_execution",
+                  data: { command: "ls", rawOutput: { content: "first line" } },
+                },
+          );
         }
         yield* sql`DELETE FROM projection_thread_activities WHERE thread_id LIKE 'window-%' OR activity_id = 'window-orphan'`;
         yield* sql`DELETE FROM projection_threads WHERE project_id = 'window-project'`;
