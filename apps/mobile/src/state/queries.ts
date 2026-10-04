@@ -2,6 +2,7 @@ import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRe
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
   ProjectId,
   ThreadId,
   VcsListRefsResult,
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -350,4 +352,25 @@ export function useCheckpointDiff(target: CheckpointDiffTarget) {
     targets.turn === null ? null : orchestrationEnvironment.turnDiff(targets.turn),
   );
   return targets.fullThread === null ? turn : fullThread;
+}
+
+/** Full input and output for one tool row; pass null to skip fetching. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly row: OrchestrationV2ProjectedTurnItem;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.row.sourceThreadId,
+            itemId: target.row.sourceItemId,
+            revision: turnItemDetailRevision(target.row.item),
+          },
+        }),
+  );
 }

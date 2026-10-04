@@ -17,7 +17,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { projectTurnItemForWire, projectDomainEventForWire } from "./WireProjection.ts";
+import {
+  projectTurnItemForWire,
+  projectTurnItemForDetail,
+  projectDomainEventForWire,
+} from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
@@ -173,7 +177,7 @@ describe("orchestration V2 wire projection", () => {
 
   it("omits even small dynamic tool results while retaining input", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
-    expect(projectTurnItemForWire(item)).toEqual(base);
+    expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
   });
 
@@ -252,9 +256,23 @@ describe("orchestration V2 wire projection", () => {
       const projected = projectTurnItemForWire(item);
       expect(projected).not.toHaveProperty("output");
       expect(projected).toMatchObject({ input: "test", status: "completed" });
+      // Clients fetch withheld output on demand, so they need to know it exists.
+      expect(projected.type === "command_execution" ? projected.outputOmitted : null).toBe(
+        output ? true : undefined,
+      );
       expect(item.output).toBe(output);
     },
   );
+
+  it.each([
+    ["echo ok", "echo ok"],
+    ["a".repeat(262_143) + "😀", "a".repeat(262_143) + "\n… output truncated for transport"],
+  ])("bounds fetched command input without changing persistence, case %#", (input, expected) => {
+    const item = { ...base, type: "command_execution" as const, input, output: "ok" };
+    const projected = projectTurnItemForDetail(item);
+    expect(projected).toMatchObject({ input: expected, output: "ok" });
+    expect(item.input).toBe(input);
+  });
 
   it("keeps failure evidence without retaining command output", () => {
     const item = {
@@ -290,6 +308,14 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
     expect(item.diffStr).toBe("+new code");
+    // A failed edit keeps the provider's error so expanding the row can show it.
+    const failed = projectTurnItemForWire({
+      ...item,
+      status: "failed",
+      diffStr: "String to replace not found",
+    });
+    expect(failed).toMatchObject({ diffStr: "String to replace not found" });
+    expect(failed).not.toHaveProperty("newStr");
   });
 
   it("retains only result identities and failure metadata in live tool events", () => {

@@ -1324,6 +1324,12 @@ describe("AcpAdapterV2", () => {
         ),
         { input: "printf proof", output: "proof" },
       );
+      assert.deepInclude(
+        items.flatMap((item) =>
+          item.type === "command_execution" ? [{ input: item.input, output: item.output }] : [],
+        ),
+        { input: "cat probe.txt", output: "after\n" },
+      );
       assert.isTrue(
         items.some((item) => item.title === "Action required" && item.status === "waiting"),
       );
@@ -1345,6 +1351,35 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const webItem = (nativeId: string, status: string) => {
+        const item = items.findLast(
+          (candidate) =>
+            candidate.type === "web_search" &&
+            candidate.status === status &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "web_search"
+          ? { title: item.title, patterns: item.patterns, results: item.results }
+          : null;
+      };
+      assert.deepEqual(webItem("grok-x-search", "running"), {
+        title: "X search",
+        patterns: undefined,
+        results: undefined,
+      });
+      assert.deepEqual(webItem("grok-x-search", "completed"), {
+        title: "X search: conversation_id:42",
+        patterns: ["conversation_id:42"],
+        results: undefined,
+      });
+      assert.deepEqual(webItem("grok-web-search", "completed"), {
+        title: "Web search: t3 code",
+        patterns: ["t3 code"],
+        results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
+      });
+      assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
+        { url: "https://t3.codes", snippet: "T3 Code page" },
+      ]);
       const completedCompaction = items.find(
         (item) =>
           item.type === "compaction" &&
