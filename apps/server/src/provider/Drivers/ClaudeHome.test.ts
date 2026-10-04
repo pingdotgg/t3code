@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
@@ -62,6 +63,54 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
           explicit,
         );
+      }),
+    );
+
+    const makeClaudeHomes = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" }),
+      );
+      const home = (name: string) => path.join(root, name);
+      const linkProjects = (name: string, target: string) =>
+        fileSystem
+          .makeDirectory(home(name))
+          .pipe(Effect.andThen(fileSystem.symlink(target, path.join(home(name), "projects"))));
+
+      yield* fileSystem.makeDirectory(path.join(home("shared"), "projects"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(home("separate"), "projects"), { recursive: true });
+      yield* fileSystem.makeDirectory(home("fresh"));
+      yield* linkProjects("overlay", path.join(home("shared"), "projects"));
+      yield* linkProjects("chained", path.join(home("overlay"), "projects"));
+      yield* linkProjects("dangling", path.join(home("missing"), "projects"));
+      yield* fileSystem.symlink(home("shared"), home("alias"));
+      return home;
+    });
+    const keyFor = (homePath: string, environment?: NodeJS.ProcessEnv) =>
+      makeClaudeContinuationGroupKey({ homePath }, environment);
+
+    it.effect("groups auth-overlay homes with the home their projects symlink points at", () =>
+      Effect.gen(function* () {
+        const home = yield* makeClaudeHomes;
+        const sharedKey = `claude:home:${home("shared")}`;
+
+        expect(yield* keyFor(home("shared"))).toBe(sharedKey);
+        expect(yield* keyFor(home("overlay"))).toBe(sharedKey);
+        expect(yield* keyFor(home("chained"))).toBe(sharedKey);
+        expect(yield* keyFor(home("alias"))).toBe(sharedKey);
+        expect(yield* keyFor("", { CLAUDE_CONFIG_DIR: home("overlay") })).toBe(sharedKey);
+        expect(yield* keyFor(home("separate"))).toBe(`claude:home:${home("separate")}`);
+      }),
+    );
+
+    it.effect("keeps a home without resolvable projects in its own group", () =>
+      Effect.gen(function* () {
+        const home = yield* makeClaudeHomes;
+
+        expect(yield* keyFor(home("fresh"))).toBe(`claude:home:${home("fresh")}`);
+        expect(yield* keyFor(home("dangling"))).toBe(`claude:home:${home("dangling")}`);
+        expect(yield* keyFor(home("missing"))).toBe(`claude:home:${home("missing")}`);
       }),
     );
 

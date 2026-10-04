@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -57,9 +58,18 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
   function* (
     config: Pick<ClaudeSettings, "homePath">,
     environment?: NodeJS.ProcessEnv,
-  ): Effect.fn.Return<string, never, Path.Path> {
+  ): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `claude:home:${resolvedHomePath}`;
+    // Auth-overlay homes symlink `projects` into a shared home and resume its transcripts.
+    const transcriptsHome = yield* fileSystem
+      .realPath(path.join(resolvedHomePath, "projects"))
+      .pipe(
+        Effect.map(path.dirname),
+        Effect.orElseSucceed(() => resolvedHomePath),
+      );
+    return `claude:home:${transcriptsHome}`;
   },
 );
 
