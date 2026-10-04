@@ -34,6 +34,7 @@ function recordEffect(action: string) {
   state.completed.resolve();
 }
 
+vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
@@ -46,6 +47,7 @@ vi.mock("../state/session", () => ({
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
 vi.mock("../state/entities", () => ({
+  readEnvironmentSupportsAutoSettleOptOut: () => true,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
@@ -57,8 +59,8 @@ vi.mock("../state/entities", () => ({
     title: "Thread",
     branch: "main",
     worktreePath: null,
-    session: null,
-    latestTurn: null,
+    runtime: null,
+    latestRun: null,
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
@@ -123,6 +125,7 @@ vi.mock("./useThreadActions", () => ({
   useThreadActions: () =>
     Object.fromEntries(
       [
+        "markThreadUnread",
         "settleThread",
         "unsettleThread",
         "snoozeThread",
@@ -134,7 +137,7 @@ vi.mock("./useThreadActions", () => ({
       ].map((action) => [
         action,
         async () => {
-          recordEffect(action);
+          recordEffect(action === "markThreadUnread" ? "mark-unread" : action);
           return AsyncResult.success(undefined);
         },
       ]),

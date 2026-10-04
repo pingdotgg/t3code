@@ -19,6 +19,7 @@ vi.mock("react", async (importOriginal) => ({
 }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
+  useWindowDimensions: () => ({ height: 800, width: 400 }),
   Pressable: "Pressable",
   ScrollView: "ScrollView",
   View: "View",

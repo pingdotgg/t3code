@@ -4,6 +4,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -263,3 +264,40 @@ describe("settings mutation authorization", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("requires task permission before attaching a prepared worktree to a thread", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.gitPreparePullRequestThread
+        > => tag !== WS_METHODS.gitPreparePullRequestThread,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.gitPreparePullRequestThread, () =>
+            Effect.sync(() => {
+              handled = true;
+            }).pipe(Effect.andThen(Effect.never)),
+          ),
+          rpcScopeAuthorizationLayer([AuthSourceControlWriteScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.gitPreparePullRequestThread]({
+        cwd: "/repo",
+        reference: "42",
+        mode: "worktree",
+        threadId: ThreadId.make("thread"),
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);

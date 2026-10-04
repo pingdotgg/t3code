@@ -1,6 +1,7 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
+  GitPreparePullRequestThreadInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -247,13 +248,24 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
+const requiredScopesForRpcCall = (
+  method: string,
+  payload: unknown,
+): ReadonlyArray<AuthEnvironmentScope> => {
+  if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.gitPreparePullRequestThread) {
+    const input = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput)(payload);
+    if (input.mode === "worktree" && input.threadId !== undefined) {
+      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+    }
+  }
+  return [requiredScopeForRpcMethod(method)];
+};
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes =
-      rpc._tag === WS_METHODS.serverUpdateSettings
-        ? requiredScopesForSettingsUpdate(payload)
-        : [requiredScopeForRpcMethod(rpc._tag)];
+    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));
   });

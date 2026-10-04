@@ -24,7 +24,13 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
+vi.mock("../../components/MaterialListRow", () => ({ MaterialListRow: "MaterialListRow" }));
+vi.mock("../../components/MaterialButton", () => ({ MaterialButton: "MaterialButton" }));
+vi.mock("../../components/ScreenScrollView", () => ({ ScreenScrollView: "ScrollView" }));
+vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: "SettingsScreen" }));
+vi.mock("../../components/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
 vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
   ActivityIndicator: "ActivityIndicator",
   Alert: { alert: () => {} },
   Pressable: "Pressable",
@@ -60,14 +66,14 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: { platform: { os: "linux" } },
+          environment: { platform: { os: "linux" }, capabilities: {} },
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
       [
         "other-environment",
         {
-          environment: { platform: { os: "linux" } },
+          environment: { platform: { os: "linux" }, capabilities: {} },
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],

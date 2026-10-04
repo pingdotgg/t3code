@@ -327,7 +327,7 @@ describe("thread action permissions", () => {
     state.sessionLookupFails = sessionLookupFails;
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
-    expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+    expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
   });
 
@@ -344,7 +344,7 @@ describe("thread action permissions", () => {
       // instead of failing the deletion.
       const result = await useThreadActions().deleteThread(target);
       expect(result._tag).toBe("Success");
-      expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+      expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
       expect(state.toasts).toContain("Failed to delete worktree");
       expect(state.localEffects).toContain("clear-terminal-ui");
     } finally {

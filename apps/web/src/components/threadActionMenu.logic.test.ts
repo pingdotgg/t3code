@@ -51,8 +51,26 @@ describe("buildThreadActionMenuItems", () => {
         isSnoozed: reversed,
       });
       const expected = reversed
-        ? ["unpin", "unsettle", "unsnooze", "rename", "regenerate-title", "archive", "delete"]
-        : ["pin", "settle", "snooze", "rename", "regenerate-title", "archive", "delete"];
+        ? [
+            "unpin",
+            "unsettle",
+            "unsnooze",
+            "rename",
+            "regenerate-title",
+            "auto-settle",
+            "archive",
+            "delete",
+          ]
+        : [
+            "pin",
+            "settle",
+            "snooze",
+            "rename",
+            "regenerate-title",
+            "auto-settle",
+            "archive",
+            "delete",
+          ];
       expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(expected);
       expect(
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??

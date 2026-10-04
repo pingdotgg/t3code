@@ -112,7 +112,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useThread, useThreadShell } from "~/state/entities";
+import { useThreadProjection, useThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -1094,7 +1094,7 @@ export default function GitActionsControl({
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
     [activeThreadRef],
   );
-  const activeServerThread = useThreadShell(activeThreadRef);
+  const activeServerThreadShell = useThreadShell(activeThreadRef);
   const openPrLink = useOpenPrLink(activeThreadRef ?? undefined);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
@@ -1103,11 +1103,11 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
-  const activeServerThreadShell = useThreadShell(activeThreadRef);
-  const activeServerThreadDetail = useThread(activeThreadRef, {
-    waitForShell: activeDraftThread !== null,
-  });
-  const activeServerThread = activeServerThreadShell ?? activeServerThreadDetail;
+  const activeServerThreadProjection = useThreadProjection(
+    activeDraftThread !== null && activeServerThreadShell === null ? null : activeThreadRef,
+  );
+  const activeServerThread =
+    activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -1273,12 +1273,11 @@ export default function GitActionsControl({
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
   );
-  const quickActionDisabledReason =
-    !canWriteSourceControl && quickAction.kind !== "open_pr"
-      ? "This connection cannot change source control."
-      : quickAction.disabled
-        ? (quickAction.hint ?? "This action is currently unavailable.")
-        : null;
+  const quickActionDisabledReason = !canWriteSourceControl
+    ? "This connection cannot change source control."
+    : quickAction.disabled
+      ? (quickAction.hint ?? "This action is currently unavailable.")
+      : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
@@ -1720,7 +1719,7 @@ export default function GitActionsControl({
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
             key={`${item.id}-${item.label}`}
-            disabled={(!canWriteSourceControl && item.kind !== "open_pr") || item.disabled}
+            disabled={!canWriteSourceControl || item.disabled}
             onClick={() => {
               openDialogForMenuItem(item);
             }}
@@ -1892,7 +1891,7 @@ export default function GitActionsControl({
               size="xs"
               part="primary"
               panel={isPanel}
-              disabled={(!canWriteSourceControl && quickAction.kind !== "open_pr") || isGitActionRunning || quickAction.disabled}
+              disabled={!canWriteSourceControl || isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
               <GitQuickActionIcon

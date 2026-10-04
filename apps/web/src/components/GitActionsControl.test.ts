@@ -33,10 +33,12 @@ vi.mock("react", async (importOriginal) => ({
     return callback;
   },
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: unknown) => (atom === "vcs-state" ? { isRunning: false } : null),
+}));
 vi.mock("~/state/entities", () => ({
-  useThread: (_ref: unknown, options?: { waitForShell?: boolean }) =>
-    options?.waitForShell && state.shell === null ? null : state.detail,
+  useThreadProjection: (ref: unknown) =>
+    ref === null || state.detail === null ? null : { projection: { thread: state.detail } },
   useThreadShell: () => state.shell,
 }));
 vi.mock("~/state/session", () => ({
@@ -48,7 +50,10 @@ vi.mock("~/state/session", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: {} }));
-vi.mock("~/state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
+vi.mock("~/state/vcs", () => ({
+  vcsEnvironment: { status: () => null },
+  vcsActionManager: { stateAtom: () => "vcs-state" },
+}));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: {
     updateMetadata: async ({
@@ -139,6 +144,7 @@ vi.mock("~/components/ui/group", () => ({ Group: "Group", GroupSeparator: "Group
 vi.mock("~/components/ui/menu", () => ({
   Menu: "Menu",
   MenuItem: "MenuItem",
+  MenuItemLabel: "MenuItemLabel",
   MenuPopup: "MenuPopup",
   MenuTrigger: "MenuTrigger",
 }));
