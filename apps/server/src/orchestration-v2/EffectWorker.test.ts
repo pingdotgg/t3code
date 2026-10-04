@@ -76,9 +76,34 @@ function restartEffect(
   };
 }
 
+function interruptEffect(now: DateTime.Utc): EffectOutbox.OrchestrationEffectV2 {
+  const timestamp = DateTime.formatIso(now);
+  return {
+    id: "effect:interrupt:background-work",
+    commandId: CommandId.make("command:interrupt:background-work"),
+    threadId,
+    request: {
+      type: "provider-turn.interrupt",
+      providerSessionId: oldSessionId,
+      providerThreadId,
+      providerTurnId,
+    },
+    status: "running",
+    attemptCount: 1,
+    availableAt: timestamp,
+    leaseOwner: "test-worker",
+    leaseExpiresAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
 function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
+  readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2["Service"]["interrupt"];
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
 }) {
@@ -87,7 +112,7 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
-        interrupt: () => Effect.void,
+        interrupt: input.interrupt ?? (() => Effect.void),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -192,6 +217,101 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
     ),
   );
 });
+
+it.effect("settles background work when the interrupted provider turn is already inactive", () =>
+  Effect.gen(function* () {
+    const effect = interruptEffect(yield* DateTime.now);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const commands = yield* Ref.make<
+      ReadonlyArray<
+        Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+      >
+    >([]);
+    const layer = makeExecutorLayer({
+      events,
+      interrupt: () =>
+        Ref.update(events, (existing) => [...existing, "interrupt"]).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderTurnControlService.ProviderTurnControlError({
+                threadId,
+                operation: "interrupt",
+                providerTurnId,
+                cause: new Error(
+                  `Provider turn ${providerTurnId} is not active and cannot be interrupted.`,
+                ),
+              }),
+            ),
+          ),
+        ),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(commands, (existing) => [...existing, command]).pipe(
+            Effect.andThen(Ref.update(events, (existing) => [...existing, "settle"])),
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      },
+    });
+
+    yield* EffectWorker.OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) => executor.execute(effect)),
+      Effect.provide(layer),
+    );
+
+    assert.deepEqual(yield* Ref.get(events), ["interrupt", "settle"]);
+    assert.deepEqual(yield* Ref.get(commands), [
+      {
+        type: "thread.background-work.settle",
+        commandId: CommandId.make(`${effect.id}:background-work-settled`),
+        threadId,
+        providerThreadId,
+        providerTurnId,
+      },
+    ]);
+  }),
+);
+
+it.effect("does not settle background work when provider interruption fails unexpectedly", () =>
+  Effect.gen(function* () {
+    const effect = interruptEffect(yield* DateTime.now);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const commands = yield* Ref.make<
+      ReadonlyArray<
+        Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+      >
+    >([]);
+    const layer = makeExecutorLayer({
+      events,
+      interrupt: () =>
+        Effect.fail(
+          new ProviderTurnControlService.ProviderTurnControlError({
+            threadId,
+            operation: "interrupt",
+            providerTurnId,
+            cause: new Error("ACP hard teardown failed unexpectedly; the session is poisoned"),
+          }),
+        ),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(commands, (existing) => [...existing, command]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      },
+    });
+
+    const exit = yield* EffectWorker.OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) => executor.execute(effect)),
+      Effect.provide(layer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.include(Cause.pretty(exit.cause), "ACP hard teardown failed unexpectedly");
+    }
+    assert.deepEqual(yield* Ref.get(commands), []);
+  }),
+);
 
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {
