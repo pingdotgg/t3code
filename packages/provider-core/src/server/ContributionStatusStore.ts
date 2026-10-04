@@ -4,6 +4,9 @@ import {
   CONTRIBUTION_STATUS_KEY_MAX_LENGTH,
   CONTRIBUTION_STATUS_MAX_ITEMS,
   CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
   CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD,
   CONTRIBUTION_STATUS_MAX_THREADS,
   CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
@@ -106,7 +109,7 @@ const HAS_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
  * contract allows, or contains a control character or lone UTF-16 surrogate
  * is rejected on set and clear alike.
  */
-const isValidKey = (key: string) =>
+export const isValidContributionStatusKey = (key: string) =>
   key.length > 0 &&
   key.length <= CONTRIBUTION_STATUS_KEY_MAX_LENGTH &&
   key.isWellFormed() &&
@@ -118,7 +121,7 @@ const isValidKey = (key: string) =>
  * at most `maxLength` UTF-16 units without splitting a surrogate pair. A
  * truncated value ends in `…`.
  */
-function normalizeContributionStatusText(raw: string, maxLength: number): string {
+export function normalizeContributionStatusText(raw: string, maxLength: number): string {
   const text = NodeUtil.stripVTControlCharacters(raw.toWellFormed())
     .replace(CONTROL_CHARACTERS, " ")
     .replace(/\s+/g, " ")
@@ -141,9 +144,24 @@ interface SourceSlot {
 /**
  * Which handles compete for one entry on a thread. A thread hosts one provider
  * session at a time, so every provider-session source shares a slot and a new
- * session takes the old one over; plugins will each get their own slot.
+ * session takes the old one over; each plugin gets its own slot.
  */
-const slotKey = (source: ContributionStatusSource) => source.kind;
+const slotKey = (source: ContributionStatusSource) =>
+  source.kind === "plugin" ? contributionStatusSourceKey(source) : source.kind;
+
+/** Capacity pools: plugins count only against their own, so they never crowd out provider statuses. */
+const poolLimits = (source: ContributionStatusSource) =>
+  source.kind === "plugin"
+    ? {
+        sources: CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+        threads: CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+      }
+    : {
+        sources: CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD,
+        threads: CONTRIBUTION_STATUS_MAX_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_ITEMS,
+      };
 
 const sameItem = (left: ContributionStatusItem | undefined, right: ContributionStatusItem) =>
   left !== undefined &&
@@ -167,28 +185,33 @@ export const make = Effect.fn("contributions.status.make")(function* () {
    * Binding a thread only records ownership; capacity is taken by the first
    * visible item and returned by the last clear, so silent producers never
    * crowd out ones that show something, and a rejected producer's later set
-   * is admitted once capacity frees up.
+   * is admitted once capacity frees up. Each pool's caps count only its own
+   * sources.
    */
   const admitsNewItem = (threadId: ThreadId, slot: SourceSlot) => {
     if (slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE) return false;
+    const limits = poolLimits(slot.source);
+    const samePool = (other: SourceSlot) =>
+      (other.source.kind === "plugin") === (slot.source.kind === "plugin");
     let items = 0;
     let visibleThreads = 0;
     for (const slots of threads.values()) {
       let visible = false;
       for (const other of slots.values()) {
+        if (!samePool(other)) continue;
         items += other.items.size;
         visible ||= other.items.size > 0;
       }
       if (visible) visibleThreads += 1;
     }
-    if (items >= CONTRIBUTION_STATUS_MAX_ITEMS) return false;
+    if (items >= limits.items) return false;
     if (slot.items.size > 0) return true;
     let visibleSources = 0;
     for (const other of threads.get(threadId)?.values() ?? []) {
-      if (other.items.size > 0) visibleSources += 1;
+      if (samePool(other) && other.items.size > 0) visibleSources += 1;
     }
-    if (visibleSources >= CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD) return false;
-    return visibleSources > 0 || visibleThreads < CONTRIBUTION_STATUS_MAX_THREADS;
+    if (visibleSources >= limits.sources) return false;
+    return visibleSources > 0 || visibleThreads < limits.threads;
   };
 
   const currentSnapshot = (): ContributionStatusSnapshot => ({
@@ -271,7 +294,8 @@ export const make = Effect.fn("contributions.status.make")(function* () {
           update(() => {
             const slot = ownedSlot();
             const key = input.key;
-            if (slot === undefined || threadId === null || !isValidKey(key)) return false;
+            if (slot === undefined || threadId === null || !isValidContributionStatusKey(key))
+              return false;
             const text = normalizeContributionStatusText(
               input.text,
               CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
@@ -299,7 +323,7 @@ export const make = Effect.fn("contributions.status.make")(function* () {
         clear: (key) =>
           update(() => {
             const slot = ownedSlot();
-            if (slot === undefined || !isValidKey(key)) return false;
+            if (slot === undefined || !isValidContributionStatusKey(key)) return false;
             return slot.items.delete(key);
           }),
         clearAll: update(() => {

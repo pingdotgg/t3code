@@ -2,7 +2,11 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CONTRIBUTION_STATUS_MAX_ITEMS,
   CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
   CONTRIBUTION_STATUS_MAX_THREADS,
+  type ContributionStatusSnapshot,
   type ContributionStatusSource,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -37,6 +41,27 @@ const openHandle = Effect.fn("openHandle")(function* (
   yield* handle.bindThread(threadId);
   return { handle, close: Scope.close(scope, Exit.void) };
 });
+
+/** A plugin producer, which has its own capacity pool beside provider sessions. */
+const openPlugin = Effect.fn("openPlugin")(function* (
+  store: ContributionStatusStore.ContributionStatusStoreShape,
+  pluginId: string,
+  threadId: ThreadId,
+) {
+  const handle = yield* store
+    .openSource({ kind: "plugin", pluginId, name: pluginId })
+    .pipe(Scope.provide(yield* Scope.make()));
+  yield* handle.bindThread(threadId);
+  return handle;
+});
+
+const countBy = (snapshot: ContributionStatusSnapshot, kind: ContributionStatusSource["kind"]) => {
+  const entries = snapshot.entries.filter((entry) => entry.source.kind === kind);
+  return {
+    threads: new Set(entries.map((entry) => entry.threadId)).size,
+    items: entries.reduce((total, entry) => total + entry.items.length, 0),
+  };
+};
 
 const itemsByThread = (store: ContributionStatusStore.ContributionStatusStoreShape) =>
   Effect.map(store.snapshot, (snapshot) =>
@@ -169,10 +194,9 @@ describe("ContributionStatusStore", () => {
 
       const snapshot = yield* store.snapshot;
       assert.deepStrictEqual(yield* itemsByThread(store), { [THREAD_A]: ["mode=new"] });
-      assert.strictEqual(
-        snapshot.entries[0]?.source.providerSessionId,
-        ProviderSessionId.make("session-new"),
-      );
+      assert.deepInclude(snapshot.entries[0]?.source, {
+        providerSessionId: ProviderSessionId.make("session-new"),
+      });
     }),
   );
 
@@ -274,6 +298,77 @@ describe("ContributionStatusStore", () => {
       assert.include(
         (yield* store.snapshot).entries.map((entry) => entry.threadId),
         ThreadId.make(`t-${fullThreads}`),
+      );
+    }),
+  );
+  it.effect("keeps every slot a provider session had on a thread full of plugins", () =>
+    Effect.gen(function* () {
+      const store = yield* ContributionStatusStore.make();
+      for (let index = 0; index <= CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD; index += 1) {
+        const plugin = yield* openPlugin(store, `acme.p${index}`, THREAD_A);
+        yield* plugin.set({ key: "run", text: "on" });
+      }
+      // The plugin pool is full on this thread: the extra plugin was refused.
+      assert.strictEqual(
+        countBy(yield* store.snapshot, "plugin").items,
+        CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+      );
+
+      const provider = yield* openHandle(store, "session-1", THREAD_A);
+      yield* provider.handle.set({ key: "mode", text: "plan" });
+      const kinds = (yield* store.snapshot).entries.map((entry) => entry.source.kind);
+      assert.deepStrictEqual(kinds, ["provider-session", "plugin", "plugin", "plugin"]);
+    }),
+  );
+
+  it.effect("never lets plugins take thread or item capacity from provider sessions", () =>
+    Effect.gen(function* () {
+      const store = yield* ContributionStatusStore.make();
+      // A provider status that exists before the plugins arrive.
+      const existing = yield* openHandle(store, "provider-0", ThreadId.make("t-0"));
+      yield* existing.handle.set({ key: "mode", text: "plan" });
+
+      // Plugins fill their whole pool: every plugin thread and every plugin item.
+      const perThread =
+        CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS / CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS;
+      for (let index = 0; index < CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS; index += 1) {
+        const plugin = yield* openPlugin(store, `acme.p${index}`, ThreadId.make(`t-${index}`));
+        for (let item = 0; item < perThread; item += 1)
+          yield* plugin.set({ key: `k${item}`, text: "on" });
+      }
+      const refused = yield* openPlugin(store, "acme.late", ThreadId.make("t-late"));
+      yield* refused.set({ key: "k", text: "refused" });
+      assert.deepStrictEqual(countBy(yield* store.snapshot, "plugin"), {
+        threads: CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+      });
+
+      // The existing provider source still adds a new key, and providers still
+      // reach their own thread and item caps, on plugin threads and new ones.
+      yield* existing.handle.set({ key: "branch", text: "main" });
+      const perProvider = CONTRIBUTION_STATUS_MAX_ITEMS / CONTRIBUTION_STATUS_MAX_THREADS;
+      for (let item = 2; item < perProvider; item += 1)
+        yield* existing.handle.set({ key: `k${item}`, text: "on" });
+      for (let index = 1; index < CONTRIBUTION_STATUS_MAX_THREADS; index += 1) {
+        const provider = yield* openHandle(store, `provider-${index}`, ThreadId.make(`t-${index}`));
+        for (let item = 0; item < perProvider; item += 1)
+          yield* provider.handle.set({ key: `k${item}`, text: "on" });
+      }
+      const snapshot = yield* store.snapshot;
+      assert.deepStrictEqual(countBy(snapshot, "provider-session"), {
+        threads: CONTRIBUTION_STATUS_MAX_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_ITEMS,
+      });
+      assert.deepStrictEqual(countBy(snapshot, "plugin"), {
+        threads: CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+      });
+      // The provider caps themselves are unchanged.
+      const overflow = yield* openHandle(store, "provider-late", ThreadId.make("t-late"));
+      yield* overflow.handle.set({ key: "mode", text: "refused" });
+      assert.strictEqual(
+        countBy(yield* store.snapshot, "provider-session").items,
+        CONTRIBUTION_STATUS_MAX_ITEMS,
       );
     }),
   );

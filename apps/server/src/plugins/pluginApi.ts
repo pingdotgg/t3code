@@ -84,6 +84,29 @@ interface PluginStorageApi {
   keys(): Promise<ReadonlyArray<string>>;
 }
 
+type PluginTone = "neutral" | "info" | "success" | "warning" | "error";
+
+/**
+ * Short advisory statuses on threads, shown beside provider statuses on every
+ * client. Present with the `status` capability. Text is one plain line (up to
+ * 80 characters, longer text is truncated); empty text clears the key. A
+ * plugin shows at most 16 statuses at once and 10 updates at once, then 2 per
+ * second; past a bound `set` rejects. Everything is cleared when the plugin's
+ * process stops, so set statuses again after a restart.
+ */
+interface PluginStatusApi {
+  set(status: {
+    readonly threadId: string;
+    /** Up to 64 characters; setting an existing key replaces it. */
+    readonly key: string;
+    readonly text: string;
+    readonly tone?: PluginTone;
+    /** Up to 240 characters. */
+    readonly tooltip?: string;
+  }): Promise<void>;
+  clear(status: { readonly threadId: string; readonly key: string }): Promise<void>;
+}
+
 export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
@@ -101,6 +124,7 @@ export interface PluginProposedApi {
   onEvent(handler: PluginEventHandler): PluginDisposable;
   readonly settings: PluginSettingsApi | undefined;
   readonly storage: PluginStorageApi | undefined;
+  readonly status: PluginStatusApi | undefined;
 }
 
 export interface PluginContext {

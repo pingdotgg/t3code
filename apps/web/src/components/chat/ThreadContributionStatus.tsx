@@ -46,7 +46,7 @@ function ContributionStatusChips(props: { readonly chips: ReadonlyArray<Contribu
         render={
           <button
             type="button"
-            aria-label={`Provider status: ${chips.map((chip) => chip.text).join(", ")}`}
+            aria-label={`Thread status: ${chips.map((chip) => chip.text).join(", ")}`}
             data-thread-contribution-status
             className="relative isolate flex min-w-0 max-w-[45%] shrink cursor-pointer items-center gap-1 rounded-sm outline-none before:pointer-events-none before:absolute before:inset-0 before:z-10 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11"
           />
@@ -92,7 +92,7 @@ function ContributionStatusChips(props: { readonly chips: ReadonlyArray<Contribu
 }
 
 /**
- * Advisory statuses a provider (today, Pi extensions) set on the open thread.
+ * Advisory statuses a provider (today, Pi extensions) or a plugin set on the open thread.
  * Renders nothing when there are none or the server predates the channel.
  */
 export const ThreadContributionStatus = memo(function ThreadContributionStatus(props: {

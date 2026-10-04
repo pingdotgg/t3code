@@ -37,6 +37,24 @@ const entry = (
 });
 
 describe("contributionStatusChips", () => {
+  it("attributes a plugin's chips to the plugin by name, keyed by its id", () => {
+    const pluginEntry = (name: string): ContributionStatusEntry => ({
+      threadId: THREAD,
+      source: { kind: "plugin", pluginId: "acme.ci", name },
+      items: [{ key: "ci", text: "passing", tone: "success" }],
+    });
+    const [chip] = contributionStatusChips([pluginEntry("CI watcher")]);
+    assert.deepStrictEqual(chip, {
+      id: JSON.stringify([JSON.stringify(["plugin", "acme.ci"]), "ci"]),
+      text: "passing",
+      tone: "success",
+      tooltip: null,
+      origin: "From the CI watcher plugin.",
+    });
+    // A renamed plugin keeps its chip identity.
+    assert.strictEqual(contributionStatusChips([pluginEntry("Renamed")])[0]?.id, chip?.id);
+  });
+
   it("keeps the server's order and keys each chip by source plus item key", () => {
     const chips = contributionStatusChips([
       entry([

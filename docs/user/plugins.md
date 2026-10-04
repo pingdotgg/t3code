@@ -182,6 +182,21 @@ most 64 KiB, and a call fails after 30 seconds. A view that floods messages or s
 stopped; **Reload** in its tab starts it again. Disabling or removing the plugin, or a file check
 finding it changed, closes its views on every client, and they come back when it is enabled again.
 
+### Statuses
+
+With the `status` capability, `context.proposed.status.set({ threadId, key, text, tone, tooltip })`
+shows a short status on a thread, next to the statuses its agent sets, such as a Pi extension's. It
+appears beside the thread title on web and desktop and under the header on mobile, and names your
+plugin when opened. Setting a key again replaces it; empty text or
+`context.proposed.status.clear({ threadId, key })` removes it. Text is one line of up to 80
+characters and tooltips up to 240; `tone` is `neutral`, `info`, `success`, `warning` or `error`.
+
+A plugin shows at most 16 statuses at once and makes up to 10 updates at once, then 2 per second;
+past either limit `set` rejects. A thread shows at most 3 plugins' statuses; when a thread or the
+environment is full, a new status is not shown. Statuses live only in the server's memory and are
+cleared when the plugin's process stops, for example when it is disabled or crashes, or the server
+restarts. Set them again once the plugin runs again.
+
 ### Publishing to npm
 
 Publish `t3-plugin.json` and the code at the package root. Because T3 Code never installs

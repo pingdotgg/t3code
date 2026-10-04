@@ -68,7 +68,7 @@ function accessibleName(element: Element) {
 
 function statusButton() {
   const button = [...container.querySelectorAll("button")].find((candidate) =>
-    accessibleName(candidate).startsWith("Provider status"),
+    accessibleName(candidate).startsWith("Thread status"),
   );
   if (!button) throw new Error("Status button was not rendered");
   return button;
@@ -126,7 +126,7 @@ describe("ThreadContributionStatus", () => {
     ]);
 
     expect(accessibleName(statusButton())).toBe(
-      `Provider status: Plan, ${longText}, disk almost full`,
+      `Thread status: Plan, ${longText}, disk almost full`,
     );
 
     await act(async () => statusButton().click());
@@ -134,6 +134,25 @@ describe("ThreadContributionStatus", () => {
     expect(text).toContain("Plan");
     expect(text).toContain("12 files to change");
     expect(text).toContain(longText);
+  });
+
+  it("shows a plugin's statuses beside the provider's and says which plugin set them", async () => {
+    await renderStatus([
+      entry([{ key: "mode", text: "● plan" }]),
+      {
+        threadId: THREAD,
+        source: { kind: "plugin", pluginId: "acme.ci", name: "CI watcher" },
+        items: [{ key: "ci", text: "✓ passing", tone: "success", tooltip: "main @ 3f2a" }],
+      },
+    ]);
+
+    expect(accessibleName(statusButton())).toBe("Thread status: ● plan, ✓ passing");
+    await act(async () => statusButton().click());
+    const text = popupText();
+    for (const status of ["● plan", PI_ORIGIN, "✓ passing", "main @ 3f2a"]) {
+      expect(text).toContain(status);
+    }
+    expect(text).toContain("From the CI watcher plugin.");
   });
 
   it("renders nothing without statuses", async () => {

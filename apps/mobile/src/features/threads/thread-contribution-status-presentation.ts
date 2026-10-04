@@ -1,5 +1,6 @@
 import {
   type ContributionStatusEntry,
+  type ContributionStatusSource,
   type ContributionStatusTone,
   contributionStatusSourceKey,
   PROVIDER_DISPLAY_NAMES,
@@ -9,8 +10,9 @@ import {
 export interface ThreadContributionStatusChip {
   /** Source key plus item key, so a provider session taking over re-keys the chip. */
   readonly id: string;
-  readonly driver: ProviderDriverKind;
-  /** The first chip of each source carries that source's provider icon. */
+  /** The provider that set it, or null for a plugin's status. */
+  readonly driver: ProviderDriverKind | null;
+  /** The first chip of each provider source carries that provider's icon. */
   readonly leadsSource: boolean;
   readonly text: string;
   readonly tone: ContributionStatusTone;
@@ -26,8 +28,13 @@ function providerLabel(driver: ProviderDriverKind): string {
   return PROVIDER_DISPLAY_NAMES[driver] ?? driver;
 }
 
-function statusHelp(driver: ProviderDriverKind): string {
-  const origin = driver === "pi" ? "a Pi extension" : providerLabel(driver);
+function sourceLabel(source: ContributionStatusSource): string {
+  return source.kind === "plugin" ? source.name : providerLabel(source.driver);
+}
+
+function statusHelp(source: ContributionStatusSource): string {
+  if (source.kind === "plugin") return `Set by the ${source.name} plugin.`;
+  const origin = source.driver === "pi" ? "a Pi extension" : providerLabel(source.driver);
   return `Set by ${origin}. It can lag a session change.`;
 }
 
@@ -36,25 +43,24 @@ export function threadContributionStatusChips(
   entries: ReadonlyArray<ContributionStatusEntry>,
 ): ReadonlyArray<ThreadContributionStatusChip> {
   return entries.flatMap((entry) => {
-    const sourceKey = contributionStatusSourceKey(entry.source);
-    const { driver } = entry.source;
-    return entry.items.map((item, index) => {
-      const help = statusHelp(driver);
-      return {
-        id: JSON.stringify([sourceKey, item.key]),
-        driver,
-        leadsSource: index === 0,
-        text: item.text,
-        tone: item.tone ?? "neutral",
-        tooltip: item.tooltip ?? null,
-        accessibilityLabel: `${providerLabel(driver)} status: ${item.text}`,
-        help,
-        details: {
-          title: `${providerLabel(driver)} status`,
-          message: [item.text, item.tooltip, help].filter(Boolean).join("\n\n"),
-        },
-      };
-    });
+    const { source } = entry;
+    const sourceKey = contributionStatusSourceKey(source);
+    const label = sourceLabel(source);
+    const help = statusHelp(source);
+    return entry.items.map((item, index) => ({
+      id: JSON.stringify([sourceKey, item.key]),
+      driver: source.kind === "plugin" ? null : source.driver,
+      leadsSource: index === 0,
+      text: item.text,
+      tone: item.tone ?? "neutral",
+      tooltip: item.tooltip ?? null,
+      accessibilityLabel: `${label} status: ${item.text}`,
+      help,
+      details: {
+        title: `${label} status`,
+        message: [item.text, item.tooltip, help].filter(Boolean).join("\n\n"),
+      },
+    }));
   });
 }
 

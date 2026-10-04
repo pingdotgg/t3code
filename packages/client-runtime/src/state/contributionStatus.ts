@@ -30,7 +30,11 @@ function threadContributionStatusEntries(
   return entries.length === 0 ? NO_ENTRIES : entries;
 }
 
-/** Equal when every entry has the same source identity and the same items. */
+/** A source's displayed name, which is not part of its identity. */
+const sourceName = (entry: ContributionStatusEntry) =>
+  entry.source.kind === "plugin" ? entry.source.name : undefined;
+
+/** Equal when every entry has the same source identity and name and the same items. */
 function sameEntries(
   left: ReadonlyArray<ContributionStatusEntry>,
   right: ReadonlyArray<ContributionStatusEntry>,
@@ -42,6 +46,7 @@ function sameEntries(
       return (
         other !== undefined &&
         contributionStatusSourceKey(entry.source) === contributionStatusSourceKey(other.source) &&
+        sourceName(entry) === sourceName(other) &&
         entry.items.length === other.items.length &&
         entry.items.every((item, itemIndex) => {
           const otherItem = other.items[itemIndex];

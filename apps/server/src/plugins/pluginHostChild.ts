@@ -176,6 +176,16 @@ export const runPluginHostChild = (): void => {
           ...(message.capabilities.includes("settings")
             ? settingsApi()
             : { settings: undefined, storage: undefined }),
+          status: message.capabilities.includes("status")
+            ? {
+                set: async (status) => {
+                  await hostCall("status.set", status);
+                },
+                clear: async (status) => {
+                  await hostCall("status.clear", status);
+                },
+              }
+            : undefined,
         }
       : undefined;
     const context: PluginContext = {

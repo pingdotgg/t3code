@@ -640,6 +640,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
             registration: { ...registration, installationId: "x" as PluginInstallationId },
             input: { key: "a", value: 1 },
             admitted: Effect.void,
+            lifetime: yield* Scope.make(),
           }).pipe(Effect.flip);
           expect(error.message).toBe('The plugin did not declare the "settings" capability.');
         }

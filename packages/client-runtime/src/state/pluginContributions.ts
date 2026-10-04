@@ -225,6 +225,7 @@ const CAPABILITY_MEANINGS = new Map([
   ["views", "Shows its own panels in the app."],
   ["settings", "Has settings you fill in; secrets stay on the server."],
   ["events", "Hears when runs finish: the outcome and the thread's title, never message contents."],
+  ["status", "Shows status on your threads."],
 ]);
 
 /** Every capability a manifest declares, in its order, with a plain meaning; unknown names show as they are. */

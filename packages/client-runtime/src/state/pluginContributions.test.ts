@@ -243,9 +243,9 @@ describe("describePluginContributions", () => {
 
 describe("describePluginCapabilities", () => {
   it("explains every capability the server implements, in its order, and shows others as named", () => {
-    const known = ["views", "settings", "tools", "events", "actions"];
+    const known = ["views", "settings", "tools", "events", "actions", "status"];
     // Names the server refuses get no meaning: nothing implements them.
-    const unknown = ["transforms", "approvals", "status", "notifications", "telepathy"];
+    const unknown = ["transforms", "approvals", "notifications", "telepathy"];
     const described = describePluginCapabilities([...known, ...unknown]);
     expect(described.map((capability) => capability.name)).toEqual([...known, ...unknown]);
     for (const capability of described.slice(0, known.length))

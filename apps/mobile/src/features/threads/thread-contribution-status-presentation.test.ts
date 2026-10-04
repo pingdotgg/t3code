@@ -29,6 +29,23 @@ const entry = (
 });
 
 describe("threadContributionStatusChips", () => {
+  it("names a plugin as the source of its chips, without a provider icon", () => {
+    const [chip] = threadContributionStatusChips([
+      {
+        threadId: ThreadId.make("thread-1"),
+        source: { kind: "plugin", pluginId: "acme.ci", name: "CI watcher" },
+        items: [{ key: "ci", text: "passing", tone: "success" }],
+      },
+    ]);
+    expect(chip).toMatchObject({
+      driver: null,
+      text: "passing",
+      tone: "success",
+      accessibilityLabel: "CI watcher status: passing",
+      help: "Set by the CI watcher plugin.",
+    });
+  });
+
   it("shows nothing for a thread without statuses", () => {
     expect(threadContributionStatusChips([])).toEqual([]);
   });

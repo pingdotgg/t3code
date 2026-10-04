@@ -9,6 +9,9 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * extension's `ctx.ui.setStatus(key, text)`. The server owns these in memory
  * only: they are never persisted and disappear with their producer.
  */
+/** Manifest capability for a plugin's `context.proposed.status`; requires `proposedApi: true`. */
+export const PLUGIN_STATUS_CAPABILITY = "status";
+
 export const CONTRIBUTION_STATUS_KEY_MAX_LENGTH = 64;
 export const CONTRIBUTION_STATUS_TEXT_MAX_LENGTH = 80;
 export const CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH = 240;
@@ -21,6 +24,15 @@ export const CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE = 8;
 export const CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD = 4;
 export const CONTRIBUTION_STATUS_MAX_THREADS = 64;
 export const CONTRIBUTION_STATUS_MAX_ITEMS = 128;
+/**
+ * Plugin sources have their own pool beside the limits above, so they never
+ * take capacity a provider session would have had: at most 3 plugin sources
+ * on a thread (with its provider session, still 4 sources), on at most 32
+ * threads, with at most 64 items in all.
+ */
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD = 3;
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS = 32;
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS = 64;
 
 const CONTRIBUTION_STATUS_TONES = ["neutral", "info", "success", "warning", "error"] as const;
 const ContributionStatusToneLiteral = Schema.Literals(CONTRIBUTION_STATUS_TONES);
@@ -58,17 +70,32 @@ export const ContributionStatusItem = Schema.Struct({
 export type ContributionStatusItem = typeof ContributionStatusItem.Type;
 
 /**
- * Who set an entry's items. A thread has at most one provider-session source:
- * a new provider session on the thread takes over the previous one's entry.
- * Plugin sources are reserved for a later `kind`; each plugin will own its own
- * entry beside the provider's.
+ * A provider session that set an entry's items. A thread has at most one: a
+ * new provider session on the thread takes over the previous one's entry.
  */
-export const ContributionStatusSource = Schema.Struct({
+const ProviderSessionContributionStatusSource = Schema.Struct({
   kind: Schema.Literal("provider-session"),
   providerSessionId: ProviderSessionId,
   providerInstanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
 });
+
+/**
+ * An enabled plugin with the `status` capability. Each plugin owns its own
+ * entry on a thread, beside the provider's; `name` is the manifest's display
+ * name, never part of the identity.
+ */
+const PluginContributionStatusSource = Schema.Struct({
+  kind: Schema.Literal("plugin"),
+  pluginId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100)),
+});
+
+/** Who set an entry's items. Clients drop entries of a kind they do not know. */
+export const ContributionStatusSource = Schema.Union([
+  ProviderSessionContributionStatusSource,
+  PluginContributionStatusSource,
+]);
 export type ContributionStatusSource = typeof ContributionStatusSource.Type;
 
 /**
@@ -76,7 +103,9 @@ export type ContributionStatusSource = typeof ContributionStatusSource.Type;
  * Renderers key an entry by it and an item by it plus the item key.
  */
 export const contributionStatusSourceKey = (source: ContributionStatusSource): string =>
-  JSON.stringify([source.kind, source.providerInstanceId, source.providerSessionId]);
+  source.kind === "plugin"
+    ? JSON.stringify([source.kind, source.pluginId])
+    : JSON.stringify([source.kind, source.providerInstanceId, source.providerSessionId]);
 
 /** One source's items on one thread. Entry identity is the thread plus the source. */
 export const ContributionStatusEntry = Schema.Struct({

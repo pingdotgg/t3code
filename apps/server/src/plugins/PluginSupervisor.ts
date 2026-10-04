@@ -228,6 +228,12 @@ export type PluginHostMethod = (call: {
   readonly input: Schema.Json;
   /** Fails once the calling generation is revoked or its process has exited. */
   readonly admitted: Effect.Effect<void, PluginHostCallError>;
+  /**
+   * The calling process's lifetime: closed when its generation is revoked or
+   * the process exits (finalizers added after that run at once). Methods tie
+   * what a plugin contributes, such as statuses, to it.
+   */
+  readonly lifetime: Scope.Scope;
 }) => Effect.Effect<Schema.Json, PluginHostCallError>;
 
 export type PluginSupervisorEvent =
@@ -576,7 +582,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         : Effect.fail(new PluginHostCallError({ message: STOPPED_MESSAGE })),
     );
     return Effect.suspend(() =>
-      handler({ registration: entry.registration, input, admitted }),
+      handler({ registration: entry.registration, input, admitted, lifetime: child.hostWork }),
     ).pipe(
       Effect.exit,
       Effect.flatMap((outcome) => answer(child, requestId, outcomeMessage(requestId, outcome))),

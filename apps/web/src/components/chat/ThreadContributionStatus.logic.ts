@@ -20,6 +20,7 @@ export interface ContributionStatusChip {
 }
 
 function contributionStatusOrigin(source: ContributionStatusSource): string {
+  if (source.kind === "plugin") return `From the ${source.name} plugin.`;
   const name = resolveProviderInstanceDisplayName({
     instanceId: source.providerInstanceId,
     driver: source.driver,

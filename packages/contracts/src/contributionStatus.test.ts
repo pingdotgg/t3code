@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ContributionStatusSnapshot } from "./contributionStatus.ts";
+import { ContributionStatusSnapshot, contributionStatusSourceKey } from "./contributionStatus.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(ContributionStatusSnapshot);
 
@@ -31,13 +31,24 @@ describe("ContributionStatusSnapshot", () => {
       entries: [
         {
           ...piEntry([{ key: "a", text: "From a plugin" }]),
-          source: { kind: "plugin", pluginId: "x" },
+          source: { kind: "extension-host", hostId: "x" },
         },
         piEntry([{ key: "a", text: "x".repeat(81) }]),
         piEntry([{ key: "mode", text: "plan" }]),
       ],
     });
     expect(snapshot.entries.map((entry) => entry.items)).toEqual([[{ key: "mode", text: "plan" }]]);
+  });
+
+  it("decodes plugin entries and keys them by plugin id, not display name", () => {
+    const source = { kind: "plugin", pluginId: "acme.notifier", name: "Notifier" } as const;
+    const snapshot = decodeSnapshot({
+      entries: [{ threadId: "thread-1", source, items: [{ key: "a", text: "Done" }] }],
+    });
+    expect(snapshot.entries[0]?.source).toEqual(source);
+    expect(contributionStatusSourceKey({ ...source, name: "Renamed" })).toBe(
+      contributionStatusSourceKey(source),
+    );
   });
 
   it("rejects an entry with more items than one source may set", () => {
