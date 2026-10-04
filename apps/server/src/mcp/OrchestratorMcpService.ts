@@ -130,8 +130,9 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
-const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
+// Return recoverable handles before common MCP client timeouts expire.
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+const MAX_WAIT_TIMEOUT_MS = 45_000;
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
   { thread: "child", eventType: "run.updated" },
