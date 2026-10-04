@@ -14,15 +14,17 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
     );
   });
 
-  it("omits replaced text from the retained draft context", () => {
+  it("includes replaced text separately from retained draft context", () => {
     const result = buildTranscriptionPostProcessingPrompt("Clean this transcript.", "raw", {
       text: "Before old after",
       selection: { start: 7, end: 10 },
     });
     expect(result.prompt).toContain("<composer_before>\nBefore \n</composer_before>");
     expect(result.prompt).toContain("<composer_after>\n after\n</composer_after>");
-    expect(result.prompt).not.toContain("old");
-    expect(result.prompt).toContain("The transcript will replace the selected text");
+    expect(result.prompt).toContain("<composer_selection>\nold\n</composer_selection>");
+    expect(result.prompt).toContain("it will not remain in the draft");
+    expect(result.prompt).toContain("Do not preserve or copy it into the result");
+    expect(result.prompt).toContain("The transcript will replace composer_selection");
     expect(result.prompt).toContain("Return only the cleaned transcript");
   });
 
@@ -32,6 +34,7 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
       selection: { start: 7, end: 7 },
     });
     expect(result.prompt).toContain("The transcript will be inserted at the cursor");
+    expect(result.prompt).not.toContain("composer_selection");
     expect(result.prompt).toContain("<composer_before>\nBefore \n</composer_before>");
     expect(result.prompt).toContain("<composer_after>\nafter\n</composer_after>");
   });
