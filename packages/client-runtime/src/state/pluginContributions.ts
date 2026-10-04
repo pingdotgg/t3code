@@ -225,6 +225,7 @@ const CAPABILITY_MEANINGS = new Map([
   ["views", "Shows its own panels in the app."],
   ["settings", "Has settings you fill in; secrets stay on the server."],
   ["events", "Hears when runs finish: the outcome and the thread's title, never message contents."],
+  ["transforms", "Reads your messages and can add context to them before they reach the agent."],
   ["status", "Shows status on your threads."],
   ["notifications", "Can show you notifications."],
 ]);

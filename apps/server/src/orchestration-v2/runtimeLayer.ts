@@ -163,6 +163,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      // The orchestrator's layer reference, so both share one thread lock.
+      ThreadCommandExecutor.layer,
     ),
   ),
 );

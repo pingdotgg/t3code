@@ -6,6 +6,7 @@ import {
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_STATUS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_TRANSFORMS_CAPABILITY,
   PLUGIN_VIEWS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
@@ -24,6 +25,7 @@ const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
   "actions",
+  PLUGIN_TRANSFORMS_CAPABILITY,
   PLUGIN_VIEWS_CAPABILITY,
   PLUGIN_STATUS_CAPABILITY,
   PLUGIN_NOTIFICATIONS_CAPABILITY,
@@ -78,6 +80,15 @@ const checkActions = (manifest: PluginManifest): string | undefined => {
     if (new Set(action.placements).size !== action.placements.length)
       return `the action ${action.name} repeats a placement.`;
   }
+  return undefined;
+};
+
+/** Declared transforms need the capability and the proposed `handle` API. */
+const checkTransforms = (manifest: PluginManifest): string | undefined => {
+  if (manifest.transforms === undefined) return undefined;
+  if (!manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY))
+    return "it declares transforms without the transforms capability.";
+  if (!manifest.proposedApi) return "it declares transforms, which need proposedApi: true.";
   return undefined;
 };
 
@@ -136,6 +147,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   // Views reach their plugin through `context.proposed.handle`, which only exists with the opt-in.
   if (manifest.capabilities.includes(PLUGIN_VIEWS_CAPABILITY) && !manifest.proposedApi)
     return yield* fail(`the "${PLUGIN_VIEWS_CAPABILITY}" capability needs "proposedApi": true.`);
+  const transformProblem = checkTransforms(manifest);
+  if (transformProblem !== undefined) return yield* fail(transformProblem);
 
   // Statuses and notifications are proposed API, so they only exist with the opt-in.
   for (const capability of [PLUGIN_STATUS_CAPABILITY, PLUGIN_NOTIFICATIONS_CAPABILITY])

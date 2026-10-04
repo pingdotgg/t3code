@@ -15,6 +15,7 @@ import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchema
 import { PLUGIN_TOOL_LIMITS, PluginToolDeclaration } from "./pluginTools.ts";
 import { PluginSettingsDeclaration } from "./pluginSettingFields.ts";
 import { PLUGIN_ACTIONS_MAX_PER_PLUGIN, PluginActionDeclaration } from "./pluginActions.ts";
+import { PluginTransformsDeclaration } from "./pluginTransforms.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -75,6 +76,8 @@ export const PluginManifest = Schema.Struct({
   actions: Schema.optionalKey(
     Schema.Array(PluginActionDeclaration).check(Schema.isMaxLength(PLUGIN_ACTIONS_MAX_PER_PLUGIN)),
   ),
+  /** Run transforms; needs the `transforms` capability (see PluginTransforms). */
+  transforms: Schema.optionalKey(PluginTransformsDeclaration),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

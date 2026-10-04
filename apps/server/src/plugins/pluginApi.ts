@@ -126,7 +126,8 @@ type PluginNotifyInput = {
 export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
-   * plugin; names starting with `t3.` are reserved.
+   * plugin; names starting with `t3.` are reserved, except the ones the server
+   * calls for a declared contribution: `t3.tool.<name>` and `t3.transform.enrich`.
    */
   handle(name: string, handler: PluginHandler): PluginDisposable;
   /**

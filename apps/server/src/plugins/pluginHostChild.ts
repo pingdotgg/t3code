@@ -5,7 +5,10 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
-import type { PLUGIN_TOOL_HANDLER_PREFIX as ContractToolHandlerPrefix } from "@t3tools/contracts";
+import type {
+  PLUGIN_ENRICH_HANDLER as ContractEnrichHandler,
+  PLUGIN_TOOL_HANDLER_PREFIX as ContractToolHandlerPrefix,
+} from "@t3tools/contracts";
 import type {
   PluginContext,
   PluginEvent,
@@ -25,9 +28,10 @@ import {
   makeLineDecoder,
 } from "./pluginIpcFraming.ts";
 
-// Restates the contract's prefix, which plugins may register under: importing
+// Restates the contract's host-called names plugins may register: importing
 // @t3tools/contracts at runtime would load Effect into every plugin process.
 const PLUGIN_TOOL_HANDLER_PREFIX: typeof ContractToolHandlerPrefix = "t3.tool.";
+const PLUGIN_ENRICH_HANDLER: typeof ContractEnrichHandler = "t3.transform.enrich";
 
 // Every launcher loads the entry through require, so a plugin behaves the same
 // under Node, Electron, and the single executable (which can only import()
@@ -157,7 +161,11 @@ export const runPluginHostChild = (): void => {
     const proposed: PluginProposedApi | undefined = message.proposedApi
       ? {
           handle(name: string, handler: PluginHandler) {
-            if (name.startsWith("t3.") && !name.startsWith(PLUGIN_TOOL_HANDLER_PREFIX))
+            if (
+              name.startsWith("t3.") &&
+              !name.startsWith(PLUGIN_TOOL_HANDLER_PREFIX) &&
+              name !== PLUGIN_ENRICH_HANDLER
+            )
               throw new Error(`Handler names starting with "t3." are reserved.`);
             if (handlers.has(name)) throw new Error(`Handler "${name}" is already registered.`);
             handlers.set(name, handler);

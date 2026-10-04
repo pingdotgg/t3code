@@ -211,6 +211,24 @@ before the app was opened, and everything from before a server restart is not sh
 plugin's process stops, for example when it is disabled or crashes, its notifications close on every
 device.
 
+### Context
+
+With the `transforms` capability and `"transforms": { "enrich": { "timeoutSeconds": 5 } }` (1 to 10
+seconds, default 5), `context.proposed.handle("t3.transform.enrich", handler)` can add context to a
+message you send before the agent receives it. The handler receives `{ environmentId, projectId,
+threadId, runId, cwd, message: { text, truncated } }`, with your text cut to 16,000 characters, and
+answers `{ context: [{ title, text }] }` with up to 4 entries (titles up to 100 characters, text up to
+6,000, at most 8 KiB in all), or `null` for nothing.
+
+T3 Code asks only for turns you start or queue yourself: never for steering a running turn, commands
+typed with `/`, or turns the agent or server starts. Up to 4 plugins add context to one turn, in the
+order they were added; a row in the thread says how many more were not asked, and context
+past 8 KiB per turn is not added. The agent receives the context ahead of your message; the message
+you see is unchanged. Each plugin's part shows in the thread as a row: expand it to see the context,
+or why none was added. A plugin that fails, answers late or too much, or is disabled mid-call adds
+nothing, and the turn goes on without it. Disabling or removing the plugin stops it from the next turn;
+enabling it again resumes. Context is not carried over when a thread switches provider.
+
 ### Publishing to npm
 
 Publish `t3-plugin.json` and the code at the package root. Because T3 Code never installs

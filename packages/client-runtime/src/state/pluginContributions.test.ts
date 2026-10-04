@@ -243,9 +243,18 @@ describe("describePluginContributions", () => {
 
 describe("describePluginCapabilities", () => {
   it("explains every capability the server implements, in its order, and shows others as named", () => {
-    const known = ["views", "settings", "tools", "events", "actions", "status", "notifications"];
+    const known = [
+      "views",
+      "settings",
+      "tools",
+      "events",
+      "actions",
+      "status",
+      "notifications",
+      "transforms",
+    ];
     // Names the server refuses get no meaning: nothing implements them.
-    const unknown = ["transforms", "approvals", "telepathy"];
+    const unknown = ["approvals", "telepathy"];
     const described = describePluginCapabilities([...known, ...unknown]);
     expect(described.map((capability) => capability.name)).toEqual([...known, ...unknown]);
     for (const capability of described.slice(0, known.length))
@@ -262,5 +271,6 @@ describe("describePluginCapabilities", () => {
     const meaning = (name: string) => describePluginCapabilities([name])[0]?.meaning;
     expect(meaning("tools")).toContain("agents tools");
     expect(meaning("events")).toContain("never message contents");
+    expect(meaning("transforms")).toContain("Reads your messages");
   });
 });
