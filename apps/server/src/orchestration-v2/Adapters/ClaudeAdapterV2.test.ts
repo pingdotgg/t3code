@@ -30,6 +30,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +46,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/unstable/ai";
+import { TestClock } from "effect/testing";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -1607,6 +1610,54 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
+  it.effect("times out and terminates a stalled history worker", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+      const stalledSpawner = {
+        ...spawner,
+        spawn: () =>
+          Effect.gen(function* () {
+            const child = yield* spawner.spawn(
+              ChildProcess.make(process.execPath, ["-e", "setInterval(() => {}, 1000)"]),
+            );
+            yield* Deferred.succeed(spawned, child);
+            return child;
+          }),
+      };
+      const fork = yield* Effect.gen(function* () {
+        const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+        return yield* runner.forkSession({
+          environment: {},
+          sessionId: NodeCrypto.randomUUID(),
+          options: {},
+          threadId: ThreadId.make("fork-target"),
+          providerSessionId: ProviderSessionId.make("fork-session"),
+        });
+      }).pipe(
+        Effect.provide(ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, stalledSpawner),
+        Effect.provide(
+          Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+            native: undefined,
+            canonical: undefined,
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const child = yield* Deferred.await(spawned);
+      yield* TestClock.adjust("30 seconds");
+      const error = yield* Fiber.join(fork).pipe(
+        Effect.flip,
+        Effect.timeout("2 seconds"),
+        Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+      );
+      assert.equal(error.method, "forkSession");
+      assert.include(String(error.cause), "Timeout");
+      assert.equal(yield* child.isRunning, false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect(
     "forks history from the provider environment without changing the server environment",
     () =>

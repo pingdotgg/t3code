@@ -791,6 +791,7 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
           return yield* decodeForkSessionResult(stdout.text);
         }).pipe(
           Effect.scoped,
+          Effect.timeout("30 seconds"),
           Effect.mapError((cause) => queryRunnerError(cause, "forkSession")),
         );
         yield* logProtocolEvent({
