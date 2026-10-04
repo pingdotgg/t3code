@@ -98,6 +98,10 @@ part of the proposed API: list each capability you use in `capabilities`, set `"
 and use `context.proposed`. A manifest T3 Code cannot honor is refused when the plugin is added, with
 the reason. Each `context.proposed.handle(name, handler)` registers one entry point the server calls.
 
+For complete plugins to copy from, see [examples/plugins](../../examples/plugins/): a turn
+notifier (events and notifications), an agent tool that counts TODO comments, and a configurable
+thread label (settings and status).
+
 ### Events
 
 With the `events` capability, `context.proposed.onEvent(handler)` receives the environment's
