@@ -28,7 +28,9 @@ process.on("message", async (message) => {
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsTranslation: model.capabilities.supportsTranslate,
-        supportsInitialPrompt: model.supports("initial_prompt") });
+        // Only the Whisper run extension exposes an initial prompt in 0.2.4.
+        // Voxtral advertises the feature without a usable prompt extension.
+        supportsInitialPrompt: model.supports("initial_prompt") && model.accepts({ kind: "whisper" }) });
     } else if (message.kind === "begin") {
       correct = makeCorrector(message.customWords ?? [], message.dictionary ?? []);
       session = model.createSession();

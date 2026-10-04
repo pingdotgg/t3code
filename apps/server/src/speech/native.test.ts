@@ -33,6 +33,29 @@ it("ignores unrelated device probe messages and returns GPU devices", async () =
 const fixture = (transcribe: string, maxAudioMs = 0) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
 
+it.each(["whisper", "voxtral"])(
+  "only enables vocabulary prompts accepted by the %s model",
+  async (family) => {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+      export const TranscribeModel = { load: async () => ({
+        capabilities: { supportsStreaming: false },
+        supports: (feature) => feature === "initial_prompt",
+        accepts: (extension) => extension.kind === ${JSON.stringify(family)},
+      }) };
+    `)}`;
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      moduleUrl,
+    );
+    try {
+      expect(model.supportsInitialPrompt).toBe(family === "whisper");
+    } finally {
+      await model.dispose();
+    }
+  },
+);
+
 it("transcribes a five-minute clip in bounded pieces without dropping samples", async () => {
   const model = await loadNativeSpeechModel(
     "unused.gguf",
