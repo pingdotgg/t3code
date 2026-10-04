@@ -31,6 +31,15 @@ describe("typography settings restore", () => {
       }),
     ).toEqual(["Interface font", "Code font"]);
   });
+
+  it("detects an explicit conversation size independently", () => {
+    expect(
+      getChangedTypographySettingLabels({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        fontSizeConversation: 18,
+      }),
+    ).toEqual(["Conversation font"]);
+  });
 });
 
 describe("background activity settings restore", () => {

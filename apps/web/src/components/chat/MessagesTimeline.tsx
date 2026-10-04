@@ -1309,7 +1309,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div
           ref={setTimelineViewportElement}
-          className="relative h-full min-h-0"
+          className="conversation-font-scope relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
           {onCiteAssistantText && citationThreadRef ? (
@@ -1651,12 +1651,12 @@ function TimelineMinimap({
                 }}
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
-                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-(--conversation-preview-line-height)">
                     {activeItem.userText ?? "User message"}
                   </span>
                   {activeItem.assistantText ? (
                     <span
-                      className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                      className="mt-1 max-h-[calc(var(--conversation-text-unit,1rem)*3.75)] overflow-hidden text-muted-foreground text-sm leading-(--conversation-preview-line-height)"
                       style={{
                         display: "-webkit-box",
                         WebkitBoxOrient: "vertical",
@@ -4455,7 +4455,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </DiffWorkerPoolProvider>
       )}
       {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-(length:--font-size-code,0.75rem)">
           {renderablePatch.text}
         </pre>
       )}

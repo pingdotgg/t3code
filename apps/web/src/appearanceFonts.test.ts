@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   areFontAdvancesMonospace,
   clampCodeFontSize,
+  clampConversationFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
   DEFAULT_CODE_FONT_STACK,
@@ -121,5 +122,7 @@ describe("font size clamping", () => {
     expect(clampCodeFontSize(13.4)).toBe(13);
     expect(clampInterfaceFontSize(Number.NaN)).toBe(16);
     expect(clampPromptFontSize(Number.POSITIVE_INFINITY)).toBe(14);
+    expect(clampConversationFontSize(null, 18)).toBe(18);
+    expect(clampConversationFontSize(40, 16)).toBe(20);
   });
 });
