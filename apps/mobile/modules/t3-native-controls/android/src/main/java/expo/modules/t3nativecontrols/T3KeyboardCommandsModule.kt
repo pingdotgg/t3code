@@ -41,7 +41,7 @@ class T3KeyboardCommandsView(
     return when {
       event.keyCode == KeyEvent.KEYCODE_C && event.isShiftPressed && !event.isAltPressed ->
         "copyThreadReference"
-      event.keyCode == KeyEvent.KEYCODE_H && event.isAltPressed && !event.isShiftPressed ->
+      event.keyCode == KeyEvent.KEYCODE_H && event.isShiftPressed && !event.isAltPressed ->
         "cycleHost"
       else -> null
     }

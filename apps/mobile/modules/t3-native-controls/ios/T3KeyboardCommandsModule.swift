@@ -52,7 +52,7 @@ public final class T3KeyboardCommandsView: ExpoView {
         title: "Copy PR Link or Thread ID"
       ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
-      enabledCommand("cycleHost", input: "h", modifiers: [.command, .alternate], action: #selector(cycleHost), title: "Next Machine"),
+      enabledCommand("cycleHost", input: "h", modifiers: [.command, .shift], action: #selector(cycleHost), title: "Next Machine"),
     ].compactMap { $0 }
     if isPad {
       commands += (1...9).compactMap { index in
