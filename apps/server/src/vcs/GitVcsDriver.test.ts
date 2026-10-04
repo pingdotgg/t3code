@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -511,8 +512,207 @@ it.effect("checkpoint recovery preserves interruption and removes the private in
     assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
     assert.isDefined(privateIndex);
     assert.isFalse(yield* fs.exists(privateIndex!));
+    assert.isFalse(yield* fs.exists((yield* Path.Path).dirname(privateIndex!)));
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+// These tests rely on POSIX FIFOs, shell clean filters, and permission bits.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
+const makeLargeFileFixture = Effect.fn("makeLargeFileFixture")(function* (
+  driver: Effect.Success<ReturnType<typeof GitVcsDriver.makeVcsDriverShape>>,
+  cwd: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const fixture = yield* makeCheckpointFixture(driver, cwd);
+  // Above core.bigFileThreshold, `git add` streams the file into a temporary pack.
+  yield* fixture.git(["config", "core.bigFileThreshold", "1k"]);
+  yield* fs.writeFile(
+    path.join(cwd, "a-large.bin"),
+    Uint8Array.from({ length: 8192 }, (_, index) => (index * 7919) % 251),
+  );
+  const objects = path.join(cwd, ".git", "objects");
+  const listObjectStore = Effect.gen(function* () {
+    const pack = yield* fs.readDirectory(path.join(objects, "pack"));
+    const quarantines = (yield* fs.readDirectory(objects)).filter((entry) =>
+      entry.startsWith("tmp_objdir-"),
+    );
+    return [...pack.map((entry) => `pack/${entry}`), ...quarantines].toSorted();
+  });
+  return { ...fixture, objects, listObjectStore };
+});
+
+it.effect.skipIf(windowsHost)(
+  "concurrent checkpoint captures publish their objects with shared permissions",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-publish-" });
+      const { git, objects, listObjectStore } = yield* makeLargeFileFixture(driver, cwd);
+      yield* git(["config", "core.sharedRepository", "group"]);
+      const existingDirectories = new Set(yield* fs.readDirectory(objects));
+      const refs = ["first", "second"].map((name) =>
+        CheckpointRef.make(`refs/t3/checkpoints/${name}`),
+      );
+
+      yield* Effect.forEach(
+        refs,
+        (checkpointRef) => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+        { concurrency: "unbounded" },
+      );
+
+      const expected = (yield* git(["hash-object", "a-large.bin"])).stdout;
+      for (const checkpointRef of refs) {
+        assert.strictEqual(
+          (yield* git(["rev-parse", `${checkpointRef}:a-large.bin`])).stdout,
+          expected,
+        );
+      }
+      yield* git(["fsck", "--strict", "--no-dangling"]);
+      assert.isFalse((yield* listObjectStore).some((entry) => entry.includes("tmp_")));
+      const createdDirectories = (yield* fs.readDirectory(objects)).filter(
+        (entry) => !existingDirectories.has(entry),
+      );
+      assert.isNotEmpty(createdDirectories);
+      for (const entry of createdDirectories) {
+        // Other group members' Git processes must be able to add objects here.
+        const { mode } = yield* fs.stat(path.join(objects, entry));
+        assert.strictEqual(mode & 0o2070, 0o2070, entry);
+      }
+    }).pipe(Effect.scoped, Effect.provide(GitCaptureContractLayer)),
+);
+
+for (const failing of ["index", "loose object"] as const) {
+  it.effect.skipIf(windowsHost)(
+    `a checkpoint publication that fails on its ${failing} keeps every pack Git can read`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-publish-fail-" });
+        const { git, checkpointRef, listObjectStore } = yield* makeLargeFileFixture(
+          yield* GitVcsDriver.makeVcsDriverShape(),
+          cwd,
+        );
+        const objectStore = yield* listObjectStore;
+        const fails = (target: string) =>
+          failing === "index"
+            ? target.endsWith(".idx")
+            : /^[0-9a-f]{2}$/.test(path.basename(path.dirname(target)));
+        const diskFull = (method: string, target: string) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method,
+              pathOrDescriptor: target,
+              description: "ENOSPC",
+            }),
+          );
+        const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            link: (source, target) =>
+              fails(target) ? diskFull("link", target) : fs.link(source, target),
+            rename: (source, target) =>
+              fails(target) ? diskFull("rename", target) : fs.rename(source, target),
+          }),
+        );
+
+        const exit = yield* driver.checkpoints
+          .captureCheckpoint({ cwd, checkpointRef })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        const published = (yield* listObjectStore).filter((entry) => !objectStore.includes(entry));
+        if (failing === "index") {
+          // Git ignores a pack without its index, and gc never removes one.
+          assert.deepEqual(published, []);
+        } else {
+          // Once its index is published, another capture may already use the pack.
+          assert.deepEqual(
+            published.map((entry) => path.extname(entry)),
+            [".idx", ".pack"],
+          );
+          const blob = (yield* git(["hash-object", "a-large.bin"])).stdout.trim();
+          yield* git(["cat-file", "-e", blob]);
+        }
+      }).pipe(Effect.scoped, Effect.provide(GitCaptureContractLayer)),
+  );
+}
+
+it.effect.skipIf(windowsHost)(
+  "a killed checkpoint capture leaves none of its objects in the repository",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const processRunner = yield* ProcessRunner.ProcessRunner;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-killed-" });
+      const gates = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-gates-" });
+      const { git, checkpointRef, objects, listObjectStore } = yield* makeLargeFileFixture(
+        driver,
+        cwd,
+      );
+      const existingRef = CheckpointRef.make("refs/t3/checkpoints/existing");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: existingRef });
+      const existingCommit = (yield* git(["rev-parse", existingRef])).stdout;
+      // A later file blocks in its clean filter while Git holds the large file's open pack.
+      const started = path.join(gates, "started");
+      const hold = path.join(gates, "hold");
+      yield* processRunner.run({ command: "mkfifo", args: [started, hold], cwd: gates });
+      const filter = path.join(gates, "filter.sh");
+      yield* fs.writeFileString(
+        filter,
+        `#!/bin/sh\necho started > '${started}'\ncat '${hold}' > /dev/null\ncat\n`,
+      );
+      yield* fs.chmod(filter, 0o755);
+      yield* fs.writeFileString(
+        path.join(cwd, ".git", "info", "attributes"),
+        "z-gated.txt filter=gate\n",
+      );
+      yield* git(["config", "filter.gate.clean", `'${filter}'`]);
+      yield* fs.writeFileString(path.join(cwd, "z-gated.txt"), "gated\n");
+      // Stand-ins for a concurrent Git command's pack and another capture's quarantine.
+      yield* fs.writeFileString(path.join(objects, "pack", "tmp_pack_concurrent"), "concurrent");
+      yield* fs.makeDirectory(path.join(objects, "tmp_objdir-t3-checkpoint-concurrent"));
+      const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
+      const objectStore = yield* listObjectStore;
+
+      for (const kill of ["interrupt", "timeout"] as const) {
+        const capture = yield* driver.checkpoints
+          .captureCheckpoint({ cwd, checkpointRef })
+          .pipe(Effect.forkScoped);
+        yield* fs.readFileString(started);
+        if (kill === "interrupt") yield* Fiber.interrupt(capture);
+        else yield* TestClock.adjust("30 seconds");
+        const exit = yield* Fiber.await(capture);
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          if (kill === "interrupt") assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+          else {
+            const error = Cause.findErrorOption(exit.cause);
+            assert.isTrue(error._tag === "Some" && error.value._tag === "VcsProcessTimeoutError");
+          }
+        }
+        assert.deepEqual(yield* listObjectStore, objectStore);
+      }
+
+      assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+      assert.strictEqual((yield* git(["rev-parse", existingRef])).stdout, existingCommit);
+      assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+      yield* git(["config", "--unset", "filter.gate.clean"]);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      const captured = yield* git(["rev-parse", `${checkpointRef}:a-large.bin`]);
+      const expected = yield* git(["hash-object", "a-large.bin"]);
+      assert.strictEqual(captured.stdout, expected.stdout);
+      yield* git(["fsck", "--strict", "--no-dangling"]);
+    }).pipe(Effect.scoped, Effect.provide(GitCaptureContractLayer)),
 );
 
 it.effect("checkpoint capture does not rerun clean filters for unchanged indexed files", () =>
@@ -1129,8 +1329,11 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
 
 it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
   const observedArgs: ReadonlyArray<string>[] = [];
+  let objectDirectory = "";
 
   return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    objectDirectory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-fsync-" });
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
 
     yield* driver.checkpoints.captureCheckpoint({
@@ -1163,6 +1366,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
       "commit0000",
     ]);
   }).pipe(
+    Effect.scoped,
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
@@ -1174,8 +1378,8 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
                 ? "tree0000\n"
                 : input.args.includes("commit-tree")
                   ? "commit0000\n"
-                  : input.args.includes("--git-common-dir")
-                    ? ".git\n"
+                  : input.args.includes("--git-path") && input.args.includes("objects")
+                    ? `${objectDirectory}\n`
                     : "";
               return {
                 exitCode: ChildProcessSpawner.ExitCode(0),

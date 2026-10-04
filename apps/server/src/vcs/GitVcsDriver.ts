@@ -32,6 +32,7 @@ import {
   type VcsStatusResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -414,6 +415,21 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// A pack becomes visible through its index, so publish the index last.
+const PACK_PUBLISH_ORDER = ["keep", "pack", "rev", "mtimes", "promisor", "idx"];
+
+/** Publication order of a quarantined object file, or undefined for anything that is not one. */
+const quarantinedObjectRank = (entry: string) => {
+  if (/^[0-9a-f]{2}\/[0-9a-f]{38,62}$/.test(entry)) return PACK_PUBLISH_ORDER.length;
+  const extension = /^pack\/pack-[0-9a-f]{40,64}\.([a-z]+)$/.exec(entry)?.[1];
+  const rank = extension === undefined ? -1 : PACK_PUBLISH_ORDER.indexOf(extension);
+  return rank === -1 ? undefined : rank;
+};
+
+// Git C-unquotes alternates that start with a quote, keeping path delimiters and backslashes literal.
+const quoteAlternateObjectDirectory = (directory: string) =>
+  `"${directory.replace(/[\\"]/g, "\\$&")}"`;
+
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -775,16 +791,75 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const resolveGitCommonDir = (cwd: string) =>
+  const resolveObjectDirectory = (cwd: string) =>
     Effect.gen(function* () {
       const result = yield* execute({
-        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
+        operation: "GitVcsDriver.checkpoints.resolveObjectDirectory",
         cwd,
-        args: ["rev-parse", "--git-common-dir"],
+        args: ["rev-parse", "--git-path", "objects"],
       });
-      const gitCommonDir = result.stdout.trim();
-      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+      return path.resolve(cwd, result.stdout.trim());
     });
+
+  // Moves a successful capture's new objects into the repository the way Git's own
+  // quarantine migration does: never replacing an object, and each pack before its index.
+  const publishQuarantinedObjects = (quarantine: string, objectDirectory: string) => {
+    // Files this capture created for packs whose index is not published yet.
+    const incompletePacks = new Map<string, Array<string>>();
+    return Effect.gen(function* () {
+      const objectFiles = (yield* fileSystem.readDirectory(quarantine, { recursive: true }))
+        .flatMap((entry) => {
+          const rank = quarantinedObjectRank(entry.replaceAll("\\", "/"));
+          return rank === undefined ? [] : [{ entry, rank }];
+        })
+        .toSorted((left, right) => left.rank - right.rank);
+      const readyDirectories = new Set<string>();
+      for (const { entry } of objectFiles) {
+        const directory = path.dirname(entry);
+        if (!readyDirectories.has(directory)) {
+          const target = path.join(objectDirectory, directory);
+          // Git created the quarantine's directory with core.sharedRepository permissions.
+          yield* fileSystem.makeDirectory(target).pipe(
+            Effect.andThen(fileSystem.stat(path.join(quarantine, directory))),
+            Effect.flatMap((info) => fileSystem.chmod(target, info.mode & 0o7777)),
+            Effect.catchIf(
+              (error) => error.reason._tag === "AlreadyExists",
+              () => Effect.void,
+            ),
+          );
+          readyDirectories.add(directory);
+        }
+        const source = path.join(quarantine, entry);
+        const target = path.join(objectDirectory, entry);
+        // Objects are content-addressed, so an existing file already holds these bytes.
+        const created = yield* fileSystem.link(source, target).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            error.reason._tag === "AlreadyExists"
+              ? Effect.succeed(false)
+              : fileSystem.rename(source, target).pipe(Effect.as(true)),
+          ),
+        );
+        if (directory === "pack") {
+          const pack = path.basename(entry, path.extname(entry));
+          // A published index makes the pack visible, so other captures may already use it.
+          if (entry.endsWith(".idx")) incompletePacks.delete(pack);
+          else if (created)
+            incompletePacks.set(pack, [...(incompletePacks.get(pack) ?? []), target]);
+        }
+      }
+    }).pipe(
+      // Git ignores a pack without its index, and gc never removes one. Complete packs and
+      // loose objects that were already published are unreachable objects that gc removes.
+      Effect.tapError(() =>
+        Effect.forEach(
+          [...incompletePacks.values()].flat(),
+          (file) => fileSystem.remove(file, { force: true }).pipe(Effect.ignore),
+          { discard: true },
+        ),
+      ),
+    );
+  };
 
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
@@ -806,14 +881,25 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "sparse.expectFilesOutsideOfPatterns=false",
       ];
-      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      const tempIndexPath = path.join(
-        gitCommonDir,
-        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
+      const objectDirectory = yield* resolveObjectDirectory(input.cwd);
+      // New objects go to a private directory until the capture succeeds, so a failed or
+      // interrupted `git add` cannot leave its temporary packs in the repository. Git names
+      // its own quarantines tmp_objdir-*, which lets `git gc` reclaim one a crash left behind.
+      const quarantine = path.join(
+        objectDirectory,
+        `tmp_objdir-t3-checkpoint-${NodeCrypto.randomUUID()}`,
       );
+      const tempIndexPath = path.join(quarantine, "index");
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
+        GIT_OBJECT_DIRECTORY: quarantine,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: [
+          quoteAlternateObjectDirectory(objectDirectory),
+          ...(process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES
+            ? [process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES]
+            : []),
+        ].join((yield* HostProcessPlatform) === "win32" ? ";" : ":"),
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",
@@ -827,7 +913,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
+      const storageError = (cause: { readonly message: string }) =>
+        new VcsProcessExitError({
+          operation,
+          command: "git checkpoint storage",
+          cwd: input.cwd,
+          exitCode: 0,
+          detail: `Could not store checkpoint objects: ${cause.message}`,
+        });
+      const removeQuarantine = fileSystem
+        .remove(quarantine, { recursive: true, force: true })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("checkpoint temporary objects were not removed", { error }),
+          ),
+        );
+
       yield* Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(quarantine).pipe(Effect.mapError(storageError));
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -1058,12 +1161,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
-        });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+        // Both steps are quick. An interruption between a pack and its index would strand a pack
+        // that gc never removes, and one before the ref would strand the published objects.
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* publishQuarantinedObjects(quarantine, objectDirectory).pipe(
+              Effect.mapError(storageError),
+            );
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
+            });
+          }),
+        );
+      }).pipe(Effect.ensuring(removeQuarantine));
     }),
 
     hasCheckpointRef: (input) =>
