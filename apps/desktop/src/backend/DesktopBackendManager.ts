@@ -213,6 +213,16 @@ export class BackendProcessExitStatusError extends Schema.TaggedError<BackendPro
   }
 }
 
+// Node reports no exit code for a child killed by a signal, so Effect's
+// spawner fails `exitCode` and leaves the signal name only in the cause's
+// message. Returns that signal, or undefined for a genuine read failure.
+const SIGNAL_EXIT_PATTERN = /receipt of signal: '(SIG[A-Z0-9]+)'/;
+function signalFromExitCodeFailure(error: PlatformError.PlatformError): string | undefined {
+  return error.cause instanceof Error
+    ? SIGNAL_EXIT_PATTERN.exec(error.cause.message)?.[1]
+    : undefined;
+}
+
 export const BackendProcessError = Schema.Union([
   BackendProcessBootstrapEncodeError,
   BackendProcessSpawnError,
@@ -596,17 +606,28 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
-    Effect.mapError(
-      (cause) =>
-        new BackendProcessExitStatusError({
-          executablePath: options.executablePath,
-          entryPath: options.entryPath,
-          cwd: options.cwd,
-          httpBaseUrl: options.httpBaseUrl,
-          pid: Number(handle.pid),
-          cause,
-        }),
-    ),
+    Effect.map((exitCode): BackendProcessExit => ({
+      code: Option.some(exitCode),
+      reason: `code=${exitCode}`,
+    })),
+    Effect.catch((cause) => {
+      const signal = signalFromExitCodeFailure(cause);
+      return signal === undefined
+        ? Effect.fail(
+            new BackendProcessExitStatusError({
+              executablePath: options.executablePath,
+              entryPath: options.entryPath,
+              cwd: options.cwd,
+              httpBaseUrl: options.httpBaseUrl,
+              pid: Number(handle.pid),
+              cause,
+            }),
+          )
+        : Effect.succeed<BackendProcessExit>({
+            code: Option.none(),
+            reason: `killed by ${signal}`,
+          });
+    }),
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
@@ -620,11 +641,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
   }
-  const exitCode = exit.value;
-  return {
-    code: Option.some(exitCode),
-    reason: `code=${exitCode}`,
-  } satisfies BackendProcessExit;
+  return exit.value;
 });
 
 // Factory for one pooled backend instance. The returned instance owns
