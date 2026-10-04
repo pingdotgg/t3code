@@ -41,6 +41,7 @@ export const PROVIDER_PRESENTATION = {
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
   },
+  pi: { label: "Pi", color: "#6ba57a", driverKind: ProviderDriverKind.make("pi") },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */

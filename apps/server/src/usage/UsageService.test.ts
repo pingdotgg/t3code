@@ -109,6 +109,7 @@ const serviceLayers = (input: {
       Layer.succeed(HostProcessEnvironment, {
         HOME: input.home,
         GROK_HOME: NodePath.join(input.home, "grok"),
+        PI_CODING_AGENT_DIR: NodePath.join(input.home, "pi"),
         OPENCODE_DATA_DIR: NodePath.join(input.home, "opencode"),
         ANTIGRAVITY_DATA_DIR: NodePath.join(input.home, "antigravity"),
         XDG_CONFIG_HOME: NodePath.join(input.home, "config"),
@@ -158,6 +159,69 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("counts Pi turns toward the subscription they ran on", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const piLine = (id: string, provider: string, model: string, output: number) =>
+        encodeUnknownJsonString({
+          type: "message",
+          id,
+          timestamp: "2026-08-01T10:00:00Z",
+          message: { role: "assistant", provider, model, usage: { input: 10, output } },
+        });
+      const sessions = NodePath.join(home, "pi", "sessions", "--proj--");
+      const parent = [
+        piLine("a1", "anthropic", "claude-opus-5-5", 3),
+        piLine("b2", "openai-codex-2", "gpt-6-sol", 5),
+        piLine("c3", "deepseek", "deepseek-flash", 7),
+      ];
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "2026-08-01T10-00-00-000Z_parent.jsonl"),
+          parent.join("\n") + "\n",
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "2026-08-01T10-00-00-000Z_fork.jsonl"),
+          [...parent, piLine("d4", "anthropic", "claude-opus-5-5", 11)].join("\n") + "\n",
+        );
+      });
+
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(Effect.provide(serviceLayers({ prefix: "usage-pi", home, settings })));
+
+      const piDir = yield* Effect.promise(() =>
+        NodeFSP.realpath(NodePath.join(home, "pi", "sessions")),
+      );
+      const piSources = summary.sources.filter(
+        (source) => source.fingerprint.resolvedHomePath === piDir,
+      );
+      assert.deepStrictEqual(
+        piSources.map((source) => [source.fingerprint.provider, source.distinctSessions]),
+        [
+          ["pi", 1],
+          ["claude", 1],
+          ["codex", 1],
+        ],
+      );
+
+      const merged = mergeUsage(
+        [{ environmentId: EnvironmentId.make("pi-test"), label: "test", summary }],
+        summary.contractVersion,
+      );
+      const outputByProvider = Object.fromEntries(
+        merged.providers.map((provider) => [provider.provider, provider.totalTokens]),
+      );
+      assert.deepStrictEqual(outputByProvider, { claude: 34, codex: 15, pi: 17 });
+      assert.deepStrictEqual(merged.models.map((model) => model.model).toSorted(), [
+        "claude-opus-5-5",
+        "deepseek/deepseek-flash",
+        "gpt-6-sol",
+      ]);
+    }).pipe(Effect.scoped),
+  );
   it.live.each([
     { explicitDefault: true, label: "explicit" },
     { explicitDefault: false, label: "legacy" },

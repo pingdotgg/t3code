@@ -6,8 +6,8 @@ desktop when the terminal is not focused. Customize `usage.open` in
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, and Cursor history from your connected
-environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, and Cursor history from your
+connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
@@ -15,6 +15,10 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
+
+Pi turns count toward the subscription they ran on: Anthropic models under Claude Code and
+ChatGPT (`openai-codex`) models under Codex. Other Pi providers appear under Pi. Set
+`PI_CODING_AGENT_DIR` on the account to read a different Pi directory.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the

@@ -303,7 +303,7 @@ export const make = Effect.gen(function* () {
       fileName?: string;
     }> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+    for (const driver of ["claudeAgent", "codex", "grok", "pi"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
       const instances: Array<
@@ -342,6 +342,10 @@ export const make = Effect.gen(function* () {
           home = configured
             ? expandHomePath(configured)
             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else if (driver === "pi") {
+          home = expandHomePath(
+            environment.PI_CODING_AGENT_DIR?.trim() || path.join(NodeOS.homedir(), ".pi", "agent"),
+          );
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
@@ -852,22 +856,33 @@ export const make = Effect.gen(function* () {
       index,
       { provider, dir, volumeId, files, status, message, action, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
-      let scannedFiles = 0;
       let skippedFiles = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
+      // Pi files hold records for several providers, and each one reports as
+      // its own source so clients match its buckets. Sessions are distinct per
+      // directory: buckets carry per-cell session counts, but a session spans
+      // days and models, so clients total this figure instead.
+      const counts = new Map([[provider, { scannedFiles: 0, sessionIds: new Set<string>() }]]);
+      const countsFor = (recordProvider: UsageProviderKind) => {
+        let entry = counts.get(recordProvider);
+        if (entry === undefined) {
+          entry = { scannedFiles: 0, sessionIds: new Set() };
+          counts.set(recordProvider, entry);
+        }
+        return entry;
+      };
 
       for (const file of filesByDir[index] ?? []) {
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
-        scannedFiles += 1;
+        for (const recordProvider of new Set(file.records.map((record) => record.provider))) {
+          countsFor(recordProvider).scannedFiles += 1;
+        }
         const codexEventOccurrences = new Map<string, number>();
         for (const record of file.records) {
           let usageRecord = record;
-          if (record.provider === "codex" && sharedSessions.has(record.sessionId)) {
+          if (provider === "codex" && sharedSessions.has(record.sessionId)) {
             // Match moved rollout copies without collapsing repeated equal events
             // within one rollout (timestamps can have only second precision).
             // Only sessions seen in several files can have a copy to match.
@@ -885,23 +900,32 @@ export const make = Effect.gen(function* () {
           // Only sessions contributing in-window count; the mtime slack can
           // admit boundary files whose records fall outside the range.
           if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
+            countsFor(record.provider).sessionIds.add(record.sessionId);
           }
         }
       }
 
-      sources.push({
-        fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
-        // Clients exclude missing sources, so saved records remain an available source.
-        status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
-        scannedFiles,
-        skippedFiles,
-        malformedRecords: 0,
-        distinctSessions: sessionIds.size,
-        message:
-          message ?? (files === null ? "No transcript directory on this environment." : null),
-        ...(action ? { action } : {}),
-      });
+      for (const [sourceProvider, { scannedFiles, sessionIds }] of counts) {
+        const primary = sourceProvider === provider;
+        sources.push({
+          fingerprint: {
+            hostId: sourceHostId ?? hostId,
+            provider: sourceProvider,
+            resolvedHomePath: dir,
+            volumeId,
+          },
+          // Clients exclude missing sources, so saved records remain an available source.
+          status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
+          scannedFiles,
+          skippedFiles: primary ? skippedFiles : 0,
+          malformedRecords: 0,
+          distinctSessions: sessionIds.size,
+          message: !primary
+            ? null
+            : (message ?? (files === null ? "No transcript directory on this environment." : null)),
+          ...(primary && action ? { action } : {}),
+        });
+      }
     }
 
     const pruned = pruneScanCache(fileCache, retentionCutoffMs);

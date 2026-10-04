@@ -32,6 +32,8 @@ import {
   parseCodexRecord,
   parseGrokLine,
   parseGrokRecord,
+  parsePiLine,
+  parsePiRecord,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -93,7 +95,7 @@ type SelectedFields = { readonly [key: string]: true | SelectedFields };
 
 // Keep the fields consumed by usageTranscripts, including reducer state and
 // dedupe/cost metadata. A selected subtree (usage) keeps future token fields.
-const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
+const USAGE_FIELDS: Record<"claude" | "codex" | "grok" | "pi", SelectedFields> = {
   claude: {
     type: true,
     timestamp: true,
@@ -124,10 +126,19 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
       update: { sessionUpdate: true, prompt_id: true, usage: true },
     },
   },
+  pi: {
+    type: true,
+    id: true,
+    timestamp: true,
+    message: { role: true, api: true, provider: true, model: true, usage: true },
+  },
 };
 
 function selectUsageFields(provider: UsageProviderKind) {
-  const fields = USAGE_FIELDS[provider === "codex" || provider === "grok" ? provider : "claude"];
+  const fields =
+    USAGE_FIELDS[
+      provider === "codex" || provider === "grok" || provider === "pi" ? provider : "claude"
+    ];
   return (path: ReadonlyArray<string | number | null>): boolean => {
     let selected: true | SelectedFields = fields;
     for (const key of path) {
@@ -291,6 +302,7 @@ export async function readTranscriptRecords(
       resumed = true;
     }
 
+    const piSessionId = NodePath.basename(filePath, ".jsonl").split("_").at(-1) ?? "";
     const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
       if (provider === "codex") {
         if (
@@ -310,7 +322,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
+      const record = provider === "pi" ? parsePiLine(line, piSessionId) : parseClaudeLine(line);
       if (record !== null) out.push(record);
     };
 
@@ -360,7 +372,9 @@ export async function readTranscriptRecords(
           const record =
             provider === "codex"
               ? parseCodexRecord(projected, state)
-              : parseClaudeRecord(projected);
+              : provider === "pi"
+                ? parsePiRecord(projected, piSessionId)
+                : parseClaudeRecord(projected);
           if (record !== null) out.push(record);
         }
       } else if (pendingBytes > 0) {
