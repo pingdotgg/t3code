@@ -2917,6 +2917,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
+  it.effect("reuses the CLI permission mode when auto falls back to default", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        ...CLAUDE_TEST_RUNTIME_POLICY,
+        runtimeMode: "auto",
+      });
+      const turnInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-auto-fallback-1"),
+        text: "Hello.",
+        attachments: [],
+        runtimePolicy,
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      const openedOptions = harness.getOpenedOptions();
+      assert.equal(openedOptions?.permissionMode, "auto");
+      yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, permissionMode: "default" }));
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-auto-fallback-2"),
+          providerTurnOrdinal: 2,
+          text: "Continue.",
+          attachments: [],
+          runtimePolicy,
+        }),
+      );
+      assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+      assert.lengthOf(harness.offeredMessages, 2);
+      assert.deepEqual(harness.permissionModeChanges, []);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2998,6 +3040,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.sdkMessages,
           toolResults("00000000-0000-4000-8000-000000000502", ["tool-todo-1"]),
         );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, permissionMode: "bypassPermissions" }),
+        );
         // Claude entered plan mode on its own (EnterPlanMode).
         yield* Queue.offer(
           harness.sdkMessages,
@@ -3008,6 +3053,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             permissionMode: "plan",
             uuid: "00000000-0000-4000-8000-000000000508",
             session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeTurnInit,
+            uuid: "00000000-0000-4000-8000-000000000509",
+            permissionMode: "plan",
           }),
         );
         yield* Queue.offer(

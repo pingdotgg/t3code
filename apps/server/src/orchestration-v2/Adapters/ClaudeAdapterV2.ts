@@ -2739,10 +2739,12 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
-  // The mode this process was opened in, and the mode the CLI last reported
-  // (init and status frames). Claude changes the latter itself through
-  // EnterPlanMode.
-  readonly openedPermissionMode: PermissionMode;
+  // The mode this process opened in (first init frame; the CLI falls back
+  // from modes the model lacks, such as Auto on Haiku), and the mode the CLI
+  // last reported (init and status frames). Claude changes the latter itself
+  // through EnterPlanMode.
+  openedPermissionMode: PermissionMode;
+  receivedInit: boolean;
   permissionMode: PermissionMode;
   // Stop, rollback or fork is closing this process; its work is ending.
   stopping: boolean;
@@ -6929,7 +6931,7 @@ export function makeClaudeAdapterV2(
           ) {
             // Claude can switch its own mode mid-session (EnterPlanMode), and
             // a denied ExitPlanMode leaves it there. Put the live process back
-            // in the thread's mode before the next prompt.
+            // in its initial mode before the next prompt.
             if (existing.permissionMode !== existing.openedPermissionMode) {
               yield* existing.query.setPermissionMode(existing.openedPermissionMode);
               existing.permissionMode = existing.openedPermissionMode;
@@ -7049,6 +7051,7 @@ export function makeClaudeAdapterV2(
             closed,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
+            receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             subagentsFromEarlierProcesses: new Set(
@@ -7060,6 +7063,15 @@ export function makeClaudeAdapterV2(
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) => {
+              if (
+                message.type === "system" &&
+                message.subtype === "init" &&
+                !context.receivedInit
+              ) {
+                context.openedPermissionMode =
+                  message.permissionMode ?? context.openedPermissionMode;
+                context.receivedInit = true;
+              }
               if (
                 message.type === "system" &&
                 (message.subtype === "init" || message.subtype === "status") &&
