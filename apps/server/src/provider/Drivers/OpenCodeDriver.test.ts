@@ -83,7 +83,24 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
         }),
       );
-      assert.deepStrictEqual(serverStarts, ["start"]);
+      yield* Effect.flip(
+        instance.textGeneration.findWorkItemMatches({
+          cwd: process.cwd(),
+          relationship: "related",
+          source: {
+            kind: "issue",
+            provider: "github",
+            repository: "team/repo",
+            number: 1,
+            title: "Saved issue",
+            url: "https://github.com/team/repo/issues/1",
+            body: "Find related work",
+          },
+          candidates: [],
+          modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+        }),
+      );
+      assert.deepStrictEqual(serverStarts, ["start", "start"]);
     }).pipe(Effect.scoped),
   );
 

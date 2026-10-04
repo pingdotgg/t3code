@@ -13,6 +13,10 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  MAX_THREAD_ISSUES,
+  normalizeWorkItemLinkKey,
+  type ThreadIssueKey,
+  type ThreadIssueLink,
   type ChatAttachment,
   CommandId,
   isProviderNativeSubagentThread,
@@ -365,6 +369,13 @@ export function isNativeMaintenanceCommand(message: {
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+const threadIssueMatchesKey = (issue: ThreadIssueLink, key: ThreadIssueKey) =>
+  issue.provider === key.provider &&
+  issue.repository.toLowerCase() === key.repository.toLowerCase() &&
+  issue.number === key.number &&
+  (key.url === undefined ||
+    normalizeWorkItemLinkKey(issue).url ===
+      normalizeWorkItemLinkKey({ provider: key.provider, url: key.url }).url);
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
@@ -2374,6 +2385,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (command.type === "thread.metadata.update") {
+      const issues = thread.issues ?? [];
+      const issueKey = command.issueLink ?? command.issueUnlink;
+      const linked =
+        issueKey !== undefined && issues.some((issue) => threadIssueMatchesKey(issue, issueKey));
+      const cause =
+        command.issueLink !== undefined && linked
+          ? `Issue ${command.issueLink.repository}#${command.issueLink.number} is already linked to thread ${command.threadId}.`
+          : command.issueLink !== undefined && issues.length >= MAX_THREAD_ISSUES
+            ? `Thread ${command.threadId} already has ${MAX_THREAD_ISSUES} linked issues.`
+            : command.issueUnlink !== undefined && !linked
+              ? `Issue ${command.issueUnlink.repository}#${command.issueUnlink.number} is not linked to thread ${command.threadId}.`
+              : null;
+      if (cause !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      }
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -2784,6 +2816,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
+          const issueUnlink = command.issueUnlink;
+          const issueUnlinkIndex =
+            issueUnlink === undefined
+              ? -1
+              : (thread.issues ?? []).findIndex((issue) =>
+                  threadIssueMatchesKey(issue, issueUnlink),
+                );
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
             thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
@@ -2804,6 +2843,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.issueLink === undefined
+              ? {}
+              : { issues: [...(thread.issues ?? []), command.issueLink] }),
+            ...(issueUnlink === undefined
+              ? {}
+              : {
+                  issues: (thread.issues ?? []).filter((_, index) => index !== issueUnlinkIndex),
+                }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&

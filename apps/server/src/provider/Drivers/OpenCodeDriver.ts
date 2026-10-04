@@ -168,6 +168,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
+    findWorkItemMatches: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.findWorkItemMatches(input),
+        v2: v2.findWorkItemMatches(input),
+      }),
   };
 }
 

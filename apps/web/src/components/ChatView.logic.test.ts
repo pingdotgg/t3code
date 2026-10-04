@@ -267,6 +267,20 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
 });
 
 describe("deriveComposerSendState", () => {
+  it.each([
+    ["[@acme/app#12](https://github.com/acme/app/issues/12)", 0],
+    ["[PR #12](t3-context://v1/review-comment/pr12)", 1],
+  ])("keeps a source-control mention sendable: %s", (prompt, elementContextCount) => {
+    expect(
+      deriveComposerSendState({
+        prompt,
+        imageCount: 0,
+        terminalContexts: [],
+        elementContextCount,
+      }).hasSendableContent,
+    ).toBe(true);
+  });
+
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
       prompt: "[Terminal 1](t3-context://v1/terminal/ctx-expired)",

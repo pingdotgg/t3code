@@ -72,6 +72,16 @@ function roundTrip(value: string) {
   return serializeEditorDoc(doc);
 }
 
+it.each([
+  "| Name | Value |\n| --- | --- |\n| one | two |",
+  "```ts\nconst answer = 42;\n```",
+  "<details>\n<summary>More</summary>\nBody\n</details>",
+  "Read [the guide](https://example.com/guide?q=1) and ![diagram](https://example.com/a.png).",
+  "Ask @alice about #123 before closing.",
+])("keeps issue Markdown through the rich editor: %s", (body) => {
+  expect(roundTrip(body).value).toBe(body);
+});
+
 // Plain mode: the same engine with the mark extensions off. Markers stay
 // literal characters and task lines stay paragraphs.
 const plainSchema = getSchemaByResolvedExtensions(

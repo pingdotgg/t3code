@@ -210,6 +210,17 @@ export function createEnvironmentSummaryAtoms(input: {
           .pullRequests === true,
     ),
   );
+  const issuesSupportedAtom = Atom.make((get) => {
+    for (const [environmentId, entry] of get(input.catalogValueAtom).entries) {
+      if (entry.target._tag === "PrimaryConnectionTarget") {
+        return (
+          get(input.presentationAtom(environmentId))?.serverConfig?.environment.capabilities
+            .issues === true
+        );
+      }
+    }
+    return false;
+  });
   return {
     environmentIdsAtom,
     connectedEnvironmentIdsAtom,
@@ -217,5 +228,6 @@ export function createEnvironmentSummaryAtoms(input: {
     environmentsAtom,
     machineByIdAtom,
     pullRequestsSupportedAtom,
+    issuesSupportedAtom,
   };
 }

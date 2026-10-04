@@ -1,9 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { EventId, ThreadId } from "@t3tools/contracts";
+import { EventId, ThreadId, ThreadIssueLinks } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -14,6 +15,7 @@ import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 
+const encodeIssueLinks = Schema.encodeEffect(Schema.fromJsonString(ThreadIssueLinks));
 const databaseLayer = SqlitePersistenceMemory;
 const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
 const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
@@ -223,6 +225,17 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
             '2026-01-04T00:00:00.000Z', NULL)
       `;
 
+      const issues = [
+        {
+          provider: "github",
+          repository: "pingdotgg/t3code",
+          number: 12,
+          url: "https://github.com/pingdotgg/t3code/issues/12",
+          title: "Saved issue",
+        },
+      ];
+      const issueLinksJson = yield* encodeIssueLinks(issues);
+      yield* sql`UPDATE projection_threads SET issue_links_json = ${issueLinksJson} WHERE thread_id = ${threadId}`;
       assert.equal(yield* importer.pendingThreadCount, 1);
       const shellImport = yield* importer.reconcileShells;
       assert.equal(yield* importer.pendingThreadCount, 1);
@@ -242,6 +255,8 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       assert.isTrue((yield* maintenance.verify).valid);
       const shellProjection = yield* projections.getThreadProjection(threadId);
       assert.equal(shellProjection.thread.historyOrigin, "v1_import");
+      assert.deepEqual(shellProjection.thread.issues, issues);
+      assert.deepEqual((yield* projections.getThreadShell(threadId))?.issues, issues);
       assert.equal(shellProjection.thread.branch, "main");
       assert.equal(shellProjection.thread.worktreePath, "/tmp/legacy-project");
       assert.deepEqual(
@@ -454,6 +469,17 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
           'az'
         )
       `;
+      const issues = [
+        {
+          provider: "github",
+          repository: "pingdotgg/t3code",
+          number: 12,
+          url: "https://github.com/pingdotgg/t3code/issues/12",
+          title: "Saved issue",
+        },
+      ];
+      const issueLinksJson = yield* encodeIssueLinks(issues);
+      yield* sql`UPDATE projection_threads SET issue_links_json = ${issueLinksJson} WHERE thread_id = ${threadId}`;
       yield* importer.reconcileShells;
       yield* maintenance.rebuild;
       const shellProjection = yield* projections.getThreadProjection(threadId);
@@ -471,6 +497,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       };
       delete previousRepairThread.branchPullRequest;
       delete previousRepairThread.activeOrderKey;
+      delete previousRepairThread.issues;
       yield* eventSink.write({
         events: [
           {
@@ -496,6 +523,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       assert.deepStrictEqual(repaired.thread.pullRequests, []);
       assert.equal(repaired.thread.branchPullRequest?.number, 9001);
       assert.equal(repaired.thread.activeOrderKey, "az");
+      assert.deepEqual(repaired.thread.issues, issues);
 
       const eventsBeforeRetry = yield* sql<{ readonly event_id: string }>`
         SELECT event_id

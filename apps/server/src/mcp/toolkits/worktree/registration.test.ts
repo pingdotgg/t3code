@@ -20,6 +20,9 @@ import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRu
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as IssueService from "../../../issue/IssueService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -34,6 +37,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
   Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
+  SqlitePersistenceMemory,
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
@@ -123,6 +129,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("link_issue");
+      expect(toolNames).toContain("list_issue_pull_request_links");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not

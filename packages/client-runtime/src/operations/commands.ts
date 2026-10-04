@@ -23,6 +23,8 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
+  type ThreadIssueKey,
+  type ThreadIssueLink,
   type ThreadEnvMode,
   type UploadChatAttachment,
 } from "@t3tools/contracts";
@@ -130,6 +132,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   /** Link (object) or unlink (null) a pull request (#8160). */
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
+  readonly issueLink?: ThreadIssueLink;
+  readonly issueUnlink?: ThreadIssueKey;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -566,6 +570,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
+      input.issueLink !== undefined ||
+      input.issueUnlink !== undefined ||
       input.limitRecovery !== undefined
     ) {
       result = yield* dispatch({
@@ -580,6 +586,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),
+        ...(input.issueLink === undefined ? {} : { issueLink: input.issueLink }),
+        ...(input.issueUnlink === undefined ? {} : { issueUnlink: input.issueUnlink }),
       });
     }
     if (input.modelSelection !== undefined) {

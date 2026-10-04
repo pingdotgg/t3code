@@ -26,6 +26,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -409,10 +410,20 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       };
     });
 
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn("AntigravityTextGeneration.findWorkItemMatches")(function* (input) {
+      return yield* runAntigravityJson({
+        operation: "findWorkItemMatches",
+        ...buildWorkItemMatchPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    findWorkItemMatches,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

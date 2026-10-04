@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 
-// Settings, Usage, and Pull Requests replace the sidebar utility row with a
+// Settings, Usage, Pull Requests, and Issues replace the sidebar utility row with a
 // Back button. Everything else is the main app. Legacy `/projects/<key>` links
 // redirect into settings, so they count too and are never remembered.
 export function isSidebarUtilityPage(pathname: string) {
@@ -10,7 +10,8 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname.startsWith("/settings/") ||
     pathname.startsWith("/projects/") ||
     pathname === "/usage" ||
-    pathname === "/pull-requests"
+    pathname === "/pull-requests" ||
+    pathname === "/issues"
   );
 }
 

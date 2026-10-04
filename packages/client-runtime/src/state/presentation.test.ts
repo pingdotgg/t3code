@@ -3,16 +3,24 @@ import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+} from "../connection/model.ts";
 import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
 } from "./presentation.ts";
+import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 
 const FIRST = EnvironmentId.make("first");
 const SECOND = EnvironmentId.make("second");
-function entry(environmentId: EnvironmentId, label = environmentId as string) {
+function entry(
+  environmentId: EnvironmentId,
+  label = environmentId as string,
+): ConnectionCatalogEntry {
   return {
     target: new PrimaryConnectionTarget({
       environmentId,
@@ -192,6 +200,51 @@ describe("environment summary subscriptions", () => {
       expect(h.registry.get(h.environmentIdsAtom)).toEqual([]);
       expect(h.registry.get(h.identitiesAtom)).toEqual([]);
       expect(h.registry.get(h.environmentsAtom)).toEqual([]);
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+
+  it("supports issues only from the primary environment and ignores config refreshes", () => {
+    const h = harness();
+    const issues = (supported: boolean, cwd = "/workspace") =>
+      ({
+        ...config(false, cwd),
+        environment: { capabilities: { issues: supported }, platform: { machine: "desktop" } },
+      }) as ServerConfig;
+    h.registry.set(h.catalog, {
+      isReady: true,
+      entries: new Map([
+        [FIRST, entry(FIRST)],
+        [
+          SECOND,
+          {
+            ...entry(SECOND),
+            target: new BearerConnectionTarget({
+              environmentId: SECOND,
+              label: "second",
+              connectionId: "second",
+            }),
+          },
+        ],
+      ]),
+    });
+    let changes = 0;
+    const stop = h.registry.subscribe(h.issuesSupportedAtom, () => changes++);
+    try {
+      h.registry.set(h.configs(SECOND), issues(true));
+      expect(h.registry.get(h.issuesSupportedAtom)).toBe(false);
+      h.registry.set(h.configs(FIRST), issues(true));
+      expect(h.registry.get(h.issuesSupportedAtom)).toBe(true);
+      const settled = changes;
+      for (let index = 0; index < 5; index++) {
+        h.registry.set(h.configs(FIRST), issues(true, `/workspace-${index}`));
+        expect(h.registry.get(h.issuesSupportedAtom)).toBe(true);
+      }
+      expect(changes).toBe(settled);
+      h.registry.set(h.configs(FIRST), null);
+      expect(h.registry.get(h.issuesSupportedAtom)).toBe(false);
     } finally {
       stop();
       h.registry.dispose();

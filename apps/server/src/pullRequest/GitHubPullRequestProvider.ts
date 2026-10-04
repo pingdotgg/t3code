@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import type {
+  IssueLink,
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestCheck,
@@ -17,6 +18,11 @@ import {
   type ProviderRepositoryRef,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import {
+  mergeIssueLinks,
+  parseIssueReferences,
+  unlinkedIssueReferences,
+} from "./issueReferences.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -200,6 +206,37 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
+  /**
+   * The issues the pull request's own words name, resolved before any of them is shown: a number
+   * in a body is not proof that an issue exists, and a dead row in this section is worse than an
+   * absent one.
+   *
+   * Weaker than what GitHub itself reported, so a lookup that fails leaves the section with the
+   * host's own links rather than taking the detail down with it. What the host already reported is
+   * dropped first, which is what keeps an ordinary `Closes #12` from costing a request at all.
+   */
+  const citedIssues = (
+    input: { readonly cwd: string; readonly repository: string; readonly host: string },
+    pullRequest: { readonly title: string; readonly body: string },
+    hostLinks: ReadonlyArray<IssueLink>,
+  ): Effect.Effect<ReadonlyArray<IssueLink>> => {
+    const references = unlinkedIssueReferences(
+      parseIssueReferences({
+        kind: "github",
+        host: input.host,
+        repository: input.repository,
+        title: pullRequest.title,
+        body: pullRequest.body,
+      }),
+      hostLinks,
+    );
+    return references.length === 0
+      ? Effect.succeed([])
+      : cli
+          .listCitedIssues({ cwd: input.cwd, host: input.host, references })
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<IssueLink> => []));
+  };
+
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
       Effect.flatMap((pullRequest) =>
@@ -370,30 +407,43 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequest: (input) =>
-      readChecks(input).pipe(
-        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
-          ...pullRequest,
-          author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
-          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
-          mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
-          baseComparison:
-            pullRequest.comparison === null || pullRequest.comparison.behindBy === null
-              ? "unknown"
-              : pullRequest.comparison.behindBy > 0
-                ? "behind"
-                : "up-to-date",
-          ...(pullRequest.comparison?.behindBy == null
-            ? {}
-            : { behindBy: pullRequest.comparison.behindBy }),
-        })),
+      Effect.all(
+        {
+          pullRequest: readChecks(input),
+          linkedIssues: cli
+            .listLinkedIssues(input)
+            .pipe(Effect.orElseSucceed(() => ({ links: [], truncated: false }))),
+        },
+        { concurrency: 2 },
+      ).pipe(
+        Effect.flatMap(({ pullRequest, linkedIssues }) =>
+          citedIssues(input, pullRequest, linkedIssues.links).pipe(
+            Effect.map((cited): ProviderChangeRequestDetail => ({
+              ...pullRequest,
+              reviewers: pullRequest.reviewRequestLogins.map((login) => ({
+                login,
+                name: null,
+                avatarUrl: null,
+              })),
+              mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
+              viewerPermissions: gitHubViewerPermissions({
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              }),
+              linkedIssues: mergeIssueLinks(linkedIssues.links, cited),
+              linkedIssuesTruncated: linkedIssues.truncated,
+              baseComparison:
+                pullRequest.comparison === null || pullRequest.comparison.behindBy === null
+                  ? "unknown"
+                  : pullRequest.comparison.behindBy > 0
+                    ? "behind"
+                    : "up-to-date",
+              ...(pullRequest.comparison?.behindBy == null
+                ? {}
+                : { behindBy: pullRequest.comparison.behindBy }),
+            })),
+          ),
+        ),
         Effect.mapError(fail("getChangeRequest")),
       ),
 

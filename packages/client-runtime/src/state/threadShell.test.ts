@@ -3,6 +3,7 @@ import {
   ProjectId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -48,6 +49,60 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("defaults missing issue links to an empty list", () => {
+    const { registry, threads } = makeHarness();
+    try {
+      expect(registry.get(threads.threadShellsAtom)[0]?.issues).toEqual([]);
+    } finally {
+      registry.dispose();
+    }
+  });
+
+  it("imports issue links from the snapshot and applies link and unlink updates", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const issues: ReadonlyArray<ThreadIssueLink> = [
+      {
+        provider: "gitlab",
+        repository: "team/project",
+        number: 42,
+        url: "https://gitlab.example.test/team/project/-/issues/42",
+        title: "Fix the shared issue links",
+      },
+    ];
+    let snapshot: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      threads: [{ ...v2ThreadShell, issues }],
+    };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const dispose = registry.mount(threads.threadShellsAtom);
+    const threadAtom = threads.threadShellAtom({ environmentId, threadId: v2ThreadShell.id });
+    try {
+      const initial = registry.get(threads.threadShellsAtom)[0];
+      expect(initial?.issues).toBe(issues);
+      expect(registry.get(threadAtom)).toBe(initial);
+
+      const linkedIssues = [
+        ...issues,
+        { ...issues[0]!, number: 43, url: "https://gitlab.example.test/team/project/-/issues/43" },
+      ];
+      for (const [index, nextIssues] of [linkedIssues, [linkedIssues[1]!], []].entries()) {
+        snapshot = applyShellStreamEvent(snapshot, {
+          kind: "thread.updated",
+          location: "active",
+          sequence: index + 1,
+          thread: { ...v2ThreadShell, issues: nextIssues },
+        });
+        registry.set(snapshotAtom(environmentId), snapshot);
+        const current = registry.get(threads.threadShellsAtom)[0];
+        expect(current?.issues).toBe(nextIssues);
+        expect(registry.get(threadAtom)).toBe(current);
+      }
+    } finally {
+      dispose();
+      registry.dispose();
+    }
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {

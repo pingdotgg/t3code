@@ -6,6 +6,7 @@ import type {
   ChatAttachment,
   ModelSelection,
   ProviderInstanceId,
+  WorkItemMatchRelationship,
 } from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
@@ -81,6 +82,30 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface WorkItemMatchGenerationInput {
+  cwd: string;
+  relationship: WorkItemMatchRelationship;
+  source: {
+    readonly kind: "issue" | "pull-request";
+    readonly provider: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly title: string;
+    readonly url: string;
+    readonly body: string;
+  };
+  candidates: ReadonlyArray<WorkItemMatchGenerationInput["source"]>;
+  modelSelection: ModelSelection;
+}
+
+export interface WorkItemMatchGenerationResult {
+  matches: ReadonlyArray<{
+    candidate: number;
+    confidence: "high" | "medium";
+    reason: string;
+  }>;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -112,6 +137,10 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    readonly findWorkItemMatches: (
+      input: WorkItemMatchGenerationInput,
+    ) => Effect.Effect<WorkItemMatchGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +148,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "findWorkItemMatches";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -171,6 +201,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    findWorkItemMatches: (input) =>
+      resolveInstance(registry, "findWorkItemMatches", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.findWorkItemMatches(input)),
       ),
   });
 });

@@ -10,10 +10,13 @@ import type {
   EnvironmentId,
   PreviewSessionSnapshot,
   ProjectId,
+  IssueCloseReason,
+  IssueState,
   PullRequestState,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
+  CircleDot,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -39,7 +42,7 @@ import {
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
-import type { RightPanelSurface } from "~/rightPanelStore";
+import { issueSurfaceId, type RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
@@ -76,6 +79,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { resolveIssueState } from "./issue/issuePresentation";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
@@ -122,6 +126,12 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  /**
+   * Picking an issue needs a project to pick from, which only a thread has: the list pages reuse
+   * these tabs to hold surfaces they opened themselves, so for them this card stays out.
+   */
+  onAddIssue: () => void;
+  issueAvailable: boolean;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -132,6 +142,7 @@ interface RightPanelTabsProps {
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
+  issueStatuses?: Readonly<Record<string, IssueTabStatus>>;
 }
 
 export interface PullRequestTabStatus {
@@ -140,6 +151,14 @@ export interface PullRequestTabStatus {
   number: number;
   state: PullRequestState;
   isDraft: boolean;
+}
+
+export interface IssueTabStatus {
+  projectId: string;
+  repository: string;
+  number: number;
+  state: IssueState;
+  stateReason: IssueCloseReason | null;
 }
 
 export type PullRequestTabStatusSeed = Pick<PullRequestTabStatus, "state" | "isDraft">;
@@ -156,6 +175,7 @@ const SURFACE_DISABLED_REASONS = {
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
+  issue: "Issues are only available from a project checked out from a host.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
 } as const;
@@ -179,6 +199,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   files: "Available when a project is open.",
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
+  issue: "Available for projects with a host.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
 } as const;
@@ -318,6 +339,7 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
+  onAddIssue: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
@@ -325,6 +347,7 @@ function RightPanelEmptyState(props: {
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
+  issueAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
 }) {
@@ -379,6 +402,15 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Issue",
+      description: "Browse this project's issues.",
+      icon: CircleDot,
+      shortcut: "I",
+      available: props.issueAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.issue,
+      onClick: props.onAddIssue,
     },
     {
       label: "Device",
@@ -593,7 +625,11 @@ function surfaceTitle(
         getTerminalLabel(surface.activeTerminalId)
       );
     case "pull-request":
+    case "issue":
       return `#${surface.number}`;
+    // The strip says what the tab is showing, which for the browser is either of two things.
+    case "issues":
+      return surface.selected ? `#${surface.selected.number}` : "Issues";
     case "pull-requests":
       return "Pull requests";
     case "device":
@@ -637,6 +673,7 @@ function SurfaceIcon({
   theme,
   environmentId,
   pullRequestStatusSeeds,
+  issueStatuses,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
@@ -644,6 +681,7 @@ function SurfaceIcon({
   theme: "light" | "dark";
   environmentId: EnvironmentId | null;
   pullRequestStatusSeeds: Readonly<Record<string, PullRequestTabStatusSeed>> | undefined;
+  issueStatuses: Readonly<Record<string, IssueTabStatus>> | undefined;
 }) {
   switch (surface.kind) {
     case "preview": {
@@ -677,6 +715,26 @@ function SurfaceIcon({
           seed={pullRequestStatusSeeds?.[surface.id]}
         />
       );
+    case "issue":
+    case "issues": {
+      // Until the panel has read the issue, the tab wears the neutral glyph rather than
+      // claiming a state it has not been told. The browser wears the state of whichever issue
+      // it is showing, and the plain glyph while it is listing.
+      const statusKey =
+        surface.kind === "issue"
+          ? surface.id
+          : surface.selected
+            ? issueSurfaceId(surface.selected)
+            : null;
+      const state = (statusKey === null ? null : issueStatuses?.[statusKey]) ?? null;
+      const presentation = state === null ? null : resolveIssueState(state);
+      const Icon = presentation?.Icon ?? CircleDot;
+      return (
+        <Icon
+          className={cn("size-3 shrink-0", presentation?.toneClassName ?? "text-muted-foreground")}
+        />
+      );
+    }
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "device":
@@ -872,6 +930,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
       onClick: props.onAddPullRequest,
+    },
+    {
+      label: "Issue",
+      icon: CircleDot,
+      shortcut: "I",
+      available: props.issueAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.issue,
+      onClick: props.onAddIssue,
     },
     {
       label: "Linked pull requests",
@@ -1089,6 +1155,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              // An issue tab has room for its number and nothing else, so which repository it
+              // came from is what the hover is for.
+              const tooltip = surface.kind === "issue" ? surface.repository : title;
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
@@ -1124,6 +1193,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       theme={resolvedTheme}
                       environmentId={props.environmentId}
                       pullRequestStatusSeeds={props.pullRequestStatusSeeds}
+                      issueStatuses={props.issueStatuses}
                     />
                     {pending ? (
                       <span
@@ -1206,7 +1276,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             title={title}
                           />
                         ) : (
-                          title
+                          tooltip
                         )}
                       </TooltipPopup>
                     </Tooltip>
@@ -1369,6 +1439,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
+            onAddIssue={props.onAddIssue}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
@@ -1376,6 +1447,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
+            issueAvailable={props.issueAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
           />

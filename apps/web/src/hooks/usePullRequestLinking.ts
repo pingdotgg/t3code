@@ -89,7 +89,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       });
       if (mutation === null)
         throw new Error("This environment does not support linking this pull request.");
-      const result = await (mutation.type === "thread.meta.update"
+      const result = await (mutation.type === "thread.metadata.update"
         ? updateMetadata({ environmentId: threadRef.environmentId, input: mutation.input })
         : mutation.type === "thread.pull-request.link"
           ? link({ environmentId: threadRef.environmentId, input: mutation.input })

@@ -1072,6 +1072,23 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const IssueTrackerProjectBinding = Schema.Struct({
+  credentialId: Schema.optionalKey(TrimmedNonEmptyString),
+  repository: TrimmedNonEmptyString,
+});
+export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+const IssueTrackerSettings = Schema.Struct({
+  projectBindings: Schema.Record(ProjectId, Schema.NullOr(IssueTrackerProjectBinding)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+
+const IssueTrackingSettings = Schema.Struct({
+  connections: Schema.Record(TrimmedNonEmptyString, IssueTrackerSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 /**
  * How assistant text reaches clients while a turn runs.
  * - `turn`: hold the whole message until the turn finishes or pauses.
@@ -1332,6 +1349,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  issueTracking: IssueTrackingSettings,
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1652,6 +1670,11 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  issueTracking: Schema.optionalKey(
+    Schema.Struct({
+      connections: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, IssueTrackerSettings)),
+    }),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

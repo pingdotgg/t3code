@@ -70,9 +70,28 @@ function isReadOperation(document: string): boolean {
   return operation.startsWith("query") || operation.startsWith("{");
 }
 
+/**
+ * Finds the first operation close: empty or malformed documents return -1; nested selections balance.
+ * ponytail: Read queries are internal templates without brace-bearing string literals; use a
+ * GraphQL parser if user-authored documents ever reach this helper.
+ */
+function operationSelectionEnd(document: string): number {
+  const start = document.indexOf("{");
+  if (start === -1) return -1;
+  let depth = 0;
+  for (let index = start; index < document.length; index += 1) {
+    const character = document[index];
+    if (character === "{") depth += 1;
+    if (character !== "}") continue;
+    depth -= 1;
+    if (depth === 0) return index;
+  }
+  return -1;
+}
+
 function withRateLimit(document: string): string {
   if (!isReadOperation(document)) return document;
-  const end = document.lastIndexOf("}");
+  const end = operationSelectionEnd(document);
   if (end === -1 || document.includes(RATE_LIMIT_SELECTION)) return document;
   return `${document.slice(0, end)}\n  ${RATE_LIMIT_SELECTION}\n${document.slice(end)}`;
 }

@@ -54,6 +54,7 @@ import {
   unsettleThread,
   updateProject,
   updateThreadMetadata,
+  type UpdateThreadMetadataInput,
 } from "./commands.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
@@ -664,6 +665,65 @@ describe("V2 environment commands", () => {
         // A text-only edit must not send an attachments replacement list.
         expect(commands[5]).not.toHaveProperty("attachments");
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect.each<Pick<UpdateThreadMetadataInput, "issueLink" | "issueUnlink">>([
+    {
+      issueLink: {
+        provider: "gitlab",
+        repository: "team/project",
+        number: 42,
+        url: "https://gitlab.example.test/team/project/-/issues/42",
+        title: "Fix the shared issue links",
+      },
+    },
+    {
+      issueUnlink: {
+        provider: "gitlab",
+        repository: "team/project",
+        number: 42,
+        url: "https://gitlab.example.test/team/project/-/issues/42",
+      },
+    },
+    { issueUnlink: { provider: "github", repository: "team/project", number: 42 } },
+  ])("dispatches issue-only metadata changes unchanged: %j", (metadata) =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+      const result = yield* updateThreadMetadata({
+        commandId: CommandId.make("issue-metadata"),
+        threadId: v2ThreadId,
+        ...metadata,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "thread.metadata.update",
+          commandId: "issue-metadata",
+          threadId: v2ThreadId,
+          ...metadata,
+        },
+      ]);
+      expect(result).toEqual({ sequence: 1 });
+      expect(projectionRequests).toEqual([]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("does not dispatch metadata updates without changes", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+      const result = yield* updateThreadMetadata({
+        commandId: CommandId.make("no-metadata"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([]);
+      expect(projectionRequests).toEqual([]);
+      expect(result).toEqual({ sequence: 0 });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
   it.effect("delegates model selection to the server without fetching the full projection", () =>

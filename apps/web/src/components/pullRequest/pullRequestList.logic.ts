@@ -78,7 +78,7 @@ const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
   others: "Others",
 };
 
-function normalize(value: string | null | undefined): string | null {
+export function normalizeLogin(value: string | null | undefined): string | null {
   const trimmed = value?.trim().toLowerCase() ?? "";
   return trimmed.length > 0 ? trimmed : null;
 }
@@ -98,7 +98,7 @@ export function collectPullRequestListFacets(
   for (const entry of uniqueEntries.values()) {
     const inState = state === "all" || entry.state === state;
     if (entry.author !== null) {
-      const key = normalize(entry.author.login);
+      const key = normalizeLogin(entry.author.login);
       if (key !== null) {
         const held = authors.get(key);
         authors.set(key, {
@@ -110,7 +110,7 @@ export function collectPullRequestListFacets(
     }
     if (!inState) continue;
     for (const label of entry.labels) {
-      const key = normalize(label.name);
+      const key = normalizeLogin(label.name);
       if (key === null) continue;
       const held = labels.get(key);
       labels.set(key, {
@@ -146,7 +146,7 @@ export function pullRequestEntryViewer(
 ): string | null {
   // The environment's own answer first; a plain host key is what a single-environment listing
   // still writes, and what the snapshot from one carries.
-  return normalize(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
+  return normalizeLogin(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
 }
 
 /**
@@ -156,7 +156,7 @@ export function pullRequestEntryViewer(
  */
 function isAuthoredByViewer(entry: ScopedEntry, viewers: PullRequestViewers): boolean {
   const viewer = pullRequestEntryViewer(entry, viewers);
-  return viewer !== null && normalize(entry.author?.login) === viewer;
+  return viewer !== null && normalizeLogin(entry.author?.login) === viewer;
 }
 
 /** What `review:` and `status:` take, in GitHub's spelling and in the contract's. */
