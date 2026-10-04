@@ -40,6 +40,7 @@ const PluginSettingChange = Schema.Struct({
   /** `null` clears the saved value: a field returns to its default, a secret is deleted. */
   value: Schema.NullOr(PluginSettingValue),
 });
+export type PluginSettingChange = typeof PluginSettingChange.Type;
 
 export const PluginSettingsUpdateInput = Schema.Struct({
   installationId: PluginInstallationId,

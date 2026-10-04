@@ -187,6 +187,10 @@
       "types": "./src/state/plugins.ts",
       "default": "./src/state/plugins.ts"
     },
+    "./state/pluginSettings": {
+      "types": "./src/state/pluginSettings.ts",
+      "default": "./src/state/pluginSettings.ts"
+    },
     "./state/pluginPresentation": {
       "types": "./src/state/pluginPresentation.ts",
       "default": "./src/state/pluginPresentation.ts"

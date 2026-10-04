@@ -249,6 +249,14 @@ export function resolvePluginManageAccess(input: {
     : "denied";
 }
 
+/**
+ * Plugin settings save through an administrative RPC, so every session without
+ * proven access:write (denied, unreadable, or still checking) sees them read-only.
+ */
+export function pluginSettingsReadOnly(access: PluginManageAccess): boolean {
+  return access !== "granted";
+}
+
 /** One environment's catalogue subscription as a screen sees it. */
 export type PluginCatalogState =
   | { readonly _tag: "disconnected" }

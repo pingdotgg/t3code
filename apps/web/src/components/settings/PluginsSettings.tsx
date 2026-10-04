@@ -209,9 +209,10 @@ type PluginManageAccessChildren = (
 
 /**
  * Resolves whether this session may manage the environment's plugins (access:write)
- * and renders `children` with it.
+ * and renders `children` with it. Plugin settings forms, which save through an
+ * administrative RPC, use it to go read-only.
  */
-function PluginManageAccessScope({
+export function PluginManageAccessScope({
   environment,
   children,
 }: {
