@@ -230,12 +230,12 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
         })}
       </ul>
       {queueHeldAt !== null ? (
-        <div className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+        <div className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-border/55 bg-muted/30 px-2.5 py-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
             <Pause className="size-3.5" aria-hidden="true" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="composer-input-font-secondary block font-semibold text-foreground">
+            <span className="composer-input-font-secondary block font-medium text-foreground">
               Queue held after restart
             </span>
             <span className="composer-input-font-secondary block text-muted-foreground">
