@@ -63,6 +63,9 @@ export function DeviceSetup(props: {
   const [step, setStep] = useState(0);
   const enabled = props.state.hostStatus !== "disabled";
   const busy = props.state.hostStatus === "installing" || props.state.hostStatus === "starting";
+  const localPlatformsUnavailable = props.state.hosts.some(
+    (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
+  );
 
   const update = async (
     kind: NonNullable<typeof pending>,
@@ -117,8 +120,8 @@ export function DeviceSetup(props: {
           </section>
         ) : null}
 
-        {step === 1 ? (
-          <section className="space-y-3 text-sm">
+        {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
+          <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
             <h3 className="font-medium">Check simulator support</h3>
             <DevicePlatformSetup
               state={props.state}
