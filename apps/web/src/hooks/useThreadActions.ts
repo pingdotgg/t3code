@@ -485,7 +485,12 @@ export function useThreadActions() {
         .get(threadRef.environmentId);
       const localApi = readLocalApi();
       let canDeleteWorktree = false;
-      if (orphanedWorktreePath !== null && threadProject !== null && !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot) && localApi) {
+      if (
+        orphanedWorktreePath !== null &&
+        threadProject !== null &&
+        !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot) &&
+        localApi
+      ) {
         const sessionResult = await loadSessionState(threadRef.environmentId);
         const permissionFailure = threadOperationFailure(threadRef);
         if (permissionFailure) return permissionFailure;
