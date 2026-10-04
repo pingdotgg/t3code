@@ -1,6 +1,9 @@
 import { requireOptionalNativeModule } from "expo";
 import * as Linking from "expo-linking";
-import type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
+import {
+  subscriptionUsageTimeline,
+  type SubscriptionUsageSnapshot,
+} from "./subscriptionUsageSnapshot";
 
 let tapUrl: string | undefined;
 let listening = false;
@@ -23,11 +26,12 @@ export async function publishSubscriptionUsage(snapshot: SubscriptionUsageSnapsh
   }
   widget.updateSnapshot(snapshot);
   // Android has no timeline; an alarm re-renders the stored snapshot at each
-  // deadline so stale readings flip to "Open T3 to refresh" unattended.
+  // timeline date so countdowns advance and stale readings flip to
+  // "Open T3 to refresh" unattended.
   requireOptionalNativeModule<{ schedule: (name: string, deadlines: number[]) => void }>(
     "T3WidgetExpiry",
   )?.schedule(
     "SubscriptionUsage",
-    snapshot.providers.map((provider) => provider.expiresAt).filter((at) => at > 0),
+    subscriptionUsageTimeline(snapshot, Date.now()).map((entry) => entry.date.getTime()),
   );
 }
