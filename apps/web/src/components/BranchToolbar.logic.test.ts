@@ -17,6 +17,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  resolveWorktreeBaseBranchDefault,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
@@ -140,6 +141,44 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "local",
       }),
     ).toBe("worktree");
+  });
+});
+
+describe("resolveWorktreeBaseBranchDefault", () => {
+  it("preselects the base branch for a new-worktree draft", () => {
+    expect(
+      resolveWorktreeBaseBranchDefault({
+        hasServerThread: false,
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: null,
+        baseBranchCandidate: "main",
+      }),
+    ).toBe("main");
+  });
+
+  it("leaves a launched thread to the server while its worktree is prepared", () => {
+    expect(
+      resolveWorktreeBaseBranchDefault({
+        hasServerThread: true,
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: null,
+        baseBranchCandidate: "main",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a base branch the draft already has", () => {
+    expect(
+      resolveWorktreeBaseBranchDefault({
+        hasServerThread: false,
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature-a",
+        baseBranchCandidate: "main",
+      }),
+    ).toBeNull();
   });
 });
 

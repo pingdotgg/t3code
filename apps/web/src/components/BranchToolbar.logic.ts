@@ -207,6 +207,35 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   return "local";
 }
 
+/**
+ * The base ref to preselect for a new-worktree draft. A thread that already
+ * exists on the server gets its branch and worktree from workspace preparation.
+ * Both read as null here until the server finishes creating the worktree, so
+ * writing a default then would replace the worktree being prepared.
+ */
+export function resolveWorktreeBaseBranchDefault(input: {
+  hasServerThread: boolean;
+  effectiveEnvMode: EnvMode;
+  activeWorktreePath: string | null;
+  activeThreadBranch: string | null;
+  baseBranchCandidate: string | null;
+}): string | null {
+  const {
+    hasServerThread,
+    effectiveEnvMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    baseBranchCandidate,
+  } = input;
+  if (hasServerThread || effectiveEnvMode !== "worktree") {
+    return null;
+  }
+  if (activeWorktreePath || activeThreadBranch) {
+    return null;
+  }
+  return baseBranchCandidate;
+}
+
 export function resolveBranchToolbarValue(input: {
   envMode: EnvMode;
   activeWorktreePath: string | null;
