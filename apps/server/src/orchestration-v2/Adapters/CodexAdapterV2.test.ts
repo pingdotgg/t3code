@@ -1620,6 +1620,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    options?: { readonly managed?: boolean },
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1671,6 +1672,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }),
         },
+        ...(options?.managed === true
+          ? {
+              resolveRuntime: Effect.succeed({
+                config: DEFAULT_CODEX_SETTINGS,
+                environment: {},
+                revision: "managed-test",
+              }),
+            }
+          : {}),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -5896,6 +5906,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.isDefined(item);
         }
         if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "managed",
+      managed: true,
+      expectedMessage:
+        "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
+    },
+    {
+      name: "native",
+      managed: false,
+      expectedMessage:
+        "subscription_sharing_unsupported_capability: tool 'namespace' is unsupported",
+    },
+  ] as const)("surfaces $name ChatGPT sharing failures", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = `native-sharing-${scenario.name}`;
+        const nativeTurnId = `turn-sharing-${scenario.name}`;
+        const rawMessage =
+          "subscription_sharing_unsupported_capability: tool 'namespace' is unsupported";
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-sharing-${scenario.name}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            {
+              type: "emit_inbound",
+              label: "error",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: false,
+                  error: { message: rawMessage, codexErrorInfo: null, additionalDetails: null },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                    error: { message: rawMessage, codexErrorInfo: null },
+                  },
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, undefined, undefined, {
+          managed: scenario.managed,
+        });
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            text: "Continue.",
+            attemptId: RunAttemptId.make(`attempt-sharing-${scenario.name}`),
+          }),
+        );
+        yield* harness.firstTerminal;
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.message, scenario.expectedMessage);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
