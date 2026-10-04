@@ -23,6 +23,7 @@ import {
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
+  projectScriptTerminalInput,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { Alert, Platform, ScrollView, View } from "react-native";
@@ -773,7 +774,7 @@ function ThreadRouteContent(
           cwd,
           worktreePath: preferredWorktreePath,
           env,
-          initialInput: `${script.command}\r`,
+          initialInput: projectScriptTerminalInput(script.command),
         },
       });
       terminalDebugLog("project-script:staged", {

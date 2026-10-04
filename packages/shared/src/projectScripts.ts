@@ -73,3 +73,11 @@ export function projectScriptRuntimeEnv(
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
 }
+
+/**
+ * Terminal input that runs a project script. The leading space keeps it out
+ * of shell history under zsh `HIST_IGNORE_SPACE`, bash `ignorespace`, and fish.
+ */
+export function projectScriptTerminalInput(command: string): string {
+  return ` ${command}\r`;
+}

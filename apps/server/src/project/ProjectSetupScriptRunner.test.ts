@@ -92,7 +92,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       NO_COLOR: "1",
       FORCE_COLOR: "0",
     });
-    assert.equal(write.mock.calls[0]?.[0].data, "vp install\r");
+    assert.equal(write.mock.calls[0]?.[0].data, " vp install\r");
     const lines: string[] = [];
     const observed = yield* runner.runForThread({
       threadId: "thread-1",
@@ -106,6 +106,8 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       },
     });
     assert.equal(observed.status, "started");
+    // The sentinel wrapper stays out of shell history too.
+    assert.match(write.mock.calls[1]?.[0].data ?? "", /^ \S/);
     const listener = listeners[0]!;
     yield* listener({
       type: "output",
