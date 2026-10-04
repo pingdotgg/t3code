@@ -19,7 +19,9 @@ export type VoiceInputState<WithPostProcessing extends boolean = false> = {
   readonly errorAction: "retry" | "settings" | null;
 };
 
-export function voiceInputBlocksSubmission(state: VoiceInputState<true>): boolean {
+export function voiceInputBlocksSubmission<State extends Pick<VoiceInputState<true>, "phase">>(
+  state: State,
+): boolean {
   return (
     state.phase === "preparing" ||
     state.phase === "recording" ||
@@ -28,7 +30,9 @@ export function voiceInputBlocksSubmission(state: VoiceInputState<true>): boolea
   );
 }
 
-export function voiceInputFreezesEditor(state: VoiceInputState<true>): boolean {
+export function voiceInputFreezesEditor<State extends Pick<VoiceInputState<true>, "phase">>(
+  state: State,
+): boolean {
   return voiceInputBlocksSubmission(state);
 }
 
