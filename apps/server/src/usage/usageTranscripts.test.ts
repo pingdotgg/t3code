@@ -655,6 +655,25 @@ describe("parsePiLine", () => {
     });
   });
 
+  it("counts standalone usage entries such as cache warming", () => {
+    const record = parsePiLine(
+      JSON.stringify({
+        type: "usage",
+        id: "360b2e29",
+        timestamp: "2026-10-02T16:02:33.550Z",
+        kind: "cache_warm",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        usage: { input: 2, output: 1, cacheRead: 66971, cacheWrite: 0, cost: { total: 0.0134 } },
+      }),
+      "session-a",
+    );
+    expect(record?.provider).toBe("claude");
+    expect(record?.model).toBe("claude-opus-5-5");
+    expect(record?.totals.cachedInputTokens).toBe(66971);
+    expect(record?.reportedCostUsd).toBe(0.0134);
+  });
+
   it("prices a zero reported cost from the rate table", () => {
     expect(parsePiLine(piLine("anthropic", "claude-opus-5-5", "x", 0), "s")?.reportedCostUsd).toBe(
       null,

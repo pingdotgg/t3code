@@ -16,8 +16,9 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
-Pi turns count toward the subscription they ran on: Anthropic models under Claude Code and
-ChatGPT (`openai-codex`) models under Codex. Other Pi providers appear under Pi. Set
+Pi turns are grouped by the provider Pi recorded: Anthropic turns under Claude Code, including
+those billed to an API key, and ChatGPT (`openai-codex`) turns under Codex. Other Pi providers
+appear under Pi. Set
 `PI_CODING_AGENT_DIR` on the account to read a different Pi directory.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation

@@ -177,8 +177,8 @@ function piUsageProvider(provider: string, api: unknown): UsageProviderKind {
 }
 
 /**
- * Parses one line of a Pi session. Pi writes one entry per assistant message
- * with a complete `usage` block, and names its session file
+ * Parses one line of a Pi session. Usage lives on assistant messages and on
+ * standalone `usage` entries, such as cache warming. Pi names its session file
  * `<timestamp>_<sessionId>.jsonl`, so the caller supplies the session id.
  */
 export function parsePiLine(line: string, sessionId: string): UsageRecord | null {
@@ -195,22 +195,27 @@ export function parsePiRecord(parsed: unknown, sessionId: string): UsageRecord |
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "message") return null;
+  let source: Record<string, unknown>;
+  if (record["type"] === "usage") {
+    source = record;
+  } else {
+    const message = record["message"];
+    if (record["type"] !== "message" || typeof message !== "object" || message === null) {
+      return null;
+    }
+    source = message as Record<string, unknown>;
+    if (source["role"] !== "assistant") return null;
+  }
 
-  const message = record["message"];
-  if (typeof message !== "object" || message === null) return null;
-  const messageRecord = message as Record<string, unknown>;
-  if (messageRecord["role"] !== "assistant") return null;
-
-  const usage = messageRecord["usage"];
+  const usage = source["usage"];
   if (typeof usage !== "object" || usage === null) return null;
   const usageRecord = usage as Record<string, unknown>;
 
   const timestampMs = parseTimestampMs(record["timestamp"]);
   if (timestampMs === null) return null;
 
-  const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  const piProvider = typeof messageRecord["provider"] === "string" ? messageRecord["provider"] : "";
+  const model = typeof source["model"] === "string" ? source["model"] : "";
+  const piProvider = typeof source["provider"] === "string" ? source["provider"] : "";
   if (model.length === 0 || piProvider.length === 0) return null;
 
   const outputTokens = int(usageRecord["output"]);
@@ -226,7 +231,7 @@ export function parsePiRecord(parsed: unknown, sessionId: string): UsageRecord |
   const cost = usageRecord["cost"];
   const costTotal =
     typeof cost === "object" && cost !== null ? (cost as Record<string, unknown>)["total"] : null;
-  const provider = piUsageProvider(piProvider, messageRecord["api"]);
+  const provider = piUsageProvider(piProvider, source["api"]);
   const entryId = typeof record["id"] === "string" ? record["id"] : null;
 
   return {

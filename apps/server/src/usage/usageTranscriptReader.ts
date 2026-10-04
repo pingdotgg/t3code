@@ -130,6 +130,9 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok" | "pi", SelectedFields> =
     type: true,
     id: true,
     timestamp: true,
+    provider: true,
+    model: true,
+    usage: true,
     message: { role: true, api: true, provider: true, model: true, usage: true },
   },
 };
@@ -302,7 +305,8 @@ export async function readTranscriptRecords(
       resumed = true;
     }
 
-    const piSessionId = NodePath.basename(filePath, ".jsonl").split("_").at(-1) ?? "";
+    const piFileName = NodePath.basename(filePath, ".jsonl");
+    const piSessionId = piFileName.slice(piFileName.indexOf("_") + 1);
     const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
       if (provider === "codex") {
         if (
