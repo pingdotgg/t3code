@@ -287,7 +287,7 @@ export function ReviewThreadCard({
                   <div className="mt-1 flex items-start gap-1">
                     <PullRequestMarkdown
                       className="min-w-0 flex-1 text-sm"
-                      text={comment.body}
+                      text={comment.displayBody ?? comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
                     />

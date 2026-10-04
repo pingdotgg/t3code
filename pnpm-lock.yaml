@@ -553,15 +553,27 @@ importers:
       node-pty:
         specifier: ^1.2.0-beta.15
         version: 1.2.0-beta.15(patch_hash=f2fe901c61cde17986240002d05c172d5d0272d83ffaab8d0ebeb922763be414)
+      parse5:
+        specifier: ^8.0.1
+        version: 8.0.1
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
       stream-json:
         specifier: 3.6.0
         version: 3.6.0
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -749,6 +761,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.6.0

@@ -214,6 +214,7 @@ export const make = Effect.gen(function* () {
             deletions: diffStat.deletions,
             changedFiles: diffStat.changedFiles,
             body: pullRequest.body,
+            displayBody: pullRequest.displayBody,
             mergedAt: null,
             closedAt: null,
             reviewers: pullRequest.reviewers,

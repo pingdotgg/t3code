@@ -1926,3 +1926,26 @@ describe("single-PR merge compatibility during stack discovery", () => {
     },
   );
 });
+
+describe("mention display source", () => {
+  it("shows readable mentions in the timeline without changing the source", () => {
+    const comment = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      body: "@{account-id}",
+      displayBody: "@Alex Smith",
+    };
+    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments: [comment] });
+    expect(events.find((event) => event.id === comment.id)?.body).toBe("@Alex Smith");
+    expect(comment.body).toBe("@{account-id}");
+  });
+  it("drops stale display text on a local edit without changing other comments", () => {
+    const untouched = { id: "other", body: "raw", displayBody: "readable" };
+    const edited = editPullRequestThreadComment(
+      [{ id: "edited", body: "@{account-id}", displayBody: "@Alex Smith" }, untouched],
+      "edited",
+      "@{account-id} updated",
+    );
+    expect(edited[0]).toEqual({ id: "edited", body: "@{account-id} updated" });
+    expect(edited[1]).toBe(untouched);
+  });
+});
