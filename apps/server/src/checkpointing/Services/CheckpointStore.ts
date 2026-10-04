@@ -79,6 +79,16 @@ export interface CheckpointStoreShape {
   ) => Effect.Effect<void, CheckpointStoreError>;
 
   /**
+   * Capture the current worktree as a commit for an isolated snapshot fork.
+   * Returns HEAD unchanged when the worktree is clean; otherwise returns a
+   * commit whose parent is the captured HEAD. The source checkout is never
+   * staged or checked out.
+   */
+  readonly createWorkspaceSnapshotCommit: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<string, CheckpointStoreError>;
+
+  /**
    * Check whether a checkpoint ref exists.
    */
   readonly hasCheckpointRef: (

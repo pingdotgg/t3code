@@ -57,6 +57,7 @@ it("locks only worktree creation, not the command queue, dispatch, or setup", as
           ),
         );
       }),
+    withCheckoutUnlessSameRoot: (_cwd, _comparisonPath, effect) => effect,
   };
   const layer = Layer.mergeAll(
     Layer.succeed(CheckoutCoordinator, coordinator),

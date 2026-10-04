@@ -685,6 +685,7 @@ function recordCheckoutLocks() {
           ),
         );
       }),
+    withCheckoutUnlessSameRoot: (_cwd, _comparisonPath, effect) => effect,
   };
   return { service, paths, held: () => held };
 }

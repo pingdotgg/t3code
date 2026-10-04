@@ -22,6 +22,7 @@ export interface WorkspaceAdmissionDeps {
   readonly listThreads: () => ReadonlyArray<OrchestrationThread>;
   readonly claimOwnership: WorkspaceOwnershipRepositoryShape["claim"];
   readonly hasCleanupReservationByPath: WorktreeCleanupJobRepositoryShape["hasReservationByPath"];
+  readonly createWorkspaceSnapshotCommit: (cwd: string) => Effect.Effect<string, unknown>;
 }
 
 /**
@@ -175,6 +176,7 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
   command: OrchestrationCommand,
   projectWorkspaceRoot: string | undefined,
   thread: OrchestrationThread | undefined,
+  createWorkspaceSnapshotCommit: WorkspaceAdmissionDeps["createWorkspaceSnapshotCommit"],
 ) {
   const isExecutionCommand =
     command.type === "thread.create" ||
@@ -308,6 +310,39 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     repositoryKey,
     threadWorkspaceKey,
   );
+  const allocationError = (cause: unknown) =>
+    new OrchestrationCommandInvariantError({
+      commandType: command.type,
+      detail: `Unable to allocate isolated workspace '${worktreePath}' for thread '${threadId}': ${cause instanceof Error ? cause.message : String(cause)}`,
+    });
+  const existingWorkspace = yield* Effect.tryPromise({
+    try: () =>
+      runProcess("git", ["-C", worktreePath, "rev-parse", "--show-toplevel"], {
+        allowNonZeroExit: true,
+        maxBufferBytes: 16 * 1024,
+        timeoutMs: 5_000,
+      }),
+    catch: allocationError,
+  });
+
+  let sourceSnapshotRevision: string | undefined;
+  if (existingWorkspace.code !== 0 && createThread?.sourceWorktreePath !== undefined) {
+    // This capture runs on the single orchestration command worker and stalls
+    // later commands. No caller may hold a source checkout lock while awaiting
+    // orchestration dispatch (scar 381); capture itself holds the lock briefly.
+    sourceSnapshotRevision = yield* createWorkspaceSnapshotCommit(
+      createThread.sourceWorktreePath,
+    ).pipe(
+      Effect.mapError((cause) =>
+        allocationError(
+          new Error(
+            `could not snapshot source worktree '${createThread.sourceWorktreePath}': ${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
+        ),
+      ),
+    );
+  }
+
   yield* Effect.tryPromise({
     try: async () => {
       await mkdir(path.dirname(worktreePath), { recursive: true });
@@ -360,19 +395,7 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         return;
       }
       const sourceRevision =
-        createThread?.sourceWorktreePath === undefined
-          ? sourceBranch
-          : (
-              await runProcess(
-                "git",
-                ["-C", createThread.sourceWorktreePath, "rev-parse", "HEAD"],
-                {
-                  allowNonZeroExit: true,
-                  maxBufferBytes: 16 * 1024,
-                  timeoutMs: 5_000,
-                },
-              )
-            ).stdout.trim();
+        createThread?.sourceWorktreePath === undefined ? sourceBranch : sourceSnapshotRevision;
       if (!sourceRevision) {
         throw new Error(
           `could not resolve source revision from '${createThread?.sourceWorktreePath ?? sourceBranch}'`,
@@ -400,11 +423,7 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         throw new Error(result.stderr.trim() || `git worktree add failed with code ${result.code}`);
       }
     },
-    catch: (cause) =>
-      new OrchestrationCommandInvariantError({
-        commandType: command.type,
-        detail: `Unable to allocate isolated workspace '${worktreePath}' for thread '${threadId}': ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
+    catch: allocationError,
   });
   const nextCommand =
     command.type === "thread.create"
@@ -443,7 +462,12 @@ export const admitWorkspaceCommand = Effect.fn("admitWorkspace")(function* (
     (command.type === "thread.create" ? command.projectId : undefined) ??
     (command.type === "thread.turn.start" ? command.bootstrap?.createThread?.projectId : undefined);
   const project = projectId === undefined ? undefined : deps.findProject(projectId);
-  const prepared = yield* prepareIsolatedWorkspace(command, project?.workspaceRoot, thread);
+  const prepared = yield* prepareIsolatedWorkspace(
+    command,
+    project?.workspaceRoot,
+    thread,
+    deps.createWorkspaceSnapshotCommit,
+  );
   command = prepared.command;
   const requestedPath =
     command.type === "thread.create"

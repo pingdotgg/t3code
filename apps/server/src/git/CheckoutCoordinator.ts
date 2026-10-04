@@ -15,6 +15,12 @@ export class CheckoutCoordinator extends Context.Service<
       cwd: string,
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
+    /** Lock cwd unless it resolves to the same canonical checkout as comparisonPath. */
+    readonly withCheckoutUnlessSameRoot: <A, E, R>(
+      cwd: string,
+      comparisonPath: string,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     readonly tryWithCheckout: <A, E, R>(
       cwd: string,
       effect: Effect.Effect<A, E, R>,
@@ -56,6 +62,14 @@ export const CheckoutCoordinatorLive = Layer.effect(
 
     return {
       withCheckout: (cwd, effect) => withLock(cwd, (lock) => lock.withPermits(1)(effect)),
+      withCheckoutUnlessSameRoot: (cwd, comparisonPath, effect) =>
+        Effect.flatMap(
+          Effect.all([canonical(cwd), canonical(comparisonPath)], { concurrency: "unbounded" }),
+          ([cwdKey, comparisonKey]) =>
+            cwdKey === comparisonKey
+              ? effect
+              : withLock(cwd, (lock) => lock.withPermits(1)(effect)),
+        ),
       tryWithCheckout: (cwd, effect) =>
         withLock(cwd, (lock) => lock.withPermitsIfAvailable(1)(effect)),
       beginFinalization: (eventId, cwd) =>
