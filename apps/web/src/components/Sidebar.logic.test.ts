@@ -2057,8 +2057,22 @@ describe("navigation after parking a thread", () => {
 
 describe("unseen completion with background work", () => {
   it.each([
-    { kind: "command", status: "ready", topStatus: "done", receded: false, pill: "Completed" },
-    { kind: "monitor", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
+    {
+      kind: "command",
+      status: "ready",
+      topStatus: "done",
+      receded: false,
+      working: true,
+      pill: "Completed",
+    },
+    {
+      kind: "monitor",
+      status: "waiting",
+      topStatus: "waiting",
+      receded: true,
+      working: true,
+      pill: "Waiting",
+    },
   ] as const)("presents a completed thread with a $kind roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
       ...makeThreadFixture().source,
@@ -2083,7 +2097,7 @@ describe("unseen completion with background work", () => {
         isSelected: false,
       }),
     ).toBe(expected.receded);
-    expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
+    expect(isSidebarThreadWorking(thread)).toBe(expected.working);
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
   });
 });
@@ -2104,6 +2118,7 @@ describe("Working shelf (beta)", () => {
     hasPendingUserInput: false,
     interactionMode: "default" as const,
     latestRun: makeLatestRun(),
+    pendingBackgroundTasks: [],
     runtime: null,
   };
   // Stopped with background tasks still open: V2's "waiting" sidebar status.
@@ -2123,6 +2138,32 @@ describe("Working shelf (beta)", () => {
       isSidebarThreadWorking({
         ...waiting,
         runtime: { ...runtime, status: "failed" as const, lastError: "boom" },
+      }),
+    ).toBe(false);
+  });
+
+  it("folds away every background kind, commands included", () => {
+    const completed = { ...runtime, status: "completed" as const };
+    for (const kind of ["command", "monitor", "subagent", "background_task"] as const) {
+      expect(
+        isSidebarThreadWorking({
+          ...idle,
+          runtime: completed,
+          pendingBackgroundTasks: [{ taskId: "bg-1", kind }],
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("keeps idle and failed threads without live work in the inbox", () => {
+    expect(isSidebarThreadWorking({ ...idle, runtime: { ...runtime, status: "idle" } })).toBe(
+      false,
+    );
+    expect(
+      isSidebarThreadWorking({
+        ...idle,
+        runtime: { ...runtime, status: "failed" as const, lastError: "boom" },
+        pendingBackgroundTasks: [{ taskId: "bg-1", kind: "command" as const }],
       }),
     ).toBe(false);
   });

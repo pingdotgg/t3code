@@ -11,15 +11,21 @@ type WorkingThreadInput = Pick<
   | "hasPendingUserInput"
   | "interactionMode"
   | "latestRun"
+  | "pendingBackgroundTasks"
   | "runtime"
 >;
 
 /** Threads busy with work that does not need the user fold into the Working
-    section: a running run, or one stopped with background work that will wake
-    it. Approvals, questions, plan prompts, and failures stay in the inbox. */
+    section: a running run, or one stopped with any background work still
+    live. Commands count here even though they do not hold completion: the
+    agent may be waiting on one, and a dev server is still visibly running.
+    Approvals, questions, plan prompts, and failures stay in the inbox. */
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
-  if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
+  if (thread.runtime?.status === "failed") return false;
+  if (!threadRuntimeIsActive(thread.runtime) && thread.pendingBackgroundTasks.length === 0) {
+    return false;
+  }
   // A plan prompt outranks lingering background work: the user has to act on it.
   const run = thread.latestRun;
   const runSettled =
