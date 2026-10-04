@@ -69,6 +69,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+n", command: "chat.newWithoutProject", when: "!terminalFocus" },
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+h", command: "composer.host", when: "!terminalFocus" },
+  { key: "mod+alt+h", command: "composer.cycleHost", when: "!terminalFocus" },
   { key: "mod+shift+e", command: "composer.effort", when: "!terminalFocus" },
   { key: "mod+shift+a", command: "composer.mode", when: "!terminalFocus" },
   { key: "mod+shift+x", command: "composer.workspace", when: "!terminalFocus" },
