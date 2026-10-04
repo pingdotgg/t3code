@@ -1723,51 +1723,49 @@ function AssistantChangedFilesSectionInner({
   if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 
   return (
-    <div
-      className="relative mt-4 rounded-2xl bg-card/40 shadow-xs/5 not-dark:bg-clip-padding after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-2xl after:border after:border-input"
-      style={{
-        fontSize: "var(--app-tool-font-size)",
-      }}
-    >
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-2xl bg-card/72 p-2 backdrop-blur-md">
-        <div className="min-w-0 leading-4">
+    <div data-changed-files-state={collapsed ? "collapsed" : "tree"} className="mt-4">
+      <div className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-xl bg-sunken px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
+          <span>
+            {visibleFiles.length} changed file{visibleFiles.length === 1 ? "" : "s"}
+          </span>
           <DiffStatLabel
             additions={summaryStat.additions}
-            className="leading-4"
             deletions={summaryStat.deletions}
             layout="inline"
           />
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
-            size="xs"
-            variant="outline"
-            className="size-[1.5em] p-0 text-[inherit] sm:h-[1.5em] sm:text-[inherit]"
+            size="icon-xs"
+            variant="ghost"
             disabled={visibleFiles.length === 0}
             onClick={() => onOpenTurnDiff(turnSummary.turnId, visibleFiles[0]?.path, "turn")}
-            aria-label="View diff"
+            aria-label="Open diff"
+            data-scroll-anchor-ignore
           >
-            <DiffIcon className="size-[0.85em]" />
+            <DiffIcon className="size-3" />
           </Button>
           <Button
             type="button"
-            size="xs"
+            size="icon-xs"
             variant="ghost"
-            className="size-[1.5em] p-0 text-[inherit] sm:h-[1.5em] sm:text-[inherit]"
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? "Expand changed files" : "Collapse changed files"}
+            aria-expanded={!collapsed}
+            data-scroll-anchor-ignore
           >
             {collapsed ? (
-              <ChevronDownIcon className="size-[0.85em]" />
+              <ChevronDownIcon className="size-3" />
             ) : (
-              <ChevronUpIcon className="size-[0.85em]" />
+              <ChevronUpIcon className="size-3" />
             )}
           </Button>
         </div>
       </div>
       {!collapsed && (
-        <div className="px-2 pb-2">
+        <div className="mt-0.5 rounded-b-xl bg-sunken pb-0.5">
           <ChangedFilesTree
             key={`changed-files-tree:${turnSummary.turnId}`}
             turnId={turnSummary.turnId}

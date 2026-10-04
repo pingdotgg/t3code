@@ -139,33 +139,39 @@ function diffZoomLineHeight(zoom: number): number {
 }
 
 const DIFF_PANEL_UNSAFE_CSS = `
+/* :host, not the tag name — this CSS is injected into the shadow root, where
+   only :host reaches the element that paints the diff surface. */
+:host,
 [data-diffs-header],
 [data-diff],
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
-  --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
+  --diffs-bg: var(--sunken) !important;
+  --diffs-light-bg: var(--sunken) !important;
+  --diffs-dark-bg: var(--sunken) !important;
   --diffs-token-light-bg: transparent;
   --diffs-token-dark-bg: transparent;
 
-  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
-  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
+  /* Gutter, context, and row tints all derive from the recessed well the diff
+     body sits on, matching the in-chat changed-files card. Mixing from the
+     canvas instead leaves the gutter reading as a raised card edge. */
+  --diffs-bg-context-override: color-mix(in srgb, var(--sunken) 97%, var(--code-foreground));
+  --diffs-bg-hover-override: color-mix(in srgb, var(--sunken) 94%, var(--code-foreground));
+  --diffs-bg-separator-override: color-mix(in srgb, var(--sunken) 95%, var(--code-foreground));
+  --diffs-bg-buffer-override: color-mix(in srgb, var(--sunken) 90%, var(--code-foreground));
 
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+  --diffs-bg-addition-override: color-mix(in srgb, var(--sunken) 92%, var(--success));
+  --diffs-bg-addition-number-override: color-mix(in srgb, var(--sunken) 88%, var(--success));
+  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--sunken) 85%, var(--success));
+  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--sunken) 80%, var(--success));
 
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
+  --diffs-bg-deletion-override: color-mix(in srgb, var(--sunken) 92%, var(--destructive));
+  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--sunken) 88%, var(--destructive));
+  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--sunken) 85%, var(--destructive));
   --diffs-bg-deletion-emphasis-override: color-mix(
     in srgb,
-    var(--background) 80%,
+    var(--sunken) 80%,
     var(--destructive)
   );
 
@@ -173,8 +179,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-file-info] {
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-block-color: var(--border) !important;
+  background-color: var(--sunken) !important;
   color: var(--foreground) !important;
 }
 
@@ -1177,7 +1182,7 @@ export default function DiffPanel({
                       <div
                         key={themedFileKey}
                         data-diff-file-path={filePath}
-                        className="diff-render-file mb-2 rounded-md border border-border/70 bg-background/70 p-3 first:mt-2 last:mb-0"
+                        className="diff-render-file mb-2 rounded-md p-3 first:mt-2 last:mb-0"
                       >
                         <button
                           type="button"
@@ -1210,7 +1215,7 @@ export default function DiffPanel({
                       }}
                     >
                       {safetyLabel && (
-                        <div className="rounded-t-md border border-b-0 border-border/70 bg-background/70 px-3 py-1 text-[length:var(--app-code-font-size)] text-muted-foreground/75">
+                        <div className="rounded-t-md px-3 py-1 text-[length:var(--app-code-font-size)] text-muted-foreground/75">
                           {safetyLabel}
                         </div>
                       )}
@@ -1268,7 +1273,7 @@ export default function DiffPanel({
                   </p>
                   <pre
                     className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-muted-foreground/90",
+                      "max-h-[72vh] rounded-md bg-sunken p-3 font-mono text-muted-foreground/90",
                       diffWordWrap
                         ? "overflow-auto whitespace-pre-wrap wrap-break-word"
                         : "overflow-auto",
