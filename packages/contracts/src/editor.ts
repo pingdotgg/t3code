@@ -120,6 +120,7 @@ export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly pathKind: "file" | "folder";
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -139,7 +140,9 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  // A :line suffix makes VS Code's remote URL handler open a file instead of a folder.
+  const position = input.pathKind === "file" ? ":1" : "";
+  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}${position}`;
 };
 
 /**

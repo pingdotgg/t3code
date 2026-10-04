@@ -119,50 +119,96 @@ describe("resolveRemoteOpenState", () => {
 });
 
 describe("buildRemoteOpenUrl", () => {
-  it("builds a vscode-remote deep link", () => {
+  it.each([
+    ["/home/user/.local/share/app/settings.json", "/home/user/.local/share/app/settings.json"],
+    ["/tmp/README", "/tmp/README"],
+    ["/tmp/my file #1?.json", "/tmp/my%20file%20%231%3F.json"],
+    ["C:\\Users\\user\\settings.json", "/C%3A/Users/user/settings.json"],
+    ["/tmp/project.code-workspace", "/tmp/project.code-workspace"],
+  ])("opens %s as a remote file", (absolutePath, encodedPath) => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "sol",
+        absolutePath,
+        pathKind: "file",
+      }),
+    ).toBe(`vscode://vscode-remote/ssh-remote+sol${encodedPath}:1`);
+  });
+
+  it("builds a vscode-remote folder deep link", () => {
     expect(
       buildRemoteOpenUrl({
         editor: "vscode",
         host: "sol.tail1234.ts.net",
         absolutePath: "/home/theo/code/my repo",
+        pathKind: "folder",
       }),
     ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/code/my%20repo");
   });
 
-  it("uses the fork's scheme", () => {
-    expect(buildRemoteOpenUrl({ editor: "cursor", host: "sol", absolutePath: "/tmp/x" })).toBe(
-      "cursor://vscode-remote/ssh-remote+sol/tmp/x",
-    );
+  it.each(["cursor", "vscode-insiders", "vscodium"] as const)("uses %s's scheme", (editor) => {
+    expect(
+      buildRemoteOpenUrl({ editor, host: "sol", absolutePath: "/tmp/x", pathKind: "file" }),
+    ).toBe(`${editor}://vscode-remote/ssh-remote+sol/tmp/x:1`);
+    expect(
+      buildRemoteOpenUrl({ editor, host: "sol", absolutePath: "/tmp/x", pathKind: "folder" }),
+    ).toBe(`${editor}://vscode-remote/ssh-remote+sol/tmp/x`);
+  });
+
+  it("keeps folders with file extensions as folders", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "sol",
+        absolutePath: "/tmp/project.json",
+        pathKind: "folder",
+      }),
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/tmp/project.json");
   });
 
   it("roots Windows paths", () => {
     expect(
-      buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "sol",
+        absolutePath: "C:\\Users\\theo",
+        pathKind: "folder",
+      }),
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
   });
 
-  it("builds Zed's ssh deep link", () => {
+  it.each(["file", "folder"] as const)("keeps Zed's ssh deep link for a %s", (pathKind) => {
     expect(
       buildRemoteOpenUrl({
         editor: "zed",
         host: "sol.tail1234.ts.net",
         absolutePath: "/home/theo/code/my repo",
+        pathKind,
       }),
     ).toBe("zed://ssh/sol.tail1234.ts.net/home/theo/code/my%20repo");
   });
 
-  it("drops the Windows drive letter for Zed", () => {
-    expect(
-      buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
-    ).toBe("zed://ssh/sol/Users/theo");
-    expect(buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/C:/project" })).toBe(
-      "zed://ssh/sol/C%3A/project",
-    );
-  });
+  it.each(["file", "folder"] as const)(
+    "drops the Windows drive letter for a Zed %s",
+    (pathKind) => {
+      expect(
+        buildRemoteOpenUrl({
+          editor: "zed",
+          host: "sol",
+          absolutePath: "C:\\Users\\theo",
+          pathKind,
+        }),
+      ).toBe("zed://ssh/sol/Users/theo");
+      expect(
+        buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/C:/project", pathKind }),
+      ).toBe("zed://ssh/sol/C%3A/project");
+    },
+  );
 
   it("returns undefined for editors without remote support", () => {
-    expect(buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "/tmp/x" })).toBe(
-      undefined,
-    );
+    expect(
+      buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "/tmp/x", pathKind: "file" }),
+    ).toBe(undefined);
   });
 });
