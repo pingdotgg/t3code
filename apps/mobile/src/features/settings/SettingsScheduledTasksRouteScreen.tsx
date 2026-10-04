@@ -15,7 +15,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -63,6 +62,8 @@ import {
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
+import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
+import { appAtomRegistry } from "../../state/atom-registry";
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
@@ -372,14 +373,21 @@ export function SettingsScheduledTaskEditRouteScreen() {
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
-  const { editor, setEditor, hasChanges, draftForEnvironment } = useScheduledTaskEditor();
+  const {
+    editor,
+    voiceOwnerKey,
+    readEditor,
+    setEditor,
+    startEditor,
+    hasChanges,
+    draftForEnvironment,
+  } = useScheduledTaskEditor();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const voiceOwnerId = useId();
-  const ownerKey = editor ? `${voiceOwnerId}:${editor.environmentId}` : null;
+  const ownerKey = editor ? `${voiceOwnerKey}:${editor.environmentId}` : null;
   const prompt = editor?.draft.prompt ?? "";
   const [selectionState, setSelectionState] = useState<{
     readonly ownerKey: string | null;
@@ -402,32 +410,39 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     );
   const voiceInput = useVoiceInputController({
     ownerKey,
-    draftMessage: prompt,
+    subscribeToDraftChanges: (onChange) =>
+      appAtomRegistry.subscribe(scheduledTaskEditorSessionAtom, onChange),
     selection,
+    readDraftMessage: () => {
+      const current = readEditor();
+      return current?.environmentId === editor?.environmentId
+        ? (current?.draft.prompt ?? null)
+        : null;
+    },
     onChangeSelection: setSelection,
-    onChangeDraftMessage: setPrompt,
+    onChangeDraftMessage: (text) => {
+      if (readEditor()?.environmentId === editor?.environmentId) setPrompt(text);
+    },
     disabled: saving,
   });
-  const preventRemove = !saved && (hasChanges || saving || voiceInput.isBusy);
+  const preventRemove = !saved && (hasChanges || saving);
   usePreventRemove(preventRemove, ({ data }) => {
     if (saving) {
       Alert.alert("Saving task", "Wait for the task to finish saving before leaving.");
       return;
     }
-    Alert.alert(
-      "Discard changes?",
-      voiceInput.isBusy
-        ? "Your dictation and unsaved changes will be lost."
-        : "Your unsaved changes will be lost.",
-      [
-        { text: "Keep editing", style: "cancel" },
-        {
-          text: "Discard changes",
-          style: "destructive",
-          onPress: () => navigation.dispatch(data.action),
+    Alert.alert("Discard changes?", "Your unsaved changes will be lost.", [
+      { text: "Keep editing", style: "cancel" },
+      {
+        text: "Discard changes",
+        style: "destructive",
+        onPress: () => {
+          if (voiceInput.isBusy) voiceInput.cancel();
+          startEditor(null);
+          navigation.dispatch(data.action);
         },
-      ],
-    );
+      },
+    ]);
   });
   useEffect(() => {
     if (!saved) return;
