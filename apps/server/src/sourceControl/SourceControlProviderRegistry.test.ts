@@ -17,6 +17,7 @@ import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { refineRepositoryIdentity } from "./refineRepositoryIdentity.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -42,6 +43,7 @@ function makeRegistry(input: {
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
+  readonly forgejoLogins?: ReadonlyArray<typeof ForgejoCli.ForgejoLoginSchema.Type>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -96,7 +98,9 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
-        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () => Effect.succeed(input.forgejoLogins ?? []),
+        }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -237,6 +241,81 @@ it.effect("refines the caller-selected remote instead of choosing another config
 
     assert.strictEqual(handle.context?.provider.kind, "gitlab");
     assert.strictEqual(handle.context?.remoteName, "upstream");
+  }),
+);
+
+const selfHostedIdentity = {
+  canonicalKey: "self-hosted.example.test/group/project",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: "https://self-hosted.example.test/group/project.git",
+  },
+  rootPath: "/repo",
+  displayName: "group/project",
+  provider: "unknown",
+} as const;
+
+it.effect("records a self-hosted GitLab on the project identity once glab is signed in to it", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(`self-hosted.example.test
+  ✓ Logged in to self-hosted.example.test as gitlab-user
+`),
+          ),
+      },
+    });
+
+    const identity = yield* refineRepositoryIdentity(registry)(selfHostedIdentity);
+
+    assert.strictEqual(identity.provider, "gitlab");
+  }),
+);
+
+it.effect("leaves a self-hosted identity unknown when no CLI is signed in to its host", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(`gitlab.com
+  ✓ Logged in to gitlab.com as gitlab-user
+`),
+          ),
+      },
+    });
+
+    const identity = yield* refineRepositoryIdentity(registry)(selfHostedIdentity);
+
+    assert.strictEqual(identity.provider, "unknown");
+  }),
+);
+
+it.effect("still records a self-hosted Forgejo and its web URL from a signed-in fj login", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      forgejoLogins: [
+        { name: "forge", url: "https://forge.example.test", user: "forge-user", default: "true" },
+      ],
+    });
+
+    const identity = yield* refineRepositoryIdentity(registry)({
+      ...selfHostedIdentity,
+      canonicalKey: "forge.example.test/team/repo",
+      locator: {
+        ...selfHostedIdentity.locator,
+        remoteUrl: "https://forge.example.test/team/repo.git",
+      },
+    });
+
+    assert.strictEqual(identity.provider, "forgejo");
+    assert.strictEqual(identity.webUrl, "https://forge.example.test/team/repo");
   }),
 );
 
