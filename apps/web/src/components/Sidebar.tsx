@@ -3926,7 +3926,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
+                    onClick={() => openAddProject()}
                   />
                 }
               >

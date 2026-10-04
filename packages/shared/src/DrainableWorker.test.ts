@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import { Deferred, Effect } from "effect";
 
-import { makeDrainableWorker } from "./DrainableWorker.ts";
+import { makeDrainableWorker, makeKeyedDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
   it.live("waits for work enqueued during active processing before draining", () =>
@@ -137,6 +137,117 @@ describe("makeDrainableWorker", () => {
         expect(yield* Deferred.isDone(drained)).toBe(false);
 
         yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(drained);
+      }),
+    ),
+  );
+});
+
+describe("makeKeyedDrainableWorker", () => {
+  interface Job {
+    readonly id: string;
+    readonly keys: ReadonlyArray<string>;
+    readonly gate?: Deferred.Deferred<void>;
+    readonly fail?: boolean;
+  }
+
+  const makeHarness = Effect.gen(function* () {
+    const started: string[] = [];
+    const finished: string[] = [];
+    const worker = yield* makeKeyedDrainableWorker(
+      (job: Job) =>
+        Effect.gen(function* () {
+          started.push(job.id);
+          if (job.gate) yield* Deferred.await(job.gate);
+          if (job.fail) return yield* Effect.die("boom");
+          finished.push(job.id);
+        }),
+      (job) => job.keys,
+    );
+    return { started, finished, worker };
+  });
+
+  it.live("runs other keys while one key is blocked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, finished, worker } = yield* makeHarness;
+        const gate = yield* Deferred.make<void>();
+        yield* worker.enqueue({ id: "a1", keys: ["a"], gate });
+        yield* worker.enqueue({ id: "b1", keys: ["b"] });
+        yield* Effect.sleep("20 millis");
+
+        expect(finished).toEqual(["b1"]);
+        expect(started).toContain("a1");
+        yield* Deferred.succeed(gate, undefined);
+        yield* worker.drain;
+        expect(finished).toEqual(["b1", "a1"]);
+      }),
+    ),
+  );
+
+  it.live("keeps strict enqueue order within a key", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, finished, worker } = yield* makeHarness;
+        const gate = yield* Deferred.make<void>();
+        yield* worker.enqueue({ id: "a1", keys: ["a"], gate });
+        yield* worker.enqueue({ id: "a2", keys: ["a"] });
+        yield* worker.enqueue({ id: "a3", keys: ["a"] });
+        yield* Effect.sleep("20 millis");
+
+        expect(started).toEqual(["a1"]);
+        yield* Deferred.succeed(gate, undefined);
+        yield* worker.drain;
+        expect(finished).toEqual(["a1", "a2", "a3"]);
+      }),
+    ),
+  );
+
+  it.live("orders a multi-key item against every key it names", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, finished, worker } = yield* makeHarness;
+        const gateA = yield* Deferred.make<void>();
+        yield* worker.enqueue({ id: "a1", keys: ["a"], gate: gateA });
+        yield* worker.enqueue({ id: "fork", keys: ["b", "a"] });
+        yield* worker.enqueue({ id: "b2", keys: ["b"] });
+        yield* Effect.sleep("20 millis");
+
+        expect(started).toEqual(["a1"]);
+        yield* Deferred.succeed(gateA, undefined);
+        yield* worker.drain;
+        expect(finished).toEqual(["a1", "fork", "b2"]);
+      }),
+    ),
+  );
+
+  it.live("continues a key after an item dies", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { finished, worker } = yield* makeHarness;
+        yield* worker.enqueue({ id: "a1", keys: ["a"], fail: true });
+        yield* worker.enqueue({ id: "a2", keys: ["a"] });
+        yield* worker.drain;
+        expect(finished).toEqual(["a2"]);
+      }),
+    ),
+  );
+
+  it.live("drains only after every key is idle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { worker } = yield* makeHarness;
+        const gate = yield* Deferred.make<void>();
+        yield* worker.enqueue({ id: "a1", keys: ["a"], gate });
+        yield* worker.enqueue({ id: "b1", keys: ["b"] });
+        const drained = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          worker.drain.pipe(Effect.andThen(Deferred.succeed(drained, undefined))),
+        );
+        yield* Effect.sleep("20 millis");
+
+        expect(yield* Deferred.isDone(drained)).toBe(false);
+        yield* Deferred.succeed(gate, undefined);
         yield* Deferred.await(drained);
       }),
     ),

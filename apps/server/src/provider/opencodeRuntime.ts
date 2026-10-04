@@ -331,6 +331,24 @@ export function buildOpenCodeServeArgs(input: {
   return ["serve", `--hostname=${input.hostname}`, `--port=${input.port}`];
 }
 
+/**
+ * Wrap a long-lived child so it exits when the spawning process dies. Keep the
+ * wrapper's stdin pipe open for the parent's lifetime. Electron callers must
+ * set ELECTRON_RUN_AS_NODE=1 when spawning the wrapper.
+ *
+ * @internal
+ */
+export function bindToParentLifetime(
+  command: string,
+  args: ReadonlyArray<string>,
+  shell = false,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return {
+    command: process.execPath,
+    args: ["-e", OPENCODE_SERVER_GUARD_SOURCE, JSON.stringify([command, args, shell])],
+  };
+}
+
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
 // does not expose the hidden flag. Keep in sync with OpenCode agent
 // definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
@@ -636,18 +654,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const { command: serverTarget, shell: serverShell } = resolveWindowsSpawn(input.binaryPath, {
         env: serverEnv,
       });
+      const spawnCommand = bindToParentLifetime(serverTarget, args, serverShell);
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(
-            process.execPath,
-            ["-e", OPENCODE_SERVER_GUARD_SOURCE, JSON.stringify([serverTarget, args, serverShell])],
-            {
-              detached: false,
-              stdin: "pipe",
-              env: { ...serverEnv, ELECTRON_RUN_AS_NODE: "1" },
-              forceKillAfter: "3 seconds",
-            },
-          ),
+          ChildProcess.make(spawnCommand.command, [...spawnCommand.args], {
+            detached: false,
+            stdin: "pipe",
+            env: { ...serverEnv, ELECTRON_RUN_AS_NODE: "1" },
+            forceKillAfter: "3 seconds",
+          }),
         )
         .pipe(
           Effect.provideService(Scope.Scope, runtimeScope),
