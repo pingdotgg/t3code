@@ -1,7 +1,7 @@
 import { NativeStackScreenOptions } from "../native/StackHeader";
-import { View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { EmptyState } from "./EmptyState";
-import { LoadingScreen } from "./LoadingScreen";
+import { AppText } from "./AppText";
 import type { threadLocalWorkspace } from "../state/threadLocalWorkspace";
 
 export function LocalWorkspaceNotice({
@@ -15,7 +15,12 @@ export function LocalWorkspaceNotice({
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <NativeStackScreenOptions options={{ title }} />
       {state === "loading" ? (
-        <LoadingScreen message="Loading conversation workspace..." />
+        <View className="items-center gap-4">
+          <ActivityIndicator />
+          <AppText className="text-sm text-muted-foreground">
+            Loading conversation workspace...
+          </AppText>
+        </View>
       ) : (
         <EmptyState
           title={

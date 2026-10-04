@@ -640,3 +640,36 @@ describe("cloud recovery budgets and paid dispatch boundary", () => {
     expect(posts).toBe(1);
   });
 });
+
+it("resets transient failures after successful progress in the same incomplete scan", async () => {
+  let unavailable = true;
+  let pages = 0;
+  const { client } = await server((req, res) => {
+    expect(req.method).toBe("GET");
+    if (unavailable) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
+    pages++;
+    json(res, { cliSessions: [], nextCursor: String(pages) });
+  });
+  for (let i = 0; i < 2; i++)
+    expect(
+      (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+    ).toBe("invalid_response");
+  unavailable = false;
+  expect(await run(client.findAdmission(binding.repository, messageId))).toBeNull();
+  expect(pages).toBe(25);
+  unavailable = true;
+  expect(
+    (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+  ).toBe("invalid_response");
+  // Progress resets only transient failures, not the finite pagination budget.
+  unavailable = false;
+  for (let i = 0; i < 3; i++) await run(client.findAdmission(binding.repository, messageId));
+  expect(
+    (await run(client.findAdmission(binding.repository, messageId).pipe(Effect.flip))).reason,
+  ).toBe("recovery_limit");
+  expect(pages).toBe(101);
+});

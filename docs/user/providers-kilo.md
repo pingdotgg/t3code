@@ -103,3 +103,9 @@ requires provider support, not another submission. Journal failures pause recove
 in memory if the pause cannot be saved. After storage is repaired or T3 restarts,
 the durable uncertain request still prevents a second paid start. Remote task and
 billing status remain unknown until Kilo confirms the original operation.
+
+If Kilo explicitly rejects a submitted request while local storage is unavailable,
+T3 holds the reservation and keeps that rejection in memory until it can save the
+outcome. Reopen history after repairing storage. If T3 exits before that save, the
+journal cannot prove the rejection and the request remains uncertain. Stop does
+not send a remote interrupt for a known rejected request.

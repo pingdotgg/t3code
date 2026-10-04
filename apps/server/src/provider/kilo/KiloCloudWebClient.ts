@@ -478,6 +478,12 @@ export const make = (options: {
         }
         return null;
       }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const scan = admissionScans.get(`${repository}\0${initialMessageId}`);
+            if (scan) scan.failures = 0;
+          }),
+        ),
         Effect.catchTag("KiloCloudError", (cause) =>
           Effect.gen(function* () {
             const key = `${repository}\0${initialMessageId}`;

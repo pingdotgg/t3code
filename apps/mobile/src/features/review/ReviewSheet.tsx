@@ -451,7 +451,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const { localWorkspaceEnabled, localWorkspaceState } = useSelectedThreadWorktree();
   if (!localWorkspaceEnabled)
-    return <LocalWorkspaceNotice title="Review" state={localWorkspaceState} />;
+    return <LocalWorkspaceNotice title="Review changes" state={localWorkspaceState} />;
   return <LocalReviewSheet {...props} />;
 }
 

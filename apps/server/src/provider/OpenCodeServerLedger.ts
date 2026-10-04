@@ -6,10 +6,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../config.ts";
 import { signalProcessGroup } from "../process/processGroup.ts";
+
+// Boot and provider runtimes create separate ledger instances in one T3 process.
+// Serialize their scans, including the process-group grace period. A second scan
+// must still run afterward to cover entries created since the first scan began.
+const reapers = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
 
 const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.String });
 type ProcessIdentity = typeof ProcessIdentity.Type;
@@ -303,12 +309,35 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     );
 
   /** Stops recorded servers whose owning T3 server is gone and drops stale entries. */
-  const reapOrphans = Effect.gen(function* () {
+  const reapOnce = Effect.gen(function* () {
     const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       names.filter((name) => ENTRY_FILE.test(name)),
       (name) => reapEntry(path.join(directory, name)),
       { concurrency: "unbounded", discard: true },
+    );
+  });
+
+  const reapOrphans = Effect.gen(function* () {
+    const resolved = path.resolve(input.stateDir);
+    const key = yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        let entry = reapers.get(key);
+        if (!entry) {
+          entry = { gate: Semaphore.makeUnsafe(1), users: 0 };
+          reapers.set(key, entry);
+        }
+        entry.users++;
+        return entry;
+      }),
+      // Once we signal a verified group, cancellation must not release the gate
+      // before its bounded TERM/KILL cleanup finishes. Waiting callers can cancel.
+      (entry) => entry.gate.withPermit(reapOnce.pipe(Effect.uninterruptible)),
+      (entry) =>
+        Effect.sync(() => {
+          if (--entry.users === 0) reapers.delete(key);
+        }),
     );
   });
 
