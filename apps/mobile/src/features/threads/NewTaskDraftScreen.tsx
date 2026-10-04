@@ -473,6 +473,9 @@ export function NewTaskDraftScreen(props: {
   });
   const voiceInput = useVoiceInputController({
     ownerKey: flow.draftKey,
+    onSubmit: () => {
+      if (canStart) void handleStart();
+    },
     draftMessage: flow.prompt,
     selection: composerMenu.selection,
     disabled: isIncomingShareTransferPending || isImportingShare || flow.submitting,
@@ -1328,6 +1331,21 @@ export function NewTaskDraftScreen(props: {
     scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
   }
 
+  const canStart =
+    !isImportingContext &&
+    !cloneBlocksStart &&
+    attachmentBlockReason === null &&
+    !modelUnavailable &&
+    Boolean(flow.selectedProject) &&
+    Boolean(flow.selectedModel) &&
+    flow.prompt.trim().length > 0 &&
+    isIncomingShareReady &&
+    !isImportingShare &&
+    !flow.submitting &&
+    pendingPastedTextAttachmentCount === 0 &&
+    !voiceInput.blocksSubmission &&
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
@@ -1348,20 +1366,6 @@ export function NewTaskDraftScreen(props: {
   }
 
   const isAndroid = Platform.OS === "android";
-  const canStart =
-    !isImportingContext &&
-    !cloneBlocksStart &&
-    attachmentBlockReason === null &&
-    !modelUnavailable &&
-    Boolean(flow.selectedProject) &&
-    Boolean(flow.selectedModel) &&
-    flow.prompt.trim().length > 0 &&
-    isIncomingShareReady &&
-    !isImportingShare &&
-    !flow.submitting &&
-    pendingPastedTextAttachmentCount === 0 &&
-    !voiceInput.blocksSubmission &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     // A draft attachment lives only in the draft. Without its key the screen would fall through
     // to a remote lookup for bytes the server has never seen.
