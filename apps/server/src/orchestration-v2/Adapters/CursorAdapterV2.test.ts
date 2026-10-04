@@ -40,12 +40,14 @@ const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
-    { status: "finished", model: undefined },
-    { status: "cancelled", model: "claude-opus-4-6" },
-    { status: "error", model: "custom-fable" },
+    { status: "finished", model: undefined, lateModel: undefined },
+    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
+    { status: "error", model: "custom-fable", lateModel: undefined },
+    { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
+    { status: "finished", model: "gpt-6-sol", lateModel: null },
   ] as const)(
-    "settles missing task completions when the Cursor run is $status",
-    ({ status, model }) =>
+    "projects Cursor tasks: $status, late model $lateModel",
+    ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -96,12 +98,24 @@ describe("CursorAdapterV2", () => {
                         mode: "unspecified" as const,
                       },
                     };
-                    for (const type of ["partial-tool-call", "tool-call-started"] as const) {
+                    const updates =
+                      lateModel !== undefined
+                        ? (["tool-call-started", "tool-call-completed"] as const)
+                        : (["partial-tool-call", "tool-call-started"] as const);
+                    for (const type of updates) {
                       yield* input.onDelta!({
                         type,
                         modelCallId: "model-call",
                         callId: "task-call",
-                        toolCall: taskToolCall,
+                        toolCall: {
+                          ...taskToolCall,
+                          args: {
+                            ...taskToolCall.args,
+                            ...(type === "tool-call-completed"
+                              ? { model: lateModel ?? undefined }
+                              : {}),
+                          },
+                        },
                       }).pipe(Effect.orDie);
                     }
                     return {
@@ -180,9 +194,16 @@ describe("CursorAdapterV2", () => {
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
+        assert.equal(rows.at(-1)?.subagent.model, lateModel ?? model ?? null);
         assert.equal(
           rows.at(-1)?.subagent.status,
-          status === "finished" ? "idle" : status === "cancelled" ? "cancelled" : "failed",
+          lateModel !== undefined
+            ? "completed"
+            : status === "finished"
+              ? "idle"
+              : status === "cancelled"
+                ? "cancelled"
+                : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),

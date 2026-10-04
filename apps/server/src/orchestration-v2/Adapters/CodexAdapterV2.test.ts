@@ -6402,6 +6402,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   });
 
   it.effect.each([
+    { name: "current Codex Sol", model: "gpt-6-sol" },
+    { name: "current Codex wrong child", model: null },
     { name: "Sol", model: "gpt-5.6-sol" },
     { name: "Fable", model: "gpt-5.6-fable" },
     { name: "Astra", model: "gpt-6-astra" },
@@ -6413,6 +6415,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const metadataRead = yield* Deferred.make<void>();
         const modelReported = yield* Deferred.make<void>();
+        let metadataRequests = 0;
         const harness = yield* makeCodexReplayHarness(
           resumeSubagentTranscript,
           (event) =>
@@ -6421,14 +6424,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : Effect.void,
           undefined,
           (threadId) => {
+            metadataRequests++;
             assert.equal(threadId, RESUME_CHILD_THREAD);
             return Deferred.succeed(metadataRead, undefined).pipe(
               Effect.as(
                 name === "invalid"
                   ? {}
                   : {
-                      thread: { id: name === "wrong child" ? "other-child" : threadId },
-                      model: name === "wrong child" ? "gpt-5.6-sol" : model,
+                      thread: {
+                        id: name.includes("wrong child") ? "other-child" : threadId,
+                        ...(name.startsWith("current Codex") ? { model: "gpt-6-sol" } : {}),
+                      },
+                      model: name.startsWith("current Codex")
+                        ? null
+                        : name === "wrong child"
+                          ? "gpt-5.6-sol"
+                          : model,
                     },
               ),
             );
@@ -6448,6 +6459,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("100 millis");
         yield* harness.firstTerminal;
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+        assert.equal(
+          metadataRequests,
+          name.startsWith("current Codex") || name === "invalid" ? 1 : 2,
+        );
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

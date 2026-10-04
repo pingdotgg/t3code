@@ -1046,6 +1046,18 @@ describe("AcpAdapterV2", () => {
                           agentId: "child-a",
                           title: "Map orchestration",
                           task: "Run pwd, then reply ONE.",
+                        },
+                      },
+                    },
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Map orchestration",
+                          task: "Run pwd, then reply ONE.",
                           model: "SWE-1.7 Medium",
                           depth: 1,
                           isBackground: true,
@@ -1181,6 +1193,8 @@ describe("AcpAdapterV2", () => {
         event.type === "subagent.updated" ? [event.subagent] : [],
       );
       const task = tasks.at(-1);
+      assert.isNull(tasks[0]?.model);
+      assert.equal(task?.model, "SWE-1.7 Medium");
       assert.equal(task?.status, "completed");
       assert.equal(task?.result, "Final report: ONE");
       const childMessages = new Map(
