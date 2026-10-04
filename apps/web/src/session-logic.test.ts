@@ -2,6 +2,7 @@ import {
   MessageId,
   RuntimeRequestId,
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   PlanId,
@@ -17,6 +18,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +27,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActivePlanState,
   deriveCanInterruptRunningThread,
+  deriveLiveRunIds,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
@@ -299,6 +302,179 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  describe("rollback targets for runs without checkpoints", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const userItem = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
+    const timeline = (...runNumbers: number[]) =>
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: runNumbers.map((runNumber, position) => ({
+          ...userItem,
+          position,
+          item: {
+            ...userItem.item,
+            id: TurnItemId.make(`item-${runNumber}`),
+            runId: RunId.make(`run-${runNumber}`),
+            messageId: MessageId.make(`message-${runNumber}`),
+          },
+        })),
+        optimisticMessages: [],
+      });
+    const liveRunIds = (...runNumbers: number[]) =>
+      runNumbers.map((runNumber) => RunId.make(`run-${runNumber}`));
+    const checkpoint = (
+      runNumber: number,
+      status: ThreadCheckpointSummary["status"] = "ready",
+    ): ThreadCheckpointSummary => ({
+      runId: RunId.make(`run-${runNumber}`),
+      checkpointTurnCount: runNumber,
+      checkpointRef: CheckpointRef.make(`checkpoint-run-${runNumber}`),
+      status,
+      files: [],
+      assistantMessageId: null,
+      completedAt: fixture.time(runNumber),
+    });
+
+    it("uses the previous ready checkpoint for a failed run between successful runs", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 2, 3),
+        checkpoints: [checkpoint(1), checkpoint(3)],
+        liveRunIds: liveRunIds(1, 2, 3),
+      });
+
+      expect([...targets]).toEqual([
+        [MessageId.make("message-1"), 0],
+        [MessageId.make("message-2"), 1],
+        [MessageId.make("message-3"), 2],
+      ]);
+    });
+
+    it("does not map the thread's first live run failing", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1),
+        checkpoints: [],
+        liveRunIds: liveRunIds(1),
+      });
+
+      expect(targets.size).toBe(0);
+    });
+
+    it("maps only the first of two consecutive failed runs after a ready run", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 2, 3),
+        checkpoints: [checkpoint(1)],
+        liveRunIds: liveRunIds(1, 2, 3),
+      });
+
+      expect([...targets]).toEqual([
+        [MessageId.make("message-1"), 0],
+        [MessageId.make("message-2"), 1],
+      ]);
+      expect(targets.has(MessageId.make("message-3"))).toBe(false);
+    });
+
+    it.each(["missing", "stale", "error"] as const)(
+      "does not map a failed run after a %s checkpoint",
+      (status) => {
+        const targets = deriveRevertTurnCountByUserMessageId({
+          timelineEntries: timeline(1, 2, 3),
+          checkpoints: [checkpoint(1), checkpoint(2, status)],
+          liveRunIds: liveRunIds(1, 2, 3),
+        });
+
+        expect(targets.has(MessageId.make("message-3"))).toBe(false);
+      },
+    );
+
+    it("does not map a message without a run even after a ready checkpoint", () => {
+      const timelineEntries = timeline(1, 2).map((entry): TimelineEntry =>
+        entry.kind === "message" && entry.message.id === MessageId.make("message-2")
+          ? { ...entry, message: { ...entry.message, runId: null } }
+          : entry,
+      );
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries,
+        checkpoints: [checkpoint(1)],
+        liveRunIds: liveRunIds(1, 2, 3),
+      });
+
+      expect([...targets]).toEqual([[MessageId.make("message-1"), 0]]);
+    });
+
+    it("targets a hidden ready run immediately before the failed visible prompt", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 3),
+        checkpoints: [checkpoint(1), checkpoint(2)],
+        liveRunIds: liveRunIds(1, 2, 3),
+      });
+
+      expect([...targets]).toEqual([
+        [MessageId.make("message-1"), 0],
+        [MessageId.make("message-3"), 2],
+      ]);
+    });
+
+    it("skips a chain of rolled-back runs before the failed run", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 4),
+        checkpoints: [checkpoint(1), checkpoint(2), checkpoint(3)],
+        liveRunIds: deriveLiveRunIds([
+          { id: RunId.make("run-4"), ordinal: 4, status: "failed" },
+          { id: RunId.make("run-2"), ordinal: 2, status: "rolled_back" },
+          { id: RunId.make("run-1"), ordinal: 1, status: "completed" },
+          { id: RunId.make("run-3"), ordinal: 3, status: "rolled_back" },
+        ]),
+      });
+
+      expect([...targets]).toEqual([
+        [MessageId.make("message-1"), 0],
+        [MessageId.make("message-4"), 1],
+      ]);
+    });
+
+    it("maps the first visible prompt when an earlier live run has a ready checkpoint", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(2),
+        checkpoints: [checkpoint(1)],
+        liveRunIds: liveRunIds(1, 2),
+      });
+
+      expect([...targets]).toEqual([[MessageId.make("message-2"), 1]]);
+    });
+
+    it("sorts live runs by ordinal and excludes rolled-back runs", () => {
+      const runs = [
+        { id: RunId.make("run-3"), ordinal: 3, status: "failed" as const },
+        { id: RunId.make("run-2"), ordinal: 2, status: "rolled_back" as const },
+        { id: RunId.make("run-1"), ordinal: 1, status: "completed" as const },
+      ];
+
+      expect(deriveLiveRunIds(runs)).toEqual(liveRunIds(1, 3));
+      expect(runs.map((run) => run.id)).toEqual(liveRunIds(3, 2, 1));
+    });
+
+    it("does not fall back when live run order is omitted", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 2, 3),
+        checkpoints: [checkpoint(1), checkpoint(3)],
+      });
+
+      expect([...targets]).toEqual([
+        [MessageId.make("message-1"), 0],
+        [MessageId.make("message-3"), 2],
+      ]);
+    });
+
+    it("does not fall back when live run order is empty", () => {
+      const targets = deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(1, 2),
+        checkpoints: [checkpoint(1)],
+        liveRunIds: [],
+      });
+
+      expect([...targets]).toEqual([[MessageId.make("message-1"), 0]]);
+    });
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

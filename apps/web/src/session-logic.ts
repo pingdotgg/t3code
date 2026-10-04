@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -978,9 +979,29 @@ export function inferCheckpointTurnCountByRunId(
   );
 }
 
+/** The thread's runs in ordinal order, without the ones a rollback discarded. */
+export function deriveLiveRunIds(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
+): RunId[] {
+  return runs
+    .filter((run) => run.status !== "rolled_back")
+    .toSorted((left, right) => left.ordinal - right.ordinal)
+    .map((run) => run.id);
+}
+
+/**
+ * Maps each turn-start message to the run ordinal "Edit from here" rolls back
+ * to. A run that ended without its own checkpoint (a provider error) falls back
+ * to the checkpoint of the live run right before it (`liveRunIds`, from
+ * `deriveLiveRunIds`), whoever started that run: the workspace as it was when
+ * the message was sent. Without such a ready checkpoint (the thread's first
+ * run, or a run after another one without a checkpoint) the message has no
+ * target.
+ */
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly liveRunIds?: ReadonlyArray<RunId>;
 }): Map<ChatMessage["id"], number> {
   const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
   for (const checkpoint of input.checkpoints) {
@@ -988,6 +1009,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
   }
+  const liveRunIds = input.liveRunIds ?? [];
   const byUserMessageId = new Map<ChatMessage["id"], number>();
   for (const entry of input.timelineEntries) {
     if (entry.kind !== "message" || entry.message.role !== "user") continue;
@@ -996,8 +1018,14 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     }
     if (entry.message.runId === null) continue;
     const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    const previousRunId = liveRunIds[liveRunIds.indexOf(entry.message.runId) - 1];
+    const turnCount =
+      checkpoint !== undefined
+        ? Math.max(0, checkpoint.checkpointTurnCount - 1)
+        : previousRunId === undefined
+          ? undefined
+          : readyCheckpointByRunId.get(previousRunId)?.checkpointTurnCount;
+    if (turnCount !== undefined) byUserMessageId.set(entry.message.id, turnCount);
   }
   return byUserMessageId;
 }

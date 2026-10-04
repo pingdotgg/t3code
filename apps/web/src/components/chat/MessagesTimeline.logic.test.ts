@@ -3965,6 +3965,33 @@ describe("streaming v2 row projection", () => {
     return { ...source, timelineInput, timeline, input };
   }
 
+  it("updates rollback targets when only the live run order changes", () => {
+    const initial = fixture();
+    const input = {
+      ...initial.input,
+      liveRunIds: [initial.historyRunId, initial.runId],
+    };
+    const previous = deriveMessagesTimelineRowsWithState(input);
+    const target = (rows: ReadonlyArray<MessagesTimelineRow>) =>
+      rows.find(
+        (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
+          row.kind === "message" &&
+          row.message.role === "user" &&
+          row.message.runId === initial.runId,
+      )?.revertTurnCount;
+
+    expect(target(previous.rows)).toBe(1);
+    const nextInput = {
+      ...input,
+      liveRunIds: [initial.historyRunId, RunId.make("hidden-without-checkpoint"), initial.runId],
+    };
+    const next = deriveMessagesTimelineRowsWithState(nextInput, previous);
+
+    expect(target(next.rows)).toBeUndefined();
+    expect(next.rows).toEqual(deriveMessagesTimelineRows(nextInput));
+    expect(target(previous.rows)).toBe(1);
+  });
+
   function updateText(items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>, text: string) {
     return items.map((row) =>
       row.item.type === "assistant_message" && row.item.streaming
