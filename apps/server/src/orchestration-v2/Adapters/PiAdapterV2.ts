@@ -61,6 +61,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -1008,6 +1009,7 @@ export function makePiAdapterV2(
             ...shared,
             title: toolName,
             type: "dynamic_tool",
+            ...mcpToolPresentation({ toolName }),
             toolName,
             input: args ?? {},
             ...(outputText.length > 0 ? { output: outputText } : {}),

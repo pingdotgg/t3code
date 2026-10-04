@@ -884,6 +884,250 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
+  it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-mcp";
+      let statusReads = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("mcp-presentation", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+        mcp: {
+          status: async () => {
+            statusReads++;
+            return {
+              data: {
+                "my.server_with_underscores": { status: "connected" },
+                ambiguous: { status: "connected" },
+                ambiguous_server: { status: "connected" },
+                code: { status: "connected" },
+                apply: { status: "connected" },
+              },
+            };
+          },
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      for (const status of ["running", "completed", "error"] as const) {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: "mcp-part",
+                sessionID: nativeSessionId,
+                messageID: "mcp-assistant",
+                type: "tool",
+                callID: "mcp-call",
+                tool: "my_server_with_underscores_edit_document",
+                state: {
+                  status,
+                  input: { document: "remote-doc" },
+                  title: "Edit remote document",
+                  metadata: {},
+                  output: "saved",
+                  error: "failed",
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          }),
+        );
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            part: {
+              id: "ambiguous-part",
+              sessionID: nativeSessionId,
+              messageID: "mcp-assistant",
+              type: "tool",
+              callID: "ambiguous-call",
+              tool: "ambiguous_server_edit_document",
+              state: {
+                status: "completed",
+                input: {},
+                title: "Ambiguous tool",
+                metadata: {},
+                output: "",
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        }),
+      );
+      for (const tool of ["code_search", "apply_patch"]) {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: `native-${tool}`,
+                sessionID: nativeSessionId,
+                messageID: "mcp-assistant",
+                type: "tool",
+                callID: `native-${tool}`,
+                tool,
+                state: {
+                  status: "completed",
+                  input: { query: "needle", filePath: "local.ts" },
+                  title: `Native ${tool}`,
+                  metadata: {},
+                  output: "done",
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          }),
+        );
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.compacted",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+      const allItems = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      assert.equal(
+        allItems.find((item) => item.title === "Native code_search")?.type,
+        "web_search",
+      );
+      assert.equal(
+        allItems.find((item) => item.title === "Native apply_patch")?.type,
+        "file_change",
+      );
+      const items = allItems.filter((item) => item.type === "dynamic_tool");
+      assert.deepEqual(
+        items.slice(0, 3).map((item) => item.status),
+        ["running", "completed", "failed"],
+      );
+      assert.deepEqual(
+        items.slice(0, 3).map((item) => item.title),
+        ["Edit remote document", "Edit remote document", "edit document"],
+      );
+      for (const item of items.slice(0, 3)) {
+        assert.deepEqual(item.toolSource, {
+          key: "mcp:my.server_with_underscores",
+          name: "my.server with underscores",
+          kind: "integration",
+        });
+        assert.deepEqual(item.input, { document: "remote-doc" });
+      }
+      assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
+      assert.isUndefined(items[3]?.toolSource);
+      assert.equal(statusReads, 1);
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+  );
+
+  it.effect.each(["failure", "timeout"] as const)("retries MCP status after %s", (failure) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const called = promiseGate<void>();
+      const sessionId = `mcp-status-${failure}`;
+      let statusReads = 0;
+      let signal: AbortSignal | undefined;
+      const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+        mcp: {
+          status: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            statusReads++;
+            if (statusReads === 1) {
+              signal = options?.signal;
+              called.resolve();
+              if (failure === "timeout") return new Promise(() => {});
+              throw new Error("MCP status unavailable");
+            }
+            return { data: { weather: { status: "connected" } } };
+          },
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      for (const status of ["running", "completed"] as const) {
+        const emitted = yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: sessionId,
+              part: {
+                id: "weather-part",
+                sessionID: sessionId,
+                messageID: "weather-message",
+                type: "tool",
+                callID: "weather-call",
+                tool: "weather_edit_document",
+                state: {
+                  status,
+                  input: { document: "remote-doc" },
+                  title: "Edit remote document",
+                  metadata: {},
+                  output: "saved",
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          }),
+        ).pipe(Effect.forkScoped);
+        if (status === "running" && failure === "timeout") {
+          yield* Effect.promise(() => called.promise);
+          yield* TestClock.adjust("1 second");
+        }
+        yield* Fiber.join(emitted);
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.compacted", properties: { sessionID: sessionId } }),
+      );
+      const completed = (yield* Fiber.join(received)).find(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.status === "completed",
+      );
+      assert.equal(statusReads, 2);
+      assert.equal(
+        completed?.type === "turn_item.updated" && completed.turnItem.title,
+        "Edit remote document",
+      );
+      assert.deepEqual(completed?.type === "turn_item.updated" && completed.turnItem.toolSource, {
+        key: "mcp:weather",
+        name: "weather",
+        kind: "integration",
+      });
+      if (failure === "timeout") assert.isTrue(signal?.aborted);
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+  );
+
   it.effect("admits a native command on its user receipt before generation completes", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

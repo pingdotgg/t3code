@@ -1539,9 +1539,29 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
-  it("does not brand tools whose meta asserts a foreign server", () => {
-    // The foreign assertion vetoes every loose source, including a title
-    // that would otherwise match a T3 convention.
+  it.each([
+    {
+      _meta: {
+        goose: { toolCall: { toolName: "weather__get_weather", extensionName: "weather" } },
+      },
+    },
+    { _meta: { claudeCode: { toolName: "mcp__weather__get_weather" } } },
+    { _meta: { toolName: "mcp::weather::get_weather", serverId: "weather" } },
+  ])("recovers external MCP identity from provider metadata", (metadata) => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "weather-call",
+      title: "Checking the forecast",
+      status: "in_progress",
+      ...metadata,
+    });
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "weather",
+      tool: "get_weather",
+    });
+  });
+
+  it("uses the asserted server instead of a misleading T3 title", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "foreign-1",
@@ -1551,7 +1571,10 @@ describe("extractMcpToolCallIdentity", () => {
       _meta: { toolName: "delegate_task", serverId: "other-orchestrator" },
     });
 
-    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "other-orchestrator",
+      tool: "delegate_task",
+    });
   });
 
   it("does not brand path-like or unknown-tool titles", () => {

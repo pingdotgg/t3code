@@ -2182,6 +2182,111 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect.each([
+    { isError: false, title: "Check weather" },
+    { isError: true, title: "Check weather" },
+    { isError: false, title: undefined },
+  ])("keeps late MCP display metadata with %j", ({ isError, title }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-presentation"),
+          text: "Check the weather",
+          attachments: [],
+        }),
+      );
+      const toolName = "mcp__weather__get_weather";
+      const id = "weather-call";
+      yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          toolName,
+          { city: "Berlin" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: id,
+            requestId: "weather-request",
+          },
+        ),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "weather-assistant",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "weather-message",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "tool_use", id, name: toolName, input: { city: "Berlin" } }],
+          },
+          tool_use_meta: [
+            {
+              id,
+              display_name: title,
+              server_display_name: "Weather",
+              icon_url: "https://example.com/weather.png",
+            },
+          ],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "user",
+          uuid: "weather-result",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: id,
+                content: "Weather result",
+                is_error: isError,
+              },
+            ],
+          },
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "weather-terminal", result: "Weather checked" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.status),
+        ["running", "running", isError ? "failed" : "completed"],
+      );
+      assert.isNull(items[0]?.title);
+      for (const item of items.slice(1)) {
+        assert.equal(item.title, title ?? "get weather");
+        assert.deepEqual(item.toolIcon, {
+          _tag: "themed-logo",
+          logoUrl: "https://example.com/weather.png",
+        });
+        assert.deepEqual(item.toolSource, {
+          key: "mcp:weather",
+          name: "Weather",
+          kind: "integration",
+          icon: { _tag: "themed-logo", logoUrl: "https://example.com/weather.png" },
+        });
+        assert.deepEqual(item.input, { city: "Berlin" });
+      }
+      assert.equal(new Set(items.map((item) => item.id)).size, 1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
     (status) =>

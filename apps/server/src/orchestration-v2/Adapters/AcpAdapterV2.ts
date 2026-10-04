@@ -62,6 +62,7 @@ import {
   makeAcpMcpOverAcpBridge,
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
@@ -3258,9 +3259,14 @@ export function makeAcpAdapterV2(
           } else if (mcpIdentity !== undefined) {
             turnItem = {
               ...base,
-              // Identity lives in toolName, like native Codex MCP items; the
-              // agent's own title (e.g. "Ran command") would shadow it.
               title: null,
+              ...mcpToolPresentation({
+                serverName: mcpIdentity.server,
+                toolName: mcpIdentity.tool,
+                source: unknownRecord(
+                  (unknownRecord(rawOutputRecord?.result) ?? rawOutputRecord)?._meta,
+                )?.source,
+              }),
               type: "dynamic_tool",
               toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input:
@@ -4285,6 +4291,7 @@ export function makeAcpAdapterV2(
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
                 const merged = mergeToolCallState(context.tools.get(key), toolCall);
                 context.tools.set(key, merged);
+                const mcpIdentity = extractMcpToolCallIdentity(merged);
                 const now = yield* DateTime.now;
                 const status = toolStatus(merged.status);
                 const startedAt = context.toolStartedAt.get(key) ?? now;
@@ -4309,7 +4316,22 @@ export function makeAcpAdapterV2(
                     completedAt: completedAtForStatus(status, now),
                     updatedAt: now,
                     type: "dynamic_tool",
-                    toolName: merged.title ?? merged.kind ?? "Tool",
+                    ...(mcpIdentity === undefined
+                      ? {}
+                      : mcpToolPresentation({
+                          serverName: mcpIdentity.server,
+                          toolName: mcpIdentity.tool,
+                          source: unknownRecord(
+                            (
+                              unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
+                              unknownRecord(merged.data.rawOutput)
+                            )?._meta,
+                          )?.source,
+                        })),
+                    toolName:
+                      mcpIdentity === undefined
+                        ? (merged.title ?? merged.kind ?? "Tool")
+                        : `${mcpIdentity.server}.${mcpIdentity.tool}`,
                     input: merged.data.rawInput ?? null,
                     output: merged.data.rawOutput ?? merged.data.content ?? null,
                   },

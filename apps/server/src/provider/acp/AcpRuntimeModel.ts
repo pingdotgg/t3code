@@ -1134,9 +1134,7 @@ export function extractMcpToolCallIdentity(
   // (goose, qwen, claude-acp) or only through the namespaced function name
   // in the title. The verbatim wire title survives merges even when a later
   // titleless or LLM-enriched update replaces the presentation title, so
-  // match those rather than the summarized state title. Name-derived matches
-  // are gated on the known T3 tool inventory so path-like titles (for
-  // example "t3-code/README.md") never brand.
+  // match those rather than the summarized state title.
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
     ? isRecord(meta.goose.toolCall)
@@ -1160,15 +1158,22 @@ export function extractMcpToolCallIdentity(
       }
     }
   }
-  // A present-but-foreign origin assertion marks the whole call as another
-  // server's MCP call, so no loose name matching (meta or title) may brand it.
   const gooseExtension =
     typeof gooseToolCall?.extensionName === "string" ? gooseToolCall.extensionName.trim() : "";
   const assertsForeignOrigin =
     (metaServerId.length > 0 && !/^t3[-_ ]?code$/i.test(metaServerId)) ||
     (gooseExtension.length > 0 && !/^t3[-_ ]?code$/i.test(gooseExtension));
   if (assertsForeignOrigin) {
-    return undefined;
+    const server = metaServerId || gooseExtension;
+    const name =
+      metaToolName ||
+      (typeof gooseToolCall?.toolName === "string" ? gooseToolCall.toolName.trim() : "");
+    if (!name) return undefined;
+    const prefix = [`mcp__${server}__`, `mcp::${server}::`, `${server}__`].find((prefix) =>
+      name.startsWith(prefix),
+    );
+    const tool = prefix === undefined ? name : name.slice(prefix.length);
+    return tool ? { server, tool } : undefined;
   }
   const candidates = [
     meta?.toolName,
@@ -1178,6 +1183,9 @@ export function extractMcpToolCallIdentity(
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
+    const qualified = /^mcp__(.+?)__(.+)$/i.exec(trimmed);
+    if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
+      return { server: qualified[1], tool: qualified[2] };
     const match =
       T3_MCP_TITLE_CALL.exec(trimmed) ??
       T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
