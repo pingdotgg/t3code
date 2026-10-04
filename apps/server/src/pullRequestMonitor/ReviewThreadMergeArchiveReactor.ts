@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import type { ProjectId } from "@t3tools/contracts";
 import { threadPullRequestKey } from "@t3tools/shared/threadPullRequests";
@@ -15,10 +17,11 @@ import {
   liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
+  shouldTriggerMergeArchiveSweep,
 } from "./reviewThreadMergeArchive.ts";
 import { PullRequestMonitorService } from "./PullRequestMonitorService.ts";
 
-const SWEEP_INTERVAL = "5 minutes";
+const SWEEP_INTERVAL = "1 minute";
 const LOG_TAG = "review-thread-merge-archive";
 
 type SweepServices =
@@ -27,7 +30,8 @@ type SweepServices =
   | PullRequestService
   | ServerSettingsService;
 
-// Nothing observes a merge but the poll loop, so this runs on a timer rather than off an event.
+// The merged listing is cached for 30s and grouped by project, so a 1-minute
+// sweep costs at most one host read per project with live review threads.
 export const sweepOnce = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const monitors = yield* PullRequestMonitorService;
@@ -121,9 +125,28 @@ export const sweepOnce = Effect.gen(function* () {
 }) satisfies Effect.Effect<void, never, SweepServices>;
 
 const makeReactor = Effect.gen(function* () {
+  const engine = yield* OrchestrationEngineService;
   const guards = yield* AutomaticArchiveGuardRegistry;
   yield* guards.register(({ readModel, threadId }) =>
     canAdmitAutomaticArchiveNow(readModel, threadId),
+  );
+  // A merged link write already proves the merge, so sweep eagerly instead of
+  // waiting for the next tick. Sweeping is idempotent (deterministic command
+  // ids dedupe through receipts, listings hit the 30s cache), so overlapping
+  // periodic and eager runs only cost a cheap re-read.
+  const subscription = yield* engine.acquireDomainEventSubscription;
+  yield* Effect.forkScoped(
+    Stream.forever(Stream.fromEffect(PubSub.take(subscription))).pipe(
+      Stream.runForEach((event) =>
+        shouldTriggerMergeArchiveSweep(event)
+          ? sweepOnce.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(`${LOG_TAG}: eager merge archive sweep failed`, { cause }),
+              ),
+            )
+          : Effect.void,
+      ),
+    ),
   );
   yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
 });

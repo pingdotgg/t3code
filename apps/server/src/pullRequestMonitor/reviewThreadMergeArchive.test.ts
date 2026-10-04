@@ -7,6 +7,7 @@ import {
   liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
+  shouldTriggerMergeArchiveSweep,
   type ReviewThreadPullRequest,
 } from "./reviewThreadMergeArchive.ts";
 
@@ -519,5 +520,59 @@ describe("review workers that carry only snapshot provenance", () => {
   it("ignores a snapshot whose scope is not a pull request", () => {
     const worker = snapshotOnlyReviewWorker({ reviewSnapshot: { scope: { kind: "uncommitted" } } });
     expect(liveReviewThreadPullRequests(readModel([worker]))).toEqual([]);
+  });
+});
+
+describe("shouldTriggerMergeArchiveSweep", () => {
+  const mergedLink = {
+    pullRequest: { state: "merged" },
+  };
+  const openLink = {
+    pullRequest: { state: "open" },
+  };
+
+  it("triggers on a linked pull request that just merged", () => {
+    expect(
+      shouldTriggerMergeArchiveSweep({
+        type: "thread.pull-request-linked",
+        payload: { link: mergedLink },
+      }),
+    ).toBe(true);
+    expect(
+      shouldTriggerMergeArchiveSweep({
+        type: "thread.pull-request-rekeyed",
+        payload: { link: mergedLink },
+      }),
+    ).toBe(true);
+  });
+
+  it("triggers on a meta update that records a merged pull request", () => {
+    expect(
+      shouldTriggerMergeArchiveSweep({
+        type: "thread.meta-updated",
+        payload: { pullRequest: { state: "merged" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores open pull request updates and unrelated events", () => {
+    expect(
+      shouldTriggerMergeArchiveSweep({
+        type: "thread.pull-request-linked",
+        payload: { link: openLink },
+      }),
+    ).toBe(false);
+    expect(
+      shouldTriggerMergeArchiveSweep({
+        type: "thread.meta-updated",
+        payload: { pullRequest: { state: "open" } },
+      }),
+    ).toBe(false);
+    expect(shouldTriggerMergeArchiveSweep({ type: "thread.message-sent", payload: {} })).toBe(
+      false,
+    );
+    expect(
+      shouldTriggerMergeArchiveSweep({ type: "thread.pull-request-linked", payload: {} }),
+    ).toBe(false);
   });
 });
