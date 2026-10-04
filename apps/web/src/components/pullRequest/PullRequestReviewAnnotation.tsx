@@ -37,6 +37,7 @@ const CARD_CLASS =
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
+  readonly allowEmpty?: boolean;
   readonly onSubmit: () => void;
   readonly onCancel?: (() => void) | undefined;
 }) {
@@ -45,7 +46,7 @@ function submitKeys(input: {
       event.preventDefault();
       input.onCancel();
     }
-    if (isCommentSubmitShortcut(event, input.value, input.pending)) {
+    if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
       event.preventDefault();
       input.onSubmit();
     }
@@ -176,8 +177,8 @@ export function ReviewThreadCard({
     }
   };
 
-  const send = async () => {
-    const trimmed = reply.trim();
+  const send = async (text = reply) => {
+    const trimmed = text.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
     const result = await settlePromise(() => onReply(trimmed));
@@ -347,8 +348,9 @@ export function ReviewThreadCard({
                       onChange={(event) => setReply(event.target.value)}
                       onKeyDown={submitKeys({
                         value: reply,
-                        pending: pending || speech.blocksSubmission,
-                        onSubmit: () => void send(),
+                        allowEmpty: speech.blocksSubmission,
+                        pending,
+                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
                         onCancel: () => setReplying(false),
                       })}
                     />
@@ -359,8 +361,10 @@ export function ReviewThreadCard({
                       </Button>
                       <Button
                         size="xs"
-                        disabled={pending || speech.blocksSubmission || reply.trim().length === 0}
-                        onClick={() => void send()}
+                        disabled={
+                          pending || (!speech.blocksSubmission && reply.trim().length === 0)
+                        }
+                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
                         Reply
                       </Button>

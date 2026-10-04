@@ -18,6 +18,10 @@ import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
   postProcessingEnabled: false,
+  transcript: null as Promise<string> | null,
+  processedTranscript: null as Promise<string> | null,
+  draft: "",
+  disabled: false,
   clientPreferences: {} as Partial<ClientSettings>,
   projectId: undefined as ProjectId | undefined,
   originSettings: null as ServerSettings | null,
@@ -77,7 +81,12 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     }),
   postProcessEnvironmentTranscript: (...args: unknown[]) => {
     mocks.cleanup(...args);
-    return Effect.succeed({ text: "Clean transcript" });
+    return mocks.processedTranscript
+      ? Effect.map(
+          Effect.promise(() => mocks.processedTranscript!),
+          (text) => ({ text }),
+        )
+      : Effect.succeed({ text: "Clean transcript" });
   },
   downloadEnvironmentSpeechModel: () =>
     Effect.sync(() => {
@@ -100,7 +109,7 @@ vi.mock("./browserVoiceInput", () => ({
     transcriber: {
       prepare: async () => {
         mocks.recordingOptions = input.getTranscriptionOptions();
-        return { locale: "en", transcribe: async () => "Raw transcript" };
+        return { locale: "en", transcribe: async () => mocks.transcript ?? "Raw transcript" };
       },
     },
     cancelRecording() {},
@@ -115,8 +124,12 @@ function Probe() {
     environmentId: "project-environment" as EnvironmentId,
     projectId: mocks.projectId,
     ownerKey: mocks.ownerKey,
-    draftText: "",
-    readDraft: () => ({ text: "", selection: { start: 0, end: 0 } }),
+    draftText: mocks.draft,
+    disabled: mocks.disabled,
+    readDraft: () => ({
+      text: mocks.draft,
+      selection: { start: mocks.draft.length, end: mocks.draft.length },
+    }),
     commitDraft: mocks.committed,
   });
   useLayoutEffect(() => {
@@ -164,6 +177,10 @@ afterEach(async () => {
   mocks.projectId = undefined;
   mocks.originSettings = null;
   mocks.recordingOptions = null;
+  mocks.transcript = null;
+  mocks.processedTranscript = null;
+  mocks.draft = "";
+  mocks.disabled = false;
   mocks.cleanup.mockClear();
   mocks.committed.mockClear();
   vi.unstubAllGlobals();
@@ -381,4 +398,100 @@ it("preserves the original transcript without cleanup when the client disables i
   await act(() => voice.stop());
   expect(mocks.cleanup).not.toHaveBeenCalled();
   expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
+});
+
+function deferredTranscript() {
+  let resolve!: (text: string) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<string>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+it("finishes recording and submits the existing draft with the final transcript exactly once", async () => {
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  mocks.draft = "Existing";
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  const submitted = vi.fn();
+  await act(() => {
+    voice.submitAfterDictation(submitted);
+    voice.submitAfterDictation(submitted);
+  });
+  expect(voice.state.phase).toBe("transcribing");
+  expect(submitted).not.toHaveBeenCalled();
+  await act(async () => transcript.resolve("dictated text"));
+  expect(submitted).toHaveBeenCalledExactlyOnceWith("Existing dictated text");
+});
+
+it("queues submission during post-processing and waits for the cleaned transcript", async () => {
+  const processed = deferredTranscript();
+  mocks.processedTranscript = processed.promise;
+  mocks.postProcessingEnabled = true;
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = voice.stop();
+  });
+  expect(voice.state.phase).toBe("post-processing");
+  const submitted = vi.fn();
+  await act(() => voice.submitAfterDictation(submitted));
+  expect(submitted).not.toHaveBeenCalled();
+  await act(async () => {
+    processed.resolve("Cleaned words");
+    await stopping;
+  });
+  expect(submitted).toHaveBeenCalledExactlyOnceWith("Cleaned words");
+});
+
+it.each(["cancel", "owner", "error", "disabled"] as const)(
+  "abandons queued submission on %s",
+  async (reason) => {
+    const transcript = deferredTranscript();
+    mocks.transcript = transcript.promise;
+    mocks.microphoneFailure = false;
+    await mountProbe();
+    await act(() => voice.start());
+    const submitted = vi.fn();
+    await act(() => voice.submitAfterDictation(submitted));
+    if (reason === "cancel") await act(() => voice.cancel());
+    if (reason === "owner") {
+      mocks.ownerKey = "other";
+      await act(() => root!.render(<Probe />));
+    }
+    if (reason === "disabled") {
+      mocks.disabled = true;
+      await act(() => root!.render(<Probe />));
+    }
+    await act(async () => {
+      if (reason === "error") transcript.reject(new Error("Transcription failed"));
+      else transcript.resolve("Late words");
+    });
+    expect(submitted).not.toHaveBeenCalled();
+  },
+);
+
+it("finishing dictation alone leaves the completed text for editing", async () => {
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  await act(() => voice.stop());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Raw transcript", { start: 14, end: 14 });
+});
+
+it("does not submit when the recording contains no speech", async () => {
+  mocks.transcript = Promise.resolve("");
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  const submitted = vi.fn();
+  await act(() => voice.submitAfterDictation(submitted));
+  expect(voice.state.phase).toBe("error");
+  expect(submitted).not.toHaveBeenCalled();
 });

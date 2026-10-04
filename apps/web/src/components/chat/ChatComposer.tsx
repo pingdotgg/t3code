@@ -1869,6 +1869,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
+  const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
   const dictationDisabled =
     isConnecting ||
@@ -1883,14 +1884,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
   });
-  const voiceSendDisabledReason = speechInput.blocksSubmission
-    ? "Finish or discard voice input before sending"
-    : sendDisabledReason;
-  const isSubmissionDisabled = isSendDisabled || speechInput.blocksSubmission;
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
     isSendBusy ||
-    isSubmissionDisabled ||
+    isSendDisabled ||
     isConnecting ||
     noProviderAvailable ||
     projectSelectionRequired ||
@@ -2117,7 +2114,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!isSoftwareKeyboardOpen) return false;
     if (
       isSendBusy ||
-      isSubmissionDisabled ||
+      isSendDisabled ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
       phase === "running"
@@ -2130,14 +2127,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
   };
 
+  const submitComposerRef = useRef<(dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void>(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
+    if (voiceInputActive) {
+      event?.preventDefault();
+      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      return;
+    }
     if (
       noProviderAvailable ||
-      isSubmissionDisabled ||
+      isSendDisabled ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
@@ -2192,6 +2195,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  useLayoutEffect(() => {
+    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
+  }, [submitComposerStable]);
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -3517,7 +3523,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={voiceSendDisabledReason}
+                      sendDisabledReason={sendDisabledReason}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
                         noProviderAvailable ||
@@ -3646,16 +3652,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
-                    promptHasText={prompt.trim().length > 0}
+                    promptHasText={prompt.trim().length > 0 || speechInput.blocksSubmission}
+                    voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={voiceSendDisabledReason}
+                    sendDisabledReason={sendDisabledReason}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
                     isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
+                    hasSendableContent={composerSendState.hasSendableContent || speechInput.blocksSubmission}
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     isEditingQueuedMessage={isEditingQueuedMessage}

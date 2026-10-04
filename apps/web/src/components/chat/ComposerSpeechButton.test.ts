@@ -22,7 +22,7 @@ it("maps voice input phases to composer actions", () => {
     status: "Preparing",
     showsCancel: true,
     confirmEnabled: false,
-    showsSend: false,
+    showsSend: true,
   });
   expect(
     resolveSpeechPresentation({ phase: "recording", error: null, errorAction: null }, null),
@@ -30,7 +30,7 @@ it("maps voice input phases to composer actions", () => {
     status: "Recording",
     showsCancel: true,
     confirmEnabled: true,
-    showsSend: false,
+    showsSend: true,
   });
   expect(
     resolveSpeechPresentation({ phase: "transcribing", error: null, errorAction: null }, null),
@@ -38,7 +38,7 @@ it("maps voice input phases to composer actions", () => {
     status: "Transcribing",
     showsCancel: true,
     confirmEnabled: false,
-    showsSend: false,
+    showsSend: true,
   });
   expect(
     resolveSpeechPresentation({ phase: "post-processing", error: null, errorAction: null }, null),
@@ -46,7 +46,7 @@ it("maps voice input phases to composer actions", () => {
     status: "Post-processing",
     showsCancel: true,
     confirmEnabled: false,
-    showsSend: false,
+    showsSend: true,
   });
   expect(
     resolveSpeechPresentation(

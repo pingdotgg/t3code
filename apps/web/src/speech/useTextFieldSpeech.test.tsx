@@ -11,6 +11,7 @@ import { DiffCommentAnnotation } from "~/components/diffs/DiffCommentAnnotation"
 const mocks = vi.hoisted(() => ({
   input: null as Parameters<typeof useEnvironmentSpeechInput>[0] | null,
   busy: false,
+  queued: null as ((text: string) => void) | null,
 }));
 vi.mock("./useEnvironmentSpeechInput", () => ({
   useEnvironmentSpeechInput: (input: Parameters<typeof useEnvironmentSpeechInput>[0]) => {
@@ -18,6 +19,10 @@ vi.mock("./useEnvironmentSpeechInput", () => ({
     return {
       available: true,
       state: { phase: mocks.busy ? "recording" : "idle", error: null, errorAction: null },
+      submitAfterDictation: (submit: (text: string) => void) => {
+        if (mocks.busy) mocks.queued ??= submit;
+        else submit(input.readDraft().text);
+      },
       blocksSubmission: mocks.busy,
       freezesEditor: mocks.busy,
       progress: null,
@@ -61,6 +66,7 @@ const environmentId = EnvironmentId.make("test-environment");
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.busy = false;
+  mocks.queued = null;
   comments.length = 0;
   frames = [];
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -137,7 +143,7 @@ it("inserts dictation at the comment cursor and submits the completed draft", as
   await act(() => submit.click());
   expect(comments).toEqual(["one new two"]);
 });
-it("blocks click and keyboard submission while dictation is running", async () => {
+it("defers click and keyboard submission while dictation is running", async () => {
   mocks.busy = true;
   const field = await mount();
   await act(() => mocks.input!.commitDraft("unfinished", { start: 10, end: 10 }));
@@ -156,5 +162,8 @@ it("blocks click and keyboard submission while dictation is running", async () =
       }),
     );
   });
+  expect(submit.disabled).toBe(false);
   expect(comments).toEqual([]);
+  await act(() => mocks.queued!("unfinished completed"));
+  expect(comments).toEqual(["unfinished completed"]);
 });

@@ -50,6 +50,7 @@ type HookInput = {
   readonly projectId?: ProjectId | undefined;
   readonly ownerKey: string;
   readonly draftText: string;
+  readonly disabled?: boolean | undefined;
   readonly readDraft: () => DraftInput;
   readonly commitDraft: (
     text: string,
@@ -103,6 +104,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const startRequestRef = useRef(0);
+  const pendingSubmissionRef = useRef<{
+    ownerKey: string;
+    submit: (text: string) => void;
+    text?: string;
+  } | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -230,9 +236,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           description: "The original transcription was added.",
         }),
       readDraft,
-      commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
+      commitDraft: (text, selection) => {
+        latestInputRef.current.commitDraft(text, selection);
+        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+      },
       onStateChange: (value) => {
         if (!disposed) {
+          if (value.phase === "error") pendingSubmissionRef.current = null;
           setControllerState({ prepared, value });
           if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
         }
@@ -244,6 +254,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setLevel(0);
     return () => {
       disposed = true;
+      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       controller.dispose();
@@ -299,11 +310,39 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey) return;
     previousOwnerRef.current = input.ownerKey;
+    pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     setQueuedStart(null);
     controllerRef.current?.ownerChanged();
     setSetupOpen(false);
   }, [input.ownerKey]);
+
+  useEffect(() => {
+    const pending = pendingSubmissionRef.current;
+    if (state.phase === "recording" && pending) {
+      void controllerRef.current?.stop();
+      return;
+    }
+    if (state.phase !== "idle" || !pending) return;
+    pendingSubmissionRef.current = null;
+    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
+      pending.submit(pending.text);
+  }, [state, input.ownerKey, input.disabled]);
+
+  const submitAfterDictation = useCallback(
+    (submit: (text: string) => void) => {
+      if (latestInputRef.current.disabled) return;
+      const controller = controllerRef.current;
+      if (!controller || !voiceInputBlocksSubmission(state)) {
+        submit(latestInputRef.current.readDraft().text);
+        return;
+      }
+      if (pendingSubmissionRef.current) return;
+      pendingSubmissionRef.current = { ownerKey: latestInputRef.current.ownerKey, submit };
+      if (controller.currentState.phase === "recording") void controller.stop();
+    },
+    [state],
+  );
 
   const start = useCallback(async () => {
     const request = ++startRequestRef.current;
@@ -423,8 +462,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     blocksSubmission: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
     start,
+    submitAfterDictation,
     stop: useCallback(() => controllerRef.current?.stop() ?? Promise.resolve(), []),
     cancel: useCallback(() => {
+      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       controllerRef.current?.cancel();

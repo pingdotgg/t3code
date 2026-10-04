@@ -54,7 +54,7 @@ export function resolveSpeechPresentation(
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
-        showsSend: false,
+        showsSend: true,
       };
     case "recording":
       return {
@@ -62,7 +62,7 @@ export function resolveSpeechPresentation(
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: true,
-        showsSend: false,
+        showsSend: true,
       };
     case "transcribing":
       return {
@@ -70,7 +70,7 @@ export function resolveSpeechPresentation(
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
-        showsSend: false,
+        showsSend: true,
       };
     case "post-processing":
       return {
@@ -78,7 +78,7 @@ export function resolveSpeechPresentation(
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
-        showsSend: false,
+        showsSend: true,
       };
   }
 }

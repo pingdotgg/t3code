@@ -1,9 +1,10 @@
 # Voice input
 
 On web and desktop, voice input transcribes speech on a connected T3 Code
-environment. It inserts text into your draft for review and never sends it
-automatically. Dictation is also available in supported comment, pull request
-review, diff annotation, and desktop browser annotation editors.
+environment. Finish dictation to insert text into your draft for review, or press
+Send during dictation to send once the transcript is ready. Dictation is also
+available in supported comment, pull request review, diff annotation, and desktop
+browser annotation editors.
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. This uses Apple's on-device speech model instead of
@@ -34,8 +35,12 @@ English text when the model supports translation.
 Start voice input with the microphone control, then finish to insert the transcript.
 Cancel to discard the recording and preserve your draft. Recordings can be up to
 five minutes long. In the composer, text is inserted at the cursor or replaces the
-selection captured when recording starts. Editing and submission are disabled
-while voice input is preparing, recording, transcribing, or processing the transcript.
+selection captured when recording starts. Editing is disabled while voice input
+is running. Press Send to finish recording and send the completed draft, including
+any existing text, after transcription and optional post-processing. You can also
+press Send while those steps are finishing. In other supported editors, the
+submit or save action works the same way. Cancelling dictation cancels the queued
+action and preserves your draft.
 
 Press `mod+shift+d` to start dictation and `Esc` to discard it. `mod` means Command
 on macOS and Ctrl on Windows and Linux. The shortcut targets the focused supported

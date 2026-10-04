@@ -13,7 +13,8 @@ import "~/index.css";
 import { act, render } from "../../../test/render";
 
 vi.mock("~/speech/useTextFieldSpeech", () => ({
-  useTextFieldSpeech: () => ({
+  useTextFieldSpeech: (input: { text: string }) => ({
+    submitAfterDictation: (submit: (text: string) => void) => submit(input.text),
     blocksSubmission: false,
     freezesEditor: false,
     setup: { open: false },
