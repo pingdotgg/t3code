@@ -84,6 +84,8 @@ if (process.argv.includes("--version")) {
   Electron.app.exit(0);
 }
 
+const layerElectronApp = ElectronApp.layer.pipe(Layer.provide(NodeServices.layer));
+
 const layerDesktopEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
@@ -127,7 +129,7 @@ const layerDesktopSshEnvironment = Layer.unwrap(
 );
 
 const layerElectron = Layer.mergeAll(
-  ElectronApp.layer,
+  layerElectronApp,
   ElectronDialog.layer,
   ElectronMenu.layer,
   ElectronPowerMonitor.layer,
@@ -230,7 +232,7 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(layerDesktopEnvironment),
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(ElectronApp.layer),
+  Layer.provideMerge(layerElectronApp),
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
