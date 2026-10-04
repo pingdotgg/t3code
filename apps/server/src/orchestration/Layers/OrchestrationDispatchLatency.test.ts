@@ -17,6 +17,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { DelegationAuditRepository } from "../../persistence/Services/DelegationAudit.ts";
 import type { DelegationAuditRepositoryShape } from "../../persistence/Services/DelegationAudit.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { CheckpointStoreDieStubLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -61,6 +62,7 @@ async function createLatencySystem() {
     Layer.provideMerge(Layer.succeed(DelegationAuditRepository, delegationAuditRepository)),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CheckpointStoreDieStubLive),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));

@@ -121,7 +121,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const maybeDelegationAuditRepository = yield* Effect.serviceOption(DelegationAuditRepository);
   const threadUrls = yield* Effect.serviceOption(ThreadUrlBuilder);
   const coordinator = yield* CheckoutCoordinator;
-  const checkpointStore = yield* Effect.serviceOption(CheckpointStore);
+  const checkpointStore = yield* CheckpointStore;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
   const automaticArchiveGuards = yield* AutomaticArchiveGuardRegistry;
 
@@ -345,12 +345,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     claimOwnership: (input) => workspaceOwnership.claim(input),
     hasCleanupReservationByPath: (canonicalPath) =>
       worktreeCleanupJobs.hasReservationByPath(canonicalPath),
-    createWorkspaceSnapshotCommit: (cwd) =>
-      Option.isSome(checkpointStore)
-        ? checkpointStore.value.createWorkspaceSnapshotCommit({ cwd })
-        : Effect.fail(
-            new Error("Checkpoint snapshot service is unavailable; refusing a HEAD-only fork."),
-          ),
+    createWorkspaceSnapshotCommit: (cwd) => checkpointStore.createWorkspaceSnapshotCommit({ cwd }),
   };
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
