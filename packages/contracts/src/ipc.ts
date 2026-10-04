@@ -1143,6 +1143,12 @@ export interface DesktopBridge {
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
+  /**
+   * Whether this macOS app is registered as a login item. Absent on older
+   * desktop shells and on every non-macOS build's bridge usage.
+   */
+  getOpenAtLogin?: () => boolean;
+  setOpenAtLogin?: (enabled: boolean) => Promise<void>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

@@ -36,6 +36,7 @@ vi.mock("electron", async (importOriginal) => ({
 }));
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopMacLoginItem from "../app/DesktopMacLoginItem.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -226,6 +227,7 @@ function makeTestLayer(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly launchedHidden?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -289,6 +291,7 @@ function makeTestLayer(input: {
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
+        DesktopMacLoginItem.layerTest({ launchedHidden: input.launchedHidden === true }),
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
@@ -404,6 +407,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopEnvironmentLayer,
           DesktopAppSettings.layerTest(),
           desktopClientSettingsLayer,
+          DesktopMacLoginItem.layerTest(),
           desktopServerExposureLayer,
           electronAppLayer,
           electronMenuLayer,
@@ -1627,6 +1631,34 @@ describe("DesktopWindow", () => {
         ]);
         assert.equal(onReveal.mock.calls.length, 0);
         assert.equal(yield* Ref.get(createCount), 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps the window closed when macOS opened the app at login", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        launchedHidden: true,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 0);
+
+        // The login launch itself emits activate. That must not open a window.
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 0);
+
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 1);
       }).pipe(Effect.provide(layer));
     }),
   );

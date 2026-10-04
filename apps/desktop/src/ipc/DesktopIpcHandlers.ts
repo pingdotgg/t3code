@@ -13,6 +13,7 @@ import {
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
 } from "./methods/localEnvironment.ts";
+import { getOpenAtLogin, setOpenAtLogin } from "./methods/openAtLogin.ts";
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
@@ -86,6 +87,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);
+  yield* ipc.handleSync(getOpenAtLogin);
+  yield* ipc.handle(setOpenAtLogin);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
   yield* ipc.handle(getClientSettings);

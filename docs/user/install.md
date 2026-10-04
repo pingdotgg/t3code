@@ -70,6 +70,16 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+### Start at login on macOS
+
+In the desktop app, open **Settings → Connections** and turn on **Start at login**.
+T3 Code then opens when you log in to this Mac, without a window. A menu-bar icon
+opens the window or quits the app. The local server keeps listening on
+`127.0.0.1` (port `3773` when that port is free), so other devices can still connect.
+
+Turn the setting off to remove T3 Code from Login Items. Opening the app yourself,
+from Spotlight or the Dock, still shows the window.
+
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects

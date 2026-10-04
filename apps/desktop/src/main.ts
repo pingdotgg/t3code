@@ -32,6 +32,7 @@ import * as ElectronTheme from "./electron/ElectronTheme.ts";
 import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
+import * as DesktopMacLoginItem from "./app/DesktopMacLoginItem.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
@@ -154,6 +155,7 @@ const desktopPreviewLayer = PreviewManager.layer.pipe(
 );
 
 const desktopWindowLayer = DesktopWindow.layer.pipe(
+  Layer.provideMerge(DesktopMacLoginItem.layer),
   Layer.provideMerge(desktopServerExposureLayer),
   Layer.provideMerge(desktopPreviewLayer),
 );

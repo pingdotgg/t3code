@@ -67,6 +67,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
+import { StartAtLoginSetting } from "./StartAtLoginSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
@@ -3340,6 +3341,7 @@ export function ConnectionsSettings() {
             }
           >
             <LocalEnvironmentSetting />
+            <StartAtLoginSetting />
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"

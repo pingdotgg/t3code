@@ -139,6 +139,16 @@ describe("searchSettings", () => {
     }
   });
 
+  it("registers start at login as a macOS desktop setting", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "start-at-login")).toMatchObject({
+      id: "start-at-login",
+      title: "Start at login",
+      to: "/settings/connections",
+      desktopOnly: true,
+      macOnly: true,
+    });
+  });
+
   it("registers the WSL backend as a desktop-only setting", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
       id: "wsl-backend",

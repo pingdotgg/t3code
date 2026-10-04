@@ -791,6 +791,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "start-at-login",
+    title: "Start at login",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["launch at login open hidden menu bar dock macos startup"],
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
     id: "network-access",
     title: "Network access",
     to: "/settings/connections",

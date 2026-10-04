@@ -20,6 +20,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopMacLoginItem from "./DesktopMacLoginItem.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
@@ -270,6 +271,8 @@ const startup = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const macLoginItem = yield* DesktopMacLoginItem.DesktopMacLoginItem;
 
   yield* shellEnvironment.installIntoProcess;
   const hasCommandLinePasswordStore =
@@ -316,6 +319,14 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  yield* macLoginItem.installStatusItem({
+    onOpen: () => {
+      void Effect.runPromise(desktopWindow.revealOrCreateMain.pipe(Effect.ignoreCause));
+    },
+    onQuit: () => {
+      void Effect.runPromise(electronApp.quit);
+    },
+  });
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
