@@ -185,6 +185,7 @@ import { attachmentRelativePath, createDeterministicAttachmentId } from "./attac
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import { isServerBrowserEnabled } from "./preview/serverBrowserEnabled.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
@@ -3442,10 +3443,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "terminal" },
           ),
-        [WS_METHODS.previewOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
+        [WS_METHODS.previewOpen]: (input) => {
+          // Without a server browser nothing renders server tabs, so the client renders it.
+          const { runtime, ...rest } = input;
+          const open = runtime === "server" && !isServerBrowserEnabled(config.mode) ? rest : input;
+          return observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(open), {
             "rpc.aggregate": "preview",
-          }),
+          });
+        },
         [WS_METHODS.previewNavigate]: (input) =>
           observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
             "rpc.aggregate": "preview",

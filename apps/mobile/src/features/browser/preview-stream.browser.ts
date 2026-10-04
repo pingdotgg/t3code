@@ -548,6 +548,8 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     const shortcut = event.ctrlKey || event.metaKey;
+    // Paste arrives as input text from this device's clipboard.
+    if (shortcut && event.key.toLowerCase() === "v") return;
     // Enter carries "\r" like Puppeteer's key table, so forms submit and textareas break lines.
     const text = shortcut
       ? undefined
