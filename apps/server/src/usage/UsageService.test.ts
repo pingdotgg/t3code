@@ -468,7 +468,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
+  it.live("reads active and archived account history once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       const codexHome = NodePath.join(home, "codex-account");
@@ -502,6 +502,28 @@ describe("UsageService", () => {
             .map((line) => encodeUnknownJsonString(line))
             .join("\n") + "\n",
         );
+        await NodeFSP.mkdir(NodePath.join(codexHome, "archived_sessions"), { recursive: true });
+        await NodeFSP.copyFile(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          NodePath.join(codexHome, "archived_sessions", "copy.jsonl"),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "archived_sessions", "archived.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "codex-archived-session" } },
+            { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 10, output_tokens: 17 } },
+              },
+            },
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
         await NodeFSP.mkdir(NodePath.join(grokHome, "sessions", "session"), { recursive: true });
         await NodeFSP.writeFile(
           NodePath.join(grokHome, "sessions", "session", "updates.jsonl"),
@@ -524,6 +546,9 @@ describe("UsageService", () => {
           serviceLayers({
             prefix: "usage-service-accounts-test",
             home,
+            ratesDocument: {
+              "gpt-5.6-sol": { input_cost_per_token: 0, output_cost_per_token: 1 },
+            },
             settings: {
               ...settings,
               providerInstances: {
@@ -557,7 +582,13 @@ describe("UsageService", () => {
         ),
       );
       const summary = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(summary), 59);
+      assert.strictEqual(totalOutputTokens(summary), 76);
+      const archivedDir = yield* Effect.promise(() =>
+        NodeFSP.realpath(NodePath.join(codexHome, "archived_sessions")),
+      );
+      const archivedBucket = summary.buckets.find((bucket) => bucket.sourcePath === archivedDir);
+      assert.strictEqual(archivedBucket?.totals.outputTokens, 17);
+      assert.strictEqual(archivedBucket?.costUsd, 17);
       yield* Effect.promise(() =>
         NodeFSP.rename(
           NodePath.join(codexHome, "sessions", "rollout.jsonl"),
@@ -567,20 +598,28 @@ describe("UsageService", () => {
       const moved = yield* service.readSummary(WINDOW);
       assert.deepStrictEqual(moved.buckets, summary.buckets);
       yield* Effect.promise(() =>
+        NodeFSP.rename(
+          NodePath.join(codexHome, "sessions", "moved.jsonl"),
+          NodePath.join(codexHome, "archived_sessions", "moved.jsonl"),
+        ),
+      );
+      const archived = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(archived.buckets, summary.buckets);
+      yield* Effect.promise(() =>
         NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
       );
       const removed = yield* service.readSummary(WINDOW);
       assert.deepStrictEqual(removed.buckets, summary.buckets);
 
       const sources = summary.sources.filter((source) => source.status === "ok");
-      assert.strictEqual(sources.length, 4);
+      assert.strictEqual(sources.length, 5);
       assert.strictEqual(
         sources.reduce((sum, source) => sum + source.scannedFiles, 0),
-        4,
+        6,
       );
       assert.strictEqual(
         sources.filter((source) => source.fingerprint.provider === "codex").length,
-        1,
+        2,
       );
     }).pipe(Effect.scoped),
   );
