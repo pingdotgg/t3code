@@ -929,6 +929,25 @@ describe("ServerSettings Cursor legacy settings", () => {
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {
+  it.each([
+    { mode: "repo_conventions", customInstructions: "", followChangeRequestTemplates: true },
+    { mode: "conventional_commits", customInstructions: "", followChangeRequestTemplates: false },
+    {
+      mode: "custom",
+      customInstructions: "Use concise subjects.",
+      followChangeRequestTemplates: false,
+    },
+  ])("keeps $mode settings object-shaped on the wire", (style) => {
+    const settings = decodeServerSettings({
+      sourceControlWritingStyle: style,
+      projectSettingsOverrides: { project: { sourceControlWritingStyle: style } },
+    });
+    expect(encodeServerSettings(settings)).toMatchObject({
+      sourceControlWritingStyle: style,
+      projectSettingsOverrides: { project: { sourceControlWritingStyle: style } },
+    });
+  });
+
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
 

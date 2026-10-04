@@ -1010,7 +1010,7 @@ export const SourceControlWritingStyleMode = Schema.Literals([
 ]);
 export type SourceControlWritingStyleMode = typeof SourceControlWritingStyleMode.Type;
 
-export const SourceControlWritingStyleSettings = Schema.Struct({
+const StructuredSourceControlWritingStyleSettings = Schema.Struct({
   mode: SourceControlWritingStyleMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("repo_conventions" as const)),
   ),
@@ -1019,6 +1019,26 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
 });
+const LegacySourceControlWritingStyleSettings = TrimmedString.pipe(
+  Schema.decodeTo(
+    StructuredSourceControlWritingStyleSettings,
+    SchemaTransformation.transform<
+      typeof StructuredSourceControlWritingStyleSettings.Encoded,
+      string
+    >({
+      decode: (customInstructions) => ({
+        mode: customInstructions.length > 0 ? "custom" : "repo_conventions",
+        customInstructions,
+        followChangeRequestTemplates: true,
+      }),
+      encode: (style) => style.customInstructions ?? "",
+    }),
+  ),
+);
+export const SourceControlWritingStyleSettings = Schema.Union([
+  StructuredSourceControlWritingStyleSettings,
+  LegacySourceControlWritingStyleSettings,
+]);
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
 export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
