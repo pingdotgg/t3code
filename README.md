@@ -15,7 +15,7 @@ pkg update
 pkg install nodejs-lts git
 npm install -g @mmmbuto/codex-cli-termux
 codex login
-git clone https://github.com/screen-gd/t3mobile.git
+git clone --branch feat/mobile-termux-codex https://github.com/screen-gd/t3mobile.git
 cd t3mobile/apps/runtime
 npm install --workspaces=false --omit=dev
 npm start
