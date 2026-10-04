@@ -385,7 +385,7 @@
 ## Projection schemas and checkout reservations
 
 - Whole-record read/replace persistence needs a durable revision fence: pure transition correctness does not prevent concurrent budget overspend or last-write-wins updates. Require an expected revision on every aggregate write and reject stale saves inside the transaction.
-- Projection schema changes must update repository SQL plus every full, shell, and targeted snapshot query and mapper; a passing projection write test does not prove reconnect or CLI reads decode.
+- Projection schema changes must update repository SQL plus every full, shell, and targeted snapshot query and mapper; a passing projection write test does not prove reconnect or CLI reads decode. Nullable fields still require a selected SQL alias: missing `queuePosition` on the targeted queued-turn read made every nonempty queue's thread detail fail indefinitely. Test nonempty, reordered queues through persisted detail reads, not just full snapshots.
 - Archived-thread reads must opt in at the CLI resolution seam; keep checkpoint/diff inspection opt-in and leave dispatch/revert helpers on the default active-thread filter.
 - Keep each `Effect.all` snapshot query tuple position aligned with its destructuring, and define SQL-backed `SqlSchema` queries inside the layer that owns the `SqlClient`; a misplaced query can shift `workflowRuns` to `undefined` or fail only when executed.
 - Bind SQLite booleans as integer `0`/`1`; the node SQLite parameter encoder rejects JavaScript boolean values at runtime.

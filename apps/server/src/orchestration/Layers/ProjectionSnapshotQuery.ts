@@ -1443,11 +1443,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           source_proposed_plan_id AS "sourceProposedPlanId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          queue_position AS "queuePosition",
           failed_at AS "failedAt",
           failure_message AS "failureMessage"
         FROM projection_queued_turns
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, queued_turn_id ASC
+        ORDER BY queue_position IS NULL, queue_position ASC, created_at ASC, queued_turn_id ASC
       `,
   });
 
