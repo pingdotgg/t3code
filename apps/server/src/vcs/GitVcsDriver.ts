@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -1130,34 +1131,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
-      // Clean would delete files capture skipped. Exclude patterns, unlike pathspecs, also keep
-      // them inside an untracked directory; they are anchored at the top level. Listing before
-      // the restore covers everything clean can see afterwards.
-      const oversized = yield* listOversizedUntrackedFiles(operation, input.cwd);
-      if (oversized === undefined) {
-        return yield* new VcsProcessExitError({
-          operation,
-          command: "git ls-files",
-          cwd: input.cwd,
-          exitCode: 0,
-          detail: "Could not list every untracked file, so restore could delete large files.",
-        });
-      }
-      const keepOversized: Array<string> = [];
-      if (oversized.length > 0) {
-        const prefix = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["rev-parse", "--show-prefix"],
-        });
-        for (const entry of oversized) {
-          const literal = `${prefix.stdout.replace(/\n$/, "")}${entry}`.replace(
-            /[\\*?[ ]/g,
-            "\\$&",
-          );
-          keepOversized.push("-e", `/${literal}`);
-        }
-      }
+      // Clean would delete files capture skipped. List them before the restore, so an incomplete
+      // listing fails before anything changes, and again after it, because a restored .gitignore
+      // can expose files the current one hides.
+      const listOversizedOrFail = listOversizedUntrackedFiles(operation, input.cwd).pipe(
+        Effect.filterOrFail(
+          Predicate.isNotUndefined,
+          () =>
+            new VcsProcessExitError({
+              operation,
+              command: "git ls-files",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: "Could not list every untracked file, so restore could delete large files.",
+            }),
+        ),
+      );
+      const oversizedBeforeRestore = yield* listOversizedOrFail;
 
       const tracked = yield* execute({
         operation,
@@ -1185,6 +1175,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
+      const oversized = new Set([...oversizedBeforeRestore, ...(yield* listOversizedOrFail)]);
+      // Exclude patterns, unlike pathspecs, also keep files inside an untracked directory. They
+      // are anchored at the top level.
+      const keepOversized: Array<string> = [];
+      if (oversized.size > 0) {
+        const prefix = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--show-prefix"],
+        });
+        for (const entry of oversized) {
+          const literal = `${prefix.stdout.replace(/\n$/, "")}${entry}`.replace(
+            /[\\*?[ ]/g,
+            "\\$&",
+          );
+          keepOversized.push("-e", `/${literal}`);
+        }
+      }
       const cleaned = yield* execute({
         operation,
         cwd: input.cwd,

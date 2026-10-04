@@ -319,6 +319,34 @@ it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("checkpoint restore keeps an over-cap file the restored .gitignore exposes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-size-cap-gitignore-",
+    });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "*.log\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "big.bin"), "x".repeat(1025));
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "*.log\nbig.bin\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, ".gitignore")), "*.log\n");
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, "big.bin")),
+      "x".repeat(1025),
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
