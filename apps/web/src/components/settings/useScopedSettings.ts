@@ -51,31 +51,36 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
   return scopedSettingsSource(targets, keys);
 }
 
+/**
+ * Runs a settings plan; resolves whether anything was saved. `false` only when the plan is
+ * unavailable or every planned server write failed; partial saves and plans without failures
+ * (including client-only writes) resolve `true`.
+ */
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return useCallback(
-    (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+    async (plan: ReturnType<typeof planScopedSettingsPatch>) => {
       if (plan.unavailableReason) {
         toastManager.add({
           type: "warning",
           title: "Setting not saved",
           description: plan.unavailableReason,
         });
-        return;
+        return false;
       }
-      void persistScopedSettingsPatch(plan, persistServer, persistClientSettingsPatch).then(
-        ({ failedEnvironments, savedEnvironmentCount }) => {
-          if (failedEnvironments.length === 0) return;
-          toastManager.add({
-            type: "error",
-            title:
-              savedEnvironmentCount > 0
-                ? "Setting saved on some environments"
-                : "Setting not saved",
-            description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
-          });
-        },
+      const { failedEnvironments, savedEnvironmentCount } = await persistScopedSettingsPatch(
+        plan,
+        persistServer,
+        persistClientSettingsPatch,
       );
+      if (failedEnvironments.length === 0) return true;
+      toastManager.add({
+        type: "error",
+        title:
+          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+        description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
+      });
+      return savedEnvironmentCount > 0;
     },
     [persistServer],
   );

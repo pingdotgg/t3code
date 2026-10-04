@@ -1,6 +1,6 @@
 import type { StorageCleanupSettings, WorktreeCleanupRules } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -28,18 +28,85 @@ function RetentionControl({
 }: {
   label: string;
   value: number | null;
-  onChange: (value: number | null) => void;
+  onChange: (value: number | null) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
+  // Local state from switching on until the saved value arrives: `days` is null while drafting,
+  // then the age being saved. Every step gets a fresh token and only the open one may commit,
+  // so stale callbacks (base-ui's blur, a held stepper released later) cannot save.
+  const [session, setSession] = useState<{ token: object; days: number | null } | null>(null);
+  const openRef = useRef<object | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const switchRef = useRef<HTMLElement>(null);
   if (savedValue !== value) {
     setSavedValue(value);
     setDraft(value);
+    setSession(null);
   }
+  const drafting = session?.days === null;
+
+  useEffect(() => {
+    if (!drafting) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [drafting]);
+  // Unmounting closes the open session so base-ui callbacks that outlive the control cannot save.
+  useEffect(
+    () => () => {
+      openRef.current = null;
+    },
+    [],
+  );
+
+  const open = (days: number | null) => {
+    const token = {};
+    openRef.current = token;
+    setSession({ token, days });
+    return token;
+  };
+  const close = () => {
+    openRef.current = null;
+    setSession(null);
+  };
+
+  // Saves a committed age. `null` reverts to the saved value, which cancels a draft.
+  const commit = (next: number | null) => {
+    if (session && openRef.current !== session.token) return;
+    if (next === null) {
+      // While saving, an emptied field shows the age being saved again; only the switch writes null.
+      if (session?.days != null) return setDraft(session.days);
+      close();
+      return setDraft(value);
+    }
+    const days = Math.min(3650, Math.max(1, Math.round(next)));
+    setDraft(days);
+    const saved = onChange(days);
+    if (!session) return;
+    // Stay on with this age until the saved value arrives; fall back if nothing was saved.
+    const token = open(days);
+    void saved.then((ok) => {
+      if (!ok && openRef.current === token) close();
+    });
+  };
 
   return (
-    <div className="flex items-center gap-3">
-      {value !== null ? (
+    <div
+      className="flex items-center gap-3"
+      onBlur={(event) => {
+        // Leaving the control without committing an age cancels the draft.
+        if (drafting && !event.currentTarget.contains(event.relatedTarget)) commit(null);
+      }}
+      onKeyDown={(event) => {
+        if (!drafting || event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        // Consume Escape so the settings page does not also navigate back.
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+        switchRef.current?.focus();
+      }}
+    >
+      {value !== null || session ? (
         <NumberField
           value={draft}
           min={1}
@@ -48,21 +115,25 @@ function RetentionControl({
           size="sm"
           className="w-auto"
           onValueChange={setDraft}
-          onValueCommitted={(next) => {
-            if (next === null) setDraft(value);
-            else {
-              const days = Math.min(3650, Math.max(1, Math.round(next)));
-              setDraft(days);
-              onChange(days);
-            }
-          }}
+          onValueCommitted={commit}
         >
           <NumberFieldGroup>
             <NumberFieldDecrement aria-label={`Decrease ${label}`} />
             <NumberFieldInput
+              ref={inputRef}
               aria-label={`${label} in days`}
-              size={new Intl.NumberFormat().format(draft ?? value).length}
+              size={new Intl.NumberFormat().format(draft ?? value ?? 0).length}
               className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
+              onKeyDown={(event) => {
+                if (!drafting || event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                // Moving focus lets base-ui commit typed text on blur; only text still showing
+                // the draft (the untouched default) is committed here.
+                const untouched =
+                  draft !== null &&
+                  event.currentTarget.value === new Intl.NumberFormat().format(draft);
+                switchRef.current?.focus();
+                if (untouched) commit(draft);
+              }}
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
               days
@@ -74,9 +145,24 @@ function RetentionControl({
         <span className="text-xs text-muted-foreground">Off</span>
       )}
       <Switch
+        ref={switchRef}
         aria-label={label}
-        checked={value !== null}
-        onCheckedChange={(enabled) => onChange(enabled ? 8 : null)}
+        checked={value !== null || session !== null}
+        onCheckedChange={(enabled) => {
+          if (enabled) {
+            setDraft(8);
+            open(null);
+            return;
+          }
+          // A draft was never saved; anything past it needs a write to back it out.
+          if (!drafting) void onChange(null);
+          close();
+          switchRef.current?.focus();
+        }}
+        // Clicking the switch off must not blur the input first: base-ui would commit typed text.
+        onMouseDown={(event) => {
+          if (drafting) event.preventDefault();
+        }}
       />
     </div>
   );
