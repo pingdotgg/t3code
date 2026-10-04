@@ -2,7 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type AuthSessionState } from "@t3tools/contracts";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { environmentSession } from "~/state/session";
-import type { EnvironmentId, ServerInstallation, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerInstallation,
+  ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
