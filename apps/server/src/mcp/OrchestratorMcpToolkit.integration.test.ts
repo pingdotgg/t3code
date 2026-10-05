@@ -51,6 +51,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -1544,6 +1545,14 @@ describe("orchestrator MCP toolkit", () => {
               label: "GitHub webhook secret",
               placeholder: "Paste the webhook secret",
             });
+            // The agent is blocked on the user, so the thread asks for input
+            // like a question does, in both shell paths.
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+            ).toMatchObject({ kind: "user_input" });
+            expect(threadShellFromProjection(asked).pendingRuntimeRequest).toMatchObject({
+              kind: "user_input",
+            });
             // What the card's Save sends (secrets.answerRequest).
             yield* secretRequests.answer({
               threadId: parentThreadId,
@@ -1557,6 +1566,9 @@ describe("orchestrator MCP toolkit", () => {
               secretRef?: string;
             };
             expect(secretResult.status).toBe("saved");
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest ?? null,
+            ).toBeNull();
             expect(secretResult.secretRef).toMatch(/^secret-ref:[0-9a-f]{32}$/);
             // The value appears nowhere in what the agent received.
             const received = [

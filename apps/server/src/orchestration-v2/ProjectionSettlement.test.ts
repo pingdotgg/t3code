@@ -521,5 +521,9 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
     assert.lengthOf(itemLookups, 2);
     assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
+    // The pending secret request lookup is bounded the same way.
+    const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
+    assert.lengthOf(secretLookups, 1);
+    assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
   }).pipe(Effect.provide(SqlLayer)),
 );
