@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
@@ -19,9 +19,13 @@ const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
 const invocation = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) => ({
   environmentId,
-  threadId,
-  providerSessionId: "provider-session-device-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-device-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session-device-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });

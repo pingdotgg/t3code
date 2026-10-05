@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -3612,7 +3612,14 @@ layer("GitHubPullRequestCli.layer", (it) => {
     Effect.gen(function* () {
       // A host that never runs out of pages: the walk has to end itself.
       mockedExecute.mockReturnValue(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_1", "c1")], "Y3Vyc29yOjE"))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage(
+              [{ ...thread("PRRT_1", "c1"), comments: threadComments(["c1"], "Y3Vyc29yOjI", 3) }],
+              "Y3Vyc29yOjE",
+            ),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
@@ -3625,6 +3632,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 10);
       assert.isTrue(conversation.truncated);
+      assert.isTrue(conversation.reviewThreadsTruncated);
     }),
   );
 
@@ -3656,6 +3664,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         nextCommentsCursor: "Y3Vyc29yOjI",
       });
       assert.isTrue(conversation.truncated);
+      assert.isFalse(conversation.reviewThreadsTruncated);
     }),
   );
 

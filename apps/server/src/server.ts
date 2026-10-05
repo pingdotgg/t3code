@@ -18,8 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
@@ -32,7 +32,7 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   httpCompressionLayer,
-  untracedRequestsLayer,
+  withUntracedRequests,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
@@ -112,6 +112,7 @@ import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
@@ -573,7 +574,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(PtyAdapterLive),
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.
-  Layer.provideMerge(AcpRegistryCatalogLive),
+  Layer.provideMerge(AcpRegistryCatalogLive.pipe(Layer.provide(ServerSettingsLayerLive))),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // V2 drivers and the orchestration runtime. Provide resource attribution so
   // the rewritten telemetry pipeline can account for logical NDJSON writes.
@@ -620,6 +621,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
+  Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
 );
@@ -658,8 +660,6 @@ const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
   ),
-  // Last, so no route layer can replace the server's one TracerDisabledWhen.
-  untracedRequestsLayer,
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
@@ -1010,7 +1010,10 @@ const makeServerLayer = Layer.unwrap(
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
-    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    }).pipe(
+      withUntracedRequests,
+      Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
+    );
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,

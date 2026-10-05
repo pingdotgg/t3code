@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {

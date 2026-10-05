@@ -3,7 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";

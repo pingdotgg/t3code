@@ -507,6 +507,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
+  readonly nativeThreadHasTurns?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -1348,6 +1349,9 @@ export const layer: Layer.Layer<
             runId: input.run.id,
             runOrdinal: input.run.ordinal,
             providerTurnOrdinal: input.providerTurnOrdinal,
+            ...(input.nativeThreadHasTurns === undefined
+              ? {}
+              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
             ...(input.run.restartContinuationOfRunId === undefined
               ? {}
               : {

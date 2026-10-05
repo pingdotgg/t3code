@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
@@ -1227,7 +1228,10 @@ export function makeCursorAdapterV2(
                 toolCall.result?.status === "success" &&
                 toolCall.result.value.diffString !== undefined
                   ? { diffStr: toolCall.result.value.diffString }
-                  : {}),
+                  : // A failed change keeps its error where the diff would be.
+                    toolCall.result?.status === "error" && outputText.trim().length > 0
+                    ? { diffStr: outputText }
+                    : {}),
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
               };
               break;
@@ -1248,8 +1252,20 @@ export function makeCursorAdapterV2(
             case "ls":
             case "readLints":
             case "semSearch": {
-              const results = cursorToolSearchResults(toolCall, path);
               const pattern = cursorToolSearchPattern(toolCall);
+              const searchPath =
+                toolCall.type === "grep"
+                  ? toolCall.args.path
+                  : toolCall.type === "glob"
+                    ? toolCall.args.targetDirectory
+                    : toolCall.type === "semSearch"
+                      ? toolCall.args.targetDirectories?.join(", ")
+                      : pattern;
+              // A failed search keeps its error as one row under the searched path.
+              const results =
+                toolCall.result?.status === "error" && outputText.trim().length > 0
+                  ? [{ fileName: searchPath?.trim() || ".", preview: outputText }]
+                  : cursorToolSearchResults(toolCall, path);
               turnItem = {
                 ...base,
                 title:
@@ -1267,6 +1283,12 @@ export function makeCursorAdapterV2(
               turnItem = {
                 ...base,
                 type: "dynamic_tool",
+                ...(toolCall.type === "mcp"
+                  ? mcpToolPresentation({
+                      serverName: toolCall.args.providerIdentifier,
+                      toolName: toolCall.args.toolName,
+                    })
+                  : {}),
                 toolName: cursorToolName(toolCall),
                 input: toolCall.args,
                 ...(cursorToolOutput(toolCall) === undefined

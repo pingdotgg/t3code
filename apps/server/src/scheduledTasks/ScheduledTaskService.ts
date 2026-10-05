@@ -26,7 +26,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -545,7 +545,8 @@ export const layer = Layer.effect(
                   text: prompt,
                   attachments: [],
                   modelSelection: active.modelSelection,
-                  mode: "auto",
+                  // Scheduled prompts must not interrupt tools in the bound thread.
+                  mode: "queue",
                   createdBy: active.createdBy,
                   creationSource: active.creationSource,
                 }),

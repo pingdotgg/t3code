@@ -5,7 +5,7 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -111,7 +111,7 @@ export function createProjectFaviconImageLoader(input: {
     if (!mimeType) throw new Error("Project icon has no image type.");
     const bytes = await readBounded(response, PROJECT_FAVICON_MAX_SOURCE_BYTES);
     signal.throwIfAborted();
-    const dataUrl = `data:${mimeType};base64,${Encoding.encodeBase64(bytes)}`;
+    const dataUrl = `data:${mimeType};base64,${Base64.encode(bytes)}`;
     if (isImageDataUrl(dataUrl)) return dataUrl;
     if (mimeType === "image/svg+xml") throw new Error("Project icon exceeds the cache limit.");
     return input.downscale({ url, mimeType, bytes }, signal);

@@ -1,0 +1,112 @@
+diff --git a/dist/ai/McpServer.js b/dist/ai/McpServer.js
+index 2da5941..9fada51 100644
+--- a/dist/ai/McpServer.js
++++ b/dist/ai/McpServer.js
+@@ -1093,7 +1093,7 @@ export const layerHttp = options => {
+   const methodNotAllowed = request => isAllowedMcpOrigin(request, options.allowedOrigins) ? Effect.succeed(methodNotAllowedResponse) : Effect.succeed(HttpServerResponse.empty({
+     status: 403
+   }));
+-  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("DELETE", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
++  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
+   return Layer.merge(layerWithRuntime(options, "http"), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(runtime), Layer.provide(RpcSerialization.layerJsonRpc()));
+ };
+ const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
+@@ -1136,6 +1136,17 @@ const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.
+       }))) : response;
+     });
+   });
++  yield* router.add("DELETE", options.path, request => {
++    if (!isAllowedMcpOrigin(request, options.allowedOrigins)) {
++      return Effect.succeed(HttpServerResponse.empty({
++        status: 403
++      }));
++    }
++    const sessionId = request.headers[MCP_SESSION_ID_HEADER];
++    return Effect.succeed(HttpServerResponse.empty({
++      status: sessionId === undefined ? 400 : runtime.terminateSession(sessionId) ? 204 : 404
++    }));
++  });
+   return protocol;
+ }));
+ const mcpHttpSerialization = /*#__PURE__*/(() => {
+diff --git a/dist/ai/internal/mcpRuntime.js b/dist/ai/internal/mcpRuntime.js
+index 06370fd..baa945b 100644
+--- a/dist/ai/internal/mcpRuntime.js
++++ b/dist/ai/internal/mcpRuntime.js
+@@ -336,6 +336,7 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
+     },
+     effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
+     disconnect: clientId => stateful?.disconnect(clientId),
++    terminateSession: sessionId => stateful?.terminateSession(sessionId) ?? false,
+     deliveryClientIds: () => stateful?.initializedClientIds() ?? [],
+     canDeliver: (clientId, headers, notification, fallback) => stateful?.canDeliver(clientId, headers, notification, fallback) ?? true,
+     installHandlers: Effect.fnUntraced(function* (options) {
+diff --git a/dist/ai/internal/mcpStatefulRuntime.js b/dist/ai/internal/mcpStatefulRuntime.js
+index 9471bdf..4558603 100644
+--- a/dist/ai/internal/mcpStatefulRuntime.js
++++ b/dist/ai/internal/mcpStatefulRuntime.js
+@@ -46,6 +46,7 @@ export const make = () => {
+     },
+     resolve: resolveSession,
+     resolveSessionId: sessionId => bySessionId.get(sessionId),
++    terminateSession: sessionId => bySessionId.delete(sessionId),
+     setLogLevel: (level, clientId, headers) => Effect.sync(() => {
+       const session = resolveSession(clientId, headers);
+       if (session !== undefined) {
+diff --git a/dist/http/HttpClientResponse.js b/dist/http/HttpClientResponse.js
+index 42fba67..2b4981b 100644
+--- a/dist/http/HttpClientResponse.js
++++ b/dist/http/HttpClientResponse.js
+@@ -195,7 +195,7 @@ class WebHttpClientResponse extends Inspectable.Class {
+     if (this.cachedCookies) {
+       return this.cachedCookies;
+     }
+-    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie());
++    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? []);
+   }
+   get remoteAddress() {
+     return Option.none();
+diff --git a/dist/rpc/RpcClient.js b/dist/rpc/RpcClient.js
+index 8af2e2e..65acae4 100644
+--- a/dist/rpc/RpcClient.js
++++ b/dist/rpc/RpcClient.js
+@@ -726,17 +726,25 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+ const defaultRetryPolicy = /*#__PURE__*/Schedule.min([/*#__PURE__*/Schedule.exponential(500, 1.5), /*#__PURE__*/Schedule.spaced(5000)]);
+ const makePinger = /*#__PURE__*/Effect.fnUntraced(function* (writePing) {
+   let recievedPong = true;
++  let missedPongs = 0;
+   const latch = Latch.makeUnsafe();
+   const reset = () => {
+     recievedPong = true;
++    missedPongs = 0;
+     latch.closeUnsafe();
+   };
+   const onPong = () => {
+     recievedPong = true;
++    missedPongs = 0;
+   };
+   yield* Effect.suspend(() => {
+-    if (!recievedPong) return latch.open;
++    if (!recievedPong) {
++      missedPongs += 1;
++      if (missedPongs >= 3) return latch.open;
++      return writePing;
++    }
+     recievedPong = false;
++    missedPongs = 0;
+     return writePing;
+   }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
+   return {
+diff --git a/src/http/HttpClientResponse.ts b/src/http/HttpClientResponse.ts
+index c037015..a8b0d8b 100644
+--- a/src/http/HttpClientResponse.ts
++++ b/src/http/HttpClientResponse.ts
+@@ -341,7 +341,7 @@ class WebHttpClientResponse extends Inspectable.Class implements HttpClientRespo
+     if (this.cachedCookies) {
+       return this.cachedCookies
+     }
+-    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie())
++    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? [])
+   }
+ 
+   get remoteAddress(): Option.Option<string> {

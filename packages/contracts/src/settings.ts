@@ -871,6 +871,19 @@ export type AcpRegistryDistributionPreference = typeof AcpRegistryDistributionPr
 
 export const AcpRegistrySettings = makeProviderSettingsSchema(
   {
+    source: Schema.Literals(["registry", "local"]).pipe(
+      Schema.withDecodingDefault(Effect.succeed("registry")),
+      Schema.annotateKey({
+        title: "ACP source",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "registry", label: "ACP Registry" },
+            { value: "local", label: "Local command" },
+          ],
+        },
+      }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -888,9 +901,13 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Executable override",
         description:
-          "Optional local executable to use instead of installing the registry distribution. Registry arguments and environment are still applied.",
+          "Executable on this environment. For registry agents, this overrides the distribution executable while keeping its arguments and environment.",
         providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
       }),
+    ),
+    commandArgs: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     authMethodId: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
@@ -911,7 +928,7 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["agentId", "commandPath", "authMethodId"],
+    order: ["source", "agentId", "commandPath", "authMethodId"],
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;

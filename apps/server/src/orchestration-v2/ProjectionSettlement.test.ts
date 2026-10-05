@@ -18,8 +18,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as Statement from "effect/unstable/sql/Statement";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -341,6 +341,14 @@ it.effect.each([
     assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
     assert.equal(
       DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
+      DateTime.formatIso(written),
+    );
+    // The shell carries the same stamp, which orders the Working section.
+    const shellThread = (yield* store.getShellSnapshot()).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.equal(
+      DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
   }).pipe(Effect.provide(testLayer)),

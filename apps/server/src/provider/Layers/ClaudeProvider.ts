@@ -1,6 +1,7 @@
 import {
   type ClaudeSettings,
   type ModelCapabilities,
+  type ServerProvider,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -11,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -36,6 +37,7 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import type { ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   type ClaudeScopedLimitNames,
@@ -333,6 +335,7 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  includeUsage = true,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -364,15 +367,18 @@ const probeClaudeCapabilities = (
     Effect.flatMap(({ q, init }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
-        const usageResult = yield* Effect.tryPromise(() =>
-          q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
-        const usage = Result.isSuccess(usageResult)
-          ? {
-              rate_limits_available: usageResult.success.rate_limits_available,
-              rate_limits: usageResult.success.rate_limits,
-            }
+        const usageResult = includeUsage
+          ? yield* Effect.tryPromise(() =>
+              q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+            ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
           : undefined;
+        const usage =
+          usageResult && Result.isSuccess(usageResult)
+            ? {
+                rate_limits_available: usageResult.success.rate_limits_available,
+                rate_limits: usageResult.success.rate_limits,
+              }
+            : undefined;
         const account = init.account as
           | {
               readonly email?: string;
@@ -415,6 +421,27 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
     shell: spawnCommand.shell,
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
+});
+
+/** Read commands from the same cwd Claude uses for a workspace session. */
+export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (
+  claudeSettings: ClaudeSettings,
+  machineSnapshot: ServerProvider,
+  cwd: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
+  if (!claudeSettings.enabled) return machineSnapshot;
+  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
+  const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false);
+  return {
+    ...machineSnapshot,
+    skills,
+    slashCommands: dedupeSlashCommands([
+      COMPACT_SLASH_COMMAND,
+      ...(capabilities?.slashCommands ?? []),
+    ]),
+    slashCommandsPending: !capabilities,
+  };
 });
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (

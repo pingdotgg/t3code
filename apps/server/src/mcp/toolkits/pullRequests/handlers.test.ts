@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/unstable/ai";
+import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
@@ -38,9 +38,13 @@ const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
-  threadId: THREAD_ID,
-  providerSessionId: "provider-session-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-1",
+  thread: {
+    threadId: THREAD_ID,
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });

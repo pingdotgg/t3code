@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -33,6 +33,7 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,

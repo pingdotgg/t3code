@@ -9,8 +9,8 @@ import { RelayProtectedError } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { isHttpClientError } from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { isHttpClientError } from "effect/http/HttpClientError";
 
 const isRelayResponseError = Schema.is(
   Schema.Union([

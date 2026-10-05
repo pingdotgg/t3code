@@ -18,7 +18,7 @@ import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { useIsFocused, useNavigation } from "@react-navigation/native";
+import { StackActions, useIsFocused, useNavigation } from "@react-navigation/native";
 import {
   memo,
   useCallback,
@@ -60,9 +60,12 @@ import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
   type AgentSpawnSummary,
+  formatItemFullDetail,
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
+import { toolCallLines, turnItemOutputText } from "@t3tools/client-runtime/work-log/item-detail";
+import { useTurnItemDetail } from "../../state/queries";
 import {
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
@@ -70,6 +73,7 @@ import {
 } from "./thread-feed-live-follow";
 import {
   resolveWorkEntryToolPresentation,
+  toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -836,6 +840,11 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 ) {
   const { row, expanded } = props;
   const navigation = useNavigation();
+  const fetchedDetail = useTurnItemDetail(
+    expanded && row.fetchesDetail
+      ? { environmentId: props.environmentId, row: row.projectedItem }
+      : null,
+  );
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
@@ -917,7 +926,44 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       : undefined;
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
-  const fullDetail = expanded && !reasoning ? row.getFullDetail() : null;
+  const fetchedItem = fetchedDetail.data?.item ?? null;
+  // Reads keep their path list; the fetched file contents show as output.
+  const isRead = toolGroupAction(row.workEntry) === "read";
+  // Tool calls show the call in the foreground and the result muted below it.
+  const shownItem = fetchedItem ?? row.projectedItem.item;
+  const call =
+    expanded && !isRead && shownItem.type === "command_execution"
+      ? toolCallLines({ command: shownItem.input })
+      : expanded && !isRead && shownItem.type === "dynamic_tool"
+        ? toolCallLines({ args: shownItem.input })
+        : expanded && shownItem.type === "file_search"
+          ? toolCallLines({ args: { pattern: shownItem.pattern } })
+          : expanded && shownItem.type === "web_search"
+            ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
+            : null;
+  const failedExitCode =
+    call && shownItem.type === "command_execution" && shownItem.exitCode
+      ? shownItem.exitCode
+      : null;
+  const fullDetail =
+    expanded && !reasoning && !call
+      ? fetchedItem && !isRead
+        ? formatItemFullDetail(row.projectedItem, fetchedItem)
+        : row.getFullDetail()
+      : null;
+  const fetchedOutput = !expanded
+    ? null
+    : shownItem.type === "file_search" || shownItem.type === "web_search"
+      ? turnItemOutputText(shownItem)
+      : fetchedItem
+        ? (turnItemOutputText(fetchedItem) ?? "No output.")
+        : fetchedDetail.error
+          ? `Couldn't load output: ${fetchedDetail.error}`
+          : row.fetchesDetail
+            ? fetchedDetail.data
+              ? "Output is no longer available."
+              : "Loading output…"
+            : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -958,10 +1004,14 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
           if (notifiedSubagentThreadId !== undefined) {
-            navigation.navigate("Thread", {
-              environmentId: String(props.environmentId),
-              threadId: String(notifiedSubagentThreadId),
-            });
+            // Push, not navigate: navigate reuses this Thread route, so back
+            // would skip the parent thread and land on Home (matches #15068).
+            navigation.dispatch(
+              StackActions.push("Thread", {
+                environmentId: String(props.environmentId),
+                threadId: String(notifiedSubagentThreadId),
+              }),
+            );
             return;
           }
           if (canExpand) {
@@ -1060,7 +1110,13 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         </View>
       </WorkLogPressable>
 
-      {expanded && (reasoning || fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
+      {expanded &&
+      (reasoning ||
+        fullDetail ||
+        call ||
+        fetchedOutput ||
+        viewedImagePath ||
+        row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
@@ -1087,11 +1143,43 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           >
             {reasoning ? (
               props.renderReasoning(reasoning.text)
-            ) : (
+            ) : call ? (
+              [
+                call.command,
+                ...(call.args ?? []).map(([key, value]) => `${key} ${value}`),
+                call.argsText,
+              ]
+                .filter((line): line is string => Boolean(line))
+                .map((line, index) => (
+                  <Text
+                    key={`${index}:${line}`}
+                    selectable
+                    className="font-mono text-2xs leading-normal text-foreground"
+                  >
+                    {line}
+                  </Text>
+                ))
+            ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fullDetail}
               </Text>
-            )}
+            ) : null}
+            {fetchedOutput ? (
+              <Text
+                selectable
+                className={cn(
+                  "font-mono text-2xs leading-normal text-foreground-muted",
+                  (!call || call.command || call.args || call.argsText) && "mt-1.5",
+                )}
+              >
+                {fetchedOutput}
+              </Text>
+            ) : null}
+            {failedExitCode !== null ? (
+              <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
+                exit {failedExitCode}
+              </Text>
+            ) : null}
           </ScrollView>
         </Animated.View>
       ) : null}

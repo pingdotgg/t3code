@@ -922,6 +922,7 @@ export function EnvironmentProviderSettings({
     }
 
     if (row.driver !== ProviderDriverKind.make("acpRegistry")) return;
+    if (providerConfigString(row.instance.config, "source") === "local") return;
     const agentId = providerConfigString(row.instance.config, "agentId");
     if (agentId === null) return;
 
@@ -1164,7 +1165,7 @@ export function EnvironmentProviderSettings({
           })
         }
         onInstallRecommended={
-          mode === "editor" &&
+          !readOnly &&
           liveProvider?.compatibilityAdvisory?.message &&
           liveProvider.compatibilityAdvisory.recommendedVersion &&
           liveProvider.versionAdvisory?.canInstallVersion
@@ -1177,13 +1178,13 @@ export function EnvironmentProviderSettings({
             : undefined
         }
         onRunUpdate={
-          mode === "editor" && showInlineUpdateButton && updateCandidate
+          !readOnly && showInlineUpdateButton && updateCandidate
             ? () => {
                 if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
               }
             : undefined
         }
-        isUpdating={mode === "editor" ? isInstanceUpdateRunning : undefined}
+        isUpdating={isInstanceUpdateRunning}
       />
     );
   };

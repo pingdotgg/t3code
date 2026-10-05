@@ -30,7 +30,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -39,8 +39,8 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 // ==============================
 // Definitions
@@ -175,7 +175,7 @@ function encodeUtf16LeBase64(input: string): string {
     bytes[index * 2] = code & 0xff;
     bytes[index * 2 + 1] = code >>> 8;
   }
-  return Encoding.encodeBase64(bytes);
+  return Base64.encode(bytes);
 }
 
 function escapePowerShellStringLiteral(input: string): string {

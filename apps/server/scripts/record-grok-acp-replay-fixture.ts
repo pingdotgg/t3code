@@ -21,7 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import * as ServerConfig from "../src/config.ts";

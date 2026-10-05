@@ -29,10 +29,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
-import * as Cookies from "effect/unstable/http/Cookies";
-import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Cookies from "effect/http/Cookies";
+import * as HttpEffect from "effect/http/HttpEffect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";

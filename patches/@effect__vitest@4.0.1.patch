@@ -1,30 +1,30 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index f0b2bcc..1b9bc38 100644
+index 530795c..237d090 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -7,11 +7,11 @@ import type * as Layer from "effect/Layer";
+@@ -7,14 +7,14 @@ import type * as Effect from "effect/Effect";
+ import type * as Layer from "effect/Layer";
  import type * as Schema from "effect/Schema";
  import type * as Scope from "effect/Scope";
- import type * as Arbitrary from "effect/unstable/arbitrary/Arbitrary";
--import * as V from "vitest";
-+import * as V from "vite-plus/test";
+-import type * as V from "vitest";
++import type * as V from "vite-plus/test";
  /**
+  * Re-exports the `vitest` API unchanged.
+  *
+  * @stability unstable
   * @since 4.0.0
   */
 -export * from "vitest";
 +export * from "vite-plus/test";
  /**
+  * @stability unstable
   * @since 4.0.0
-  */
 diff --git a/dist/index.js b/dist/index.js
-index d941a25..90e4618 100644
+index 740429f..b5c69b8 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1,9 +1,9 @@
--import * as V from "vitest";
-+import * as V from "vite-plus/test";
- import * as internal from "./internal/internal.js";
- /**
+@@ -5,7 +5,7 @@ import * as internal from "./internal/internal.js";
+  * @stability unstable
   * @since 4.0.0
   */
 -export * from "vitest";
@@ -33,20 +33,20 @@ index d941a25..90e4618 100644
   * @since 4.0.0
   */
 diff --git a/dist/internal/internal.js b/dist/internal/internal.js
-index 25ab056..d5cce3a 100644
+index 7138319..4092c67 100644
 --- a/dist/internal/internal.js
 +++ b/dist/internal/internal.js
-@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
+@@ -12,7 +12,7 @@ import * as Schedule from "effect/Schedule";
+ import * as Scope from "effect/Scope";
  import * as TestClock from "effect/testing/TestClock";
  import * as TestConsole from "effect/testing/TestConsole";
- import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary";
 -import * as V from "vitest";
 +import * as V from "vite-plus/test";
  const getCurrentSuite = V.TestRunner.getCurrentSuite;
  const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
    const exit = yield* Effect.exit(effect);
 diff --git a/dist/utils.js b/dist/utils.js
-index 4871215..2c46e2b 100644
+index 75a243d..08a4c89 100644
 --- a/dist/utils.js
 +++ b/dist/utils.js
 @@ -4,7 +4,7 @@ import * as Option from "effect/Option";
@@ -58,41 +58,55 @@ index 4871215..2c46e2b 100644
  // ----------------------------
  // Primitives
  // ----------------------------
+diff --git a/package.json b/package.json
+index d64c43d..939548e 100644
+--- a/package.json
++++ b/package.json
+@@ -37,7 +37,6 @@
+     "provenance": true
+   },
+   "peerDependencies": {
+-    "vitest": ">=5.0.0 <6.0.0",
+     "effect": "^4.0.1"
+   },
+   "devDependencies": {
 diff --git a/src/index.ts b/src/index.ts
-index 7726aac..7375f10 100644
+index 20c0497..2b16d32 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -7,13 +7,13 @@ import type * as Layer from "effect/Layer"
+@@ -7,7 +7,7 @@ import type * as Effect from "effect/Effect"
+ import type * as Layer from "effect/Layer"
  import type * as Schema from "effect/Schema"
  import type * as Scope from "effect/Scope"
- import type * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
--import * as V from "vitest"
-+import * as V from "vite-plus/test"
+-import type * as V from "vitest"
++import type * as V from "vite-plus/test"
  import * as internal from "./internal/internal.ts"
  
  /**
+@@ -16,7 +16,7 @@ import * as internal from "./internal/internal.ts"
+  * @stability unstable
   * @since 4.0.0
   */
 -export * from "vitest"
 +export * from "vite-plus/test"
  
  /**
-  * @since 4.0.0
+  * @stability unstable
 diff --git a/src/internal/internal.ts b/src/internal/internal.ts
-index 3e001b1..5b7aa2a 100644
+index b43385b..4da79fd 100644
 --- a/src/internal/internal.ts
 +++ b/src/internal/internal.ts
-@@ -14,7 +14,7 @@ import * as Scope from "effect/Scope"
+@@ -14,7 +14,7 @@ import type * as Schema from "effect/Schema"
+ import * as Scope from "effect/Scope"
  import * as TestClock from "effect/testing/TestClock"
  import * as TestConsole from "effect/testing/TestConsole"
- import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 -import * as V from "vitest"
 +import * as V from "vite-plus/test"
  import type * as Vitest from "../index.ts"
  
  const getCurrentSuite = V.TestRunner.getCurrentSuite
 diff --git a/src/utils.ts b/src/utils.ts
-index 4a4612c..846bcc9 100644
+index 8ce3409..259be29 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
 @@ -16,7 +16,7 @@ import * as Option from "effect/Option"

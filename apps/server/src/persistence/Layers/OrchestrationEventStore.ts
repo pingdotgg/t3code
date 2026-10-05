@@ -9,12 +9,12 @@ import {
   OrchestrationV2DomainEventJson,
   OrchestrationV2StoredEvent,
   ProjectId,
-  ProjectIconOverride,
+  StoredProjectIcon,
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -31,7 +31,7 @@ import {
 } from "../Errors.ts";
 import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
 
-const encodeProjectIcon = Schema.encodeSync(ProjectIconOverride);
+const encodeProjectIcon = Schema.encodeSync(StoredProjectIcon);
 const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(ApplicationEventMetadata);

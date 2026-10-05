@@ -28,7 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../IdAllocator.ts";

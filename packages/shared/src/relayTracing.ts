@@ -5,8 +5,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import type { HttpClient } from "effect/unstable/http";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import type { HttpClient } from "effect/http";
+import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
