@@ -14,6 +14,12 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  LANGUAGE_LABELS,
+  SUPPORTED_LANGUAGES,
+  isLanguagePreference,
+} from "@t3tools/client-runtime/i18n";
+import { useTranslate } from "../../i18n";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -2164,6 +2170,7 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
+  const t = useTranslate();
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
@@ -2522,6 +2529,54 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("language")}
+          description={t("settings.language.description")}
+          resetAction={
+            settings.languagePreference !== DEFAULT_UNIFIED_SETTINGS.languagePreference ? (
+              <SettingResetButton
+                label="language"
+                onClick={() =>
+                  updateSettings({
+                    languagePreference: DEFAULT_UNIFIED_SETTINGS.languagePreference,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.languagePreference}
+              onValueChange={(value) => {
+                if (isLanguagePreference(value)) {
+                  updateSettings({ languagePreference: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label={t("settings.language.title")}
+              >
+                <SelectValue>
+                  {settings.languagePreference === "system"
+                    ? t("settings.language.system")
+                    : LANGUAGE_LABELS[settings.languagePreference]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="system">
+                  {t("settings.language.system")}
+                </SelectItem>
+                {SUPPORTED_LANGUAGES.map((language) => (
+                  <SelectItem key={language} hideIndicator value={language}>
+                    {LANGUAGE_LABELS[language]}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
