@@ -528,6 +528,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes running-cat {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+/* A two-frame sprite strip: only two composited steps per cycle, never a repaint. */
+@utility running-cat {
+  display: inline-block;
+  width: 1.8em;
+  height: 1em;
+  overflow: hidden;
+  vertical-align: -0.125em;
+  /* The live label's shine makes its own text transparent. */
+  color: var(--contrast-secondary-label);
+
+  & > svg {
+    display: block;
+    width: 200%;
+    height: 100%;
+    animation: running-cat 0.36s steps(2) infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+
+    @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+      animation: none;
+    }
+  }
+}
+
 @utility visible-animate-spin {
   animation: var(--animate-spin);
   animation-play-state: var(--visible-animation-state, paused);
