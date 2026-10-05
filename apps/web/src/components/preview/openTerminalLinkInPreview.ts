@@ -72,7 +72,7 @@ export async function openTerminalLinkInPreview<E>(
       // Same reason as `openUrlInPreview`: this path handles its own result
       // mapping, so the configured defaults are applied explicitly.
       viewport: browserDefaultOpenViewport(defaults),
-      profileId: browserDefaultOpenProfileId(defaults),
+      profileId: browserDefaultOpenProfileId(input.threadRef, defaults),
     },
   });
   if (result._tag === "Failure") {

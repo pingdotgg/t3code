@@ -13,6 +13,7 @@
  *
  * @module browserDefaults
  */
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
@@ -20,13 +21,17 @@ import {
   type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { useComposerDraftStore } from "~/composerDraftStore";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
   useClientSettings,
 } from "~/hooks/useSettings";
+import { derivePhysicalProjectKey } from "~/logicalProject";
+import { readProject, readThreadShell } from "~/state/entities";
 
 import { resolveResponsiveBrowserViewportSize } from "./browserViewportLayout";
 
@@ -37,7 +42,20 @@ export interface BrowserDefaults {
   readonly autoShowFloatingPreview: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
+  readonly projectProfileIds: Readonly<Record<string, string>>;
 }
+
+// A profile that no longer exists falls back rather than opening tabs into a
+// partition with no profile behind it.
+// Incognito is a per-tab choice, not a default: a profile that discards
+// everything on close would leave every new tab signed out. Excluding it keeps
+// the resolved default equal to what the settings list offers, so the row
+// badged "Default" is the one tabs actually open under.
+const findDefaultableProfileId = (
+  profiles: ReadonlyArray<BrowserProfile>,
+  profileId: string | undefined,
+): string | undefined =>
+  profiles.find((profile) => profile.id === profileId && profile.kind !== "incognito")?.id;
 
 const toBrowserDefaults = (settings: {
   readonly browserDefaultViewport: PreviewViewportSetting;
@@ -46,6 +64,7 @@ const toBrowserDefaults = (settings: {
   readonly browserAutoShowFloatingPreview: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
+  readonly browserProjectProfileIds: Readonly<Record<string, string>>;
 }): BrowserDefaults => {
   const profiles = resolveBrowserProfiles(settings.browserProfiles);
   return {
@@ -54,17 +73,10 @@ const toBrowserDefaults = (settings: {
     appearance: settings.browserDefaultAppearance,
     autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
     profiles,
-    // A default pointing at a deleted profile falls back rather than opening
-    // tabs into a partition with no profile behind it.
-    // Incognito is a per-tab choice, not a default: a profile that discards
-    // everything on close would leave every new tab signed out. Excluding it
-    // here keeps the resolved default equal to what the settings list offers,
-    // so the row badged "Default" is the one tabs actually open under.
     profileId:
-      profiles.find(
-        (profile) =>
-          profile.id === settings.browserDefaultProfileId && profile.kind !== "incognito",
-      )?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+      findDefaultableProfileId(profiles, settings.browserDefaultProfileId) ??
+      DEFAULT_BROWSER_PROFILE_ID,
+    projectProfileIds: settings.browserProjectProfileIds,
   };
 };
 
@@ -112,11 +124,28 @@ export function browserDefaultOpenViewport(
   return defaults.viewport;
 }
 
-/** Profile a tab opens under when the caller doesn't name one. */
+/**
+ * Profile a tab opens under when the caller doesn't name one: the thread's
+ * project override, else the global default. Agent-opened and hand-opened tabs
+ * both resolve here.
+ */
 export function browserDefaultOpenProfileId(
+  threadRef: ScopedThreadRef,
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): string {
-  return defaults.profileId;
+  // A draft has no thread shell yet, but already knows its project.
+  const projectId =
+    readThreadShell(threadRef)?.projectId ??
+    useComposerDraftStore.getState().getDraftThreadByRef(threadRef)?.projectId;
+  const project = projectId
+    ? readProject(scopeProjectRef(threadRef.environmentId, projectId))
+    : null;
+  return (
+    findDefaultableProfileId(
+      defaults.profiles,
+      project ? defaults.projectProfileIds[derivePhysicalProjectKey(project)] : undefined,
+    ) ?? defaults.profileId
+  );
 }
 
 /**

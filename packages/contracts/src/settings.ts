@@ -357,6 +357,10 @@ export const ClientSettingsSchema = Schema.Struct({
   browserDefaultProfileId: BrowserProfileId.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_PROFILE_ID)),
   ),
+  /** Per-project overrides of `browserDefaultProfileId`, keyed by physical project key. */
+  browserProjectProfileIds: Schema.Record(TrimmedNonEmptyString, BrowserProfileId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   // Desktop-only. Boolean values from older settings files decode to their
   // equivalent mode and encode back as the canonical string value.
   confirmQuit: QuitConfirmationModeSetting.pipe(
@@ -1754,6 +1758,9 @@ export const ClientSettingsPatch = Schema.Struct({
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
+  browserProjectProfileIds: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, BrowserProfileId),
+  ),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
