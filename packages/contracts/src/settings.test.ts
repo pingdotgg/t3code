@@ -18,11 +18,14 @@ import {
   DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
   DEFAULT_SIDEBAR_ROW_SPACING,
+  DEFAULT_SIDEBAR_SETTLED_THREAD_COUNT,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UI_DENSITY,
   MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MAX_SIDEBAR_SETTLED_THREAD_COUNT,
   MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_SIDEBAR_SETTLED_THREAD_COUNT,
   RECOMMENDED_FONT_SIZES_BY_UI_DENSITY,
   ServerSettings,
   ServerSettingsPatch,
@@ -105,6 +108,24 @@ describe("ServerSettings.autoArchiveSettledAfterDays", () => {
   it("exports the range bounds mirroring the sidebar auto-settle pattern", () => {
     expect(MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(1);
     expect(MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(90);
+  });
+});
+
+describe("ClientSettings.sidebarSettledThreadCount", () => {
+  it("defaults legacy settings to five and allows a custom value", () => {
+    expect(DEFAULT_SIDEBAR_SETTLED_THREAD_COUNT).toBe(5);
+    expect(decodeClientSettings({}).sidebarSettledThreadCount).toBe(5);
+    expect(decodeClientSettingsPatch({ sidebarSettledThreadCount: 12 })).toEqual({
+      sidebarSettledThreadCount: 12,
+    });
+  });
+
+  it("rejects values outside its supported integer range", () => {
+    expect(MIN_SIDEBAR_SETTLED_THREAD_COUNT).toBe(1);
+    expect(MAX_SIDEBAR_SETTLED_THREAD_COUNT).toBe(50);
+    for (const value of [0, 51, 1.5]) {
+      expect(() => decodeClientSettingsPatch({ sidebarSettledThreadCount: value })).toThrow();
+    }
   });
 });
 

@@ -487,6 +487,41 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function addSettledThreads(
+  snapshot: OrchestrationReadModel,
+  count: number,
+): OrchestrationReadModel {
+  const template = snapshot.threads[0]!;
+  const settledThreads = Array.from({ length: count }, (_, index) => {
+    const id = ThreadId.make(`settled-browser-${index}`);
+    const minute = String(index).padStart(2, "0");
+    const createdAt = `2026-03-09T10:${minute}:00.000Z`;
+    return {
+      ...template,
+      id,
+      title: `Settled ${index}`,
+      createdAt,
+      updatedAt: createdAt,
+      settledOverride: "settled" as const,
+      settledAt: `2026-03-09T11:${minute}:00.000Z`,
+      messages: [],
+      session: {
+        ...template.session!,
+        threadId: id,
+        status: "ready" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+    } satisfies OrchestrationReadModel["threads"][number];
+  });
+
+  return {
+    ...snapshot,
+    threads: [...snapshot.threads, ...settledThreads],
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
@@ -567,6 +602,8 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     latestTurn: thread.latestTurn,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
+    settledOverride: thread.settledOverride ?? null,
+    settledAt: thread.settledAt ?? null,
     archivedAt: thread.archivedAt,
     session: thread.session,
     latestUserMessageAt:
@@ -7286,20 +7323,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("runs the Sidebar V2 top and footer actions", async () => {
-    localStorage.setItem(
-      "t3code:client-settings:v1",
-      JSON.stringify({
-        ...DEFAULT_CLIENT_SETTINGS,
-        sidebarV2Enabled: true,
-      }),
-    );
-
+  it("runs the sidebar top and footer actions", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-sidebar-v2-top-actions" as MessageId,
-        targetText: "sidebar v2 top actions",
+        targetMessageId: "msg-user-sidebar-top-actions" as MessageId,
+        targetText: "sidebar top actions",
       }),
     });
 
@@ -7330,8 +7359,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
         },
       });
-      await expect.element(page.getByText("New thread", { exact: true })).toBeInTheDocument();
-      await page.getByText("New thread", { exact: true }).click();
+      await page.getByTestId("new-thread-button").click();
 
       const draftPath = await waitForURL(
         mounted.router,
@@ -7341,7 +7369,76 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const draft = useComposerDraftStore.getState().getDraftSession(draftIdFromPath(draftPath));
       expect(draft?.projectId).toBe(PROJECT_ID);
     } finally {
-      localStorage.removeItem("t3code:client-settings:v1");
+      await mounted.cleanup();
+    }
+  });
+
+  it("groups settled threads per project, shows the recent limit, and expands or collapses", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addSettledThreads(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-settled-sidebar" as MessageId,
+          targetText: "settled sidebar fixture",
+        }),
+        7,
+      ),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const settledHeader = page.getByRole("button", { name: "Settled 7" });
+      await expect.element(settledHeader).toBeVisible();
+      await expect.element(page.getByText("Settled 6", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 2", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 1", { exact: true })).not.toBeInTheDocument();
+
+      const showMore = page.getByRole("button", { name: "Show 2 more" });
+      await expect.element(showMore).toBeVisible();
+      await page.screenshot({ path: "../../../../.t3/settled-v1-project-group.png" });
+      await showMore.click();
+      await expect.element(page.getByText("Settled 1", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 0", { exact: true })).toBeVisible();
+      await page.screenshot({ path: "../../../../.t3/settled-v1-project-group-expanded.png" });
+
+      await settledHeader.click();
+      await expect.element(settledHeader).toHaveAttribute("aria-expanded", "false");
+      await expect.element(page.getByText("Settled 6", { exact: true })).not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("groups settled threads per project, shows the recent limit, and expands or collapses", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addSettledThreads(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-settled-sidebar" as MessageId,
+          targetText: "settled sidebar fixture",
+        }),
+        7,
+      ),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const settledHeader = page.getByRole("button", { name: "Settled 7" });
+      await expect.element(settledHeader).toBeVisible();
+      await expect.element(page.getByText("Settled 6", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 2", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 1", { exact: true })).not.toBeInTheDocument();
+
+      const showMore = page.getByRole("button", { name: "Show 2 more" });
+      await expect.element(showMore).toBeVisible();
+      await showMore.click();
+      await expect.element(page.getByText("Settled 1", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Settled 0", { exact: true })).toBeVisible();
+
+      await settledHeader.click();
+      await expect.element(settledHeader).toHaveAttribute("aria-expanded", "false");
+      await expect.element(page.getByText("Settled 6", { exact: true })).not.toBeInTheDocument();
+    } finally {
       await mounted.cleanup();
     }
   });

@@ -17,8 +17,12 @@ import { cn } from "../lib/utils";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadBrowserOpen } from "../rightPanelStore";
 import { useUiStateStore } from "../uiStateStore";
-import { formatWorkingDurationLabel, resolveWorkingStartedAt } from "./SidebarV2.logic";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadStatusPill,
+  resolveWorkingStartedAt,
+  type ThreadStatusPill,
+} from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 

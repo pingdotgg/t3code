@@ -44,8 +44,8 @@ import { resolveThreadListRowStatus, type ThreadListRowStatus } from "./thread-l
 export { snoozeWakeLabel };
 
 /**
- * Thread List v2 model, ported from the web sidebar v2
- * (apps/web/src/components/Sidebar.logic.ts + SidebarV2.tsx).
+ * Thread List v2 model, ported from the web project's sidebar logic
+ * (apps/web/src/components/Sidebar.logic.ts).
  *
  * Approval, input, work and failure roll up from descendants. Ready is the
  * unlabeled resting state.

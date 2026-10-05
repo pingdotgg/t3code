@@ -27,7 +27,7 @@ import {
   buildThreadTooltipActivity,
   selectThreadTooltipChildren,
   type ThreadTooltipStatus,
-} from "./SidebarV2ThreadTooltip.logic";
+} from "./SidebarThreadTooltip.logic";
 import { TooltipPopup } from "./ui/tooltip";
 
 const ThreadTooltipThreadsContext = createContext<readonly SidebarThreadSummary[] | null>(null);

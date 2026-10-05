@@ -5,9 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SidebarThreadSummary } from "../types";
 import { SidebarThreadEnvironmentIcon } from "./SidebarThreadEnvironmentIcon";
-import { SidebarV2NestedRow } from "./SidebarV2NestedRow";
-import { SidebarV2Row, type SidebarV2RowProps } from "./SidebarV2Row";
-import { useThreadEnvironmentLabel } from "./SidebarV2ThreadTooltip";
+import { useThreadEnvironmentLabel } from "./SidebarThreadTooltip";
 
 const environments = vi.hoisted(() => ({
   primaryId: "local-environment" as string | null,
@@ -74,35 +72,6 @@ function EnvironmentMarker() {
   return <SidebarThreadEnvironmentIcon environmentLabel={environmentLabel} />;
 }
 
-const noop = () => {};
-const rowProps: SidebarV2RowProps = {
-  thread,
-  projectName: "t3code",
-  projectCwd: null,
-  variant: "card",
-  active: false,
-  pinned: false,
-  snoozed: false,
-  settled: false,
-  settleBlocked: false,
-  snoozeBlocked: false,
-  settlementSupported: true,
-  snoozeSupported: true,
-  providerEntry: null,
-  displayStatus: "ready",
-  hasChildren: false,
-  isExpanded: false,
-  childCount: 0,
-  onToggleExpanded: noop,
-  onDismissAgentRun: noop,
-  onOpen: noop,
-  onSetPinned: noop,
-  onSettle: noop,
-  onUnsettle: noop,
-  onSnooze: noop,
-  onUnsnooze: noop,
-};
-
 describe("sidebar environment presentation", () => {
   beforeEach(() => {
     environments.primaryId = "local-environment";
@@ -134,27 +103,4 @@ describe("sidebar environment presentation", () => {
     environments.savedLabel = null;
     expect(renderToStaticMarkup(<EnvironmentMarker />)).toContain('title="Remote"');
   });
-
-  it.each(["card", "slim", "nested"] as const)(
-    "renders exactly one remote icon and no inline environment text in %s rows",
-    (variant) => {
-      const renderRow = () =>
-        renderToStaticMarkup(
-          variant === "nested" ? (
-            <SidebarV2NestedRow {...rowProps} depth={1} archiveBlocked={false} onArchive={noop} />
-          ) : (
-            <SidebarV2Row {...rowProps} variant={variant} />
-          ),
-        );
-      const markup = renderRow();
-      expect(markup.match(/aria-label="Execution environment:/g)).toHaveLength(1);
-      const visibleText = markup.replace(/<[^>]*>/g, "");
-      expect(visibleText).toContain(thread.title);
-      expect(visibleText).not.toContain("Build machine");
-      expect(visibleText).not.toContain(thread.environmentId.slice(0, 6));
-
-      environments.primaryId = thread.environmentId;
-      expect(renderRow()).not.toContain('aria-label="Execution environment:');
-    },
-  );
 });

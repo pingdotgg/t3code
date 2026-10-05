@@ -1,15 +1,13 @@
 import { useEffect, type ReactNode } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
-import SidebarV2 from "./SidebarV2";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
-import { useSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -54,13 +52,6 @@ function SidebarKeyboardShortcuts() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const sidebarV2Enabled = useSettings((settings) => settings.sidebarV2Enabled);
-  // The settings nav lives inside the v1 sidebar, so v1 stays mounted on
-  // settings routes regardless of the v2 preference. Without this, enabling v2
-  // leaves the thread inbox rendered on /settings with no way to navigate it.
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
-  const showSidebarV2 = sidebarV2Enabled && !isOnSettings;
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -126,7 +117,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {showSidebarV2 ? <SidebarV2 /> : <ThreadSidebar />}
+        <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
       {children}

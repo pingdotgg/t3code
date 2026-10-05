@@ -21,9 +21,14 @@ import {
   shouldRenderSidebarDraft,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarThreadGitCwd,
+  selectVisibleSettledSidebarRows,
   resolveFilteredSidebarProjects,
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
+  compactSidebarTimeLabel,
+  formatWorkingDurationLabel,
+  resolveThreadLifecycleSupport,
+  resolveWorkingStartedAt,
   resolveSidebarThreadClickKind,
   matchesSidebarThreadFilter,
   filterSidebarThreads,
@@ -39,6 +44,7 @@ import { buildSidebarThreadRows, selectVisibleThreadRows } from "../sidebarThrea
 
 import {
   EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   OrchestrationLatestTurn,
   ProjectId,
   ProviderInstanceId,
@@ -51,6 +57,7 @@ import {
   type Project,
   type SidebarThreadSummary,
   type Thread,
+  type ThreadSession,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -1615,6 +1622,17 @@ function makeSummary(overrides: Partial<SidebarThreadSummary> = {}): SidebarThre
   };
 }
 
+function makeSession(overrides: Partial<ThreadSession> = {}): ThreadSession {
+  return {
+    provider: "codex",
+    status: "ready",
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    orchestrationStatus: "idle",
+    ...overrides,
+  } as ThreadSession;
+}
+
 function summaryKey(thread: SidebarThreadSummary): string {
   return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
 }
@@ -1670,6 +1688,117 @@ describe("isCollapsedSettledRow", () => {
     expect(isCollapsedSettledRow({ status: null, thread: makeSummary(), now: SETTLED_NOW })).toBe(
       false,
     );
+  });
+});
+
+describe("shared sidebar lifecycle presentation helpers", () => {
+  it("resolves thread-settlement and snooze support independently per environment", () => {
+    const localId = EnvironmentId.make("environment-local-capable");
+    const remoteId = EnvironmentId.make("environment-remote-stale");
+    const support = resolveThreadLifecycleSupport([
+      {
+        environmentId: localId,
+        capabilities: { threadSettlement: true, threadSnooze: true },
+      } as unknown as ExecutionEnvironmentDescriptor,
+      {
+        environmentId: remoteId,
+        capabilities: { threadSettlement: false, threadSnooze: false },
+      } as unknown as ExecutionEnvironmentDescriptor,
+    ]);
+
+    expect(support.get(localId)).toEqual({ settlement: true, snooze: true });
+    expect(support.get(remoteId)).toEqual({ settlement: false, snooze: false });
+  });
+
+  it("uses the first valid timestamp for a working thread", () => {
+    const startedAt = "2026-01-01T00:00:05.000Z";
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: {
+          startedAt: "not-a-date",
+          requestedAt: "also-not-a-date",
+          completedAt: null,
+        } as NonNullable<SidebarThreadSummary["latestTurn"]>,
+        session: makeSession({ updatedAt: startedAt }),
+        createdAt: "2025-12-31T00:00:00.000Z",
+      }),
+    ).toBe(startedAt);
+  });
+
+  it("formats elapsed durations compactly and removes the repeated relative suffix", () => {
+    expect(formatWorkingDurationLabel(4_200)).toBe("4s");
+    expect(formatWorkingDurationLabel(4 * 60_000)).toBe("4m");
+    expect(formatWorkingDurationLabel(125 * 60_000)).toBe("2h 5m");
+    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+    expect(compactSidebarTimeLabel("3m ago")).toBe("3m");
+    expect(compactSidebarTimeLabel("just now")).toBe("now");
+  });
+});
+
+describe("selectVisibleSettledSidebarRows", () => {
+  const settledThreads = Array.from({ length: 7 }, (_, index) =>
+    makeSummary({
+      id: ThreadId.make(`thread-settled-${index}`),
+      title: `Settled ${index}`,
+      createdAt: `2026-03-09T10:0${index}:00.000Z`,
+      updatedAt: `2026-03-09T10:0${index}:00.000Z`,
+      settledOverride: "settled",
+      settledAt: `2026-03-09T11:0${index}:00.000Z`,
+    }),
+  );
+  const active = makeSummary({
+    id: ThreadId.make("thread-active-for-settled-shelf"),
+    title: "Active",
+  });
+  const partitioned = partitionSettledSidebarRows(buildSettledRows([...settledThreads, active]), {
+    now: SETTLED_NOW,
+  });
+
+  it("shows the configured recent groups and counts the rest", () => {
+    const visible = selectVisibleSettledSidebarRows({
+      activeRows: partitioned.activeRows,
+      settledGroups: partitioned.settledGroups,
+      visibleCount: 5,
+      showAll: false,
+      activeThreadKey: null,
+    });
+
+    expect(
+      visible.settledRows.filter((row) => row.depth === 0).map((row) => row.thread.title),
+    ).toEqual(["Settled 6", "Settled 5", "Settled 4", "Settled 3", "Settled 2"]);
+    expect(visible.remainingCount).toBe(2);
+    expect(visible.activeRows.map((row) => row.thread.title)).toEqual(["Active"]);
+  });
+
+  it("keeps an older routed group visible while preserving its hidden count", () => {
+    const oldest = settledThreads[0]!;
+    const visible = selectVisibleSettledSidebarRows({
+      activeRows: partitioned.activeRows,
+      settledGroups: partitioned.settledGroups,
+      visibleCount: 5,
+      showAll: false,
+      activeThreadKey: summaryKey(oldest),
+    });
+
+    expect(
+      visible.settledRows.filter((row) => row.depth === 0).map((row) => row.thread.title),
+    ).toEqual(["Settled 6", "Settled 5", "Settled 4", "Settled 3", "Settled 2", "Settled 0"]);
+    expect(visible.remainingCount).toBe(1);
+  });
+
+  it("shows every settled group after Show more", () => {
+    const visible = selectVisibleSettledSidebarRows({
+      activeRows: partitioned.activeRows,
+      settledGroups: partitioned.settledGroups,
+      visibleCount: 5,
+      showAll: true,
+      activeThreadKey: null,
+    });
+
+    expect(
+      visible.settledRows.filter((row) => row.depth === 0).map((row) => row.thread.title),
+    ).toEqual(settledThreads.map((thread) => thread.title).reverse());
+    expect(visible.remainingCount).toBe(0);
   });
 });
 

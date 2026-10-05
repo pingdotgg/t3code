@@ -194,7 +194,16 @@ export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "update
 export const SidebarThreadFilter = Schema.Literals(["all", "active", "with_pr", "open_pr"]);
 export type SidebarThreadFilter = typeof SidebarThreadFilter.Type;
 export const DEFAULT_SIDEBAR_THREAD_FILTER: SidebarThreadFilter = "all";
-export const DEFAULT_SIDEBAR_V2_ENABLED = false;
+export const MIN_SIDEBAR_SETTLED_THREAD_COUNT = 1;
+export const MAX_SIDEBAR_SETTLED_THREAD_COUNT = 50;
+export const SidebarSettledThreadCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_SETTLED_THREAD_COUNT,
+    maximum: MAX_SIDEBAR_SETTLED_THREAD_COUNT,
+  }),
+);
+export type SidebarSettledThreadCount = typeof SidebarSettledThreadCount.Type;
+export const DEFAULT_SIDEBAR_SETTLED_THREAD_COUNT: SidebarSettledThreadCount = 5;
 
 /** Initial state filter for the pull requests page when the URL names none. */
 export const DEFAULT_PULL_REQUESTS_DEFAULT_STATE: PullRequestListState = "open";
@@ -379,8 +388,8 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadFilter: SidebarThreadFilter.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_FILTER)),
   ),
-  sidebarV2Enabled: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_ENABLED)),
+  sidebarSettledThreadCount: SidebarSettledThreadCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_SETTLED_THREAD_COUNT)),
   ),
   threadCompletionNotifications: ThreadCompletionNotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE)),
@@ -925,7 +934,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadFilter: Schema.optionalKey(SidebarThreadFilter),
-  sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarSettledThreadCount: Schema.optionalKey(SidebarSettledThreadCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   uiDensity: Schema.optionalKey(UiDensity),
   uiFont: Schema.optionalKey(UiFont),
