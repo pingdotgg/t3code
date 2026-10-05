@@ -496,6 +496,7 @@ export const PreviewAutomationElement = Schema.Struct({
   y: Schema.Number,
   width: Schema.Number,
   height: Schema.Number,
+  inViewport: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
 
@@ -527,11 +528,37 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 });
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
+const PreviewAutomationScrollPosition = {
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+  scrollWidth: Schema.Number,
+  scrollHeight: Schema.Number,
+};
+
 export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
   visibleText: Schema.String,
+  viewportText: Schema.optional(Schema.String),
+  scroll: Schema.optional(
+    Schema.Struct({
+      ...PreviewAutomationScrollPosition,
+      containers: Schema.Array(
+        Schema.Struct({ selector: Schema.String, ...PreviewAutomationScrollPosition }),
+      ),
+      containersTruncated: Schema.Boolean,
+    }),
+  ),
+  truncated: Schema.optional(
+    Schema.Struct({
+      visibleText: Schema.Boolean,
+      viewportText: Schema.Boolean,
+      interactiveElements: Schema.Boolean,
+    }),
+  ),
   interactiveElements: Schema.Array(PreviewAutomationElement),
   accessibilityTree: Schema.Unknown,
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),

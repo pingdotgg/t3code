@@ -1,22 +1,17 @@
-import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
-import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -32,16 +27,13 @@ import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
-import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as PreviewSnapshot from "../preview/Snapshot.ts";
 import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
+import { PreviewStandardToolkitHandlersLive } from "./toolkits/preview/handlers.ts";
 import {
-  PreviewSnapshotToolkitHandlersLive,
-  PreviewStandardToolkitHandlersLive,
-} from "./toolkits/preview/handlers.ts";
-import {
+  PreviewReadTextTool,
   PreviewSnapshotTool,
-  PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
@@ -149,8 +141,12 @@ const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
 
 const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
-const cutText = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
+const cutText = (text: string, max: number) => {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  return `${text.slice(0, end)}…`;
+};
 
 /** Shortens every string field of a log entry; other fields pass through. */
 const cutEntryStrings = <A>(entry: A): A =>
@@ -172,8 +168,24 @@ type SnapshotMetadata = {
   readonly url: string;
   readonly title: string;
   readonly visibleText: string;
+  readonly viewportText?: string | undefined;
+  readonly truncated?:
+    | {
+        readonly visibleText: boolean;
+        readonly viewportText: boolean;
+        readonly interactiveElements: boolean;
+      }
+    | undefined;
+  readonly scroll?:
+    | {
+        readonly containers: ReadonlyArray<unknown>;
+        readonly containersTruncated: boolean;
+        readonly [key: string]: unknown;
+      }
+    | undefined;
   readonly interactiveElements: ReadonlyArray<{
     readonly name: string;
+    readonly inViewport?: boolean | undefined;
     readonly [key: string]: unknown;
   }>;
   readonly consoleEntries: ReadonlyArray<unknown>;
@@ -222,24 +234,22 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     ...withoutTree,
     url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
     title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    interactiveElements: metadata.interactiveElements.map((element) => ({
-      ...element,
-      name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
-    })),
+    interactiveElements: metadata.interactiveElements
+      .map((element) => ({
+        ...element,
+        name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
+      }))
+      .sort((left, right) => Number(right.inViewport === true) - Number(left.inViewport === true)),
     consoleEntries: tail(metadata.consoleEntries, "console entries"),
     networkEntries: tail(metadata.networkEntries, "network entries"),
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
 
-  // Per-field caps do not sum below the ceiling: three log arrays of 40 capped
-  // entries alone can pass 60 KB, and the caps count characters, not bytes.
-  // Halve one thing per round until the JSON fits: logs first, then page
-  // text, then the locators. The identifier caps bound the rest, so this
-  // terminates.
   const shedOrder = [
     "actionTimeline",
     "networkEntries",
     "consoleEntries",
+    "scrollContainers",
     "interactiveElements",
   ] as const;
   const lists: Record<(typeof shedOrder)[number], ReadonlyArray<unknown>> = {
@@ -247,42 +257,104 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     consoleEntries: bounded.consoleEntries,
     networkEntries: bounded.networkEntries,
     actionTimeline: bounded.actionTimeline,
+    scrollContainers: metadata.scroll?.containers ?? [],
   };
   const dropped: Record<(typeof shedOrder)[number], number> = {
     interactiveElements: 0,
     consoleEntries: 0,
     networkEntries: 0,
     actionTimeline: 0,
+    scrollContainers: 0,
   };
   let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
+  let viewportTextChars = Math.min(
+    metadata.viewportText?.length ?? 0,
+    MAX_SNAPSHOT_VISIBLE_TEXT_CHARS,
+  );
+  let identifierChars = MAX_SNAPSHOT_IDENTIFIER_CHARS;
   const value = () => ({
     ...bounded,
+    url: cutText(metadata.url, identifierChars),
+    title: cutText(metadata.title, identifierChars),
     visibleText: cutText(metadata.visibleText, visibleTextChars),
-    ...lists,
+    ...(metadata.viewportText === undefined
+      ? {}
+      : { viewportText: cutText(metadata.viewportText, viewportTextChars) }),
+    interactiveElements: lists.interactiveElements,
+    consoleEntries: lists.consoleEntries,
+    networkEntries: lists.networkEntries,
+    actionTimeline: lists.actionTimeline,
+    ...(metadata.truncated === undefined
+      ? {}
+      : {
+          truncated: {
+            visibleText:
+              metadata.truncated.visibleText || visibleTextChars < metadata.visibleText.length,
+            viewportText:
+              metadata.truncated.viewportText ||
+              viewportTextChars < (metadata.viewportText?.length ?? 0),
+            interactiveElements:
+              metadata.truncated.interactiveElements || dropped.interactiveElements > 0,
+          },
+        }),
+    ...(metadata.scroll === undefined
+      ? {}
+      : {
+          scroll: {
+            ...metadata.scroll,
+            containers: lists.scrollContainers,
+            containersTruncated:
+              metadata.scroll.containersTruncated || dropped.scrollContainers > 0,
+          },
+        }),
   });
+  const inViewportCount = bounded.interactiveElements.filter(
+    (element) => element.inViewport === true,
+  ).length;
   let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Elements carry the locators, so they go last; logs shed newest-last.
-    const key =
-      shedOrder.find(
-        (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ??
-      (visibleTextChars > 0
-        ? "visibleText"
-        : lists.interactiveElements.length > 0
-          ? "interactiveElements"
-          : undefined);
+    let key:
+      | (typeof shedOrder)[number]
+      | "visibleText"
+      | "viewportText"
+      | "identifiers"
+      | undefined = shedOrder.find(
+      (candidate) =>
+        candidate !== "interactiveElements" &&
+        candidate !== "scrollContainers" &&
+        lists[candidate].length > 0,
+    );
+    if (key === undefined) {
+      if (visibleTextChars > 0) key = "visibleText";
+      else if (lists.interactiveElements.length > inViewportCount) key = "interactiveElements";
+      else if (lists.scrollContainers.length > 0) key = "scrollContainers";
+      else if (
+        viewportTextChars > 0 &&
+        utf8Length(encodeJsonText(cutText(metadata.viewportText ?? "", viewportTextChars))) >
+          MAX_SNAPSHOT_TEXT_BYTES / 2
+      )
+        key = "viewportText";
+      else if (lists.interactiveElements.length > 0) key = "interactiveElements";
+      else if (viewportTextChars > 0) key = "viewportText";
+      else if (identifierChars > 0) key = "identifiers";
+    }
     if (key === undefined) break;
     if (key === "visibleText") {
       visibleTextChars = Math.floor(visibleTextChars / 2);
+    } else if (key === "viewportText") {
+      viewportTextChars = Math.floor(viewportTextChars / 2);
+    } else if (key === "identifiers") {
+      identifierChars = Math.floor(identifierChars / 2);
     } else {
-      const keep = Math.floor(lists[key].length / 2);
+      const keep =
+        key === "interactiveElements" && lists[key].length > inViewportCount
+          ? inViewportCount + Math.floor((lists[key].length - inViewportCount) / 2)
+          : Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
-      // slice(-0) keeps everything, so spell out the empty case.
       lists[key] =
         keep === 0
           ? []
-          : key === "interactiveElements"
+          : key === "interactiveElements" || key === "scrollContainers"
             ? lists[key].slice(0, keep)
             : lists[key].slice(-keep);
     }
@@ -293,105 +365,78 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
       `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
     );
   }
+  if (viewportTextChars < (metadata.viewportText?.length ?? 0)) {
+    omitted.push(
+      `viewportText after ${viewportTextChars} characters (use preview_evaluate for more)`,
+    );
+  }
+  if (identifierChars < MAX_SNAPSHOT_IDENTIFIER_CHARS) {
+    omitted.push(`url or title after ${identifierChars} characters`);
+  }
   for (const key of shedOrder) {
     if (dropped[key] > 0) {
-      omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
+      const originalLength =
+        key === "scrollContainers" ? metadata.scroll?.containers.length : bounded[key].length;
+      omitted.push(`${dropped[key]} of ${originalLength} ${key}`);
     }
   }
   return { value: value(), text, omitted };
 };
 
-export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
-  "PreviewScreenshotSaveError",
-  { screenshotPath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not save preview screenshot to ${this.screenshotPath}.`;
-  }
-}
-
-const MAX_SCREENSHOT_SITE_SLUG_LENGTH = 40;
-
-/** Hostname reduced to a filename-safe slug, matching the desktop's own screenshot names. */
-const screenshotSiteSlug = (rawUrl: string): string => {
-  try {
-    const slug = new URL(rawUrl).hostname
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, MAX_SCREENSHOT_SITE_SLUG_LENGTH)
-      .replace(/-+$/g, "");
-    return slug || "site";
-  } catch {
-    return "site";
-  }
-};
-
-/** Writes the snapshot PNG under the browser artifacts directory and returns its path. */
-const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
-  pageUrl: string,
-  data: Uint8Array,
-) {
-  const config = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const millis = yield* Clock.currentTimeMillis;
-  // Two saves in the same millisecond must not overwrite each other.
-  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}.png`;
-  const screenshotPath = path.join(config.browserArtifactsDir, fileName);
-  yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
-    Effect.andThen(fileSystem.writeFile(screenshotPath, data)),
-    Effect.mapError((cause) => new PreviewScreenshotSaveError({ screenshotPath, cause })),
-  );
-  return screenshotPath;
-});
-
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+const isPreviewTextCaptureError = Schema.is(PreviewSnapshot.PreviewTextCaptureError);
+const decodePreviewSnapshotInput = Schema.decodeUnknownEffect(PreviewSnapshotTool.parametersSchema);
+const decodePreviewReadTextInput = Schema.decodeUnknownEffect(PreviewReadTextTool.parametersSchema);
 
-const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
-  if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
-    return Effect.failCause(cause).pipe(Effect.orDie);
-  }
-  const failures = cause.reasons.filter(Cause.isFailReason);
-  const firstFailure = failures[0]?.error;
-  const errorTag =
-    typeof firstFailure === "object" &&
-    firstFailure !== null &&
-    "_tag" in firstFailure &&
-    typeof firstFailure._tag === "string"
-      ? firstFailure._tag
-      : "PreviewSnapshotError";
-  // Preview errors build their message on the server, never from page output,
-  // and it tells the agent what to do next, such as falling back to a shell browser.
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
-  const result = new McpSchema.CallToolResult({
-    isError: true,
-    structuredContent: {
-      error: {
-        _tag: errorTag,
-        operation: "snapshot",
-        failureCount: failures.length,
-        ...(message === undefined ? {} : { message }),
+const previewFailure =
+  (operation: "snapshot" | "readText") =>
+  <E>(cause: Cause.Cause<E>) => {
+    if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
+      return Effect.failCause(cause).pipe(Effect.orDie);
+    }
+    const failures = cause.reasons.filter(Cause.isFailReason);
+    const firstFailure = failures[0]?.error;
+    const errorTag =
+      typeof firstFailure === "object" &&
+      firstFailure !== null &&
+      "_tag" in firstFailure &&
+      typeof firstFailure._tag === "string"
+        ? firstFailure._tag
+        : "PreviewSnapshotError";
+    // Preview errors build their message on the server, never from page output,
+    // and it tells the agent what to do next, such as falling back to a shell browser.
+    const message =
+      isPreviewAutomationError(firstFailure) || isPreviewTextCaptureError(firstFailure)
+        ? firstFailure.message
+        : undefined;
+    const result = new McpSchema.CallToolResult({
+      isError: true,
+      structuredContent: {
+        error: {
+          _tag: errorTag,
+          operation,
+          failureCount: failures.length,
+          ...(message === undefined ? {} : { message }),
+        },
       },
-    },
-    // Some clients show only the text content and others only structuredContent, so both carry it.
-    content: [{ type: "text", text: `Preview snapshot failed: ${message ?? `${errorTag}.`}` }],
-  });
-  return Effect.logWarning("preview snapshot failed", {
-    operation: "snapshot",
-    errorTag,
-    failureCount: failures.length,
-  }).pipe(Effect.as(result));
-};
+      // Some clients show only the text content and others only structuredContent, so both carry it.
+      content: [
+        {
+          type: "text",
+          text: `Preview ${operation === "snapshot" ? "snapshot" : "text read"} failed: ${message ?? `${errorTag}.`}`,
+        },
+      ],
+    });
+    return Effect.logWarning(`preview ${operation} failed`, {
+      operation,
+      errorTag,
+      failureCount: failures.length,
+    }).pipe(Effect.as(result));
+  };
 
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-  // The MCP tool runner only supplies the client, so hand the save path its services here.
-  const saveServices = yield* Effect.context<
-    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
-  >();
-  const built = yield* PreviewSnapshotToolkit;
+  const snapshots = yield* PreviewSnapshot.PreviewSnapshot;
   const tool = PreviewSnapshotTool;
   yield* server.addTool({
     tool: new McpSchema.Tool({
@@ -416,82 +461,157 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           fiber.context,
           McpInvocationContext.McpInvocationContext,
         );
-        return built.handle("preview_snapshot", payload).pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
-          Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.flatMap(({ encodedResult }) =>
-            Effect.gen(function* () {
-              const snapshot = encodedResult as SnapshotMetadata & {
-                readonly url: string;
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
-                };
-              };
-              const { screenshot, ...page } = snapshot;
-              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
-              const screenshotPath =
-                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-              if (screenshotPath !== undefined && payload?.includeImage === false) {
-                // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
-                const saved = {
-                  url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                  screenshotPath,
-                };
-                return new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: saved,
-                  content: [{ type: "text", text: encodeJsonText(saved) }],
-                });
-              }
-              const metadata = {
-                ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-                ...(screenshotPath === undefined ? {} : { screenshotPath }),
-              };
-              const bounded = boundSnapshotMetadata(metadata);
-              return new McpSchema.CallToolResult({
-                isError: false,
-                structuredContent:
-                  bounded.omitted.length === 0
-                    ? bounded.value
-                    : { ...bounded.value, omitted: bounded.omitted },
-                content: [
-                  // Keep the page identity readable even if a provider truncates the snapshot.
-                  {
-                    type: "text",
-                    text: encodeJsonText({
-                      url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                    }),
-                  },
-                  { type: "text", text: bounded.text },
-                  ...(bounded.omitted.length === 0
-                    ? []
-                    : [
-                        {
-                          type: "text" as const,
-                          text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
-                        },
-                      ]),
-                  ...(payload?.includeImage === false
-                    ? []
-                    : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
-                ],
-              });
+        return decodePreviewSnapshotInput(payload ?? {}).pipe(
+          Effect.mapError((cause) =>
+            AiError.make({
+              module: "Toolkit",
+              method: "preview_snapshot.handle",
+              reason: new AiError.ToolParameterValidationError({
+                toolName: "preview_snapshot",
+                description: cause.message,
+              }),
             }),
           ),
-          Effect.provide(saveServices),
+          Effect.flatMap((input) =>
+            McpInvocationContext.requireThreadMcpCapability("preview").pipe(
+              Effect.flatMap((scope) =>
+                snapshots.withSnapshot(
+                  { scope, ...input },
+                  ({ snapshot, png, textCapture, screenshotPath }) =>
+                    Effect.sync(() => {
+                      const { screenshot, ...page } = snapshot;
+                      const textArtifact =
+                        textCapture === undefined
+                          ? {}
+                          : {
+                              textCaptureId: textCapture.captureId,
+                              textChars: textCapture.totalChars,
+                              textUrl: textCapture.url,
+                              textTabId: textCapture.tabId,
+                            };
+                      if (screenshotPath !== undefined && input.includeImage === false) {
+                        // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
+                        const saved = {
+                          url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                          screenshotPath,
+                          ...textArtifact,
+                        };
+                        return new McpSchema.CallToolResult({
+                          isError: false,
+                          structuredContent: saved,
+                          content: [{ type: "text", text: encodeJsonText(saved) }],
+                        });
+                      }
+                      const metadata = {
+                        ...page,
+                        screenshot: {
+                          mimeType: screenshot.mimeType,
+                          width: screenshot.width,
+                          height: screenshot.height,
+                        },
+                        ...(screenshotPath === undefined ? {} : { screenshotPath }),
+                        ...textArtifact,
+                      };
+                      const bounded = boundSnapshotMetadata(metadata);
+                      return new McpSchema.CallToolResult({
+                        isError: false,
+                        structuredContent:
+                          bounded.omitted.length === 0
+                            ? bounded.value
+                            : { ...bounded.value, omitted: bounded.omitted },
+                        content: [
+                          // Keep the page identity readable even if a provider truncates the snapshot.
+                          {
+                            type: "text",
+                            text: encodeJsonText({
+                              url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                            }),
+                          },
+                          { type: "text", text: bounded.text },
+                          ...(bounded.omitted.length === 0
+                            ? []
+                            : [
+                                {
+                                  type: "text" as const,
+                                  text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
+                                },
+                              ]),
+                          ...(input.includeImage === false
+                            ? []
+                            : [
+                                {
+                                  type: "image" as const,
+                                  data: png,
+                                  mimeType: screenshot.mimeType,
+                                },
+                              ]),
+                        ],
+                      });
+                    }),
+                ),
+              ),
+            ),
+          ),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
-            onFailure: previewSnapshotFailure,
+            onFailure: previewFailure("snapshot"),
+            onSuccess: Effect.succeed,
+          }),
+        );
+      }),
+  });
+  const readTool = PreviewReadTextTool;
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: readTool.name,
+      description: Tool.getDescription(readTool),
+      inputSchema: Tool.getJsonSchema(readTool),
+      outputSchema: Tool.getJsonSchemaFromSchema(readTool.successSchema),
+      annotations: {
+        ...Context.getOption(readTool.annotations, Tool.Title).pipe(
+          Option.map((title) => ({ title })),
+          Option.getOrUndefined,
+        ),
+        readOnlyHint: Context.get(readTool.annotations, Tool.Readonly),
+        destructiveHint: Context.get(readTool.annotations, Tool.Destructive),
+        idempotentHint: Context.get(readTool.annotations, Tool.Idempotent),
+        openWorldHint: Context.get(readTool.annotations, Tool.OpenWorld),
+      },
+    }),
+    annotations: readTool.annotations,
+    handle: (payload) =>
+      Effect.withFiber((fiber) => {
+        const invocation = Context.getUnsafe(
+          fiber.context,
+          McpInvocationContext.McpInvocationContext,
+        );
+        return decodePreviewReadTextInput(payload ?? {}).pipe(
+          Effect.mapError((cause) =>
+            AiError.make({
+              module: "Toolkit",
+              method: "preview_read_text.handle",
+              reason: new AiError.ToolParameterValidationError({
+                toolName: "preview_read_text",
+                description: cause.message,
+              }),
+            }),
+          ),
+          Effect.flatMap((input) =>
+            McpInvocationContext.requireThreadMcpCapability("preview").pipe(
+              Effect.flatMap((scope) => snapshots.readText({ scope, ...input })),
+            ),
+          ),
+          Effect.map(
+            (result) =>
+              new McpSchema.CallToolResult({
+                isError: false,
+                structuredContent: result,
+                content: [{ type: "text", text: encodeJsonText(result) }],
+              }),
+          ),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.matchCauseEffect({
+            onFailure: previewFailure("readText"),
             onSuccess: Effect.succeed,
           }),
         );
@@ -652,7 +772,7 @@ const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandard
 );
 
 const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
-  Layer.provide(PreviewSnapshotToolkitHandlersLive),
+  Layer.provide(PreviewSnapshot.layer),
 );
 
 export const PreviewToolkitRegistrationLive = Layer.mergeAll(

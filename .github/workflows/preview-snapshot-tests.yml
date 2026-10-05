@@ -1,0 +1,51 @@
+name: Preview snapshot tests
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/preview-snapshot-tests.yml
+      - apps/desktop/src/preview/**
+      - apps/server/src/mcp/**
+      - apps/server/src/preview/Snapshot*.ts
+      - packages/contracts/src/preview*.ts
+      - packages/shared/src/t3McpToolPresentation*.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Snapshot tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - run: vp install
+      - run: >-
+          vp test run
+          apps/desktop/src/preview/SnapshotPage.test.ts
+          apps/desktop/src/preview/Manager.test.ts
+          apps/server/src/mcp/McpHttpServer.test.ts
+          apps/server/src/mcp/PreviewAutomationBroker.test.ts
+          apps/server/src/mcp/toolkits/core.test.ts
+          apps/server/src/preview/Snapshot.test.ts
+          apps/server/src/mcp/toolkits/preview/tools.test.ts
+          packages/contracts/src/previewAutomationSnapshot.test.ts
+          packages/contracts/src/preview.test.ts
+          packages/shared/src/t3McpToolPresentation.test.ts

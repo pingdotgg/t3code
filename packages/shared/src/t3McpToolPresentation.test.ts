@@ -72,6 +72,10 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Get preview browser status",
       logo: "t3-code",
     });
+    expect(resolveT3McpToolPresentation("mcp__t3_code__preview_read_text")).toEqual({
+      displayName: "Read captured browser text",
+      logo: "t3-code",
+    });
   });
 
   it("matches the separator variants ACP registry agents emit", () => {

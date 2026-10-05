@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import { Tool } from "effect/unstable/ai";
 
 import { PreviewToolkit } from "./tools.ts";
@@ -74,4 +75,32 @@ it("exports exact object result schemas for preview actions", () => {
       description: "The preview action completed successfully.",
     });
   }
+});
+
+it("keeps text capture opt-in and requires its tab and capture identifiers for reads", () => {
+  expect(Context.get(PreviewToolkit.tools.preview_snapshot.annotations, Tool.Idempotent)).toBe(
+    false,
+  );
+  const snapshotSchema = Tool.getJsonSchema(PreviewToolkit.tools.preview_snapshot) as {
+    readonly properties: Readonly<Record<string, unknown>>;
+    readonly required?: ReadonlyArray<string>;
+  };
+  expect(snapshotSchema.properties.captureText).toBeDefined();
+  expect(snapshotSchema.properties.saveText).toBeUndefined();
+  expect(snapshotSchema.required ?? []).not.toContain("captureText");
+  const readSchema = Tool.getJsonSchema(PreviewToolkit.tools.preview_read_text) as {
+    readonly required: ReadonlyArray<string>;
+  };
+  expect(readSchema.required.toSorted()).toEqual(["captureId", "tabId"]);
+  const resultSchema = Tool.getJsonSchemaFromSchema(
+    PreviewToolkit.tools.preview_read_text.successSchema,
+  ) as { readonly type: string; readonly required: ReadonlyArray<string> };
+  expect(resultSchema.type).toBe("object");
+  expect(resultSchema.required.toSorted()).toEqual([
+    "done",
+    "nextOffset",
+    "released",
+    "text",
+    "totalChars",
+  ]);
 });

@@ -18,6 +18,7 @@ import {
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
+  PreviewTabId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -116,10 +117,10 @@ const PreviewSetAppearanceTool = safeBrowserTool(
     .annotate(Tool.Idempotent, true),
 );
 
-export const PreviewSnapshotTool = readonlyBrowserTool(
+export const PreviewSnapshotTool = safeBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. The text is capped near 20 KB and lists what it omitted; use preview_evaluate to read more. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and screenshotPath. Embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use the current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. When the desktop host supports it, viewportText describes the current view, scroll reports page and visible container scroll positions, and inViewport elements come first. visibleText also includes rendered text outside the view; content not yet loaded requires scrolling. The text is capped near 20 KB, keeps current-view text ahead of offscreen page text, and lists what it omitted. Set captureText=true to hold all loaded, rendered main-page text in temporary browser memory without a total character cap; use textCaptureId and textTabId with preview_read_text to read it in small parts. No text file is created. The capture expires after five idle minutes, a page change, or a replacement capture. This does not scroll or load missing text, and excludes embedded frames and shadow DOM. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and saved artifact details. Embed screenshotPath in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
@@ -131,14 +132,62 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
       save: Schema.optional(
         Schema.Boolean.annotate({
           description:
-            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. With includeImage=false, return only the url and screenshotPath. Defaults to false.",
+            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. With includeImage=false, return only the url and saved artifact details. Defaults to false.",
+        }),
+      ),
+      captureText: Schema.optional(
+        Schema.Boolean.annotate({
+          description:
+            "Keep all loaded, rendered main-page text in temporary browser memory and return textCaptureId, textTabId, textChars, and textUrl. Read it with preview_read_text. No text file or total character cap; snapshot output stays bounded. Does not scroll or load missing content. Defaults to false.",
         }),
       ),
     }),
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
     dependencies,
-  }).annotate(Tool.Title, "Inspect browser page"),
+  })
+    .annotate(Tool.Title, "Inspect browser page")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Idempotent, false),
+);
+
+export const PreviewReadTextTool = safeBrowserTool(
+  Tool.make("preview_read_text", {
+    description:
+      "Read one small part of the loaded main-page text captured by preview_snapshot with captureText=true. Pass its textCaptureId as captureId and textTabId as tabId. Start with offset=0, then use nextOffset for the next part until done=true. Each response contains at most 4096 UTF-16 characters and preserves whole character pairs. Reading refreshes the five-minute idle expiry. Set release=true to discard the capture when finished; it returns no text. A page change or replacement capture also discards it. Text is read from temporary browser memory without creating a text file; normal chat and tool history can still store the text you read.",
+    parameters: Schema.Struct({
+      tabId: PreviewTabId.pipe(
+        Schema.annotateEncoded({
+          description: "The textTabId returned by the snapshot that captured this text.",
+        }),
+      ),
+      captureId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)).annotate({
+        description: "The textCaptureId returned by preview_snapshot with captureText=true.",
+      }),
+      offset: Schema.optional(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).annotate({
+          description: "UTF-16 character offset. Defaults to zero; use nextOffset to continue.",
+        }),
+      ),
+      release: Schema.optional(
+        Schema.Boolean.annotate({
+          description: "Discard the captured text without reading another part. Defaults to false.",
+        }),
+      ),
+    }),
+    success: Schema.Struct({
+      text: Schema.String.check(Schema.isMaxLength(4096)),
+      nextOffset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      totalChars: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      done: Schema.Boolean,
+      released: Schema.Boolean,
+    }),
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Read captured browser text")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Idempotent, false),
 );
 
 const PreviewClickTool = browserTool(
@@ -248,6 +297,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
+  PreviewReadTextTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,
@@ -273,5 +323,3 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );
-
-export const PreviewSnapshotToolkit = Toolkit.make(PreviewSnapshotTool);

@@ -14,7 +14,6 @@ import {
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
   type PreviewAutomationSetColorSchemeResult,
-  type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -29,7 +28,7 @@ import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
+import { PreviewStandardToolkit } from "./tools.ts";
 
 /**
  * Collapses the `show` alias onto `open` and defaults tab reuse.
@@ -197,11 +196,6 @@ const handlers = {
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
-  preview_snapshot: (input) => {
-    // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
-    const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
-    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
-  },
   preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
   preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
   preview_press: (input) => invokeTargeted<object>("press", input),
@@ -229,12 +223,6 @@ const handlers = {
       const artifact = yield* claimPreviewRecording(scope.thread.threadId, response.result);
       return { ...artifact, ...(response.toolIcon ? { toolIcon: response.toolIcon } : {}) };
     }),
-} satisfies Parameters<typeof PreviewToolkit.toLayer>[0];
+} satisfies Parameters<typeof PreviewStandardToolkit.toLayer>[0];
 
-const { preview_snapshot, ...standardHandlers } = handlers;
-
-export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer(standardHandlers);
-
-export const PreviewSnapshotToolkitHandlersLive = PreviewSnapshotToolkit.toLayer({
-  preview_snapshot,
-});
+export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer(handlers);
