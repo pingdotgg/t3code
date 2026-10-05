@@ -139,10 +139,15 @@ describe("HtmlRender", () => {
       yield* fileSystem.writeFileString(stalling, `${"<?p?>".repeat(40)}<config><svg/></config>`);
       const unclosed = path.join(directory, "unclosed.svg");
       yield* fileSystem.writeFileString(unclosed, '<!DOCTYPE svg [<!ENTITY a "x><svg/>');
+      // Roots named SVG or svgé are other elements.
+      const upper = path.join(directory, "upper.svg");
+      yield* fileSystem.writeFileString(upper, "<SVG/>API_KEY=abc123");
+      const longer = path.join(directory, "longer.svg");
+      yield* fileSystem.writeFileString(longer, "<svg\u00e9/>API_KEY=abc123");
 
       const error = yield* htmlRender
         .prepare(
-          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}">`,
+          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
         )
         .pipe(Effect.flip);
 
@@ -156,6 +161,8 @@ describe("HtmlRender", () => {
         config,
         stalling,
         unclosed,
+        upper,
+        longer,
       ]);
     }).pipe(Effect.provide(testLayer)),
   );

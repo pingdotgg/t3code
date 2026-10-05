@@ -199,7 +199,8 @@ const hasSvgRoot = (text: string) => {
     if (text.startsWith("<?", at)) at = after(text, "?>", at + 2);
     else if (text.startsWith("<!--", at)) at = after(text, "-->", at + 4);
     else if (text.slice(at, at + 9).toLowerCase() === "<!doctype") at = afterDoctype(text, at + 9);
-    else return /^<svg[\s/>]/i.test(text.slice(at, at + 5));
+    // XML names are case-sensitive, and only these characters can end one here.
+    else return /^<svg[ \t\r\n/>]/.test(text.slice(at, at + 5));
   }
   return false;
 };
