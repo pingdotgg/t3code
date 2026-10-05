@@ -1628,11 +1628,12 @@ export const layer = Layer.effect(
                     )
                   : runOutcome("started"),
               ),
-              Effect.catchTag("WebhookDeliverySkipped", (skipped) =>
-                runOutcome("skipped").pipe(
-                  Effect.andThen(markDeliveryFailed(deliveryId, skipped.reason)),
-                ),
-              ),
+              Effect.catchTags({
+                WebhookDeliverySkipped: (skipped) =>
+                  runOutcome("skipped").pipe(
+                    Effect.andThen(markDeliveryFailed(deliveryId, skipped.reason)),
+                  ),
+              }),
               // The log is readable over RPC, so it gets a fixed reason; the
               // cause, which can carry request data, stays in the server log.
               Effect.catchCause((cause) =>

@@ -51,7 +51,7 @@ import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.t
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
-import { layer as secretRequestsLayer } from "../secrets/SecretRequests.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 /** The shared application event log and its command receipts. */
 export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
@@ -257,7 +257,7 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );
-const secretRequestsProvided = secretRequestsLayer.pipe(Layer.provide(threadManagementProvided));
+const secretRequestsProvided = SecretRequests.layer.pipe(Layer.provide(threadManagementProvided));
 const scheduledTaskProvided = scheduledTaskServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(threadLaunchProvided, threadManagementProvided, secretRequestsProvided),

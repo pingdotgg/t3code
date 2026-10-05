@@ -65,9 +65,7 @@ describe("secretRequestAnswerInput", () => {
 describe("secretRequestFailureMessage", () => {
   it("passes through server errors but hides anything that could echo the payload", () => {
     expect(
-      secretRequestFailureMessage(
-        new SecretRequestError({ message: "This secret request was already answered." }),
-      ),
+      secretRequestFailureMessage(new SecretRequestError({ reason: "already_answered" })),
     ).toBe("This secret request was already answered.");
     expect(secretRequestFailureMessage(new Error('Expected string, got "whsec_1"'))).toBe(
       "Could not answer the request. Try again.",

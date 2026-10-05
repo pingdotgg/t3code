@@ -91,7 +91,7 @@ const withService = <A, E>(
           const value = secretsByRef.get(ref);
           secretsByRef.delete(ref);
           return value === undefined
-            ? Effect.fail(new SecretRequestError({ message: "That secretRef was already used." }))
+            ? Effect.fail(new SecretRequestError({ reason: "ref_unavailable" }))
             : Effect.succeed(value);
         },
       }),
