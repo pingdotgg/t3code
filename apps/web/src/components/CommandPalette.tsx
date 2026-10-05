@@ -686,6 +686,7 @@ function CommandPaletteDialog(props: {
   );
 }
 
+/** Keep command navigation and project actions scoped to the currently browsed environment. */
 function OpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;

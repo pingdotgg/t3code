@@ -181,6 +181,17 @@ describe("add project shared logic", () => {
     ).toBe("\\\\host\\share\\");
   });
 
+  it("remembers Windows home-relative clone parents only on Windows environments", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "win32" })).toBe(
+      "~\\Code\\",
+    );
+    expect(resolveCloneParentDirectory({ rawPath: "~\\repo\\", platform: "win32" })).toBe("~\\");
+    expect(
+      resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "darwin" }),
+    ).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "linux" })).toBeNull();
+  });
+
   it("resolves a relative clone parent against its environment's active project", () => {
     expect(
       resolveCloneParentDirectory({

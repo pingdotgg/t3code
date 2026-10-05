@@ -365,6 +365,7 @@ export function isDefaultCloneParentDirectory(input: {
   readonly homeDirectory: string | null | undefined;
 }): boolean {
   if (input.parentDirectory === null) return false;
+  /** Expand aliases using the server's home before comparing separators, case, and trailing slashes. */
   const normalize = (value: string): string => {
     const path = value.trim();
     const expanded =
