@@ -1082,7 +1082,7 @@ it.effect(
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(token);
         const resolved = yield* registry.resolve(token!);
-        assert.equal(resolved?.threadId, threadId);
+        assert.equal(resolved?.thread.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
           new Set(["preview", "orchestration", "worktree", "pull-requests"]),
@@ -1317,7 +1317,7 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
         McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
         replacement?.providerSessionId,
       );
-      assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+      assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
     });
 
     yield* effect.pipe(
@@ -1393,7 +1393,7 @@ it.effect(
           McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
           replacement?.providerSessionId,
         );
-        assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+        assert.equal((yield* registry.resolve(replacementToken!))?.thread.threadId, threadId);
       });
 
       yield* effect.pipe(
@@ -1449,7 +1449,7 @@ it.effect(
         // process's MCP client keeps using the credential it was started with.
         yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!))?.thread.threadId,
           threadId,
           "detach must not revoke the credential the live provider process still holds",
         );
@@ -1468,7 +1468,7 @@ it.effect(
           original?.providerSessionId,
           "re-attach must reuse the existing credential, not rotate it",
         );
-        assert.equal((yield* registry.resolve(originalToken!))?.threadId, threadId);
+        assert.equal((yield* registry.resolve(originalToken!))?.thread.threadId, threadId);
 
         // Releasing the session (provider process gone) still revokes.
         yield* manager.close(providerSessionId);
@@ -1592,7 +1592,7 @@ it.effect(
           "the credential the adapter was configured with must remain current",
         );
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!))?.thread.threadId,
           threadId,
           "the predecessor release must not revoke a credential reserved by an in-flight open",
         );

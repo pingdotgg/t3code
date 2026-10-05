@@ -4,7 +4,7 @@ import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
+import { readCaller, readFullAccessCaller, unavailable } from "../../threadAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
 export function preferences(settings: ServerSettings) {
@@ -30,7 +30,11 @@ export function preferences(settings: ServerSettings) {
 }
 const access = (writable = false) =>
   Effect.gen(function* () {
-    const context = yield* writable ? readMutationCaller() : readCaller();
+    const context = yield* writable
+      ? readFullAccessCaller(
+          "Preference updates require a live full-access/default thread or a full-access client.",
+        )
+      : readCaller();
     const environment = yield* Environment.ServerEnvironment;
     const descriptor = yield* environment.getDescriptor;
     if (descriptor.environmentId !== context.scope.environmentId)
@@ -57,23 +61,15 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      return yield* executor.withLock(
-        scope.threadId,
-        Effect.gen(function* () {
-          const { caller, settings } = yield* access(true);
-          if (
-            caller.archivedAt !== null ||
-            caller.runtimeMode !== "full-access" ||
-            caller.interactionMode !== "default"
-          )
-            return yield* new OrchestratorMcpFailure({
-              code: "capability_denied",
-              message: "Preference updates require a live full-access/default thread.",
-            });
-          return preferences(
-            yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
-          );
-        }),
-      );
+      const update = Effect.gen(function* () {
+        const { settings } = yield* access(true);
+        return preferences(
+          yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
+        );
+      });
+      // A thread caller serializes with its own turn; a client has no thread to lock.
+      return yield* scope.thread === undefined
+        ? update
+        : executor.withLock(scope.thread.threadId, update);
     }),
 });

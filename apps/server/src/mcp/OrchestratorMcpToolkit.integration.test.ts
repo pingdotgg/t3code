@@ -71,6 +71,7 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -631,6 +632,16 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(registryLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
+            Layer.provide(
+              Layer.mock(ProjectService.ProjectService)({
+                getById: (id) =>
+                  Effect.succeed(
+                    id === projectId
+                      ? Option.some({ id, defaultModelSelection: null } as never)
+                      : Option.none(),
+                  ),
+              }),
+            ),
             Layer.provide(NodeServices.layer),
           );
 
@@ -676,9 +687,13 @@ describe("orchestrator MCP toolkit", () => {
 
             const invocation: McpInvocationContext.McpInvocationScope = {
               environmentId: EnvironmentId.make("environment:mcp-orchestrator"),
-              threadId: parentThreadId,
-              providerSessionId: "mcp-provider-session-parent",
-              providerInstanceId: codexInstanceId,
+              requestNamespace: "mcp-provider-session-parent",
+              thread: {
+                threadId: parentThreadId,
+                providerSessionId: "mcp-provider-session-parent",
+                providerInstanceId: codexInstanceId,
+              },
+              client: undefined,
               capabilities: new Set(["orchestration"]),
               issuedAt: 1,
             };
@@ -2326,31 +2341,38 @@ describe("orchestrator MCP toolkit", () => {
               branch: null,
               worktreePath: cwd,
             });
+            // Targets reach the whole environment; the caller's modes still cap writes.
             const foreignOrganizeCall = yield* invoke("t3_thread_organize", {
               threadId: foreignThreadId,
               action: "pin",
             });
-            expect(foreignOrganizeCall.structuredContent).toMatchObject({
-              code: "thread_not_found",
-            });
-            expect((yield* orchestrator.getThreadShell(foreignThreadId))?.pinnedAt).toBeNull();
+            expect(foreignOrganizeCall.isError).toBe(false);
+            expect((yield* orchestrator.getThreadShell(foreignThreadId))?.pinnedAt).not.toBeNull();
 
             const foreignReadCall = yield* invoke("t3_thread_read", {
               threadId: foreignThreadId,
             });
             expect(foreignReadCall.structuredContent).toMatchObject({
-              _tag: "OrchestratorMcpFailure",
-              code: "thread_not_found",
+              thread: { threadId: foreignThreadId, projectId: "project:mcp-foreign" },
             });
             const foreignUpdateCall = yield* invoke("t3_thread_update", {
               threadId: foreignThreadId,
               action: "rename",
-              title: "Should stay foreign",
+              title: "Renamed from another project",
             });
             expect(foreignUpdateCall.structuredContent).toMatchObject({
-              _tag: "OrchestratorMcpFailure",
-              code: "thread_not_found",
+              threadId: foreignThreadId,
+              title: "Renamed from another project",
             });
+            const foreignListCall = yield* invoke("t3_thread_list", {
+              projectId: "project:mcp-foreign",
+            });
+            const foreignListed = yield* decodeThreadListResult(
+              foreignListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(foreignListed.threads.map((thread) => thread.threadId)).toEqual([
+              foreignThreadId,
+            ]);
             const listCall = yield* invoke("t3_thread_list", {
               includeSubagents: false,
               limit: 100,
@@ -3548,6 +3570,7 @@ describe("orchestrator MCP toolkit", () => {
           ),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(NodeServices.layer),
         );
 
@@ -3602,9 +3625,13 @@ describe("orchestrator MCP toolkit", () => {
 
           const invocation: McpInvocationContext.McpInvocationScope = {
             environmentId: EnvironmentId.make("environment:mcp-replay"),
-            threadId: parentThreadId,
-            providerSessionId: "mcp-provider-session-replay-parent",
-            providerInstanceId: codexInstanceId,
+            requestNamespace: "mcp-provider-session-replay-parent",
+            thread: {
+              threadId: parentThreadId,
+              providerSessionId: "mcp-provider-session-replay-parent",
+              providerInstanceId: codexInstanceId,
+            },
+            client: undefined,
             capabilities: new Set(["orchestration"]),
             issuedAt: 1,
           };

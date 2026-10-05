@@ -468,8 +468,8 @@ export const layerWithOptions = (
                   const resolved = yield* mcpSessionRegistry.resolve(rawToken);
                   if (
                     resolved !== undefined &&
-                    resolved.threadId === threadId &&
-                    resolved.providerInstanceId === providerInstanceId &&
+                    resolved.thread.threadId === threadId &&
+                    resolved.thread.providerInstanceId === providerInstanceId &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
