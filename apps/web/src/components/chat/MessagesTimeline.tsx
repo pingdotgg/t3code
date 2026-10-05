@@ -4944,8 +4944,11 @@ function remarkThoughtPreview(fallback: string) {
 function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
+  const streaming = isWorking && entries.some(
+    (entry) => entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress",
+  );
   return (
-    <WorkLogDetails>
+    <WorkLogDetails followLive={streaming}>
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}

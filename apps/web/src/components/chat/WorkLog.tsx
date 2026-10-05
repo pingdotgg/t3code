@@ -1,4 +1,4 @@
-import { createContext, use, type ComponentProps, type ReactNode } from "react";
+import { createContext, use, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 const GroupedRows = createContext(false);
@@ -109,15 +109,38 @@ export function WorkLogRow({
   );
 }
 
+/** Within this many px of the end, the reader counts as following live content. */
+const FOLLOW_EDGE_PX = 4;
+
 export function WorkLogDetails({
   children,
   kind = "text",
+  followLive = false,
 }: {
   children: ReactNode;
   kind?: "text" | "panel" | "media";
+  /** Pin the scroller to the end while live content grows, until the reader scrolls away. */
+  followLive?: boolean;
 }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const pinnedRef = useRef(true);
+
+  // Runs after every render so newly streamed content re-pins before paint.
+  useLayoutEffect(() => {
+    if (!followLive || !pinnedRef.current) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    const end = el.scrollHeight - el.clientHeight;
+    if (el.scrollTop < end) el.scrollTop = el.scrollHeight;
+  });
+
   return (
     <div
+      ref={scrollerRef}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_EDGE_PX;
+      }}
       className={cn(
         "cursor-auto",
         kind === "text"
