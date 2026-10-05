@@ -44,13 +44,16 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
 
 /**
  * Translate known categories without exposing arbitrary provider defect text.
- * A category names its reason only when an adapter wrote it: a protocol error's
- * `detail` or a plain string cause. Nested `Error` messages stay in the logs.
+ * A category names its reason only when the adapter wrote it directly beneath
+ * the category: a protocol error's `detail` or a plain string cause. Anything
+ * deeper, including nested `Error` messages, stays in the logs.
  */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
   let reason: string | undefined;
+  // True only for the node directly beneath the most recent category.
+  let adapterAuthored = false;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -59,11 +62,12 @@ function causeMessage(cause: unknown): string | undefined {
         continue;
       }
       if (typeof cause === "string") {
-        if (category !== undefined) reason ??= cause;
+        if (adapterAuthored) reason = cause;
         break;
       }
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
+      const nextCategory = typeof tag === "string" ? PROVIDER_FAILURE_CATEGORIES[tag] : undefined;
       switch (tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
@@ -72,11 +76,14 @@ function causeMessage(cause: unknown): string | undefined {
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
         case "ProviderAdapterProtocolError":
-          if (category !== undefined) reason ??= stringField(cause, "detail");
+          if (adapterAuthored) reason = stringField(cause, "detail");
           break;
-        default:
-          if (typeof tag === "string") category = PROVIDER_FAILURE_CATEGORIES[tag] ?? category;
       }
+      if (nextCategory !== undefined) {
+        category = nextCategory;
+        reason = undefined;
+      }
+      adapterAuthored = nextCategory !== undefined;
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;

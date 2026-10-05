@@ -130,10 +130,16 @@ it("names the adapter's reason when a turn cannot start", () => {
     }).message,
     "The provider could not start this turn: This provider does not support context compaction. Retry the turn; if it keeps failing, check the provider setup and server logs.",
   );
-  assert.equal(
-    makeProviderFailure({ cause: turnStart(new Error("socket hang up at 10.0.0.5")) }).message,
-    "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
-  );
+  for (const hidden of [
+    new Error("socket hang up at 10.0.0.5"),
+    // Pi copies the provider's raw RPC error onto its own error's cause.
+    { _tag: "PiRpcError", detail: "set_model failed", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+  ]) {
+    assert.equal(
+      makeProviderFailure({ cause: turnStart(hidden) }).message,
+      "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+    );
+  }
 });
 
 it("does not expose defect text nested inside a known error category", () => {
