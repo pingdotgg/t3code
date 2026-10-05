@@ -6,6 +6,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateIdleTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
@@ -345,5 +346,49 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+});
+
+describe("getDesktopUpdateIdleTooltip", () => {
+  const now = Date.UTC(2026, 6, 12, 15);
+
+  it("shows the nightly release age from the version date", () => {
+    expect(getDesktopUpdateIdleTooltip(baseState, "1.2.4-nightly.20260709.766", now)).toEqual({
+      title: "Check for updates",
+      details: ["Version 1.2.4-nightly.20260709.766, released 3 days ago"],
+    });
+  });
+
+  it("counts release age in whole UTC days", () => {
+    const version = "1.2.4-nightly.20260709.766";
+    const details = (nowMs: number) =>
+      getDesktopUpdateIdleTooltip(baseState, version, nowMs).details[0];
+    expect(details(Date.UTC(2026, 6, 9, 23, 59))).toBe(`Version ${version}, released today`);
+    expect(details(Date.UTC(2026, 6, 10, 0, 1))).toBe(`Version ${version}, released 1 day ago`);
+  });
+
+  it("omits the release age for versions without a date", () => {
+    expect(getDesktopUpdateIdleTooltip(baseState, "1.2.4", now).details).toEqual(["Version 1.2.4"]);
+  });
+
+  it("explains why checking is unavailable", () => {
+    expect(
+      getDesktopUpdateIdleTooltip(
+        {
+          ...baseState,
+          enabled: false,
+          status: "disabled",
+          message: "Automatic updates are only available in packaged production builds.",
+        },
+        "1.2.4",
+        now,
+      ),
+    ).toEqual({
+      title: "Updates unavailable",
+      details: [
+        "Version 1.2.4",
+        "Automatic updates are only available in packaged production builds.",
+      ],
+    });
   });
 });

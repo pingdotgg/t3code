@@ -100,9 +100,14 @@ describe("DesktopUpdates", () => {
 
       const deb = yield* linuxState("deb\n");
       assert.equal(deb.status, "idle");
+      assert.equal(deb.message, null);
 
       const unmarked = yield* linuxState(undefined);
       assert.equal(unmarked.status, "disabled");
+      assert.equal(
+        unmarked.message,
+        "Automatic updates on Linux require the AppImage or the .deb package.",
+      );
     }),
   );
 

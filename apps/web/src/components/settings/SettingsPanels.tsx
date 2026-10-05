@@ -420,7 +420,9 @@ function AboutVersionSection() {
   const description =
     action === "download" || action === "install"
       ? "Update available."
-      : "Current version of the application.";
+      : updateState?.status === "disabled" && updateState.message
+        ? updateState.message
+        : "Current version of the application.";
 
   return (
     <>

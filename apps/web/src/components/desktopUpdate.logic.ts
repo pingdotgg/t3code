@@ -121,3 +121,42 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );
 }
+
+/**
+ * Nightly versions carry their build date (`1.2.4-nightly.20260709.766`), the only
+ * release timestamp the renderer has. Stable versions have none.
+ */
+export function getDesktopUpdateReleaseDate(version: string): Date | null {
+  const match = /-nightly\.(\d{4})(\d{2})(\d{2})(?:\.|$)/.exec(version);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatReleaseAge(releaseDate: Date, nowMs: number): string {
+  const days = Math.floor((nowMs - releaseDate.getTime()) / 86_400_000);
+  if (days < 1) return "today";
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/**
+ * Hover content for the update button when there is nothing to download or install:
+ * what is running, how old it is, and why a check is unavailable if it is.
+ */
+export function getDesktopUpdateIdleTooltip(
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message">,
+  appVersion: string,
+  nowMs: number = Date.now(),
+): { readonly title: string; readonly details: ReadonlyArray<string> } {
+  const releaseDate = getDesktopUpdateReleaseDate(appVersion);
+  const version = releaseDate
+    ? `Version ${appVersion}, released ${formatReleaseAge(releaseDate, nowMs)}`
+    : `Version ${appVersion}`;
+  if (!state.enabled || state.status === "disabled") {
+    return {
+      title: "Updates unavailable",
+      details: [version, state.message ?? "Automatic updates are not available in this build."],
+    };
+  }
+  return { title: "Check for updates", details: [version] };
+}
