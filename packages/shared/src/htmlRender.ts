@@ -250,18 +250,28 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   "Give charts fixed pixel heights rather than heights that scale with width.",
 ].join(" ");
 
-const HTML_RENDER_THEME_MESSAGE_TYPE = "t3-html-render-theme";
-const HTML_RENDER_LINK_MESSAGE_TYPE = "t3-html-render-link";
+// The bridge between a render and its client speaks the MCP Apps protocol
+// (JSON-RPC over postMessage), so the same host code can later drive upstream
+// MCP apps: https://github.com/modelcontextprotocol/ext-apps
+const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";
+const OPEN_LINK_METHOD = "ui/open-link";
 
-/** The http(s) URL a framed render asks its client to open, if `data` is that message. */
-export function readHtmlRenderLinkMessage(data: unknown): string | undefined {
+/** A render's `ui/open-link` request, if `data` is one with an http(s) URL. */
+export function readHtmlRenderLinkRequest(
+  data: unknown,
+): { readonly id: string | number; readonly url: string } | undefined {
   if (typeof data !== "object" || data === null) return undefined;
-  const { type, url } = data as Record<string, unknown>;
-  return type === HTML_RENDER_LINK_MESSAGE_TYPE &&
-    typeof url === "string" &&
-    /^https?:\/\//i.test(url)
-    ? url
-    : undefined;
+  const { jsonrpc, id, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== OPEN_LINK_METHOD) return undefined;
+  if (typeof id !== "string" && typeof id !== "number") return undefined;
+  const url =
+    typeof params === "object" && params !== null ? (params as { url?: unknown }).url : undefined;
+  return typeof url === "string" && /^https?:\/\//i.test(url) ? { id, url } : undefined;
+}
+
+/** The empty result a client sends back for a render's request. */
+export function htmlRenderResult(id: string | number) {
+  return { jsonrpc: "2.0", id, result: {} } as const;
 }
 
 const THEME_FRAGMENT_KEY = "t3-theme";
@@ -271,9 +281,13 @@ export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
   return `#${THEME_FRAGMENT_KEY}=${encodeURIComponent(JSON.stringify(theme))}`;
 }
 
-/** The message a client posts into a mounted render when the theme changes. */
+/** The `host-context-changed` notification a client posts into a mounted render when the theme changes. */
 export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
-  return { type: HTML_RENDER_THEME_MESSAGE_TYPE, theme };
+  return {
+    jsonrpc: "2.0",
+    method: HOST_CONTEXT_CHANGED_METHOD,
+    params: { theme: theme.appearance, styles: { variables: theme.variables } },
+  } as const;
 }
 
 // The frame scrolls a page taller than itself, but a scrollbar inside the
@@ -296,7 +310,7 @@ function rootRule(theme: HtmlRenderTheme): string {
 // the reader clicks to another page never replaces the page inside the thread:
 // a framed page asks its client to open it, and a top-level page (mobile)
 // opens it as a new window, which the client sends to the browser.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});document.addEventListener("click",function(e){var l=e.isTrusted&&e.target&&e.target.closest?e.target.closest("a[href]"):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({type:${JSON.stringify(HTML_RENDER_LINK_MESSAGE_TYPE)},url:u.href},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted&&e.target&&e.target.closest?e.target.closest("a[href]"):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
