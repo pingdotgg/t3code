@@ -2,9 +2,12 @@ import {
   WS_METHODS,
   type EnvironmentId,
   type PullRequestActor,
+  type PullRequestActionInput,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestRef,
+  type PullRequestMergeMethod,
+  PullRequestOperationError,
   type PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -16,6 +19,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
+  createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -316,11 +320,58 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
       },
     }),
-    runAction: createEnvironmentRpcCommand(runtime, {
+    runAction: createEnvironmentCommand(runtime, {
       label: "environment-data:pull-requests:run-action",
-      tag: WS_METHODS.pullRequestsRunAction,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsRunAction, input),
-      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
+      // Preparation belongs to the write's lane. Refreshable queries would restart it after
+      // every preceding action, and preparing outside the lane could reorder the clicks.
+      execute: (
+        input: PullRequestActionInput & {
+          readonly resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
+        },
+        registry,
+        environmentId,
+      ) =>
+        Effect.gen(function* () {
+          const { resolveMergeMethod, ...actionInput } = input;
+          let preparedInput = actionInput;
+          if (actionInput.action === "merge" && resolveMergeMethod !== undefined) {
+            const { projectId, host, repository, number } = actionInput;
+            const reference = { projectId, host, repository, number, allowStale: false };
+            const detail = yield* routedRequest(WS_METHODS.pullRequestsDetail, reference);
+            if (
+              detail.state !== "open" ||
+              detail.isDraft ||
+              !detail.capabilities.actions.includes("merge") ||
+              !detail.viewerPermissions.actions.includes("merge")
+            ) {
+              return yield* new PullRequestOperationError({
+                operation: "runAction",
+                detail: "This pull request cannot be merged.",
+              });
+            }
+            if (detail.capabilities.stackActions) {
+              const stack = yield* routedRequest(WS_METHODS.pullRequestsStack, reference);
+              if (stack !== null) {
+                return yield* new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: "Open this pull request to merge its stack.",
+                });
+              }
+            }
+            const mergeMethod = yield* Effect.try({
+              try: () => resolveMergeMethod(detail),
+              catch: (cause) =>
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail:
+                    cause instanceof Error ? cause.message : "Could not choose a merge method.",
+                }),
+            });
+            preparedInput = { ...actionInput, mergeMethod };
+          }
+          yield* routedRequest(WS_METHODS.pullRequestsRunAction, preparedInput);
+          registry.refresh(preview({ environmentId, input: actionInput }));
+        }),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

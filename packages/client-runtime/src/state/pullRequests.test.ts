@@ -891,6 +891,159 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
+it.effect("queues merge preparation with actions without restarting it on refresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      const calls: string[] = [];
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsDetail]: (input: { number: number; allowStale?: boolean }) =>
+          Effect.gen(function* () {
+            expect(input.allowStale).toBe(false);
+            calls.push(`detail:${input.number}`);
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return {
+              state: "open",
+              isDraft: false,
+              capabilities: { actions: ["merge"], stackActions: true },
+              viewerPermissions: { actions: ["merge"] },
+            };
+          }),
+        [WS_METHODS.pullRequestsStack]: (input: { number: number; allowStale?: boolean }) =>
+          Effect.sync(() => {
+            expect(input.allowStale).toBe(false);
+            calls.push(`stack:${input.number}`);
+            return null;
+          }),
+        [WS_METHODS.pullRequestsRunAction]: (input: {
+          action: string;
+          number: number;
+          mergeMethod?: string;
+        }) =>
+          Effect.sync(() => {
+            if (input.action === "merge") expect(input.mergeMethod).toBe("squash");
+            expect(input).not.toHaveProperty("resolveMergeMethod");
+            calls.push(`${input.action}:${input.number}`);
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const unmount = registry.mount(
+        atoms.refreshes({ environmentId: TARGET.environmentId, input: {} }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web" };
+      const first = atoms.runAction.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...reference, number: 1, action: "merge", resolveMergeMethod: () => "squash" },
+      });
+      yield* Deferred.await(started);
+      const second = atoms.runAction.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...reference, number: 2, action: "close" },
+      });
+      yield* PubSub.publish(refreshEvents, 1);
+      expect(calls).toEqual(["detail:1"]);
+      yield* Deferred.succeed(release, undefined);
+      const results = yield* Effect.promise(() => Promise.all([first, second]));
+      expect(results.every(AsyncResult.isSuccess)).toBe(true);
+      expect(calls).toEqual(["detail:1", "stack:1", "merge:1", "close:2"]);
+    }),
+  ),
+);
+
+it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
+  "rejects an unsafe quick merge with %s and keeps later actions running",
+  (reason) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const client = {
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.succeed({
+              state: reason === "closed" ? "closed" : "open",
+              isDraft: reason === "draft",
+              capabilities: { actions: ["merge"], stackActions: true },
+              viewerPermissions: { actions: reason === "permission" ? [] : ["merge"] },
+            }),
+          [WS_METHODS.pullRequestsStack]: () => Effect.succeed(reason === "stack" ? {} : null),
+          [WS_METHODS.pullRequestsRunAction]: (input: { action: string }) =>
+            Effect.sync(() => calls.push(input.action)),
+        } as unknown as WsRpcProtocolClient;
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = {
+          environmentId: TARGET.environmentId,
+          input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+        };
+        const merge = atoms.runAction.run(registry, {
+          ...target,
+          input: {
+            ...target.input,
+            action: "merge",
+            resolveMergeMethod: () => {
+              if (reason === "method") throw new Error("No merge method is available.");
+              return "squash";
+            },
+          },
+        });
+        const close = atoms.runAction.run(registry, {
+          ...target,
+          input: { ...target.input, action: "close" },
+        });
+        const results = yield* Effect.promise(() => Promise.all([merge, close]));
+        expect(results.map((result) => result._tag)).toEqual(["Failure", "Success"]);
+        expect(calls).toEqual(["close"]);
+      }),
+    ),
+);
+
+it.effect("keeps a close batch ordered and continues after a refused close", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const calls: number[] = [];
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.pullRequestsRunAction]: (input: { number: number; action: string }) =>
+          Effect.gen(function* () {
+            expect(input.action).toBe("close");
+            calls.push(input.number);
+            if (input.number === 6) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            if (input.number === 5)
+              return yield* new PullRequestOperationError({
+                operation: "runAction",
+                detail: "You cannot close this pull request.",
+              });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const batch = [6, 5, 4].map((number) =>
+        atoms.runAction.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number,
+            action: "close",
+          },
+        }),
+      );
+      yield* Deferred.await(started);
+      expect(calls).toEqual([6]);
+      yield* Deferred.succeed(release, undefined);
+      const results = yield* Effect.promise(() => Promise.all(batch));
+      expect(results.map((result) => result._tag)).toEqual(["Success", "Failure", "Success"]);
+      expect(calls).toEqual([6, 5, 4]);
+    }),
+  ),
+);
+
 it.effect("keeps hover previews fresh after edits and turns", () =>
   Effect.scoped(
     Effect.gen(function* () {

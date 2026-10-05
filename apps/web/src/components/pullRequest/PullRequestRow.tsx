@@ -91,6 +91,9 @@ function PullRequestRowImpl({
   onSelect,
   speedMode,
   onActed,
+  closing = false,
+  sweeping = false,
+  onCloseSweepStart,
 }: {
   entry: EnvironmentPullRequestEntry;
   selected: boolean;
@@ -110,12 +113,16 @@ function PullRequestRowImpl({
   onSelect: (entry: PullRequestRowTarget) => void;
   speedMode: boolean;
   onActed: (result: PullRequestSpeedActionResult) => void;
+  closing?: boolean;
+  sweeping?: boolean;
+  onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
     <div
       ref={statsRef}
       data-pull-request-stats-key={statsKey}
+      data-pull-request-key={statsKey}
       className={cn(
         // Keep the action buttons inside the same skipped row, but outside its selection button.
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
@@ -249,7 +256,14 @@ function PullRequestRowImpl({
         />
       </button>
       {entry.state !== "merged" && entry.provider === "github" ? (
-        <PullRequestSpeedActions entry={entry} visible={speedMode} onActed={onActed} />
+        <PullRequestSpeedActions
+          entry={entry}
+          visible={speedMode}
+          onActed={onActed}
+          closing={closing}
+          sweeping={sweeping}
+          {...(onCloseSweepStart ? { onCloseSweepStart } : {})}
+        />
       ) : null}
     </div>
   );

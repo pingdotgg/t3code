@@ -1650,6 +1650,31 @@ describe("pull request list overrides", () => {
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
   });
 
+  it.each([
+    ["open", [1]],
+    ["closed", [2]],
+    ["merged", [3]],
+    ["all", [1, 2, 3]],
+  ] as const)("filters host rows by %s after pending actions settle", (state, expected) => {
+    const rows = [entry(1, "open"), entry(2, "closed"), entry(3, "merged")];
+    expect(applyPullRequestOverrides(rows, new Map(), key, state).map((row) => row.number)).toEqual(
+      expected,
+    );
+  });
+
+  it("keeps a confirmed close hidden when its override is cleared", () => {
+    const at = 1_000_000;
+    const rows = [entry(1, "closed"), entry(2, "open"), entry(3, "merged")];
+    const overrides = new Map([
+      ["#1", { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at }],
+    ]);
+    const settled = settlePullRequestOverrides(overrides, rows, key, at + 5_000);
+    expect(settled.size).toBe(0);
+    expect(applyPullRequestOverrides(rows, settled, key, "open").map((row) => row.number)).toEqual([
+      2,
+    ]);
+  });
+
   it("hands back the held object for a row a refresh did not change", () => {
     const previous = [entry(1, "open"), entry(2, "open")];
     const next = [{ ...entry(1, "open") }, { ...entry(2, "open"), state: "merged" as const }];
