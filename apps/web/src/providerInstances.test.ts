@@ -619,6 +619,45 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("provider icon metadata", () => {
+  it("clears stale registry branding when an instance switches to a local command", () => {
+    const instanceId = ProviderInstanceId.make("custom-acp");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
+    const snapshots = deriveProviderInstanceEntries([
+      { ...provider({ provider: driver, instanceId }), iconUrl },
+    ]);
+    const registryConfig = { agentId: "swe-agent", registryIconUrl: iconUrl };
+    const brandedEntries = applyProviderInstanceSettings(snapshots, {
+      providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
+      providers: {} as never,
+    });
+    expect(brandedEntries[0]?.acpRegistryAgentId).toBe("swe-agent");
+    expect(brandedEntries[0]?.acpRegistryIconUrl).toBe(iconUrl);
+
+    const [localEntry] = applyProviderInstanceSettings(brandedEntries, {
+      providerInstances: {
+        [instanceId]: {
+          driver,
+          enabled: false,
+          config: { ...registryConfig, source: "local", commandPath: "dsh" },
+        },
+      },
+      providers: {} as never,
+    });
+    expect(localEntry?.acpRegistryAgentId).toBeUndefined();
+    expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
+    expect(localEntry?.enabled).toBe(false);
+    expect(localEntry?.snapshot).toBe(snapshots[0]?.snapshot);
+
+    const [restoredEntry] = applyProviderInstanceSettings(localEntry ? [localEntry] : [], {
+      providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
+      providers: {} as never,
+    });
+    expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
+    expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(restoredEntry?.enabled).toBe(true);
+  });
+
   it("retains server-published registry icons without local settings", () => {
     const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
     const [entry] = deriveProviderInstanceEntries([

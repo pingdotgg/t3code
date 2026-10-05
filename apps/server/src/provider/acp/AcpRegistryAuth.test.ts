@@ -57,7 +57,12 @@ const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
   uninstallManagedBinary: () => Effect.die("unused"),
 };
 
-const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
+const makeHarness = (
+  method: AcpSchema.AuthMethod,
+  failVerification = false,
+  settings = decodeSettings({ agentId: "test-agent" }),
+  providerInstanceId = instanceId,
+) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
     const changed: boolean[] = [];
@@ -74,8 +79,8 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
     const written: string[] = [];
     const sizes: number[][] = [];
     const controller = yield* makeAcpRegistryAuth({
-      instanceId,
-      settings: decodeSettings({ agentId: "test-agent" }),
+      instanceId: providerInstanceId,
+      settings,
       cwd: "/workspace",
       environment: { PATH: "/tools", OVERRIDE: "base" },
       onChanged: (value) =>
@@ -210,6 +215,26 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
       },
     };
   }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+it.effect("keeps local credentials separate from a matching registry agent ID", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeHarness(browserMethod);
+    const local = yield* makeHarness(
+      browserMethod,
+      false,
+      decodeSettings({ source: "local", commandPath: "/different/agent" }),
+      ProviderInstanceId.make("test-agent"),
+    );
+    assert.deepEqual(registry.controller.credentialBinding, {
+      owner: "provider",
+      key: "acp:test-agent",
+    });
+    assert.deepEqual(local.controller.credentialBinding, {
+      owner: "provider",
+      key: "acp:local:test-agent",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect(
   "discovers methods without signing in, then waits for browser consent and session verification",

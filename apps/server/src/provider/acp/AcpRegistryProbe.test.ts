@@ -222,6 +222,75 @@ describe("ACP Registry probe", () => {
     expect(result.currentModelId).toBeNull();
   });
 
+  it("preserves grouped model values and advertises reasoning choices", () => {
+    const codexModel = '["codex","gpt-6.1-sol"]';
+    const goModel = '["opencode-go","deepseek-v4.1-flash"]';
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: goModel,
+            options: [
+              {
+                groupId: "codex",
+                name: "Codex",
+                options: [{ value: codexModel, name: "GPT-6.1 Sol" }],
+              },
+              {
+                groupId: "opencode-go",
+                name: "OpenCode Go",
+                options: [{ value: goModel, name: "DeepSeek V4.1 Flash" }],
+              },
+            ],
+          },
+          {
+            id: "reasoning",
+            name: "Reasoning",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [
+              {
+                groupId: "effort",
+                name: "Effort",
+                options: [
+                  { value: "medium", name: "Medium" },
+                  { value: "high", name: "High" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      modelConfigId: "model",
+    } satisfies AcpSessionRuntimeStartResult);
+
+    expect(result.models).toEqual([
+      { id: codexModel, name: "GPT-6.1 Sol", description: null },
+      { id: goModel, name: "DeepSeek V4.1 Flash", description: null },
+    ]);
+    expect(result.currentModelId).toBe(goModel);
+    expect(result.configOptions).toEqual([
+      {
+        id: "reasoning",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ]);
+  });
+
   it("omits a current model that falls outside the bounded model catalog", () => {
     const result = acpRegistryProbeResult(instanceId, {
       sessionId: "probe-session",

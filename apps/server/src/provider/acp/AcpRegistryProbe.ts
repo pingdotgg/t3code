@@ -440,7 +440,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       probe: acpRegistryProbeResult(
         input.instanceId,
         result.started,
-        result.resolved.agent.icon ?? null,
+        result.resolved.agent?.icon ?? null,
         {
           command: result.resolved.spawn.command,
           args: result.resolved.spawn.args,

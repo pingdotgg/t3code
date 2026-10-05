@@ -922,6 +922,7 @@ export function EnvironmentProviderSettings({
     }
 
     if (row.driver !== ProviderDriverKind.make("acpRegistry")) return;
+    if (providerConfigString(row.instance.config, "source") === "local") return;
     const agentId = providerConfigString(row.instance.config, "agentId");
     if (agentId === null) return;
 

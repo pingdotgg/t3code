@@ -34,6 +34,9 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
     // Cosmetic settings and model discovery can rebuild the driver without
     // changing the account. Credential overrides and profile paths cannot.
     const binding = hash({
+      ...(input.settings.source === "local"
+        ? { source: "local", commandArgs: input.settings.commandArgs }
+        : {}),
       agentId: input.settings.agentId,
       commandPath: input.settings.commandPath,
       distribution: input.settings.distribution,
