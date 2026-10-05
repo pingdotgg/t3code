@@ -16,7 +16,7 @@ const item = {
 describe("secretRequestDisplay", () => {
   it("shows the form only while pending and maps every answer to its outcome copy", () => {
     const display = (secretStatus: SecretRequestItem["secretStatus"]) =>
-      secretRequestDisplay({ secretStatus } as SecretRequestItem);
+      secretRequestDisplay({ secretStatus }, "local");
     expect(display("pending")).toEqual({ kind: "pending" });
     expect(display("saved")).toEqual({
       kind: "answered",
@@ -32,6 +32,16 @@ describe("secretRequestDisplay", () => {
       kind: "answered",
       outcome: "ended",
       label: "Request ended",
+    });
+  });
+
+  it("never offers the form for a request inherited from another thread", () => {
+    expect(secretRequestDisplay({ secretStatus: "pending" }, "inherited")).toEqual({
+      kind: "pending-elsewhere",
+      label: "Waiting for an answer in the original thread",
+    });
+    expect(secretRequestDisplay({ secretStatus: "saved" }, "inherited")).toMatchObject({
+      outcome: "saved",
     });
   });
 });

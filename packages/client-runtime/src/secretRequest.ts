@@ -11,6 +11,7 @@ export type SecretRequestItem = Extract<
 /** What a secret request card shows: the form while pending, otherwise a one-line outcome. */
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
+  | { readonly kind: "pending-elsewhere"; readonly label: string }
   | {
       readonly kind: "answered";
       readonly outcome: "saved" | "declined" | "ended";
@@ -33,11 +34,22 @@ const ENDED_DISPLAY: SecretRequestDisplay = {
   label: "Request ended",
 };
 const PENDING_DISPLAY: SecretRequestDisplay = { kind: "pending" };
+const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
+  kind: "pending-elsewhere",
+  label: "Waiting for an answer in the original thread",
+};
 
-export function secretRequestDisplay(item: SecretRequestItem): SecretRequestDisplay {
+/**
+ * `visibility` is the projected row's: a request inherited from another
+ * thread (a fork) can only be answered where it was asked.
+ */
+export function secretRequestDisplay(
+  item: Pick<SecretRequestItem, "secretStatus">,
+  visibility: "local" | "inherited" | "synthetic",
+): SecretRequestDisplay {
   switch (item.secretStatus) {
     case "pending":
-      return PENDING_DISPLAY;
+      return visibility === "local" ? PENDING_DISPLAY : PENDING_ELSEWHERE_DISPLAY;
     case "saved":
       return SAVED_DISPLAY;
     case "declined":
