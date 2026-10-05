@@ -85,7 +85,11 @@ interface LastRead {
   readonly fingerprint: string;
   /** Nothing is in flight or unread, so only a moved snapshot or the reread brings news. */
   readonly quiet: boolean;
+  /** The watches this read evaluated; a watch started since takes its first look next pass. */
+  readonly watches: ReadonlySet<string>;
 }
+
+const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
 
 const snapshotFingerprint = ({ link }: WatchTarget) => {
   const snapshot = link.snapshot;
@@ -107,8 +111,7 @@ function needsRead(group: WatchGroup, last: LastRead | undefined, now: number): 
     !last.quiet ||
     last.fingerprint !== group.fingerprint ||
     now - last.at >= QUIET_REREAD_MS ||
-    // A new watch takes its first look right away.
-    group.targets.some((target) => Date.parse(target.watch.startedAt) > last.at)
+    group.targets.some((target) => !last.watches.has(watchKey(target)))
   );
 }
 
@@ -342,6 +345,7 @@ export const make = Effect.gen(function* () {
         remarks !== null &&
         detail.mergeability !== "unknown" &&
         detail.checks.every((check) => check.status !== "pending"),
+      watches: new Set(group.targets.map(watchKey)),
     });
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks);

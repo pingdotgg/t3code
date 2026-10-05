@@ -2537,32 +2537,34 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         const threadIds = ["one", "two"].map((name) =>
           ThreadId.make(`runtime-pull-request-watch-shared-${name}`),
         );
-        for (const threadId of threadIds) {
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`create:${threadId}`),
-            threadId,
-            projectId,
-            title: "Watch shared",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
+        const watchFrom = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`create:${threadId}`),
+              threadId,
+              projectId,
+              title: "Watch shared",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.pull-request.watch",
+              commandId: CommandId.make(`watch:${threadId}`),
+              threadId,
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 9,
+              watching: true,
+              link: { url: "https://github.com/pingdotgg/t3code/pull/9", source: "agent" },
+            });
           });
-          yield* orchestrator.dispatch({
-            type: "thread.pull-request.watch",
-            commandId: CommandId.make(`watch:${threadId}`),
-            threadId,
-            host: "github.com",
-            repository: "pingdotgg/t3code",
-            number: 9,
-            watching: true,
-            link: { url: "https://github.com/pingdotgg/t3code/pull/9", source: "agent" },
-          });
-        }
+        for (const threadId of threadIds) yield* watchFrom(threadId);
         const rateLimited = new PullRequestOperationError({
           operation: "getChangeRequest",
           detail: "github requests are paused until the rate limit resets",
@@ -2641,11 +2643,22 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* reactor.sweep;
         assert.equal(reads, 21);
 
+        // A new watch on the quiet pull request takes its first look on the next pass.
+        const late = ThreadId.make("runtime-pull-request-watch-shared-late");
+        yield* watchFrom(late);
+        yield* reactor.sweep;
+        assert.equal(reads, 22);
+        assert.deepEqual(yield* summaries(late), ["#9: checks passed"]);
+        for (const threadId of threadIds) {
+          assert.deepEqual(yield* summaries(threadId), ["#9: checks passed"]);
+        }
+        threadIds.push(late);
+
         // The quiet reread finds the pull request closed, ends both watches, and says so.
         host = "closed";
         yield* TestClock.adjust("10 minutes");
         yield* reactor.sweep;
-        assert.equal(reads, 22);
+        assert.equal(reads, 23);
         for (const threadId of threadIds) {
           assert.isFalse(yield* watching(threadId));
           assert.deepEqual(yield* summaries(threadId), [
