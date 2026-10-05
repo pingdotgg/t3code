@@ -6715,7 +6715,7 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
-    requestedEnvMode: envMode,
+    requestedEnvMode: isCloudComposer ? "local" : envMode,
     isGitRepo,
   });
   const localCheckoutBranchMismatch = useMemo(
@@ -7899,7 +7899,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject) return;
+      if (isCloudThread || !scriptId || !activeProject) return;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();
