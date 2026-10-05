@@ -1126,7 +1126,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     />
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                        accessibilityLabel={
+                          currentModelOption?.providerBadge
+                            ? `Model and reasoning settings, ${currentModelOption.providerBadge.displayName} account`
+                            : "Model and reasoning settings"
+                        }
                         emphasized
                         renderIcon={(size) => (
                           <ProviderAccountIcon

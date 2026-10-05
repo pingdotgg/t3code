@@ -41,7 +41,7 @@ export function ProviderSubagentBar(props: {
       {/* Only the text is one element, so "Open parent" stays reachable. */}
       <View
         accessible
-        accessibilityLabel={`${modelDescription} subagent, ${statusLabel}. It runs on its own and cannot take messages.`}
+        accessibilityLabel={`${modelDescription} subagent${props.provider?.badge ? ` on the ${props.provider.badge.displayName} account` : ""}, ${statusLabel}. It runs on its own and cannot take messages.`}
         className="min-w-0 flex-1 gap-0.5"
       >
         <View className="min-w-0 flex-row items-center gap-1.5">

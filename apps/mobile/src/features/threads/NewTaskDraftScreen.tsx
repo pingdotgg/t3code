@@ -1764,7 +1764,11 @@ export function NewTaskDraftScreen(props: {
                   <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                        accessibilityLabel={
+                          flow.selectedModelOption?.providerBadge
+                            ? `Model and reasoning settings, ${flow.selectedModelOption.providerBadge.displayName} account`
+                            : "Model and reasoning settings"
+                        }
                         disabled={isComposerInteractionLocked}
                         emphasized
                         renderIcon={(size) => (
