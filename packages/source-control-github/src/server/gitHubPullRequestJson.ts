@@ -273,10 +273,16 @@ const RawStatsSchema = Schema.Struct({
   ),
 });
 
+/**
+ * Keyed by alias. `pullRequest` is optional because the GraphQL budget adds a `rateLimit`
+ * reading beside the aliases, and that key carries no pull request.
+ */
 const RawStackMembershipsSchema = Schema.Struct({
   data: Schema.Record(
     Schema.String,
-    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
+    Schema.NullOr(
+      Schema.Struct({ pullRequest: Schema.optional(Schema.NullOr(RawStackMembershipSchema)) }),
+    ),
   ),
 });
 

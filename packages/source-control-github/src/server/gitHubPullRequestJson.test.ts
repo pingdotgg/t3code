@@ -1920,6 +1920,25 @@ describe("pull request stack membership batches", () => {
     expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
   });
 
+  it("reads memberships beside the rate-limit reading the budget adds to every document", () => {
+    const memberships = expectSuccess(
+      decodePullRequestStackMembershipsJson(
+        JSON.stringify({
+          data: {
+            s0: {
+              pullRequest: {
+                stack: { number: 7, size: 2, baseRefName: "main" },
+                stackEntry: { position: 1 },
+              },
+            },
+            rateLimit: { cost: 1, limit: 5_000, remaining: 4_990, resetAt: "2099-01-01T00:00:00Z" },
+          },
+        }),
+      ),
+    );
+    expect([...memberships]).toEqual([[0, { number: 7, size: 2, base: "main", position: 1 }]]);
+  });
+
   it("refuses malformed responses and unsafe query selectors", () => {
     expect(Result.isFailure(decodePullRequestStackMembershipsJson('{"errors":[]}'))).toBe(true);
     expect(buildPullRequestStackMembershipsGraphQlQuery('acme/web") { x } #', [1])).toBeNull();

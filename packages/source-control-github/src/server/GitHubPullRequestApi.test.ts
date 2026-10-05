@@ -1426,6 +1426,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   },
                 },
                 s1: { pullRequest: { stack: null, stackEntry: null } },
+                // The GraphQL budget appends this reading to every document it sends.
+                rateLimit: {
+                  cost: 1,
+                  limit: 5_000,
+                  remaining: 4_990,
+                  resetAt: "2099-01-01T00:00:00Z",
+                },
               },
             }),
           ),
