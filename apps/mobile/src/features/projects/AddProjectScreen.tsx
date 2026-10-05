@@ -1281,13 +1281,14 @@ export function AddProjectDestinationScreen(props: {
   const [error, setError] = useState<string | null>(null);
 
   const [isSavingCloneFolder, setIsSavingCloneFolder] = useState(false);
-  const cloneParentDirectory = environment
-    ? resolveCloneParentDirectory({
-        rawPath: pathInput,
-        platform: environment.platform,
-        currentProjectCwd,
-      })
-    : null;
+  const cloneParentDirectory =
+    environment && environment.platform.length > 0
+      ? resolveCloneParentDirectory({
+          rawPath: pathInput,
+          platform: environment.platform,
+          currentProjectCwd,
+        })
+      : null;
   const cloneHomeDirectoryQuery = useEnvironmentQuery(
     environment
       ? filesystemEnvironment.browse({

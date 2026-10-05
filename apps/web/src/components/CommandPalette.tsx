@@ -2796,8 +2796,12 @@ function OpenCommandPaletteDialog(props: {
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
 
+  const cloneParentPlatformOs = browseEnvironment?.serverConfig?.environment.platform.os;
+  // A browser-platform fallback is useful for browsing, but cannot define a server preference.
   const cloneParentDirectory =
-    addProjectCloneFlow?.step === "confirm"
+    addProjectCloneFlow?.step === "confirm" &&
+    cloneParentPlatformOs !== undefined &&
+    cloneParentPlatformOs !== "unknown"
       ? resolveCloneParentDirectory({
           rawPath: resolvedAddProjectPath,
           currentProjectCwd: currentProjectCwdForBrowse,
