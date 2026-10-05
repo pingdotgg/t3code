@@ -291,6 +291,24 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output.content[0]?.source.data).toBe(data);
   });
 
+  it("keeps image markers when the rest of a tool output is too large to send", () => {
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "AAAA" },
+    };
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      output: { content: [{ type: "text", text: "x".repeat(300_000) }, image] },
+    };
+    const projected = projectTurnItemForDetail(item);
+    const output = projected.type === "dynamic_tool" ? projected.output : null;
+    expect(Array.isArray(output) ? output.slice(1) : null).toEqual([
+      { type: "image", mimeType: "image/png" },
+    ]);
+    expect(JSON.stringify(output).length).toBeLessThan(270_000);
+  });
+
   it("keeps failure evidence without retaining command output", () => {
     const item = {
       ...base,
