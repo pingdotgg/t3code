@@ -6,7 +6,7 @@
  *
  * @module TerminalManager
  */
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { resolveWorkspacePath, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   TerminalCwdError,
@@ -2693,10 +2693,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
+  const resolveWorkspaceLeaseCwd = (input: TerminalOpenInput | TerminalRestartInput) =>
+    resolveWorkspacePath(input.worktreePath ?? input.cwd).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError((cause) => new TerminalCwdStatError({ cwd: input.cwd, cause })),
+    );
+
   const openLocked = (input: TerminalOpenInput) =>
-    withWorkspaceLease(
-      path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+    resolveWorkspaceLeaseCwd(input).pipe(
+      Effect.flatMap((cwd) => withWorkspaceLease(cwd, openWithWorkspaceLease(input))),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
@@ -3074,9 +3080,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(
         Effect.flatMap((resolved) =>
-          withWorkspaceLease(
-            path.resolve(resolved.worktreePath ?? resolved.cwd),
-            restartResolved(resolved),
+          resolveWorkspaceLeaseCwd(resolved).pipe(
+            Effect.flatMap((cwd) => withWorkspaceLease(cwd, restartResolved(resolved))),
           ),
         ),
       ),

@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import {
   CheckpointRollbackServiceV2,
   layer as rollbackLayer,
@@ -106,6 +107,7 @@ it.effect.each([
         Layer.mergeAll(
           NodeServices.layer,
           idAllocatorLayer,
+          Layer.mock(GitWorkflowService)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
           }),

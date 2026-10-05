@@ -18,8 +18,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { resolveWorkspacePath, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
@@ -88,6 +90,7 @@ export const layer: Layer.Layer<
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
+  | Path.Path
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
@@ -102,6 +105,7 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -213,13 +217,17 @@ export const layer: Layer.Layer<
       };
     };
 
-    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly runId: RunId;
-      readonly willRetry?: boolean;
-    }) {
+    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
+      input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly willRetry?: boolean;
+      },
+      projection: Effect.Success<
+        ReturnType<ProjectionStore.ProjectionStoreV2Shape["getTurnStartContext"]>
+      >,
+    ) {
       const { runId } = input;
-      const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -1206,7 +1214,7 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
-      yield* runExecution.startRootRun({
+      return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
         providerSessionId,
@@ -1261,7 +1269,45 @@ export const layer: Layer.Layer<
 
     return ProviderTurnStartServiceV2.of({
       start: (input) =>
-        start(input).pipe(
+        Effect.gen(function* () {
+          const resolvePath = (worktreePath: string | null) =>
+            worktreePath == null
+              ? Effect.succeed(null)
+              : resolveWorkspacePath(worktreePath).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                );
+          const initial = yield* projectionStore.getThreadRecords(input.threadId, []);
+          let worktreePath = yield* resolvePath(initial.thread.worktreePath);
+          while (true) {
+            const effect = Effect.gen(function* () {
+              const storedProjection = yield* projectionStore.getTurnStartContext(
+                input.threadId,
+                input.runId,
+              );
+              const freshPath = yield* resolvePath(storedProjection.thread.worktreePath);
+              if (freshPath !== worktreePath)
+                return { retry: true as const, worktreePath: freshPath };
+              const projection =
+                freshPath === null
+                  ? storedProjection
+                  : {
+                      ...storedProjection,
+                      thread: { ...storedProjection.thread, worktreePath: freshPath },
+                    };
+              return { retry: false as const, providerTurn: yield* start(input, projection) };
+            });
+            const result = yield* worktreePath === null
+              ? effect
+              : withWorkspaceLease(worktreePath, effect);
+            if (result.retry) {
+              worktreePath = result.worktreePath;
+              continue;
+            }
+            if (result.providerTurn !== undefined) yield* result.providerTurn;
+            return;
+          }
+        }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause

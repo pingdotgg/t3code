@@ -23,8 +23,10 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -43,6 +45,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { resolveWorkspacePath } from "../workspace/workspaceLease.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -180,6 +183,8 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -311,7 +316,11 @@ const make = Effect.gen(function* () {
       }
       let worktreePath =
         input.workspaceStrategy.type === "existing_worktree"
-          ? input.workspaceStrategy.worktreePath
+          ? yield* resolveWorkspacePath(input.workspaceStrategy.worktreePath).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.mapError(mapError(input, "provision-worktree", threadId)),
+            )
           : null;
       if (input.workspaceStrategy.type === "worktree") {
         if (runId !== null) {
@@ -385,7 +394,12 @@ const make = Effect.gen(function* () {
             },
           )
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        worktreePath = worktree.worktree.path;
+        createdWorktreePath = worktree.worktree.path;
+        worktreePath = yield* resolveWorkspacePath(createdWorktreePath).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError(mapError(input, "provision-worktree", threadId)),
+        );
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
         yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
@@ -394,13 +408,17 @@ const make = Effect.gen(function* () {
 
       // A reused worktree is already recorded, and rewriting it could undo
       // the first attempt's branch rename.
-      if (reused === undefined) {
+      if (
+        reused === undefined ||
+        (input.workspaceStrategy.type === "existing_worktree" &&
+          input.workspaceStrategy.worktreePath !== worktreePath)
+      ) {
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make(`${input.commandId}:workspace`),
             threadId,
-            branch,
+            ...(reused === undefined ? { branch } : {}),
             worktreePath,
           })
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
@@ -728,7 +746,7 @@ const make = Effect.gen(function* () {
 
         // A Scratch thread launched at the project root runs in a folder of its
         // own. Only the first attempt claims one; a retry replays its create.
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
+        let workspaceStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
@@ -744,6 +762,16 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
+        if (workspaceStrategy.type === "existing_worktree") {
+          workspaceStrategy = {
+            ...workspaceStrategy,
+            worktreePath: yield* resolveWorkspacePath(workspaceStrategy.worktreePath).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.mapError(mapError(input, "provision-worktree", candidateThreadId)),
+            ),
+          };
+        }
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
