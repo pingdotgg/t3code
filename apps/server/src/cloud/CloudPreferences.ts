@@ -21,6 +21,10 @@ import {
 
 const encode = (value: boolean) => new TextEncoder().encode(String(value));
 
+/** A failed rollback leaves a setting changed; it is logged, not hidden. */
+const rollbackFailed = (cause: unknown) =>
+  Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
+
 const internalError = (message: string) => (cause: unknown) =>
   Effect.logError(message, { cause }).pipe(
     Effect.andThen(Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
@@ -30,9 +34,11 @@ export class CloudPreferences extends Context.Service<
   CloudPreferences,
   {
     /**
-     * Saves this environment's T3 Connect preferences. Holding webhooks while
-     * offline is decided by the relay, so it is told first and put back if the
-     * local save fails.
+     * Saves this environment's T3 Connect preferences, all or nothing. The
+     * activity setting is saved first. Holding webhooks while offline is decided
+     * by the relay, so the relay is told before the local copy is saved. If
+     * either step fails, the activity setting is put back, and so is the relay
+     * when only the local save failed.
      */
     readonly update: (
       input: EnvironmentCloudPreferencesRequest,
@@ -92,7 +98,7 @@ const make = Effect.gen(function* () {
               Effect.tapError(() =>
                 previous === next
                   ? Effect.void
-                  : pushHoldWebhooksWhileOffline(previous).pipe(Effect.ignore),
+                  : pushHoldWebhooksWhileOffline(previous).pipe(Effect.catch(rollbackFailed)),
               ),
             ),
           ),
@@ -100,7 +106,7 @@ const make = Effect.gen(function* () {
             Option.match(previousActivity, {
               onNone: () => secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
               onSome: (bytes) => secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, bytes),
-            }).pipe(Effect.ignore),
+            }).pipe(Effect.catch(rollbackFailed)),
           ),
         );
       }
