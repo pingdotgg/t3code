@@ -182,6 +182,8 @@ async function mountProbe() {
   vi.stubGlobal("window", {
     document,
     HTMLIFrameElement: EventTarget,
+    addEventListener() {},
+    removeEventListener() {},
     setTimeout: globalThis.setTimeout,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
