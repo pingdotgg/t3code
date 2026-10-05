@@ -333,10 +333,10 @@ function useBrowsePathInput(
   );
   const navigateToBrowsePath = useCallback(
     /** Commit a folder change only after its listing has loaded in the destination context. */
-    async (input: {
+    async function navigateToBrowsePath(input: {
       readonly browseDirectoryPath: string;
       readonly selectedDirectoryName?: string;
-    }) => {
+    }) {
       const selectedDirectoryPath = input.selectedDirectoryName
         ? appendBrowsePathSegment(input.browseDirectoryPath, input.selectedDirectoryName)
         : input.browseDirectoryPath;
@@ -352,7 +352,7 @@ function useBrowsePathInput(
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
         /** Warm the listing before committing; skip unavailable connections. */
-        async () => {
+        async function preloadBrowseDirectory() {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
@@ -863,13 +863,14 @@ function FolderBrowser(props: {
   );
   const browseInput = useMemo(
     /** Keep relative listings anchored to the same project as clone validation. */
-    () =>
-      browsePath.directoryPath.length > 0
+    function buildBrowseInput() {
+      return browsePath.directoryPath.length > 0
         ? {
             partialPath: browsePath.directoryPath,
             ...(props.currentProjectCwd ? { cwd: props.currentProjectCwd } : {}),
           }
-        : null,
+        : null;
+    },
     [browsePath.directoryPath, props.currentProjectCwd],
   );
   const browseState = useEnvironmentQuery(
@@ -1332,7 +1333,7 @@ export function AddProjectDestinationScreen(props: {
 
   const submitPath = useCallback(
     /** Validate the destination and wait for the streamed project record before opening its draft. */
-    async () => {
+    async function submitCloneDestination() {
       if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
         return;
       setError(null);
