@@ -206,6 +206,16 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+/** The row labels a ready thread with an unseen completion "Done". */
+export function threadListV2ShowsDone(
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "latestRun" | "lastVisitedAt"
+  >,
+): boolean {
+  return resolveThreadListV2Status(thread) === "ready" && threadHasUnseenCompletion(thread);
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 function parseTimestampMs(isoDate: string): number {
@@ -297,6 +307,11 @@ export interface ThreadListV2Layout {
       a timeout at this boundary so the list re-partitions the moment a
       snooze expires instead of on the next minute tick. */
   readonly nextSnoozeWakeAt: string | null;
+  /** Threads in the view that is not showing: pins in the inbox, active and
+      working threads in the pinned view. Zero while the pinned view is off. */
+  readonly otherViewThreadCount: number;
+  /** Of those, the rows that would show the unread Done label. */
+  readonly otherViewDoneCount: number;
 }
 
 export interface ThreadListV2ThreadListItem {
@@ -650,6 +665,10 @@ export function buildThreadListV2Items(input: {
       outbox. Such a thread has work the user is waiting on, so it stays in
       the active block even when the server has settled it. */
   readonly queuedThreadKeys?: ReadonlySet<string>;
+  /** Pinned view beta: one view at a time, the inbox without pins or only
+      pinned threads. Snoozed and settled shelves render in both. Absent = off:
+      pins sit above the active block. */
+  readonly view?: "active" | "pinned";
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -723,14 +742,20 @@ export function buildThreadListV2Items(input: {
       active.push(thread);
     }
   }
+  // Search and scope already applied, so the other view's counts follow them.
+  const otherViewThreads =
+    input.view === "pinned" ? active.concat(working) : input.view === "active" ? pinned : [];
+  const viewPinned = input.view === "active" ? [] : pinned;
+  const viewActive = input.view === "pinned" ? [] : active;
+  const viewWorking = input.view === "pinned" ? [] : working;
 
   // The beta inbox is time-ordered, so the saved arrangement (and any move in
   // flight) is kept but not applied until the beta is off again.
   const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+    ? sortInboxThreadsByReturn(viewActive, input.inboxReturnAt)
+    : applyPendingThreadOrder(sortThreadsForListV2(viewActive), "active", pending);
   // Newest send first; finishing and waking again do not move a row.
-  const orderedWorking = sortWorkingThreadsBySend(working);
+  const orderedWorking = sortWorkingThreadsBySend(viewWorking);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
@@ -765,7 +790,7 @@ export function buildThreadListV2Items(input: {
 
   const items: ThreadListV2Item[] = [];
   for (const thread of applyPendingThreadOrder(
-    sortPinnedThreadsByOrderKey(pinned),
+    sortPinnedThreadsByOrderKey(viewPinned),
     "pinned",
     pending,
   )) {
@@ -830,5 +855,7 @@ export function buildThreadListV2Items(input: {
     settledCount: orderedSettled.length,
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
+    otherViewThreadCount: otherViewThreads.length,
+    otherViewDoneCount: otherViewThreads.filter(threadListV2ShowsDone).length,
   };
 }

@@ -2302,3 +2302,114 @@ describe("Working section beta", () => {
     ]);
   });
 });
+
+describe("pinned view beta", () => {
+  const running = {
+    status: "running" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: NOW,
+  };
+  // Completed after the last visit: the row shows "Done" unless a status
+  // label (approval, working, ...) outranks it.
+  const unread = (
+    id: string,
+    input: Partial<EnvironmentThreadShell> = {},
+  ): EnvironmentThreadShell =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      lastVisitedAt: "2026-06-01T10:00:00.000Z",
+      latestRun: {
+        runId: RunId.make(`run-${id}`),
+        status: "completed",
+        requestedAt: "2026-06-01T11:00:00.000Z",
+        startedAt: "2026-06-01T11:00:00.000Z",
+        completedAt: "2026-06-01T12:00:00.000Z",
+        assistantMessageId: null,
+      },
+      ...input,
+    });
+  const pinnedAt = "2026-06-01T00:00:00.000Z";
+  const threads = [
+    makeThread({ id: ThreadId.make("pinned"), title: "pinned", pinnedAt }),
+    unread("pinned-done", { pinnedAt }),
+    makeThread({ id: ThreadId.make("active"), title: "active" }),
+    unread("active-done"),
+    unread("active-approval", { hasPendingApprovals: true }),
+    makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
+    makeThread({
+      id: ThreadId.make("snoozed"),
+      title: "snoozed",
+      pinnedAt,
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    }),
+    makeThread({
+      id: ThreadId.make("settled"),
+      title: "settled",
+      settledOverride: "settled",
+      settledAt: NOW,
+    }),
+  ];
+  const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
+    buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+      snoozedShelfExpanded: true,
+      ...input,
+    });
+  const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+    layout.items.map((item) => item.thread.id);
+
+  it("keeps pins above the inbox and counts nothing while off", () => {
+    const layout = build();
+    expect(ids(layout).slice(0, 2).sort()).toEqual(["pinned", "pinned-done"]);
+    expect(layout.items.filter((item) => item.pinned)).toHaveLength(2);
+    expect(layout.workingCount).toBe(1);
+    expect(layout.otherViewThreadCount).toBe(0);
+    expect(layout.otherViewDoneCount).toBe(0);
+  });
+
+  it("hides pins from the inbox and counts them for the toggle", () => {
+    const layout = build({ view: "active" });
+    expect([...ids(layout)].sort()).toEqual([
+      "active",
+      "active-approval",
+      "active-done",
+      "settled",
+      "snoozed",
+      "working",
+    ]);
+    expect(layout.items.some((item) => item.pinned)).toBe(false);
+    expect(layout.otherViewThreadCount).toBe(2);
+    expect(layout.otherViewDoneCount).toBe(1);
+  });
+
+  it("shows only pins, with the snoozed and settled shelves but no Working shelf", () => {
+    const layout = build({ view: "pinned" });
+    expect(ids(layout).slice(0, 2).sort()).toEqual(["pinned", "pinned-done"]);
+    expect(ids(layout).slice(2)).toEqual(["snoozed", "settled"]);
+    expect(layout.items.slice(0, 2).every((item) => item.pinned)).toBe(true);
+    expect(layout.workingCount).toBe(0);
+    expect(layout.workingShelfHeaderIndex).toBeNull();
+    expect(layout.snoozedCount).toBe(1);
+    expect(layout.settledCount).toBe(1);
+    // Active and working threads; the approval row shows Approval, not Done.
+    expect(layout.otherViewThreadCount).toBe(4);
+    expect(layout.otherViewDoneCount).toBe(1);
+  });
+
+  it("counts the other view under the same search as the list", () => {
+    const layout = build({ view: "pinned", searchQuery: "done" });
+    expect(ids(layout)).toEqual(["pinned-done"]);
+    expect(layout.otherViewThreadCount).toBe(1);
+    expect(layout.otherViewDoneCount).toBe(1);
+  });
+});

@@ -33,6 +33,7 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useThreadSearch } from "../../state/queries";
+import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -117,6 +118,8 @@ interface HomeScreenProps {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
+  /** Feeds the header's pinned view toggle, which lives outside this list. */
+  readonly onOtherViewCountsChange: (threadCount: number, doneCount: number) => void;
 }
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
@@ -466,6 +469,8 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const {
     loaded: shelfPreferencesLoaded,
+    pinnedView,
+    pinnedViewEnabled,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -473,7 +478,13 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    togglePinnedView,
   } = useThreadListV2ShelfPreferences();
+  const pinnedViewCommands = useMemo(
+    () => (pinnedViewEnabled ? (["togglePinnedView"] as const) : []),
+    [pinnedViewEnabled],
+  );
+  useHardwareKeyboardCommand(pinnedViewCommands, togglePinnedView);
   // The queued-start and snooze helpers need a clock while the list stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   // Snooze wake times are second-precise; a counter bumped exactly at the
@@ -564,8 +575,11 @@ export function HomeScreen(props: HomeScreenProps) {
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: null,
+      view: pinnedViewEnabled ? (pinnedView ? "pinned" : "active") : undefined,
     });
   }, [
+    pinnedView,
+    pinnedViewEnabled,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -597,25 +611,39 @@ export function HomeScreen(props: HomeScreenProps) {
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
+  const { otherViewThreadCount, otherViewDoneCount } = threadListV2Layout;
+  const onOtherViewCountsChange = props.onOtherViewCountsChange;
+  useEffect(() => {
+    onOtherViewCountsChange(otherViewThreadCount, otherViewDoneCount);
+  }, [onOtherViewCountsChange, otherViewDoneCount, otherViewThreadCount]);
   // Queued tasks are not thread shells, so the v2 partition never sees them;
   // they are spliced in below the active block and stay visible and deletable
   // while their environment is offline. Same environment scope and search
-  // filter as the list itself.
+  // filter as the list itself. They are new inbox work, so the pinned view
+  // leaves them out.
   const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
-      props.pendingTasks.filter(
-        (pendingTask) =>
-          (props.selectedEnvironmentId === null ||
-            pendingTask.environmentId === props.selectedEnvironmentId) &&
-          (v2ScopedProjectKeys === null ||
-            v2ScopedProjectKeys.has(
-              scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-            )) &&
-          (v2SearchQuery.length === 0 ||
-            pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-      ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+      pinnedView
+        ? []
+        : props.pendingTasks.filter(
+            (pendingTask) =>
+              (props.selectedEnvironmentId === null ||
+                pendingTask.environmentId === props.selectedEnvironmentId) &&
+              (v2ScopedProjectKeys === null ||
+                v2ScopedProjectKeys.has(
+                  scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+                )) &&
+              (v2SearchQuery.length === 0 ||
+                pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+          ),
+    [
+      pinnedView,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      v2ScopedProjectKeys,
+      v2SearchQuery,
+    ],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -922,6 +950,12 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState
         title="No results"
         detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : pinnedView ? (
+      <EmptyState
+        title="No pinned threads"
+        detail="Pin a thread from its menu to keep it here."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

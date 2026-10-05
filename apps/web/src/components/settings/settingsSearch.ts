@@ -305,6 +305,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "pinned-view",
+    title: "Pinned view (beta)",
+    to: "/settings/general",
+    searchTerms: ["pins pinned threads separate own view inbox"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

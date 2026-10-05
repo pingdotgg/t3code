@@ -12,6 +12,7 @@ import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { checkForAppUpdateOnLaunch, startAppUpdateForegroundRecheck } from "../updates/app-updates";
@@ -117,6 +118,26 @@ export function HomeRouteScreen() {
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+  // Pinned view beta: the list computes what its hidden view holds; the
+  // header shows it.
+  const { pinnedView, pinnedViewEnabled, togglePinnedView } = useThreadListV2ShelfPreferences();
+  const [otherViewCounts, setOtherViewCounts] = useState({ threadCount: 0, doneCount: 0 });
+  const handleOtherViewCountsChange = useCallback(
+    (threadCount: number, doneCount: number) => setOtherViewCounts({ threadCount, doneCount }),
+    [],
+  );
+  const pinnedViewToggle = useMemo(
+    () =>
+      pinnedViewEnabled
+        ? {
+            pinnedView,
+            otherViewThreadCount: otherViewCounts.threadCount,
+            otherViewDoneCount: otherViewCounts.doneCount,
+            onToggle: togglePinnedView,
+          }
+        : null,
+    [otherViewCounts, pinnedView, pinnedViewEnabled, togglePinnedView],
+  );
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
@@ -169,10 +190,12 @@ export function HomeRouteScreen() {
             shallow-merged. The brand slot also doubles as the connection
             status surface while an environment reconnects. */}
         <NativeStackScreenOptions
-          optionsVersion={windowWidth}
+          optionsVersion={[windowWidth, pinnedViewEnabled]}
           options={{
             ...getConnectionAwareBrandHeaderOptions({
               headerWidth: windowWidth,
+              // Settings, plus the pinned view toggle while that beta is on.
+              trailingItemCount: pinnedViewEnabled ? 2 : 1,
               onOpenEnvironments: () =>
                 navigation.navigate("SettingsSheet", {
                   screen: "SettingsContent",
@@ -204,6 +227,7 @@ export function HomeRouteScreen() {
           }
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          pinnedViewToggle={pinnedViewToggle}
         />
 
         <HomeScreen
@@ -240,6 +264,7 @@ export function HomeRouteScreen() {
           onSelectPendingTask={openPendingTask}
           onDeletePendingTask={confirmDeletePendingTask}
           onNewThreadOnBranch={handleNewThreadOnBranch}
+          onOtherViewCountsChange={handleOtherViewCountsChange}
           onNewThreadInProject={(project) => {
             navigation.navigate("NewTaskSheet", {
               screen: "NewTaskDraft",

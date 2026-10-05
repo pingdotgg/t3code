@@ -242,13 +242,15 @@ function AutoSettleSettingsRows() {
 
 /**
  * Device-local beta toggles, the counterpart of web's Working section (beta)
- * in Settings → General.
+ * and Pinned view (beta) in Settings → General.
  */
 function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled === true;
+  const pinnedViewEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.pinnedViewEnabled === true;
 
   return (
     <View className="gap-3">
@@ -259,11 +261,21 @@ function BetaSettingsSection() {
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
+        <SettingsSwitchRow
+          icon="pin.circle"
+          label="Pinned view"
+          value={pinnedViewEnabled}
+          onValueChange={(value) => savePreferences({ pinnedViewEnabled: value })}
+        />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Fold working and monitoring threads into a Working section. They return to the top of the
         list when they need you. While this is on, active threads are ordered by time and cannot be
         moved.
+      </Text>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Give pinned threads their own view. The pin button switches between active and pinned
+        threads.
       </Text>
     </View>
   );

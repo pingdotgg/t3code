@@ -5,6 +5,10 @@ import type {
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import {
+  createPinnedViewHeaderItem,
+  type ThreadListPinnedViewToggle,
+} from "./thread-list-pinned-view-toggle";
 
 type NativeHeaderMenuItems = NativeStackHeaderItemMenu["menu"]["items"];
 type NativeHeaderIcon = NonNullable<Extract<NativeStackHeaderItem, { type: "button" }>["icon"]>;
@@ -32,16 +36,21 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 }
 
 /**
- * Right-side UINavigationBar items for the sidebar column: the thread list
- * filter/sort menu plus the settings button, sharing one glass capsule —
- * the Messages-style grouped header buttons.
+ * Right-side UINavigationBar items for the sidebar column: the pinned view
+ * toggle (beta, null while off), the thread list filter/sort menu and the
+ * settings button, sharing one glass capsule — the Messages-style grouped
+ * header buttons.
  */
 export function createSidebarHeaderItems(input: {
+  readonly pinnedViewToggle: ThreadListPinnedViewToggle | null;
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
+    ...(input.pinnedViewToggle === null
+      ? []
+      : [createPinnedViewHeaderItem(input.pinnedViewToggle)]),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

@@ -319,6 +319,9 @@ export function planSidebarThreadDrop(input: {
   readonly activeReorderableKeys?: ReadonlySet<string>;
   /** Working beta: the inbox sorts by time, so drops only change lifecycle. */
   readonly activeTimeOrdered?: boolean;
+  /** The section the current sidebar view hides. Its rows are not on screen,
+      so a drop into it changes lifecycle only and has no placement. */
+  readonly offViewSection?: "pinned" | "active";
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -340,7 +343,7 @@ export function planSidebarThreadDrop(input: {
     case "active": {
       // Like the settled tail: threads can enter a time-ordered inbox, but
       // not be arranged inside it.
-      if (input.activeTimeOrdered) {
+      if (input.activeTimeOrdered || input.offViewSection === "active") {
         return activeSection === "active"
           ? { kind: "none" }
           : {
@@ -380,6 +383,10 @@ export function planSidebarThreadDrop(input: {
     case "settled":
       return activeSection === "settled" ? { kind: "none" } : { kind: "settle" };
     case "pinned": {
+      // Like the pin action: the server puts a fresh pin at the top.
+      if (input.offViewSection === "pinned") {
+        return { kind: "pin", order: [], orderKey: undefined, extraAssignments: [] };
+      }
       const order = target.pinnedOrder;
       // Dropped back where it started: nothing to write.
       if (
@@ -1030,6 +1037,25 @@ export function resolveSidebarV2TopStatus(input: {
     return "woke";
   }
   return input.isUnread ? "done" : null;
+}
+
+/** The status pill a row shows, from its visit and wake times. */
+export function resolveSidebarThreadPill(
+  thread: ThreadStatusInput & Pick<SidebarThreadSummary, "settledOverride">,
+  input: { readonly lastVisitedAt: string | undefined; readonly wokeAt: string | null },
+): SidebarV2TopStatusKind | null {
+  const lastVisitedAtMs =
+    input.lastVisitedAt === undefined ? Number.NaN : Date.parse(input.lastVisitedAt);
+  const wokeAtMs = input.wokeAt === null ? Number.NaN : Date.parse(input.wokeAt);
+  return resolveSidebarV2TopStatus({
+    status: resolveSidebarThreadStatus(thread),
+    isUnread: hasUnseenCompletion({ ...thread, lastVisitedAt: input.lastVisitedAt }),
+    // An unparseable visit counts as never visited, as on the row.
+    isWoke:
+      !Number.isNaN(wokeAtMs) &&
+      !(lastVisitedAtMs >= wokeAtMs) &&
+      thread.settledOverride !== "settled",
+  });
 }
 
 export function shouldShowSidebarV2Duration(status: SidebarThreadStatus): boolean {

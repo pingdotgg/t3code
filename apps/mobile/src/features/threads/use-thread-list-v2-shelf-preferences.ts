@@ -5,7 +5,7 @@ import { useCallback, useRef } from "react";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 
 /**
- * Shared persisted shelf state for the compact Home list and iPad sidebar.
+ * Shared persisted shelf and view state for the compact Home list and iPad sidebar.
  * Refs advance before persistence starts so consecutive presses always toggle
  * the latest value, even if React has not rendered the optimistic patch yet.
  */
@@ -21,12 +21,18 @@ export function useThreadListV2ShelfPreferences() {
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
+  // Pinned view beta: the list shows one view at a time, the inbox or only
+  // pinned threads. The remembered view applies only while the beta is on.
+  const pinnedViewEnabled = loaded && preferencesResult.value.pinnedViewEnabled === true;
+  const pinnedView = pinnedViewEnabled && preferencesResult.value.threadListPinnedView === true;
   const snoozedShelfExpandedRef = useRef(snoozedShelfExpanded);
   const settledShelfExpandedRef = useRef(settledShelfExpanded);
   const workingShelfExpandedRef = useRef(workingShelfExpanded);
+  const pinnedViewRef = useRef(pinnedView);
   snoozedShelfExpandedRef.current = snoozedShelfExpanded;
   settledShelfExpandedRef.current = settledShelfExpanded;
   workingShelfExpandedRef.current = workingShelfExpanded;
+  pinnedViewRef.current = pinnedView;
 
   const toggleSnoozedShelf = useCallback(() => {
     if (!loaded) return;
@@ -46,9 +52,17 @@ export function useThreadListV2ShelfPreferences() {
     workingShelfExpandedRef.current = expanded;
     savePreferences({ threadListWorkingShelfExpanded: expanded });
   }, [loaded, savePreferences]);
+  const togglePinnedView = useCallback(() => {
+    if (!pinnedViewEnabled) return;
+    const next = !pinnedViewRef.current;
+    pinnedViewRef.current = next;
+    savePreferences({ threadListPinnedView: next });
+  }, [pinnedViewEnabled, savePreferences]);
 
   return {
     loaded,
+    pinnedView,
+    pinnedViewEnabled,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -56,5 +70,6 @@ export function useThreadListV2ShelfPreferences() {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    togglePinnedView,
   } as const;
 }

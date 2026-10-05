@@ -32,6 +32,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadPill,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
@@ -528,6 +529,52 @@ describe("hasUnseenCompletion", () => {
         runtime: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveSidebarThreadPill", () => {
+  const thread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestRun: makeLatestRun(),
+    runtime: null,
+    settledOverride: null,
+  };
+
+  it("shows Done for an unread completion until it is visited", () => {
+    expect(
+      resolveSidebarThreadPill(thread, {
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        wokeAt: null,
+      }),
+    ).toBe("done");
+    expect(
+      resolveSidebarThreadPill(thread, {
+        lastVisitedAt: "2026-03-09T10:06:00.000Z",
+        wokeAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("shows an approval over an unread completion", () => {
+    expect(
+      resolveSidebarThreadPill(
+        { ...thread, hasPendingApprovals: true },
+        { lastVisitedAt: "2026-03-09T10:04:00.000Z", wokeAt: null },
+      ),
+    ).toBe("approval");
+  });
+
+  it("shows a wake until the thread is visited after it", () => {
+    const wokeAt = "2026-03-09T11:00:00.000Z";
+    expect(
+      resolveSidebarThreadPill(thread, { lastVisitedAt: "2026-03-09T10:06:00.000Z", wokeAt }),
+    ).toBe("woke");
+    expect(
+      resolveSidebarThreadPill(thread, { lastVisitedAt: "2026-03-09T11:01:00.000Z", wokeAt }),
+    ).toBeNull();
   });
 });
 
@@ -2260,6 +2307,45 @@ describe("Working shelf (beta)", () => {
           activeKey: "p1",
           activeSection: "pinned",
           target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+        }),
+      ).toEqual({
+        kind: "move-active",
+        order: null,
+        assignments: [],
+        unpin: true,
+        unsettle: false,
+        unsnooze: false,
+      });
+    });
+
+    it("only changes lifecycle when dropping into the view that is not showing", () => {
+      const base = {
+        pinnedOrder: [],
+        pinnedKeysById: new Map([["p1", "m"]]),
+        activeOrder: ["a1", "a2"],
+        activeKeysById: new Map([
+          ["a1", "f"],
+          ["a2", "t"],
+        ]),
+      };
+      expect(
+        planSidebarThreadDrop({
+          ...base,
+          activeKey: "a1",
+          activeSection: "active",
+          target: { section: "pinned", pinnedOrder: ["a1"], activeOrder: ["a2"] },
+          offViewSection: "pinned",
+        }),
+      ).toEqual({ kind: "pin", order: [], orderKey: undefined, extraAssignments: [] });
+      expect(
+        planSidebarThreadDrop({
+          ...base,
+          pinnedOrder: ["p1"],
+          activeOrder: [],
+          activeKey: "p1",
+          activeSection: "pinned",
+          target: { section: "active", pinnedOrder: [], activeOrder: ["p1"] },
+          offViewSection: "active",
         }),
       ).toEqual({
         kind: "move-active",

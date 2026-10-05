@@ -1,8 +1,9 @@
 /**
- * The sidebar header: one row holding search, project scope and new thread.
+ * The sidebar header: one row holding search, the pinned view toggle, project
+ * scope and new thread.
  *
- * Search owns the row's text and spans it. Project scope collapses to an icon
- * that sits with new-project and new-thread as a segmented group at the end.
+ * Search owns the row's text and spans it. The pinned view toggle and project
+ * scope sit with new-project and new-thread as a segmented group at the end.
  * The scope icon swaps to the project favicon while a project is selected,
  * so the header still names the scope after the row that showed it is gone.
  *
@@ -10,7 +11,7 @@
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
  * the picker's popup can anchor to that width rather than to its 28px trigger.
  */
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { FolderPlusIcon, PinIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -29,7 +30,17 @@ export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so those controls stay out. */
   hasProjects: boolean;
-  /** The project scope combobox, rendered as the first icon of the group. */
+  /** Swaps the list between the inbox and pinned threads. Null while the
+      pinned view setting is off. */
+  pinnedViewToggle: {
+    pinnedView: boolean;
+    onToggle: () => void;
+    shortcutLabel: string | null | undefined;
+    /** All threads in the view that is not showing, and its unread Done rows. */
+    otherViewThreadCount: number;
+    otherViewDoneCount: number;
+  } | null;
+  /** The project scope combobox, rendered after the pinned view toggle. */
   projectScope: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
@@ -52,6 +63,7 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
+  pinnedViewToggle,
   projectScope,
   onNewProject,
   onNewThread,
@@ -124,6 +136,7 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {pinnedViewToggle ? <PinnedViewToggle {...pinnedViewToggle} /> : null}
         {hasProjects ? (
           <>
             {projectScope}
@@ -157,6 +170,60 @@ export function SidebarThreadHeader({
   );
 }
 
+function PinnedViewToggle({
+  pinnedView,
+  onToggle,
+  shortcutLabel,
+  otherViewThreadCount,
+  otherViewDoneCount,
+}: NonNullable<SidebarThreadHeaderProps["pinnedViewToggle"]>) {
+  const otherViewName = pinnedView ? "active" : "pinned";
+  const otherViewThreadsLabel = `${otherViewThreadCount} ${otherViewName} ${
+    otherViewThreadCount === 1 ? "thread" : "threads"
+  }`;
+  const otherViewDoneLabel = `${otherViewDoneCount} unread done`;
+  return (
+    // Badges sit outside the button, whose overflow clips: unread done on
+    // top, all threads in the other view below.
+    <span className="relative flex">
+      <SidebarHeaderIconButton
+        label={`Pinned threads, ${otherViewThreadsLabel}, ${otherViewDoneLabel}`}
+        tooltip={
+          <span className="flex flex-col gap-0.5">
+            <span>
+              {`Show ${otherViewName} threads`}
+              {shortcutLabel ? ` (${shortcutLabel})` : ""}
+            </span>
+            <span className="text-muted-foreground">{otherViewThreadsLabel}</span>
+            <span className="text-muted-foreground">{otherViewDoneLabel}</span>
+          </span>
+        }
+        isActive={pinnedView}
+        aria-pressed={pinnedView}
+        onClick={onToggle}
+      >
+        <PinIcon />
+      </SidebarHeaderIconButton>
+      {otherViewDoneCount > 0 ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold tabular-nums text-white"
+        >
+          {otherViewDoneCount > 99 ? "99+" : otherViewDoneCount}
+        </span>
+      ) : null}
+      {otherViewThreadCount > 0 ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -right-0.5 -bottom-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border border-sidebar-border bg-sidebar px-1 text-3xs font-semibold tabular-nums text-sidebar-muted-foreground"
+        >
+          {otherViewThreadCount > 99 ? "99+" : otherViewThreadCount}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /**
  * Icon button with a tooltip, sized for the header's segmented pair. Spreads
  * unknown props through so it can serve as a popup trigger's render target,
@@ -176,7 +243,7 @@ export function SidebarHeaderIconButton({
   children?: ReactNode;
 } & Omit<
   ComponentProps<typeof SidebarMenuButton>,
-  "children" | "className" | "tooltip" | "isActive" | "aria-label"
+  "children" | "className" | "tooltip" | "aria-label"
 >) {
   return (
     <Tooltip>

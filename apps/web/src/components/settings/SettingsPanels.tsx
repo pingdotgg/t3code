@@ -573,6 +573,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
         : []),
+      ...(settings.sidebarPinnedViewEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarPinnedViewEnabled
+        ? ["Pinned view"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -709,6 +712,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
+      settings.sidebarPinnedViewEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -809,6 +813,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarPinnedViewEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarPinnedViewEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
@@ -2386,6 +2391,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section (beta)"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pinned-view")}
+          description="Give pinned threads their own view. A pin button at the top of the sidebar switches between active and pinned threads."
+          resetAction={
+            settings.sidebarPinnedViewEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarPinnedViewEnabled ? (
+              <SettingResetButton
+                label="pinned view"
+                onClick={() =>
+                  updateSettings({
+                    sidebarPinnedViewEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarPinnedViewEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarPinnedViewEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarPinnedViewEnabled: Boolean(checked) })
+              }
+              aria-label="Pinned view (beta)"
             />
           }
         />

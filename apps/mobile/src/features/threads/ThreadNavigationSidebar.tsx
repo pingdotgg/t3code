@@ -291,6 +291,8 @@ function ThreadNavigationSidebarPane(
   );
   const {
     loaded: shelfPreferencesLoaded,
+    pinnedView,
+    pinnedViewEnabled,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -298,6 +300,7 @@ function ThreadNavigationSidebarPane(
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    togglePinnedView,
   } = useThreadListV2ShelfPreferences();
   // The queued-start and snooze helpers need a clock while the pane stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
@@ -385,8 +388,11 @@ function ThreadNavigationSidebarPane(
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: props.selectedThreadKey ?? null,
+      view: pinnedViewEnabled ? (pinnedView ? "pinned" : "active") : undefined,
     });
   }, [
+    pinnedView,
+    pinnedViewEnabled,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -424,19 +430,22 @@ function ThreadNavigationSidebarPane(
     // never sees them; the shared splice puts them below the active block
     // (mirrors the compact Home v2 list) where they stay visible and
     // deletable while their environment is offline. Same environment scope
-    // and search filter as the list.
+    // and search filter as the list. They are new inbox work, so the pinned
+    // view leaves them out.
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
+    const v2PendingTasks = pinnedView
+      ? []
+      : pendingTasks.filter(
+          (pendingTask) =>
+            (options.selectedEnvironmentId === null ||
+              pendingTask.environmentId === options.selectedEnvironmentId) &&
+            (selectedProjectRefs === null ||
+              selectedProjectRefs.has(
+                scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+              )) &&
+            (v2SearchQuery.length === 0 ||
+              pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+        );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
       items: threadListV2Layout.items,
       pendingTasks: v2PendingTasks,
@@ -467,6 +476,7 @@ function ThreadNavigationSidebarPane(
     nowMinute,
     options.selectedEnvironmentId,
     pendingTasks,
+    pinnedView,
     props.searchQuery,
     queuedThreadKeys,
     threadMoveAvailability,
@@ -651,6 +661,34 @@ function ThreadNavigationSidebarPane(
     return true;
   }, [props.nativeChrome, props.onRequestVisibility, props.visible]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
+  const { onRequestVisibility, visible } = props;
+  const handleTogglePinnedView = useCallback(() => {
+    togglePinnedView();
+    if (!visible) onRequestVisibility();
+  }, [onRequestVisibility, togglePinnedView, visible]);
+  const pinnedViewCommands = useMemo(
+    () => (pinnedViewEnabled ? (["togglePinnedView"] as const) : []),
+    [pinnedViewEnabled],
+  );
+  useHardwareKeyboardCommand(pinnedViewCommands, handleTogglePinnedView);
+  const pinnedViewToggle = useMemo(
+    () =>
+      pinnedViewEnabled
+        ? {
+            pinnedView,
+            otherViewThreadCount: threadListV2Layout.otherViewThreadCount,
+            otherViewDoneCount: threadListV2Layout.otherViewDoneCount,
+            onToggle: togglePinnedView,
+          }
+        : null,
+    [
+      pinnedView,
+      pinnedViewEnabled,
+      threadListV2Layout.otherViewDoneCount,
+      threadListV2Layout.otherViewThreadCount,
+      togglePinnedView,
+    ],
+  );
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
@@ -858,11 +896,12 @@ function ThreadNavigationSidebarPane(
   const nativeHeaderItems = useMemo(
     () =>
       createSidebarHeaderItems({
+        pinnedViewToggle,
         filterIcon,
         filterMenu,
         onOpenSettings: props.onOpenSettings,
       }),
-    [filterIcon, filterMenu, props.onOpenSettings],
+    [filterIcon, filterMenu, pinnedViewToggle, props.onOpenSettings],
   );
   // Snoozed threads need no special case: the shelf header is a list row
   // even while collapsed.
@@ -882,9 +921,11 @@ function ThreadNavigationSidebarPane(
             ? threadSearch.isPending
               ? "Searching thread messages…"
               : "No matching threads"
-            : selectedProjectScope !== null
-              ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+            : pinnedView
+              ? "No pinned threads"
+              : selectedProjectScope !== null
+                ? `No threads in ${selectedProjectScope.title}`
+                : "No threads yet"}
     </Text>
   );
 
@@ -1038,6 +1079,7 @@ function ThreadNavigationSidebarPane(
           onOpenSettings={props.onOpenSettings}
           onOpenEnvironments={props.onOpenEnvironmentSettings}
           onRequestVisibility={props.onRequestVisibility}
+          pinnedViewToggle={pinnedViewToggle}
         />
       ) : (
         <View

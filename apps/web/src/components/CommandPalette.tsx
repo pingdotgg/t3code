@@ -59,6 +59,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PinIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -85,7 +86,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -787,6 +788,8 @@ function OpenCommandPaletteDialog(props: {
     }
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const sidebarPinnedView = useUiStateStore((store) => store.sidebarPinnedView);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
@@ -2242,6 +2245,20 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (!legacySidebarEnabled && clientSettings.sidebarPinnedViewEnabled) {
+    actionItems.push({
+      kind: "action",
+      value: "action:sidebar-pinned-view",
+      searchTerms: ["pinned", "pins", "pinned threads", "inbox", "sidebar view"],
+      title: sidebarPinnedView ? "Show active threads" : "Show pinned threads",
+      icon: <PinIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "sidebar.togglePinnedView",
+      run: async () => {
+        useUiStateStore.getState().toggleSidebarPinnedView();
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

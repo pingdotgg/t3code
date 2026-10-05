@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ThreadListPinnedViewToggle } from "../threads/thread-list-pinned-view-toggle";
 import type {
   HomeListFilterMenuEnvironment,
   HomeListFilterMenuProject,
@@ -18,4 +19,6 @@ export interface HomeHeaderProps {
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
+  /** Pinned view beta; null while off. */
+  readonly pinnedViewToggle: ThreadListPinnedViewToggle | null;
 }

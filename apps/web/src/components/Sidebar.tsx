@@ -196,6 +196,7 @@ import {
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadPill,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -2530,6 +2531,11 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  // Opt-in: with the setting off, pinned threads stay above the inbox.
+  const pinnedViewEnabled = useClientSettings((s) => s.sidebarPinnedViewEnabled);
+  const storedPinnedView = useUiStateStore((store) => store.sidebarPinnedView);
+  const pinnedView = pinnedViewEnabled && storedPinnedView;
+  const toggleSidebarPinnedView = useUiStateStore((store) => store.toggleSidebarPinnedView);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
@@ -2633,11 +2639,11 @@ export default function Sidebar() {
     }
     return count;
   });
-  // Scope flips drop the selection: rows selected under the old scope may be
+  // Scope and view flips drop the selection: rows selected before may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, pinnedView, pinnedViewEnabled, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2815,6 +2821,37 @@ export default function Sidebar() {
     threads,
     workingShelfEnabled,
   ]);
+  // With the pinned view on, the list shows one view at a time: the inbox,
+  // or only pinned threads. Snoozed and settled shelves render in both.
+  // Search spans every thread.
+  const viewPinnedThreads = pinnedViewEnabled && !pinnedView ? EMPTY_THREADS : pinnedThreads;
+  const viewActiveThreads = pinnedView ? EMPTY_THREADS : activeThreads;
+  const viewWorkingThreads = pinnedView ? EMPTY_THREADS : workingThreads;
+  const offViewSection = !pinnedViewEnabled ? null : pinnedView ? "active" : "pinned";
+  const otherViewThreads = useMemo(
+    () =>
+      !pinnedViewEnabled
+        ? EMPTY_THREADS
+        : pinnedView
+          ? [...activeThreads, ...workingThreads]
+          : pinnedThreads,
+    [activeThreads, pinnedThreads, pinnedView, pinnedViewEnabled, workingThreads],
+  );
+  // Counts the rows that would show a Done pill. Selecting a number
+  // re-renders only when the count changes, not on every recorded visit.
+  const otherViewDoneCount = useUiStateStore((store) =>
+    otherViewThreads.reduce((count, thread) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      const pill = resolveSidebarThreadPill(thread, {
+        lastVisitedAt: resolveThreadLastVisitedAt(
+          thread.lastVisitedAt,
+          store.threadLastVisitedAtById[threadKey],
+        ),
+        wokeAt: threadWokeAt(thread, { now: snoozeNow }),
+      });
+      return pill === "done" ? count + 1 : count;
+    }, 0),
+  );
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2971,26 +3008,26 @@ export default function Sidebar() {
     [setWorkingShelfExpanded],
   );
   const visibleWorkingThreads = useMemo(() => {
-    if (workingShelfExpanded) return workingThreads;
+    if (workingShelfExpanded) return viewWorkingThreads;
     if (routeThreadKey === null) return EMPTY_THREADS;
-    const routeThread = workingThreads.find(
+    const routeThread = viewWorkingThreads.find(
       (thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
     );
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeThreadKey, workingShelfExpanded, workingThreads]);
+  }, [routeThreadKey, viewWorkingThreads, workingShelfExpanded]);
 
   const orderedThreads = useMemo(
     () => [
-      ...pinnedThreads,
-      ...activeThreads,
+      ...viewPinnedThreads,
+      ...viewActiveThreads,
       ...visibleWorkingThreads,
       ...visibleSnoozedThreads,
       ...renderedSettledThreads,
     ],
     [
-      pinnedThreads,
-      activeThreads,
+      viewPinnedThreads,
+      viewActiveThreads,
       visibleWorkingThreads,
       visibleSnoozedThreads,
       renderedSettledThreads,
@@ -3548,17 +3585,17 @@ export default function Sidebar() {
   );
   const pinnedKeys = useMemo(
     () =>
-      pinnedThreads.map((thread) =>
+      viewPinnedThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [pinnedThreads],
+    [viewPinnedThreads],
   );
   const activeKeys = useMemo(
     () =>
-      activeThreads.map((thread) =>
+      viewActiveThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [activeThreads],
+    [viewActiveThreads],
   );
   useEffect(() => {
     if (optimisticDrop === null) return;
@@ -3721,14 +3758,16 @@ export default function Sidebar() {
     ) {
       return [];
     }
+    // Both views keep the pinned markers: dragging across the divider pins
+    // or unpins a row into the view that is not showing.
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(viewPinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
+    const activeRows = rowsOf(viewActiveThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
-    if (workingThreads.length > 0) {
+    if (viewWorkingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
     }
@@ -3742,11 +3781,14 @@ export default function Sidebar() {
     items.push(...settledRows);
     return items;
   }, [
-    activeThreads,
-    pinnedThreads,
+    activeThreads.length,
+    pinnedThreads.length,
     renderedSettledThreads,
     settledThreads.length,
     snoozedThreads.length,
+    viewActiveThreads,
+    viewPinnedThreads,
+    viewWorkingThreads.length,
     visibleSnoozedThreads,
     visibleWorkingThreads,
     workingThreads.length,
@@ -3819,12 +3861,12 @@ export default function Sidebar() {
       scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id));
     return sortInboxThreadsByReturn(
       [
-        ...activeThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
+        ...viewActiveThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
         applySidebarThreadDrop(thread, "active", dragState.occurredAt),
       ],
       inboxReturns.returnedAt,
     ).map(key);
-  }, [activeThreads, dragState, threadByKey, workingShelfEnabled]);
+  }, [dragState, threadByKey, viewActiveThreads, workingShelfEnabled]);
   const sidebarSortingStrategy = useMemo(
     () =>
       createSidebarSortingStrategy({
@@ -3897,6 +3939,7 @@ export default function Sidebar() {
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
             activeTimeOrdered: workingShelfEnabled,
+            ...(offViewSection === null ? {} : { offViewSection }),
           }).kind !== "none"
         );
       },
@@ -3915,6 +3958,7 @@ export default function Sidebar() {
     draggedFromSection,
     dragActivationY,
     draggableThreadKeys,
+    offViewSection,
     pinnedKeys,
     sidebarListItems,
     threadByKey,
@@ -3947,6 +3991,7 @@ export default function Sidebar() {
         activeKeysById,
         activeReorderableKeys: activeReorderableThreadKeys,
         activeTimeOrdered: workingShelfEnabled,
+        ...(offViewSection === null ? {} : { offViewSection }),
       });
       if (plan.kind === "none") return;
       if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
@@ -4068,6 +4113,7 @@ export default function Sidebar() {
       activeKeys,
       activeReorderableThreadKeys,
       draggableThreadKeys,
+      offViewSection,
       pinThread,
       pinnedKeys,
       planForwardNavigation,
@@ -4716,9 +4762,7 @@ export default function Sidebar() {
   );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
-        return;
-      }
+      if (event.defaultPrevented || event.repeat) return;
       const command = resolveShortcutCommand(event, keybindings, {
         platform: navigator.platform,
         context: {
@@ -4729,6 +4773,14 @@ export default function Sidebar() {
           isDesktop: isElectron,
         },
       });
+      // The view toggle also works over the command palette, which lists it.
+      if (command === "sidebar.togglePinnedView" && pinnedViewEnabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebarPinnedView();
+        return;
+      }
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -4759,9 +4811,11 @@ export default function Sidebar() {
     keybindings,
     navigateToThread,
     orderedThreadKeys,
+    pinnedViewEnabled,
     routeTerminalOpen,
     routeThreadKey,
     threadByKey,
+    toggleSidebarPinnedView,
   ]);
 
   // Same predicate as v1: hints show only while the held modifiers exactly
@@ -4837,6 +4891,20 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              pinnedViewToggle={
+                pinnedViewEnabled
+                  ? {
+                      pinnedView,
+                      onToggle: toggleSidebarPinnedView,
+                      shortcutLabel: shortcutLabelForCommand(
+                        keybindings,
+                        "sidebar.togglePinnedView",
+                      ),
+                      otherViewThreadCount: otherViewThreads.length,
+                      otherViewDoneCount,
+                    }
+                  : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -5239,17 +5307,20 @@ export default function Sidebar() {
                         );
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
-                      const items: ReactNode[] = [
-                        <SidebarDraftBlock
-                          key="draft-sessions"
-                          projectByKey={projectByKey}
-                          projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
-                          routeDraftId={routeDraftIdForRows}
-                          onNavigateToDraft={navigateToDraft}
-                          onDraftContextMenu={handleDraftContextMenu}
-                        />,
-                      ];
+                      // Drafts are new inbox work, so the pinned view leaves them out.
+                      const items: ReactNode[] = pinnedView
+                        ? []
+                        : [
+                            <SidebarDraftBlock
+                              key="draft-sessions"
+                              projectByKey={projectByKey}
+                              projectDisplayNameByKey={projectDisplayNameByKey}
+                              scopedProjectKeys={scopedProjectKeys}
+                              routeDraftId={routeDraftIdForRows}
+                              onNavigateToDraft={navigateToDraft}
+                              onDraftContextMenu={handleDraftContextMenu}
+                            />,
+                          ];
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
@@ -5286,9 +5357,9 @@ export default function Sidebar() {
                                 label="Active"
                                 showHint={
                                   from !== null &&
-                                  (activeThreads.length === 0 ||
+                                  (viewActiveThreads.length === 0 ||
                                     (from === "active" &&
-                                      activeThreads.length === 1 &&
+                                      viewActiveThreads.length === 1 &&
                                       dragTargetSection !== null &&
                                       dragTargetSection !== "active"))
                                 }
@@ -5319,7 +5390,7 @@ export default function Sidebar() {
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                className={cn(viewWorkingThreads.length === 0 && "mt-auto")}
                                 label={
                                   snoozedShelfExpanded
                                     ? "Snoozed"
@@ -5338,7 +5409,8 @@ export default function Sidebar() {
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  viewWorkingThreads.length + snoozedThreads.length === 0 &&
+                                    "mt-auto",
                                 )}
                                 label={
                                   settledShelfExpanded
@@ -5394,7 +5466,8 @@ export default function Sidebar() {
             </TooltipProvider>
           ) : null}
           {!isSearchingThreads &&
-          visibleDraftSessionCount === 0 &&
+          // The pinned view leaves drafts out, so they can't fill its list.
+          (pinnedView || visibleDraftSessionCount === 0) &&
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +

@@ -43,7 +43,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
-  threadHasUnseenCompletion,
+  threadListV2ShowsDone,
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
@@ -586,7 +586,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // "Done" marks a completion the user has not opened yet — same emerald
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
-  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isUnread = threadListV2ShowsDone(thread);
   const statusLabel =
     STATUS_LABEL_BY_STATUS[status] ??
     (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);

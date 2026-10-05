@@ -100,9 +100,12 @@ export function HardwareKeyboardCommandProvider({
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
     commands.add("commandPalette");
+    // Thread list commands act on the list beside or behind these routes only.
     if (pathname !== "/" && !pathname.startsWith("/threads/")) {
       for (const command of commands) {
-        if (command.startsWith("thread.jump.")) commands.delete(command);
+        if (command.startsWith("thread.jump.") || command === "togglePinnedView") {
+          commands.delete(command);
+        }
       }
     }
     if (pathname !== "/" || navigation.canGoBack()) commands.add("back");

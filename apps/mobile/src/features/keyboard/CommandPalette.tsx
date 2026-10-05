@@ -31,6 +31,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
+import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -61,6 +62,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: "arrow.triangle.pull",
   copyThreadReference: "link",
+  togglePinnedView: "pin",
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -147,6 +149,7 @@ export function CommandPalette(props: {
   const activeThread = useThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const { pinnedView, pinnedViewEnabled, togglePinnedView } = useThreadListV2ShelfPreferences();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string | null>(null);
   const [visible, setVisible] = useState(true);
@@ -259,6 +262,17 @@ export function CommandPalette(props: {
             params: { screen: "SettingsArchive" },
           }),
       },
+      ...(pinnedViewEnabled
+        ? [
+            {
+              key: "togglePinnedView",
+              kind: "action" as const,
+              title: pinnedView ? "Show active threads" : "Show pinned threads",
+              searchTerms: ["pinned", "pins", "inbox", "thread list"],
+              run: togglePinnedView,
+            },
+          ]
+        : []),
     ];
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
@@ -346,11 +360,14 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     navigation,
+    pinnedView,
+    pinnedViewEnabled,
     projects,
     runCommand,
     savedConnectionsById,
     selectThread,
     threads,
+    togglePinnedView,
   ]);
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),

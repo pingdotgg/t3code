@@ -103,6 +103,7 @@ export function HomeHeader(props: HomeHeaderProps) {
         onFilterAction={handleMenuAction}
         onOpenSettings={props.onOpenSettings}
         onOpenEnvironments={props.onOpenEnvironments}
+        pinnedViewToggle={props.pinnedViewToggle}
       />
     </>
   );
