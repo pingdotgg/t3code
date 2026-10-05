@@ -89,6 +89,11 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
 
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
+type PendingBackgroundWorkPullRequest = Pick<
+  ThreadPullRequestLink,
+  "host" | "repository" | "number" | "url" | "source" | "watch"
+>;
+
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
   "id" | "pendingBackgroundTasks"
@@ -227,11 +232,7 @@ export function derivePendingBackgroundWork(input: {
    * pass projection runs so policy cannot drift.
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
-  readonly pullRequests?:
-    | ReadonlyArray<
-        Pick<ThreadPullRequestLink, "host" | "repository" | "number" | "url" | "source" | "watch">
-      >
-    | undefined;
+  readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -241,6 +242,10 @@ export function derivePendingBackgroundWork(input: {
     false;
   if (hasActiveRun) {
     return [];
+  }
+  // A thread that never ran waits on nothing else, but a watch started on it still wakes it.
+  if (input.latestRun == null) {
+    return pullRequestWatchTasks(input.pullRequests);
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -276,15 +281,23 @@ export function derivePendingBackgroundWork(input: {
     byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
   }
 
-  for (const link of input.pullRequests ?? []) {
-    if (link.watch === undefined || link.source === "stack-dismissed") continue;
-    const taskId = `pull-request-watch:${threadPullRequestKeyOf(link)}`;
-    byTaskId.set(taskId, {
-      taskId,
-      description: `Watching pull request #${link.number}`,
-      kind: "monitor",
-    });
-  }
+  for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
+}
+
+function pullRequestWatchTasks(
+  pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
+): Array<PendingBackgroundWorkTask> {
+  return (pullRequests ?? []).flatMap((link) =>
+    link.watch === undefined || link.source === "stack-dismissed"
+      ? []
+      : [
+          {
+            taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
+            description: `Watching pull request #${link.number}`,
+            kind: "monitor" as const,
+          },
+        ],
+  );
 }

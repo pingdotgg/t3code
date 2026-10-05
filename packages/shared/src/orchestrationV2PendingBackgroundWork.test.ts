@@ -564,6 +564,17 @@ describe("derivePendingBackgroundWork kinds", () => {
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
     });
 
+    it("keeps a thread that never ran waiting on its watch", () => {
+      expect(
+        derivePendingBackgroundWork({
+          latestRun: null,
+          providerThreads: [],
+          turnItems: [],
+          pullRequests,
+        }).map((task) => task.taskId),
+      ).toEqual(["pull-request-watch:github.com/acme/app#1"]);
+    });
+
     it("lists no watch while a run is active", () => {
       expect(
         derivePendingBackgroundWork({
