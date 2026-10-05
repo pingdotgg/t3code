@@ -395,6 +395,25 @@ export function isManagedEndpointNotFound(cause: unknown): boolean {
   return "cause" in cause && isManagedEndpointNotFound(cause.cause);
 }
 
+/**
+ * Cloudflare refuses to delete a tunnel while a connector is still attached,
+ * either one that has not finished draining or another runtime still serving
+ * the tunnel.
+ */
+export function isManagedEndpointTunnelInUse(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) {
+    return false;
+  }
+  if (
+    "message" in cause &&
+    typeof cause.message === "string" &&
+    cause.message.includes("has active connections")
+  ) {
+    return true;
+  }
+  return "cause" in cause && isManagedEndpointTunnelInUse(cause.cause);
+}
+
 type ManagedEndpointClientError = ManagedEndpointTunnelClientError | ManagedEndpointDnsClientError;
 
 const ignoreNotFound = <A>(
@@ -873,8 +892,16 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            yield* deleteTunnel;
-            return true;
+            // A connector still attached means the tunnel is not released. That
+            // is the same answer as losing the claim: the caller keeps its config,
+            // and the reaper deletes the tunnel once it has been down long enough.
+            return yield* deleteTunnel.pipe(
+              Effect.as(true),
+              Effect.catchIf(
+                (error) => isManagedEndpointTunnelInUse(error.cause),
+                () => Effect.succeed(false),
+              ),
+            );
           }),
         )
         .pipe(
