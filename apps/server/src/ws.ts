@@ -1810,7 +1810,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             // Secret request status is only written next to storing the
-            // secret (scheduledTasks.provideSecret) or by the requesting tool.
+            // secret (scheduledTasks.answerSecretRequest) or by the requesting tool.
             command.type === "secret_request.record"
               ? Effect.fail(
                   new OrchestrationV2DispatchCommandError({

@@ -1593,7 +1593,7 @@ const make = Effect.gen(function* () {
             );
         yield* record("pending");
 
-        // The card is answered by the user (scheduledTasks.provideWebhookSecret)
+        // The card is answered by the user (scheduledTasks.answerSecretRequest)
         // or ends with the run; poll it like a delegated task.
         const answered = yield* Effect.gen(function* () {
           while (true) {
