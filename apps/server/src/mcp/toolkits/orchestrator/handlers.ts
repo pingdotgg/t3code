@@ -36,11 +36,11 @@ const handlers = {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.scheduleTask(scope, input);
     }),
-  list_scheduled_tasks: () =>
+  list_scheduled_tasks: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listScheduledTasks(scope);
+      return yield* service.listScheduledTasks(scope, input);
     }),
   update_scheduled_task: (input) =>
     Effect.gen(function* () {

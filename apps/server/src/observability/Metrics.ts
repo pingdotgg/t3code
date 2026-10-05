@@ -70,6 +70,30 @@ export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total"
   description: "Total terminal restart requests handled.",
 });
 
+/**
+ * One per webhook request that reached a task, by `outcome` (accepted,
+ * not_found, rejected_signature, disabled, rate_limited, queue_full, expired,
+ * prompt_too_long, error) and `source` (relay or direct).
+ */
+export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {
+  description: "Webhook requests handled, by outcome and source.",
+});
+
+export const webhookDeliveryDuration = Metric.timer("t3_webhook_delivery_duration", {
+  description: "Time to verify, log, and enqueue one webhook request.",
+});
+
+/** How long a relay-held request waited before this environment got it. */
+export const webhookHeldDelay = Metric.timer("t3_webhook_held_delay", {
+  description:
+    "Time between the relay receiving a webhook request and the environment handling it.",
+});
+
+/** Runs started by webhook deliveries, by `outcome` (started, skipped, failed). */
+export const webhookRunsTotal = Metric.counter("t3_webhook_runs_total", {
+  description: "Runs started from webhook deliveries, by outcome.",
+});
+
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));

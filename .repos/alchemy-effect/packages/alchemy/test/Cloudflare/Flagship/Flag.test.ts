@@ -37,243 +37,262 @@ const expectFlagGone = (accountId: string, appId: string, flagKey: string) =>
     ),
   );
 
-test.provider("create, update, delete a flag in an app", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, delete a flag in an app",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("FlagApp", {
-          name: "alchemy-test-flagship-flags",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("Flag", {
-          appId: app.appId,
-          key: "alchemy-test-flag",
-          defaultVariation: "off",
-          variations: { off: false, on: true },
-        });
-        return { app, flag };
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("FlagApp", {
+            name: "alchemy-test-flagship-flags",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("Flag", {
+            appId: app.appId,
+            key: "alchemy-test-flag",
+            defaultVariation: "off",
+            variations: { off: false, on: true },
+          });
+          return { app, flag };
+        }),
+      );
 
-    expect(initial.flag.accountId).toEqual(accountId);
-    expect(initial.flag.appId).toEqual(initial.app.appId);
-    expect(initial.flag.key).toEqual("alchemy-test-flag");
-    expect(initial.flag.enabled).toBe(true);
-    expect(initial.flag.defaultVariation).toEqual("off");
-    expect(initial.flag.variations).toEqual({ off: false, on: true });
-    expect(initial.flag.rules).toEqual([]);
+      expect(initial.flag.accountId).toEqual(accountId);
+      expect(initial.flag.appId).toEqual(initial.app.appId);
+      expect(initial.flag.key).toEqual("alchemy-test-flag");
+      expect(initial.flag.enabled).toBe(true);
+      expect(initial.flag.defaultVariation).toEqual("off");
+      expect(initial.flag.variations).toEqual({ off: false, on: true });
+      expect(initial.flag.rules).toEqual([]);
 
-    // Verify out-of-band via the API.
-    const live = yield* flagship.getAppFlag({
-      accountId,
-      appId: initial.app.appId,
-      flagKey: "alchemy-test-flag",
-    });
-    expect(live.enabled).toBe(true);
-    expect(live.defaultVariation).toEqual("off");
-    expect(live.type).toEqual("boolean");
+      // Verify out-of-band via the API.
+      const live = yield* flagship.getAppFlag({
+        accountId,
+        appId: initial.app.appId,
+        flagKey: "alchemy-test-flag",
+      });
+      expect(live.enabled).toBe(true);
+      expect(live.defaultVariation).toEqual("off");
+      expect(live.type).toEqual("boolean");
 
-    // Update mutable props in place — same key, same app.
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("FlagApp", {
-          name: "alchemy-test-flagship-flags",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("Flag", {
-          appId: app.appId,
-          key: "alchemy-test-flag",
-          enabled: false,
-          defaultVariation: "on",
-          variations: { off: false, on: true },
-          description: "managed by alchemy",
-          rules: [
-            {
-              priority: 1,
-              conditions: [
-                { attribute: "country", operator: "equals", value: "US" },
-              ],
-              serveVariation: "on",
-              rollout: { percentage: 50 },
-            },
+      // Update mutable props in place — same key, same app.
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("FlagApp", {
+            name: "alchemy-test-flagship-flags",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("Flag", {
+            appId: app.appId,
+            key: "alchemy-test-flag",
+            enabled: false,
+            defaultVariation: "on",
+            variations: { off: false, on: true },
+            description: "managed by alchemy",
+            rules: [
+              {
+                priority: 1,
+                conditions: [
+                  { attribute: "country", operator: "equals", value: "US" },
+                ],
+                serveVariation: "on",
+                rollout: { percentage: 50 },
+              },
+            ],
+          });
+          return { app, flag };
+        }),
+      );
+
+      expect(updated.flag.key).toEqual("alchemy-test-flag");
+      expect(updated.flag.appId).toEqual(initial.app.appId);
+      expect(updated.flag.enabled).toBe(false);
+      expect(updated.flag.defaultVariation).toEqual("on");
+      expect(updated.flag.description).toEqual("managed by alchemy");
+      expect(updated.flag.rules).toEqual([
+        {
+          priority: 1,
+          conditions: [
+            { attribute: "country", operator: "equals", value: "US" },
           ],
-        });
-        return { app, flag };
-      }),
-    );
+          serveVariation: "on",
+          rollout: { percentage: 50 },
+        },
+      ]);
 
-    expect(updated.flag.key).toEqual("alchemy-test-flag");
-    expect(updated.flag.appId).toEqual(initial.app.appId);
-    expect(updated.flag.enabled).toBe(false);
-    expect(updated.flag.defaultVariation).toEqual("on");
-    expect(updated.flag.description).toEqual("managed by alchemy");
-    expect(updated.flag.rules).toEqual([
-      {
-        priority: 1,
-        conditions: [{ attribute: "country", operator: "equals", value: "US" }],
-        serveVariation: "on",
-        rollout: { percentage: 50 },
-      },
-    ]);
+      const liveUpdated = yield* flagship.getAppFlag({
+        accountId,
+        appId: initial.app.appId,
+        flagKey: "alchemy-test-flag",
+      });
+      expect(liveUpdated.enabled).toBe(false);
+      expect(liveUpdated.defaultVariation).toEqual("on");
+      expect(liveUpdated.rules).toHaveLength(1);
 
-    const liveUpdated = yield* flagship.getAppFlag({
-      accountId,
-      appId: initial.app.appId,
-      flagKey: "alchemy-test-flag",
-    });
-    expect(liveUpdated.enabled).toBe(false);
-    expect(liveUpdated.defaultVariation).toEqual("on");
-    expect(liveUpdated.rules).toHaveLength(1);
+      // Redeploying identical props is a no-op.
+      const noop = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("FlagApp", {
+            name: "alchemy-test-flagship-flags",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("Flag", {
+            appId: app.appId,
+            key: "alchemy-test-flag",
+            enabled: false,
+            defaultVariation: "on",
+            variations: { off: false, on: true },
+            description: "managed by alchemy",
+            rules: [
+              {
+                priority: 1,
+                conditions: [
+                  { attribute: "country", operator: "equals", value: "US" },
+                ],
+                serveVariation: "on",
+                rollout: { percentage: 50 },
+              },
+            ],
+          });
+          return { app, flag };
+        }),
+      );
+      expect(noop.flag.updatedAt).toEqual(updated.flag.updatedAt);
 
-    // Redeploying identical props is a no-op.
-    const noop = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("FlagApp", {
-          name: "alchemy-test-flagship-flags",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("Flag", {
-          appId: app.appId,
-          key: "alchemy-test-flag",
-          enabled: false,
-          defaultVariation: "on",
-          variations: { off: false, on: true },
-          description: "managed by alchemy",
-          rules: [
-            {
-              priority: 1,
-              conditions: [
-                { attribute: "country", operator: "equals", value: "US" },
-              ],
-              serveVariation: "on",
-              rollout: { percentage: 50 },
-            },
-          ],
-        });
-        return { app, flag };
-      }),
-    );
-    expect(noop.flag.updatedAt).toEqual(updated.flag.updatedAt);
+      yield* stack.destroy();
 
-    yield* stack.destroy();
-
-    yield* expectFlagGone(accountId, initial.app.appId, "alchemy-test-flag");
-  }).pipe(logLevel),
+      yield* expectFlagGone(accountId, initial.app.appId, "alchemy-test-flag");
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:flagship", "live"] },
 );
 
-test.provider("replaces the flag when the key changes", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "replaces the flag when the key changes",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("ReplaceApp", {
-          name: "alchemy-test-flagship-replace",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("ReplaceFlag", {
-          appId: app.appId,
-          key: "alchemy-test-flag-a",
-          defaultVariation: "off",
-          variations: { off: false, on: true },
-        });
-        return { app, flag };
-      }),
-    );
-    expect(initial.flag.key).toEqual("alchemy-test-flag-a");
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("ReplaceApp", {
+            name: "alchemy-test-flagship-replace",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("ReplaceFlag", {
+            appId: app.appId,
+            key: "alchemy-test-flag-a",
+            defaultVariation: "off",
+            variations: { off: false, on: true },
+          });
+          return { app, flag };
+        }),
+      );
+      expect(initial.flag.key).toEqual("alchemy-test-flag-a");
 
-    // Changing the key is a replacement: a new flag is created and the old
-    // one is deleted.
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("ReplaceApp", {
-          name: "alchemy-test-flagship-replace",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("ReplaceFlag", {
-          appId: app.appId,
-          key: "alchemy-test-flag-b",
-          defaultVariation: "off",
-          variations: { off: false, on: true },
-        });
-        return { app, flag };
-      }),
-    );
+      // Changing the key is a replacement: a new flag is created and the old
+      // one is deleted.
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("ReplaceApp", {
+            name: "alchemy-test-flagship-replace",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("ReplaceFlag", {
+            appId: app.appId,
+            key: "alchemy-test-flag-b",
+            defaultVariation: "off",
+            variations: { off: false, on: true },
+          });
+          return { app, flag };
+        }),
+      );
 
-    expect(replaced.flag.key).toEqual("alchemy-test-flag-b");
-    yield* expectFlagGone(accountId, initial.app.appId, "alchemy-test-flag-a");
+      expect(replaced.flag.key).toEqual("alchemy-test-flag-b");
+      yield* expectFlagGone(
+        accountId,
+        initial.app.appId,
+        "alchemy-test-flag-a",
+      );
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectFlagGone(accountId, initial.app.appId, "alchemy-test-flag-b");
-  }).pipe(logLevel),
+      yield* expectFlagGone(
+        accountId,
+        initial.app.appId,
+        "alchemy-test-flag-b",
+      );
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:flagship", "live"] },
 );
 
-test.provider("recreates a flag after out-of-band delete", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "recreates a flag after out-of-band delete",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("HealApp", {
-          name: "alchemy-test-flagship-heal-flag",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("HealFlag", {
-          appId: app.appId,
-          key: "alchemy-test-flag-heal",
-          defaultVariation: "off",
-          variations: { off: false, on: true },
-        });
-        return { app, flag };
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("HealApp", {
+            name: "alchemy-test-flagship-heal-flag",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("HealFlag", {
+            appId: app.appId,
+            key: "alchemy-test-flag-heal",
+            defaultVariation: "off",
+            variations: { off: false, on: true },
+          });
+          return { app, flag };
+        }),
+      );
 
-    // Delete the flag out-of-band. A redeploy with identical props is a
-    // planner no-op, so change a prop to force reconcile — it must observe
-    // the flag as missing and recreate it instead of failing on a 404.
-    yield* flagship.deleteAppFlag({
-      accountId,
-      appId: initial.app.appId,
-      flagKey: "alchemy-test-flag-heal",
-    });
+      // Delete the flag out-of-band. A redeploy with identical props is a
+      // planner no-op, so change a prop to force reconcile — it must observe
+      // the flag as missing and recreate it instead of failing on a 404.
+      yield* flagship.deleteAppFlag({
+        accountId,
+        appId: initial.app.appId,
+        flagKey: "alchemy-test-flag-heal",
+      });
 
-    const healed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const app = yield* Cloudflare.Flagship.App("HealApp", {
-          name: "alchemy-test-flagship-heal-flag",
-        });
-        const flag = yield* Cloudflare.Flagship.Flag("HealFlag", {
-          appId: app.appId,
-          key: "alchemy-test-flag-heal",
-          enabled: false,
-          defaultVariation: "off",
-          variations: { off: false, on: true },
-        });
-        return { app, flag };
-      }),
-    );
+      const healed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* Cloudflare.Flagship.App("HealApp", {
+            name: "alchemy-test-flagship-heal-flag",
+          });
+          const flag = yield* Cloudflare.Flagship.Flag("HealFlag", {
+            appId: app.appId,
+            key: "alchemy-test-flag-heal",
+            enabled: false,
+            defaultVariation: "off",
+            variations: { off: false, on: true },
+          });
+          return { app, flag };
+        }),
+      );
 
-    expect(healed.flag.key).toEqual("alchemy-test-flag-heal");
-    expect(healed.flag.enabled).toBe(false);
+      expect(healed.flag.key).toEqual("alchemy-test-flag-heal");
+      expect(healed.flag.enabled).toBe(false);
 
-    const live = yield* flagship.getAppFlag({
-      accountId,
-      appId: initial.app.appId,
-      flagKey: "alchemy-test-flag-heal",
-    });
-    expect(live.enabled).toBe(false);
+      const live = yield* flagship.getAppFlag({
+        accountId,
+        appId: initial.app.appId,
+        flagKey: "alchemy-test-flag-heal",
+      });
+      expect(live.enabled).toBe(false);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectFlagGone(
-      accountId,
-      initial.app.appId,
-      "alchemy-test-flag-heal",
-    );
-  }).pipe(logLevel),
+      yield* expectFlagGone(
+        accountId,
+        initial.app.appId,
+        "alchemy-test-flag-heal",
+      );
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:flagship", "live"] },
 );
 
 test.provider(
@@ -330,5 +349,8 @@ test.provider(
   // The `listApps` consistency poll above is bounded at ~90s (30 x 3s) plus
   // per-iteration `list()` latency, on top of two deploys; size the test over
   // that bounded worst case rather than the 120s default.
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:flagship", "live"],
+    timeout: 180_000,
+  },
 );

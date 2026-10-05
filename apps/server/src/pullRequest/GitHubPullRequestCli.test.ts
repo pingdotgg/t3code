@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -1828,6 +1828,170 @@ layer("GitHubPullRequestCli.layer", (it) => {
         "github.com/acme/web",
         "--squash",
       ]);
+    }),
+  );
+
+  it.effect.each(["merge", "enable-auto-merge"] as const)(
+    "removes agent credits from the proposed message for %s",
+    (action) =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                encodeJson({
+                  data: {
+                    repository: {
+                      pullRequest: {
+                        isMergeQueueEnabled: false,
+                        headRefOid: "abc123",
+                        viewerMergeBodyText:
+                          "Details\n\nCo-authored-by: Alice <alice@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>",
+                      },
+                    },
+                  },
+                }),
+              ),
+            ),
+          )
+          .mockReturnValueOnce(Effect.succeed(output("")));
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        yield* cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action,
+          mergeMethod: "squash",
+          removeAgentCreditsOnMerge: true,
+        });
+        expect(callAt(0).args).toContain("method=SQUASH");
+        expect(callAt(1).args.slice(-2)).toEqual(["--body-file", "-"]);
+        expect(callAt(1).args).toContain("--match-head-commit");
+        expect(callAt(1).args).toContain("abc123");
+        expect(callAt(1).stdin).toBe("Details\n\nCo-authored-by: Alice <alice@example.com>");
+        expect(callAt(1).args.join(" ")).not.toContain("alice@example.com");
+      }),
+  );
+
+  it.effect.each([
+    {
+      description: "an unchanged message",
+      body: "Details\n\nCo-authored-by: Alice <alice@example.com>",
+      queued: false,
+    },
+    {
+      description: "a merge queue",
+      body: "Co-authored-by: Claude <noreply@anthropic.com>",
+      queued: true,
+    },
+  ] as const)("keeps GitHub's default message for $description", ({ body, queued }) =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      isMergeQueueEnabled: queued,
+                      headRefOid: "abc123",
+                      viewerMergeBodyText: body,
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(callAt(0).args).toContain("method=MERGE");
+      expect(callAt(1).args).not.toContain("--body-file");
+      expect(callAt(1).stdin).toBeUndefined();
+    }),
+  );
+
+  it.effect("passes an explicitly empty body when the proposed message only credits an agent", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      isMergeQueueEnabled: false,
+                      headRefOid: "abc123",
+                      viewerMergeBodyText: "Co-authored-by: Claude <noreply@anthropic.com>",
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(callAt(1).stdin).toBe("");
+      expect(callAt(1).args).toContain("--body-file");
+    }),
+  );
+
+  it.effect("does not fetch a message for rebase merges", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "rebase",
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(callAt(0).args).toContain("--rebase");
+    }),
+  );
+
+  it.effect("refuses to merge when the proposed message cannot be read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(output('{"data":{"repository":{"pullRequest":null}}}')),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const result = yield* Effect.result(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action: "merge",
+          removeAgentCreditsOnMerge: true,
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 

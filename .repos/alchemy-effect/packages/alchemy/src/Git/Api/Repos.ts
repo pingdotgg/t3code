@@ -3,10 +3,10 @@
  * (DESIGN.md §5). Every route is an Effect `HttpApiEndpoint`. Who may
  * call it is decided by the middleware applied to its route layer.
  */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as Schema from "effect/Schema";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import {
   ImportFailed,
   OwnerName,

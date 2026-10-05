@@ -4,7 +4,7 @@ import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
 import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -13,10 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
-import * as Persistable from "effect/unstable/persistence/Persistable";
-import * as PersistedCache from "effect/unstable/persistence/PersistedCache";
-import * as Persistence from "effect/unstable/persistence/Persistence";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as Persistable from "effect/persistence/Persistable";
+import * as PersistedCache from "effect/persistence/PersistedCache";
+import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
 
 const CONCURRENT_READS = 512;
@@ -72,7 +72,7 @@ export const make = Effect.gen(function* () {
   let enabled = true;
   const lock = yield* Semaphore.make(CONCURRENT_READS);
   const digest = (key: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Encoding.encodeHex));
+    crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Hex.encode));
   const revisions = yield* Cache.makeWith(
     () =>
       backing

@@ -16,7 +16,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 // A minimal hosted Platform (like AWS.ECS.Task / AWS.EC2.Instance) whose
 // runtime context is built by the shared `createHostRuntimeContext`. Its
@@ -92,6 +92,7 @@ test(
 
     expect(yield* Ref.get(ran)).toEqual(["loop"]);
   }),
+  { tags: ["unit", "local"] },
 );
 
 // Regression for #706: the generated container/instance entrypoint resolves the
@@ -115,6 +116,7 @@ test(
     yield* program;
     expect(yield* Ref.get(ran)).toBe(true);
   }),
+  { tags: ["unit", "local"] },
 );
 
 // Regression for #706: a hosted Platform program can `yield* ServerHost` and
@@ -139,4 +141,5 @@ test(
 
     expect(plan.resources["MyHost"]?.action).toBe("create");
   }),
+  { tags: ["unit", "local"] },
 );

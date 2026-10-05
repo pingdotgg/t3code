@@ -29,7 +29,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -1060,6 +1060,47 @@ describe("PiAdapterV2", () => {
         fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath,
         forkFile,
       );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("presents explicitly namespaced MCP extension tools", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      for (const type of ["tool_execution_start", "tool_execution_end"]) {
+        yield* fake.emit({
+          type,
+          toolCallId: "weather-call",
+          toolName: "mcp__weather__get_weather",
+          args: { city: "Berlin" },
+          result: { content: [{ type: "text", text: "Sunny" }] },
+          isError: false,
+        });
+        const event = yield* takeEvent(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Expected an MCP tool item");
+        assert.equal(event.turnItem.title, "get weather");
+        assert.equal(
+          event.turnItem.status,
+          type === "tool_execution_start" ? "running" : "completed",
+        );
+        assert.deepEqual(event.turnItem.toolSource, {
+          key: "mcp:weather",
+          name: "weather",
+          kind: "integration",
+        });
+        assert.deepEqual(event.turnItem.input, { city: "Berlin" });
+      }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

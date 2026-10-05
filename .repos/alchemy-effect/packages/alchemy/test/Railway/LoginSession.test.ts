@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwaySdk } from "@distilled.cloud/railway";
 import * as Railway from "@/Railway";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -12,7 +13,13 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-const missingSession = ["RailwayNotFound"] as const;
+const verifyLoginSession = Query.fn((code: string) =>
+  RailwaySdk.loginSessionVerify({ code }),
+);
+
+const consumeLoginSession = Query.fn((code: string) =>
+  RailwaySdk.loginSessionConsume({ code }),
+);
 
 test.provider(
   "create, verify, and cancel a login session",
@@ -21,7 +28,7 @@ test.provider(
       yield* stack.destroy();
 
       const code = yield* Railway.provideAnonymousRailway(
-        railway.createLoginSession({}),
+        Railway.createLoginSession(),
       );
       expect(code).toEqual(expect.any(String));
       expect(code.length).toBeGreaterThan(0);
@@ -37,48 +44,48 @@ test.provider(
       expect(payload).toContain("hostname=alchemy-test");
 
       const verified = yield* Railway.provideAnonymousRailway(
-        railway
-          .verifyLoginSession({ code })
-          .pipe(railway.catchTags(missingSession, () => Effect.succeed(false))),
+        verifyLoginSession(code).pipe(
+          Effect.catchTag("RailwayNotFound", () => Effect.succeed(false)),
+        ),
       );
       // Verify is a liveness check: true while the pairing session exists,
       // even before the user authorizes in the browser.
       expect(verified).toBe(true);
 
       const beforeAuth = yield* Railway.provideAnonymousRailway(
-        railway
-          .loginSessionConsume({ code })
-          .pipe(railway.catchTags(missingSession, () => Effect.succeed(null))),
+        consumeLoginSession(code).pipe(
+          Effect.catchTag("RailwayNotFound", () => Effect.succeed(null)),
+        ),
       );
       expect(beforeAuth).toBeNull();
 
       const cancelled = yield* Railway.provideAnonymousRailway(
-        railway.cancelLoginSession({ code }),
+        Railway.cancelLoginSession(code),
       );
       expect(cancelled).toBe(true);
 
       const cancelledAgain = yield* Railway.provideAnonymousRailway(
-        railway
-          .cancelLoginSession({ code })
-          .pipe(railway.catchTags(missingSession, () => Effect.succeed(false))),
+        Railway.cancelLoginSession(code).pipe(
+          Effect.catchTag("RailwayNotFound", () => Effect.succeed(false)),
+        ),
       );
       expect(typeof cancelledAgain).toBe("boolean");
 
       const verifiedAfter = yield* Railway.provideAnonymousRailway(
-        railway
-          .verifyLoginSession({ code })
-          .pipe(railway.catchTags(missingSession, () => Effect.succeed(false))),
+        verifyLoginSession(code).pipe(
+          Effect.catchTag("RailwayNotFound", () => Effect.succeed(false)),
+        ),
       );
       expect(verifiedAfter).toBe(false);
 
       const consumedAfter = yield* Railway.provideAnonymousRailway(
-        railway
-          .loginSessionConsume({ code })
-          .pipe(railway.catchTags(missingSession, () => Effect.succeed(null))),
+        consumeLoginSession(code).pipe(
+          Effect.catchTag("RailwayNotFound", () => Effect.succeed(null)),
+        ),
       );
       expect(consumedAfter).toBeNull();
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:railway", "live"], timeout: 120_000 },
 );

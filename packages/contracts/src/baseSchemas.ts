@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const TrimmedString = Schema.String.pipe(
@@ -35,14 +36,6 @@ export type DpopFailureReason = typeof DpopFailureReason.Type;
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
-/**
- * Wire codec for server→client arrays whose element unions grow over time
- * (new literal members, new struct variants). Decoding drops elements the
- * current build cannot decode instead of failing the whole payload — a client
- * has to keep decoding configs sent by servers newer than itself, and
- * rejecting the payload would take down the connection over data the client
- * couldn't act on anyway. Encoding is the plain array encoding.
- */
 /**
  * Same idea for one optional value whose literal set grows over time: a
  * member this build does not know decodes as absent rather than failing the
@@ -107,27 +100,179 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   );
 };
 
-export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) => {
-  const decodeElement = Schema.decodeUnknownOption(element as never);
-  return Schema.Array(Schema.Unknown).pipe(
+/**
+ * Wire codec for a server→client value whose shape grows over time: a union
+ * a newer server may add members to, or an array of such values. Clients keep
+ * decoding payloads from servers newer than themselves instead of failing the
+ * connection over data they could not act on anyway.
+ *
+ * Decoding runs each value through its own schema, so transformations (dates,
+ * trimming, decoding defaults) apply as usual. Only values that schema
+ * rejects are dropped; encoding is the plain encoding.
+ *
+ * For a tagged union, prefer {@link ForwardCompatibleUnion}: it drops only
+ * values whose tag this build does not know, so a known member with a broken
+ * payload still fails loudly.
+ */
+export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
+  Schema.Array(
+    Schema.UndefinedOr(element).pipe(
+      // An element this build cannot read becomes a hole, filtered out below.
+      Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+    ),
+  ).pipe(
     Schema.decodeTo(
-      Schema.Array(element),
-      SchemaTransformation.transform<ReadonlyArray<Element["Encoded"]>, ReadonlyArray<unknown>>({
+      Schema.Array(Schema.toType(element)),
+      SchemaTransformation.transform<
+        ReadonlyArray<Element["Type"]>,
+        ReadonlyArray<Element["Type"] | undefined>
+      >({
+        decode: (values) => values.filter((value) => value !== undefined),
+        encode: (values) => values,
+      }),
+    ),
+  ) as unknown as ForwardCompatibleArray<Element>;
+export type ForwardCompatibleArray<Element extends Schema.Top> = Schema.Codec<
+  ReadonlyArray<Element["Type"]>,
+  ReadonlyArray<Element["Encoded"]>,
+  Element["DecodingServices"],
+  Element["EncodingServices"]
+>;
+
+/**
+ * A member of a {@link ForwardCompatibleUnion} whose tag this build does not
+ * know. A class, so only the codec can make one: no decoded payload, however
+ * it is shaped, is ever mistaken for it.
+ */
+export class UnknownUnionMember<Tag extends string = string> {
+  readonly tag: Tag;
+  readonly value: string;
+  constructor(tag: Tag, value: string) {
+    this.tag = tag;
+    this.value = value;
+  }
+}
+
+/**
+ * Wire codec for a server→client tagged union a newer server may add members
+ * to. A value whose `tag` field holds a value this build does not know decodes
+ * to {@link UnknownUnionMember} instead of failing; a known member decodes
+ * through its own schema, so a broken known payload still fails. Callers
+ * decide what an unknown member means: skip it, or show a fallback.
+ *
+ * Unknown members are decode-only; encoding one fails.
+ */
+export const ForwardCompatibleUnion = <
+  const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  const Tag extends string,
+>(
+  members: Members,
+  tag: Tag,
+) => {
+  const known = knownTags(members, tag);
+  const unknownMember = Schema.Struct({
+    [tag]: Schema.String.check(
+      Schema.makeFilter(
+        (value: string) => !known.has(value) || `A known ${tag} must decode in full.`,
+      ),
+    ),
+  } as Record<Tag, Schema.String>).pipe(
+    Schema.decodeTo(Schema.instanceOf(UnknownUnionMember<Tag>), {
+      decode: SchemaGetter.transform(
+        (raw: Record<string, string>) => new UnknownUnionMember(tag, raw[tag]!),
+      ),
+      encode: SchemaGetter.forbidden(() => `Unknown ${tag} values are never sent.`),
+    }),
+  );
+  return Schema.Union([...members, unknownMember]) as unknown as ForwardCompatibleUnion<
+    Members,
+    Tag
+  >;
+};
+export type ForwardCompatibleUnion<
+  Members extends ReadonlyArray<Schema.Top>,
+  Tag extends string,
+> = Schema.Codec<
+  Members[number]["Type"] | UnknownUnionMember<Tag>,
+  Members[number]["Encoded"],
+  Members[number]["DecodingServices"],
+  Members[number]["EncodingServices"]
+>;
+
+/**
+ * Whether a raw, undecoded value carries a `tag` this build does not know
+ * among `members`. For checks outside a {@link ForwardCompatibleUnion}, such
+ * as an envelope that must skip a payload of an unknown kind.
+ */
+export const hasUnknownUnionTag = (
+  members: ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  tag: string,
+): ((value: unknown) => boolean) => {
+  const known = knownTags(members, tag);
+  return (value) =>
+    typeof value === "object" &&
+    value !== null &&
+    tag in value &&
+    !known.has((value as Record<string, unknown>)[tag] as string);
+};
+
+/** Whether a decoded {@link ForwardCompatibleUnion} value is a member this build does not know. */
+export const isUnknownUnionMember = <A>(
+  value: A,
+): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
+
+/**
+ * An array of a growing tagged union that drops members this build does not
+ * know. Known members decode through their own schema and still fail when
+ * broken. Encoding is the plain array encoding.
+ */
+export const ForwardCompatibleUnionArray = <
+  const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  const Tag extends string,
+>(
+  members: Members,
+  tag: Tag,
+) =>
+  Schema.Array(ForwardCompatibleUnion(members, tag)).pipe(
+    Schema.decodeTo(
+      Schema.Array(Schema.toType(Schema.Union(members))),
+      SchemaTransformation.transform<
+        ReadonlyArray<Members[number]["Type"]>,
+        ReadonlyArray<Members[number]["Type"] | UnknownUnionMember<Tag>>
+      >({
         decode: (values) =>
-          values.filter((value) => Option.isSome(decodeElement(value))) as ReadonlyArray<
-            Element["Encoded"]
+          values.filter((value) => !isUnknownUnionMember(value)) as ReadonlyArray<
+            Members[number]["Type"]
           >,
         encode: (values) => values,
       }),
     ),
   );
+
+const knownTags = (
+  members: ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  tag: string,
+): ReadonlySet<string> => {
+  const tags = new Set<string>();
+  for (const member of members) {
+    const field = (member.fields as Record<string, unknown>)[tag] as
+      | { readonly literal?: unknown; readonly literals?: ReadonlyArray<unknown> }
+      | undefined;
+    for (const literal of field?.literals ?? [field?.literal]) {
+      if (typeof literal !== "string") {
+        throw new Error(`Every ForwardCompatibleUnion member needs a string literal ${tag}.`);
+      }
+      tags.add(literal);
+    }
+  }
+  return tags;
 };
 
 /**
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
-const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+const makeEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) => {
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand));
 };
 
 export const ThreadId = makeEntityId("ThreadId");

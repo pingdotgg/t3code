@@ -64,7 +64,7 @@ const OrchestratorMcpSchedule = Schema.Union([
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
-    "Recurring schedule object: {type:'interval', everyMs} or {type:'fixed_time', timeOfDay, weekdays?}. Never stringify it unless the provider requires the compatibility form.",
+    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
 });
 
 /**
@@ -280,7 +280,15 @@ export const OrchestratorMcpThreadStatus = Schema.Union([
 ]);
 export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
 
+const OrchestratorMcpProjectTarget = Schema.optional(
+  ProjectId.annotate({
+    description:
+      "Project to act on. Omit for the calling thread's project; required when the caller is not a T3 thread.",
+  }),
+);
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
   statuses: Schema.optional(
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
   ),
@@ -316,7 +324,8 @@ export type OrchestratorMcpThreadListItem = typeof OrchestratorMcpThreadListItem
 
 export const OrchestratorMcpThreadListResult = Schema.Struct({
   projectId: ProjectId,
-  currentThreadId: ThreadId,
+  /** The calling thread, or null when the caller is not a T3 thread. */
+  currentThreadId: Schema.NullOr(ThreadId),
   threads: Schema.Array(OrchestratorMcpThreadListItem),
   nextCursor: Schema.NullOr(NonNegativeInt),
   total: NonNegativeInt,
@@ -475,9 +484,11 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
-  parentThreadId: ThreadId,
-  inheritedProviderInstanceId: ProviderInstanceId,
-  inheritedModel: Schema.String,
+  /** The calling thread, or null when the caller is not a T3 thread. */
+  parentThreadId: Schema.NullOr(ThreadId),
+  /** The calling thread's selection, or null when the caller is not a T3 thread. */
+  inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  inheritedModel: Schema.NullOr(Schema.String),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
@@ -495,6 +506,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
   prompt: OrchestratorMcpPrompt.annotate({
     description: "Prompt executed on every scheduled run.",
   }),
@@ -529,11 +541,24 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  /** For webhook tasks: the public T3 Connect URL, or the environment-relative path when the environment is not linked. */
+  webhookUrl: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
 export const OrchestratorMcpScheduleTaskResult = OrchestratorMcpScheduledTask;
 export type OrchestratorMcpScheduleTaskResult = typeof OrchestratorMcpScheduleTaskResult.Type;
+
+export const OrchestratorMcpListScheduledTasksInput = Schema.Struct({
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description:
+        "Only list this project's tasks. Omit for the calling thread's project, or for every project when the caller is not a T3 thread.",
+    }),
+  ),
+});
+export type OrchestratorMcpListScheduledTasksInput =
+  typeof OrchestratorMcpListScheduledTasksInput.Type;
 
 export const OrchestratorMcpListScheduledTasksResult = Schema.Struct({
   tasks: Schema.Array(OrchestratorMcpScheduledTask),
@@ -583,6 +608,8 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "thread_not_interruptible",
       "invalid_request",
       "orchestration_error",
+      "thread_credential_required",
+      "target_required",
     ]),
     message: Schema.String,
   },

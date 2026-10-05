@@ -6,124 +6,223 @@ import type { WorkerProps } from "@/Cloudflare/Workers/Worker";
 import * as Output from "@/Output";
 import { describe, expect, test } from "alchemy-test";
 
-describe("getCompatibility", () => {
-  // Cloudflare enables both Node.js compatibility modes by date from
-  // 2026-08-04, so Alchemy's newer default no longer emits a redundant flag.
-  test("uses date-default Node.js compatibility for Effect-native workers", () => {
-    const { date, flags } = getCompatibility({} as WorkerProps);
-    expect(date).toBe("2026-08-31");
-    expect(flags).not.toContain("nodejs_compat");
-  });
+describe(
+  "getCompatibility",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "local",
+    ],
+  },
+  () => {
+    for (const date of ["2024-09-23", "2026-08-31"]) {
+      for (const flags of [[], ["nodejs_als", "legacy_module_registry"]]) {
+        test(`preserves explicit prebuilt flags ${JSON.stringify(flags)} on ${date}`, () => {
+          expect(
+            getCompatibility({
+              isExternal: true,
+              bundle: false,
+              main: "./dist/worker.js",
+              compatibility: { date, flags },
+            } as WorkerProps),
+          ).toEqual({ date, flags });
+        });
+      }
 
-  test("uses date-default Node.js compatibility for external workers", () => {
-    const { flags } = getCompatibility({ isExternal: true } as WorkerProps);
-    expect(flags).not.toContain("nodejs_compat");
-  });
+      test(`retains defaults for prebuilt Workers with omitted flags on ${date}`, () => {
+        const { flags } = getCompatibility({
+          isExternal: true,
+          bundle: false,
+          compatibility: { date },
+        } as WorkerProps);
+        expect(flags).toEqual(
+          date === "2024-09-23"
+            ? ["new_module_registry", "nodejs_compat"]
+            : ["new_module_registry"],
+        );
+      });
+    }
 
-  test("does not duplicate an explicit nodejs_compat", () => {
-    const { flags } = getCompatibility({
-      isExternal: true,
-      compatibility: { flags: ["nodejs_compat"] },
-    } as WorkerProps);
-    expect(flags.filter((f) => f === "nodejs_compat")).toHaveLength(1);
-  });
+    test("retains defaults for bundled external Workers with explicit empty flags", () => {
+      for (const bundle of [undefined, true]) {
+        const { flags } = getCompatibility({
+          isExternal: true,
+          bundle,
+          compatibility: { date: "2024-09-23", flags: [] },
+        } as WorkerProps);
+        expect(flags).toEqual(["new_module_registry", "nodejs_compat"]);
+      }
+    });
 
-  // nodejs_compat with a date before 2024-09-23 selects the legacy v1 mode,
-  // which lacks `process.getBuiltinModule` — the build-side unenv transform
-  // emits code that needs it, so the deploy would fail at script startup.
-  test("skips the external-worker default for pre-v2 compatibility dates", () => {
-    const { flags } = getCompatibility({
-      isExternal: true,
-      compatibility: { date: "2024-01-01" },
-    } as WorkerProps);
-    expect(flags).not.toContain("nodejs_compat");
-  });
+    test("retains Effect runtime requirements with explicit empty flags", () => {
+      const { flags } = getCompatibility({
+        isExternal: false,
+        bundle: false,
+        compatibility: { date: "2024-09-23", flags: [] },
+      } as WorkerProps);
+      expect(flags).toEqual([
+        "new_module_registry",
+        "nodejs_compat",
+        "handle_cross_request_promise_resolution",
+      ]);
+    });
 
-  test("applies the external-worker default from the v2 date onward", () => {
-    const { flags } = getCompatibility({
-      isExternal: true,
-      compatibility: { date: "2024-09-23" },
-    } as WorkerProps);
-    expect(flags).toContain("nodejs_compat");
-  });
+    test("defaults both Effect and external workers to the new module registry", () => {
+      for (const isExternal of [false, true]) {
+        const { flags } = getCompatibility({ isExternal } as WorkerProps);
+        expect(flags).toContain("new_module_registry");
+      }
+    });
 
-  // An explicit no_nodejs_compat opts out — appending nodejs_compat
-  // alongside it would send Cloudflare a contradictory flag pair.
-  test("no_nodejs_compat opts out of the default", () => {
-    const { flags } = getCompatibility({
-      isExternal: true,
-      compatibility: { flags: ["no_nodejs_compat"] },
-    } as WorkerProps);
-    expect(flags).toContain("no_nodejs_compat");
-    expect(flags).not.toContain("nodejs_compat");
-  });
+    test("respects the legacy module registry opt-out", () => {
+      const { flags } = getCompatibility({
+        compatibility: { flags: ["legacy_module_registry"] },
+      } as WorkerProps);
+      expect(flags).toContain("legacy_module_registry");
+      expect(flags).not.toContain("new_module_registry");
+    });
 
-  // Python Workers don't go through the JS bundler: they get the beta
-  // python_workers flag and no nodejs_compat default.
-  test("python workers get python_workers and no nodejs_compat default", () => {
-    const { flags } = getCompatibility({
-      isExternal: true,
-      main: "./src/entry.py",
-    } as WorkerProps);
-    expect(flags).toContain("python_workers");
-    expect(flags).not.toContain("nodejs_compat");
-  });
+    test("does not duplicate an explicit new module registry flag", () => {
+      const { flags } = getCompatibility({
+        compatibility: { flags: ["new_module_registry"] },
+      } as WorkerProps);
+      expect(
+        flags.filter((flag) => flag === "new_module_registry"),
+      ).toHaveLength(1);
+    });
 
-  // `precreate` is handed raw, *unresolved* props so resources in a
-  // dependency cycle can signal early, and `main` is an Input — a `main`
-  // derived from another resource's output (e.g. a `Command.Build` outdir)
-  // is still an Output there. An unresolved Output is a callable Proxy, so
-  // a `main !== undefined` guard passes and `main.split("?")[0]` used to
-  // blow up with a bare `TypeError` out of the Worker's pre-create.
-  test("tolerates an unresolved Output main", () => {
-    const main = Output.map(
-      Output.literal("/build"),
-      (dir: string) => `${dir}/server/entry.mjs`,
-    ) as unknown as string;
-    const { flags } = getCompatibility({
-      isExternal: true,
-      main,
-    } as WorkerProps);
-    expect(flags).not.toContain("python_workers");
-    expect(flags).not.toContain("nodejs_compat");
-  });
+    // Cloudflare enables both Node.js compatibility modes by date from
+    // 2026-08-04, so Alchemy's newer default no longer emits a redundant flag.
+    test("uses date-default Node.js compatibility for Effect-native workers", () => {
+      const { date, flags } = getCompatibility({} as WorkerProps);
+      expect(date).toBe("2026-08-31");
+      expect(flags).not.toContain("nodejs_compat");
+    });
 
-  test("forces handle_cross_request_promise_resolution for Effect workers on old dates", () => {
-    const { flags } = getCompatibility({
-      compatibility: { date: "2024-10-01" },
-    } as WorkerProps);
-    expect(flags).toContain("handle_cross_request_promise_resolution");
-  });
+    test("uses date-default Node.js compatibility for external workers", () => {
+      const { flags } = getCompatibility({ isExternal: true } as WorkerProps);
+      expect(flags).not.toContain("nodejs_compat");
+    });
 
-  test("omits handle_cross_request_promise_resolution once default-on", () => {
-    const { flags } = getCompatibility({} as WorkerProps);
-    expect(flags).not.toContain("handle_cross_request_promise_resolution");
-  });
-});
+    test("does not duplicate an explicit nodejs_compat", () => {
+      const { flags } = getCompatibility({
+        isExternal: true,
+        compatibility: { flags: ["nodejs_compat"] },
+      } as WorkerProps);
+      expect(flags.filter((f) => f === "nodejs_compat")).toHaveLength(1);
+    });
 
-describe("getToolingCompatibility", () => {
-  test("materializes date-default nodejs_compat for downstream tools", () => {
-    expect(
-      getToolingCompatibility({ date: "2026-08-31", flags: [] }, "worker.ts")
-        .flags,
-    ).toEqual(["nodejs_compat"]);
-  });
+    // nodejs_compat with a date before 2024-09-23 selects the legacy v1 mode,
+    // which lacks `process.getBuiltinModule` — the build-side unenv transform
+    // emits code that needs it, so the deploy would fail at script startup.
+    test("skips the external-worker default for pre-v2 compatibility dates", () => {
+      const { flags } = getCompatibility({
+        isExternal: true,
+        compatibility: { date: "2024-01-01" },
+      } as WorkerProps);
+      expect(flags).not.toContain("nodejs_compat");
+    });
 
-  test("preserves an explicit opt-out", () => {
-    expect(
-      getToolingCompatibility(
-        { date: "2026-08-31", flags: ["no_nodejs_compat"] },
-        "worker.ts",
-      ).flags,
-    ).toEqual(["no_nodejs_compat"]);
-  });
+    test("applies the external-worker default from the v2 date onward", () => {
+      const { flags } = getCompatibility({
+        isExternal: true,
+        compatibility: { date: "2024-09-23" },
+      } as WorkerProps);
+      expect(flags).toContain("nodejs_compat");
+    });
 
-  test("does not add Node compatibility to Python tooling", () => {
-    expect(
-      getToolingCompatibility(
-        { date: "2026-08-31", flags: ["python_workers"] },
-        "worker.py",
-      ).flags,
-    ).toEqual(["python_workers"]);
-  });
-});
+    // An explicit no_nodejs_compat opts out — appending nodejs_compat
+    // alongside it would send Cloudflare a contradictory flag pair.
+    test("no_nodejs_compat opts out of the default", () => {
+      const { flags } = getCompatibility({
+        isExternal: true,
+        compatibility: { flags: ["no_nodejs_compat"] },
+      } as WorkerProps);
+      expect(flags).toContain("no_nodejs_compat");
+      expect(flags).not.toContain("nodejs_compat");
+    });
+
+    // Python Workers don't go through the JS bundler: they get the beta
+    // python_workers flag and no nodejs_compat default.
+    test("python workers get python_workers and no nodejs_compat default", () => {
+      const { flags } = getCompatibility({
+        isExternal: true,
+        main: "./src/entry.py",
+      } as WorkerProps);
+      expect(flags).toContain("python_workers");
+      expect(flags).not.toContain("new_module_registry");
+      expect(flags).not.toContain("nodejs_compat");
+    });
+
+    // `precreate` is handed raw, *unresolved* props so resources in a
+    // dependency cycle can signal early, and `main` is an Input — a `main`
+    // derived from another resource's output (e.g. a `Command.Build` outdir)
+    // is still an Output there. An unresolved Output is a callable Proxy, so
+    // a `main !== undefined` guard passes and `main.split("?")[0]` used to
+    // blow up with a bare `TypeError` out of the Worker's pre-create.
+    test("tolerates an unresolved Output main", () => {
+      const main = Output.map(
+        Output.literal("/build"),
+        (dir: string) => `${dir}/server/entry.mjs`,
+      ) as unknown as string;
+      const { flags } = getCompatibility({
+        isExternal: true,
+        main,
+      } as WorkerProps);
+      expect(flags).not.toContain("python_workers");
+      expect(flags).not.toContain("nodejs_compat");
+    });
+
+    test("forces handle_cross_request_promise_resolution for Effect workers on old dates", () => {
+      const { flags } = getCompatibility({
+        compatibility: { date: "2024-10-01" },
+      } as WorkerProps);
+      expect(flags).toContain("handle_cross_request_promise_resolution");
+    });
+
+    test("omits handle_cross_request_promise_resolution once default-on", () => {
+      const { flags } = getCompatibility({} as WorkerProps);
+      expect(flags).not.toContain("handle_cross_request_promise_resolution");
+    });
+  },
+);
+
+describe(
+  "getToolingCompatibility",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "local",
+    ],
+  },
+  () => {
+    test("materializes date-default nodejs_compat for downstream tools", () => {
+      expect(
+        getToolingCompatibility({ date: "2026-08-31", flags: [] }, "worker.ts")
+          .flags,
+      ).toEqual(["nodejs_compat"]);
+    });
+
+    test("preserves an explicit opt-out", () => {
+      expect(
+        getToolingCompatibility(
+          { date: "2026-08-31", flags: ["no_nodejs_compat"] },
+          "worker.ts",
+        ).flags,
+      ).toEqual(["no_nodejs_compat"]);
+    });
+
+    test("does not add Node compatibility to Python tooling", () => {
+      expect(
+        getToolingCompatibility(
+          { date: "2026-08-31", flags: ["python_workers"] },
+          "worker.py",
+        ).flags,
+      ).toEqual(["python_workers"]);
+    });
+  },
+);

@@ -409,6 +409,7 @@ export const make = Effect.gen(function* () {
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
               reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+              editedAtById: new Map<string, string>(),
               reviewThreads: [],
               commentCount: 0,
               truncated: true,
@@ -475,6 +476,7 @@ export const make = Effect.gen(function* () {
               // A comment out of `gh pr view --json` carries none of its own: that read
               // reports no reaction at all, so they arrive from the GraphQL page by node id.
               reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
             }))
             .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
           // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
@@ -582,6 +584,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
           ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
           ...(input.expectedStackHeads === undefined
             ? {}

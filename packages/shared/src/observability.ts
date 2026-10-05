@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
-import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
+import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import { RotatingFileSink } from "./logging.ts";
 

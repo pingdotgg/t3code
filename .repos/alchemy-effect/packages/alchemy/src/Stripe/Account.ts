@@ -353,6 +353,7 @@ export type Account = Resource<
  * ```
  *
  * @resource
+ * @product Account
  */
 export const Account = Resource<Account>("Stripe.Account");
 

@@ -15,47 +15,50 @@ const { test } = Test.make({ providers: AWS.providers() });
 // resolve the provider from context via the typed `findProvider`, call
 // `list()`, and assert the deployed alarm appears in the exhaustively
 // paginated result.
-test.provider("list enumerates the deployed composite alarm", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed composite alarm",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const metric = yield* Alarm("ListMetricAlarm", {
-          name: "alchemy-test-composite-list-metric",
-          MetricName: "Errors",
-          Namespace: "AWS/Lambda",
-          Statistic: "Sum",
-          Period: 60,
-          EvaluationPeriods: 1,
-          Threshold: 1,
-          ComparisonOperator: "GreaterThanOrEqualToThreshold",
-        });
-        const composite = yield* CompositeAlarm("ListCompositeAlarm", {
-          name: "alchemy-test-composite-list",
-          AlarmRule: Output.interpolate`ALARM("${metric.alarmName}")`,
-        });
-        return composite;
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const metric = yield* Alarm("ListMetricAlarm", {
+            name: "alchemy-test-composite-list-metric",
+            MetricName: "Errors",
+            Namespace: "AWS/Lambda",
+            Statistic: "Sum",
+            Period: 60,
+            EvaluationPeriods: 1,
+            Threshold: 1,
+            ComparisonOperator: "GreaterThanOrEqualToThreshold",
+          });
+          const composite = yield* CompositeAlarm("ListCompositeAlarm", {
+            name: "alchemy-test-composite-list",
+            AlarmRule: Output.interpolate`ALARM("${metric.alarmName}")`,
+          });
+          return composite;
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(CompositeAlarm);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(CompositeAlarm);
+      const all = yield* provider.list();
 
-    expect(all.some((a) => a.alarmName === deployed.alarmName)).toBe(true);
+      expect(all.some((a) => a.alarmName === deployed.alarmName)).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Out-of-band assert-gone: both the composite alarm and its member
-    // metric alarm are deleted after the final destroy.
-    const gone = yield* cloudwatch.describeAlarms({
-      AlarmNames: [
-        "alchemy-test-composite-list",
-        "alchemy-test-composite-list-metric",
-      ],
-      AlarmTypes: ["CompositeAlarm", "MetricAlarm"],
-    });
-    expect(gone.CompositeAlarms ?? []).toEqual([]);
-    expect(gone.MetricAlarms ?? []).toEqual([]);
-  }),
+      // Out-of-band assert-gone: both the composite alarm and its member
+      // metric alarm are deleted after the final destroy.
+      const gone = yield* cloudwatch.describeAlarms({
+        AlarmNames: [
+          "alchemy-test-composite-list",
+          "alchemy-test-composite-list-metric",
+        ],
+        AlarmTypes: ["CompositeAlarm", "MetricAlarm"],
+      });
+      expect(gone.CompositeAlarms ?? []).toEqual([]);
+      expect(gone.MetricAlarms ?? []).toEqual([]);
+    }),
+  { tags: ["provider:aws", "provider:aws:cloudwatch", "live"] },
 );

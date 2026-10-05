@@ -18,11 +18,11 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import type * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcClientError from "effect/rpc/RpcClientError";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -170,18 +170,24 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    // Set when the socket closes because pongs stopped, so the failure says so
+    // instead of looking like the server closed the connection.
+    const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Deferred.isDone(connected).pipe(
-        Effect.flatMap((wasConnected) =>
+      onPingTimeout: Ref.set(pingTimedOut, true),
+      onDisconnect: Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)]).pipe(
+        Effect.flatMap(([wasConnected, timedOut]) =>
           Deferred.fail(
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
               detail: `${
-                wasConnected
-                  ? `${connection.label} disconnected.`
-                  : `${connection.label} could not establish a WebSocket connection.`
+                !wasConnected
+                  ? `${connection.label} could not establish a WebSocket connection.`
+                  : timedOut
+                    ? `${connection.label} stopped responding.`
+                    : `${connection.label} disconnected.`
               }${networkHint}`,
             }),
           ),

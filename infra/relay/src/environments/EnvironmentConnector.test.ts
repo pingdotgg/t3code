@@ -25,7 +25,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -194,6 +194,7 @@ function makeAllocations(
   },
 ): ManagedEndpointAllocations.ManagedEndpointAllocations["Service"] {
   return {
+    getByTunnelName: () => Effect.die("unused getByTunnelName"),
     get: () => Effect.succeed(allocation),
     reserve: () => Effect.die("unused"),
     recordTunnel: () => Effect.die("unused"),
@@ -229,6 +230,8 @@ function makeLinks(
         environmentPublicKey: environmentKeyPair.publicKey,
         ...overrides,
       }),
+    findActiveManagedForEnvironment: () => Effect.succeed([]),
+    setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
   };
 }

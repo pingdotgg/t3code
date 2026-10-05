@@ -86,17 +86,19 @@ export const RegistryLive = Layer.effect(
       return isNonStale(entryPath).pipe(
         Effect.flatMap((valid) =>
           valid
-            ? fs
-                .readFileString(entryPath)
-                .pipe(
-                  Effect.map(
-                    (content) =>
+            ? fs.readFileString(entryPath).pipe(
+                Effect.flatMap((content) =>
+                  // Other processes (including older runtimes) may expose
+                  // a partial write. A parse failure must leave refresh alive.
+                  Effect.try(
+                    () =>
                       [
                         decodeURIComponent(path.basename(entry, ".json")),
                         JSON.parse(content),
                       ] as const,
                   ),
-                )
+                ),
+              )
             : fs.remove(entryPath).pipe(Effect.as(undefined)),
         ),
         Effect.orElseSucceed(() => undefined),
@@ -105,9 +107,13 @@ export const RegistryLive = Layer.effect(
 
     const readAll = fs.readDirectory(directory).pipe(
       Effect.flatMap((entries) =>
-        Effect.forEach(entries, readEntry, {
-          concurrency: "unbounded",
-        }),
+        Effect.forEach(
+          entries.filter((entry) => entry.endsWith(".json")),
+          readEntry,
+          {
+            concurrency: "unbounded",
+          },
+        ),
       ),
       Effect.map((entries) =>
         MutableHashMap.make(...entries.filter((entry) => entry !== undefined)),
@@ -161,7 +167,19 @@ export const RegistryLive = Layer.effect(
           `${encodeURIComponent(entry.scriptName)}.json`,
         );
         const serialized = JSON.stringify(entry, null, 2);
-        return fs.writeFileString(entryPath, serialized).pipe(
+        // Publish complete files atomically so other registry processes never
+        // observe a truncated entry during creation or replacement.
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const temporaryPath = yield* fs.makeTempFileScoped({
+              directory,
+              prefix: ".registry-",
+              suffix: ".tmp",
+            });
+            yield* fs.writeFileString(temporaryPath, serialized);
+            yield* fs.rename(temporaryPath, entryPath);
+          }),
+        ).pipe(
           Effect.andThen(
             // Immediately update the in-memory registry so it's available without waiting on IO.
             SubscriptionRef.update(ref, (map) =>

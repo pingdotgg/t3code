@@ -1,11 +1,13 @@
 ---
 title: Migrations
-description: Commit a directory of ordered .sql files and point a database resource's migrations prop at it — pending files apply as part of every deploy, tracked in one Alchemy-owned table.
+description: Commit ordered SQL files and apply them on database deploy or Durable Object activation, tracked in one Alchemy-owned table.
 ---
 
 Migrations without an ORM: commit `.sql` files to a directory and
 wire it into the database resource with `migrations`. Each deploy
-applies the pending files — there is nothing else to run.
+applies the pending files — there is nothing else to run. For
+[Durable Objects](#durable-object-migrations), load the files during
+construction and apply them per instance at activation instead.
 
 ## Write the migrations
 
@@ -118,12 +120,111 @@ quirks:
 
 ## Generated migrations target the same contract
 
-[`Drizzle.Schema`](/sql/drizzle/migrations) emits into the same
-shape: its `out` output is a migrations directory, so
-`migrations: schema` orders generation before application in one
-deploy. Any tool that writes ordered `.sql` files into a directory
-already works — drizzle-kit's `<timestamp>_<name>/migration.sql`
-layout is recognized and keyed by directory name.
+Generate and commit files with drizzle-kit before deployment:
+
+```sh
+pnpm exec drizzle-kit generate
+git add src/schema.ts drizzle
+git commit -m "Add schema migration"
+```
+
+The same directory input accepts handwritten SQL or drizzle-kit's
+`<timestamp>_<name>/migration.sql` layout; see [Drizzle migrations](/sql/drizzle/migrations).
+Optional generation automation is documented separately in the
+[`Drizzle.Schema` reference](/providers/drizzle/schema).
+
+## Durable Object migrations
+
+A Durable Object's SQLite database belongs to one named instance,
+not to the Worker deployment. `Cloudflare.SqlMigrations` reads and
+normalizes a migration directory during construction/planning, then
+embeds its records in the Worker JavaScript. No ORM, SQL imports,
+`migrations.js` bundle, or migration environment variables are needed.
+
+Use either flat files such as `migrations/0001_init.sql` or modern
+drizzle-kit directories such as
+`drizzle/20260919000000_create_users/migration.sql`. Commit the files
+before running Alchemy. Paths are relative to the command's current
+working directory, **not** the source module.
+
+Load the directory in the outer Effect:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export class Users extends Cloudflare.DurableObject<Users>()(
+  "Users",
+  Effect.gen(function* () {
+    const migrations = yield* Cloudflare.SqlMigrations("./migrations");
+    const state = yield* Cloudflare.DurableObjectState;
+
+    return Effect.gen(function* () {
+      yield* migrations.apply().pipe(Effect.orDie);
+
+      return {
+        listUsers: () =>
+          state.storage.sql.exec("SELECT id, name FROM users").pipe(
+            Effect.flatMap((cursor) => cursor.toArray()),
+          ),
+      };
+    });
+  }),
+) {}
+```
+
+`migrations.apply()` requires `RuntimeContext` and the current Durable Object
+state. Call it in the **inner** Effect before returning the instance's API;
+it cannot run in the outer construction Effect.
+Its error channel includes `MigrationError` and
+`MigrationHistoryConflictError`. Using `.pipe(Effect.orDie)` here
+prevents activation if the schema cannot be initialized.
+
+The object form selects a different history table:
+
+```typescript
+const migrations = yield* Cloudflare.SqlMigrations({
+  dir: "./drizzle",
+  table: "app_migrations", // default: "__alchemy_migrations"
+});
+```
+
+### Per-instance application
+
+Each object applies pending files when it activates, not during deployment of
+the whole namespace. Each file's SQL and history row commit together:
+
+```text
+0001_create_users → commit SQL + history
+0002_add_email    → failure rolls back this file and prevents activation
+next activation  → skip 0001, retry 0002
+```
+
+### Adopting Drizzle history
+
+```text
+__drizzle_migrations → copy matching history → __alchemy_migrations
+                      missing match → MigrationHistoryConflictError
+```
+
+Adoption is one-way: keep the historical SQL files and use only Alchemy's
+migrator afterward; the old table stays frozen. Changing `migrationsTable`
+on a `migrations.js` bundle does not convert its history.
+
+### Upgrade legacy Drizzle files
+
+For the legacy `meta/_journal.json` layout:
+
+```sh
+pnpm exec drizzle-kit up
+git diff -- drizzle
+git add drizzle
+git commit -m "Upgrade Drizzle migration layout"
+```
+
+See the [Drizzle guide](/sql/drizzle/migrations#durable-object-migrations)
+or [runnable example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-durable-object-sql)
+for the full setup.
 
 ## Where next
 

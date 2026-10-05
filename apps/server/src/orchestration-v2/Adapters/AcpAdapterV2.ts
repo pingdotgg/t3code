@@ -51,7 +51,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -63,6 +63,7 @@ import {
   makeAcpMcpOverAcpBridge,
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
@@ -1632,6 +1633,21 @@ export function makeAcpAdapterV2(
             embeddedTerminalsByToolCallId.delete(oldest);
           }
         };
+        // Command lines of the terminals embedded in a tool call, so MCP calls
+        // made through the acp-mcp-call terminal fallback keep their identity.
+        const embeddedTerminalCommands = (
+          sessionId: string,
+          toolCallId: string,
+        ): ReadonlyArray<string> =>
+          (
+            embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
+              ?.terminalIds ?? []
+          ).flatMap((terminalId) => {
+            const command =
+              clientTerminals?.readCommandLine(terminalId) ??
+              agentTerminalsById.get(sessionScopedId(sessionId, terminalId))?.command;
+            return command === undefined ? [] : [command];
+          });
         // Client terminals (Devin) run with the T3 server's privileges, so they
         // are policy-checked against the active turn policy; a command the user
         // already approved satisfies an "ask" disposition.
@@ -3267,17 +3283,10 @@ export function makeAcpAdapterV2(
           // agent-specific shape and project the same branded dynamic_tool
           // item native providers produce (e.g. the T3 orchestration tools).
           const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
-            embeddedTerminalCommands: (
-              embeddedTerminalsByToolCallId.get(
-                sessionScopedId(context.nativeThreadId, toolCall.toolCallId),
-              )?.terminalIds ?? []
-            ).flatMap((terminalId) => {
-              const command =
-                clientTerminals?.readCommandLine(terminalId) ??
-                agentTerminalsById.get(sessionScopedId(context.nativeThreadId, terminalId))
-                  ?.command;
-              return command === undefined ? [] : [command];
-            }),
+            embeddedTerminalCommands: embeddedTerminalCommands(
+              context.nativeThreadId,
+              toolCall.toolCallId,
+            ),
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
@@ -3302,9 +3311,14 @@ export function makeAcpAdapterV2(
           } else if (mcpIdentity !== undefined) {
             turnItem = {
               ...base,
-              // Identity lives in toolName, like native Codex MCP items; the
-              // agent's own title (e.g. "Ran command") would shadow it.
               title: null,
+              ...mcpToolPresentation({
+                serverName: mcpIdentity.server,
+                toolName: mcpIdentity.tool,
+                source: unknownRecord(
+                  (unknownRecord(rawOutputRecord?.result) ?? rawOutputRecord)?._meta,
+                )?.source,
+              }),
               type: "dynamic_tool",
               toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input:
@@ -4328,7 +4342,8 @@ export function makeAcpAdapterV2(
             return;
           }
           if (context.finalized) return;
-          if (notification.sessionId !== (yield* Ref.get(activeSessionId))) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (notification.sessionId !== rootSessionId) {
             // Finalize may have completed during the activeSessionId yield.
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
@@ -4356,6 +4371,17 @@ export function makeAcpAdapterV2(
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
                 const merged = mergeToolCallState(context.tools.get(key), toolCall);
                 context.tools.set(key, merged);
+                // Terminals are remembered under the raw session id: the child's
+                // own session, or the root one when the flavor routes child
+                // updates out of it (Devin).
+                const mcpIdentity = extractMcpToolCallIdentity(merged, {
+                  embeddedTerminalCommands: [
+                    ...embeddedTerminalCommands(notification.sessionId, toolCall.toolCallId),
+                    ...(rootSessionId === null
+                      ? []
+                      : embeddedTerminalCommands(rootSessionId, toolCall.toolCallId)),
+                  ],
+                });
                 const now = yield* DateTime.now;
                 const status = toolStatus(merged.status);
                 const startedAt = context.toolStartedAt.get(key) ?? now;
@@ -4380,7 +4406,22 @@ export function makeAcpAdapterV2(
                     completedAt: completedAtForStatus(status, now),
                     updatedAt: now,
                     type: "dynamic_tool",
-                    toolName: merged.title ?? merged.kind ?? "Tool",
+                    ...(mcpIdentity === undefined
+                      ? {}
+                      : mcpToolPresentation({
+                          serverName: mcpIdentity.server,
+                          toolName: mcpIdentity.tool,
+                          source: unknownRecord(
+                            (
+                              unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
+                              unknownRecord(merged.data.rawOutput)
+                            )?._meta,
+                          )?.source,
+                        })),
+                    toolName:
+                      mcpIdentity === undefined
+                        ? (merged.title ?? merged.kind ?? "Tool")
+                        : `${mcpIdentity.server}.${mcpIdentity.tool}`,
                     input: merged.data.rawInput ?? null,
                     output: merged.data.rawOutput ?? merged.data.content ?? null,
                   },

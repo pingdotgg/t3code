@@ -16,6 +16,7 @@ export const RELAY_URL_SECRET = "cloud-relay-url";
 export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";
 export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
+export const HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET = "cloud-hold-webhooks-while-offline";
 
 export const encodeEndpointRuntimeConfigJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
@@ -73,3 +74,33 @@ export const readAgentActivityPublishingActive = (
       environmentCredential !== ""
     );
   }).pipe(Effect.orElseSucceed(() => false));
+
+const readSecretString = (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  name: string,
+): Effect.Effect<string | null> =>
+  secrets.get(name).pipe(
+    Effect.map((bytes) =>
+      Option.isSome(bytes) && bytes.value.length > 0 ? new TextDecoder().decode(bytes.value) : null,
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+
+/** The relay URL and environment credential, or null when not linked to T3 Connect. */
+export const readRelayConnection = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
+  Effect.all([
+    readSecretString(secrets, RELAY_URL_SECRET),
+    readSecretString(secrets, RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+  ]).pipe(
+    Effect.map(([url, environmentCredential]) =>
+      url && environmentCredential ? { url, environmentCredential } : null,
+    ),
+  );
+
+/** Whether this environment opted in to T3 Connect holding webhooks while it is offline. */
+export const readHoldWebhooksWhileOffline = (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+) =>
+  readSecretString(secrets, HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET).pipe(
+    Effect.map((value) => value === "true"),
+  );

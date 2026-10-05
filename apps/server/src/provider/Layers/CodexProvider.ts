@@ -7,8 +7,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -691,6 +691,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     skills: snapshot.skills,
     slashCommands: [
       COMPACT_SLASH_COMMAND,
+      {
+        name: "goal",
+        description: "Set a goal Codex keeps working toward until it is done",
+        input: { hint: "Objective, or pause, resume, clear" },
+      },
       {
         name: "feedback",
         description: "Send this thread and Codex logs to OpenAI",

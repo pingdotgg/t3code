@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -1108,7 +1108,10 @@ describe("RpcSessionFactory", () => {
       yield* TestClock.adjust("5 seconds");
       const error = yield* Fiber.join(closedFiber);
       expect(error).toBeInstanceOf(ConnectionTransientError);
-      expect(error).toMatchObject({ reason: "transport" });
+      expect(error).toMatchObject({
+        reason: "transport",
+        detail: "Test environment stopped responding.",
+      });
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 

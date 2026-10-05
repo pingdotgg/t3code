@@ -68,5 +68,13 @@ test.provider(
       yield* stack.destroy();
       yield* assertEndpointDeleting(endpoint.resolverEndpointId);
     }),
-  { timeout: 220_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:route53resolver",
+      "live",
+    ],
+    timeout: 220_000,
+  },
 );

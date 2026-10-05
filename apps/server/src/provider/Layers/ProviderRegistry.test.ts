@@ -31,8 +31,8 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -446,6 +446,11 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             },
           ]);
           assert.deepStrictEqual(status.slashCommands.slice(1), [
+            {
+              name: "goal",
+              description: "Set a goal Codex keeps working toward until it is done",
+              input: { hint: "Objective, or pause, resume, clear" },
+            },
             {
               name: "feedback",
               description: "Send this thread and Codex logs to OpenAI",

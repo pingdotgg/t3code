@@ -5,8 +5,8 @@ import * as serverless from "@distilled.cloud/aws/redshift-serverless";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import SnapshotFunctionLive, {
   SnapshotFunction,
 } from "./fixtures/snapshot-handler";
@@ -29,6 +29,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftserverless", "live"] },
 );
 
 test.provider(
@@ -42,6 +43,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftserverless", "live"] },
 );
 
 const SNAPSHOT_NAME = "alchemy-test-rssnap-snapshot";
@@ -54,6 +56,14 @@ let baseUrl: string;
 // in afterAll.
 describe.skipIf(!process.env.AWS_TEST_REDSHIFT)(
   "RedshiftServerless Snapshot Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:redshiftserverless",
+      "live",
+    ],
+  },
   () => {
     beforeAll(
       Effect.gen(function* () {

@@ -2,8 +2,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import { HttpClient } from "effect/unstable/http";
-import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { HttpClient } from "effect/http";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";

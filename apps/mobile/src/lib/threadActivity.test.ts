@@ -2375,3 +2375,71 @@ it.each(["provider_error", "usage_limit"] as const)(
     });
   },
 );
+
+describe("html renders", () => {
+  const page = { attachmentId: "attachment-page", title: "Revenue", height: 320 };
+  const renderCall = (
+    overrides: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>> = {},
+  ): OrchestrationV2TurnItem => ({
+    ...base("item-render", "2026-06-20T00:00:02.500Z", 2),
+    type: "dynamic_tool",
+    toolName: "mcp__t3-code__html_render",
+    input: { title: page.title },
+    output: { htmlRender: page },
+    ...overrides,
+  });
+  const laterCommand = {
+    ...command("2026-06-20T00:00:02.800Z"),
+    id: TurnItemId.make("item-command-later"),
+    ordinal: 3,
+  };
+  const feed = () =>
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(renderCall(), 2),
+      projected(laterCommand, 3),
+      projected(assistantMessage("2026-06-20T00:00:04.000Z"), 4),
+    ]);
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:04.000Z",
+  };
+
+  it("shows a completed render in place, outside the work log", () => {
+    const expanded = deriveThreadFeedPresentation(feed(), latestRun, new Set([runId]));
+    expect(expanded.map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "work-toggle",
+      "html-render",
+      "work-toggle",
+      "message",
+    ]);
+    expect(expanded[3]).toMatchObject({ type: "html-render", render: page, runId });
+    expect(expanded[2]?.continuesWorkLog).toBeUndefined();
+  });
+
+  it("keeps a render visible and in order when its run folds", () => {
+    const collapsed = deriveThreadFeedPresentation(feed(), latestRun, new Set());
+    expect(collapsed.map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "html-render",
+      "message",
+    ]);
+  });
+
+  it("leaves running, failed and errored renders in the work log", () => {
+    for (const call of [
+      renderCall({ status: "running", output: null }),
+      renderCall({ status: "failed" }),
+      renderCall({ output: { isError: true, htmlRender: page } }),
+    ]) {
+      const entries = buildThreadFeed([projected(call, 0)]);
+      expect(entries.map((entry) => entry.type)).toEqual(["activity-group"]);
+    }
+  });
+});

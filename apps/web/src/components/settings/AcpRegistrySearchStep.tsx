@@ -34,6 +34,7 @@ interface AcpRegistrySearchStepProps {
   readonly providerInstances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
+  readonly onLocalConfiguration?: () => void;
   readonly onLoadingChange?: (loading: boolean) => void;
   readonly onPreparingChange?: (preparing: boolean) => void;
 }
@@ -55,6 +56,7 @@ export function AcpRegistrySearchStep({
   providerInstances,
   onPrepared,
   onManualConfiguration,
+  onLocalConfiguration,
   onLoadingChange,
   onPreparingChange,
 }: AcpRegistrySearchStepProps) {
@@ -169,6 +171,17 @@ export function AcpRegistrySearchStep({
         >
           Enter manually
         </Button>
+        {onLocalConfiguration ? (
+          <Button
+            disabled={preparingId !== null}
+            onClick={onLocalConfiguration}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Local ACP command
+          </Button>
+        ) : null}
       </form>
 
       <div className="sr-only" role="status">

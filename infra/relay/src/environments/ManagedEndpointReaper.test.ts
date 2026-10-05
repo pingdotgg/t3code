@@ -166,6 +166,7 @@ function harness(input?: {
           }),
   });
   const allocationService = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+    getByTunnelName: () => Effect.die("unused"),
     get: () => Effect.die("unused"),
     reserve: () => Effect.die("unused"),
     recordTunnel: () => Effect.die("unused"),

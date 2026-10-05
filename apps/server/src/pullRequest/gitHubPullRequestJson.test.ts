@@ -1105,7 +1105,13 @@ describe("review thread decoding", () => {
             path: "src/a.ts",
             line: 42,
             diffSide: "LEFT",
-            comments: { totalCount: 2, nodes: [comment("c1", "first"), comment("c2", "second")] },
+            comments: {
+              totalCount: 2,
+              nodes: [
+                { ...comment("c1", "first"), lastEditedAt: "2026-07-02T00:00:00Z" },
+                comment("c2", "second"),
+              ],
+            },
           },
         ]),
       ),
@@ -1124,6 +1130,7 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "first",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: "2026-07-02T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
             reactions: [],
           },
@@ -1132,12 +1139,16 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "second",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: null,
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
             reactions: [],
           },
         ],
       },
     ]);
+    expect(
+      reviewThreadConversation(reviewThreads.threads.map((entry) => entry.thread))[0]?.editedAt,
+    ).toBe("2026-07-02T00:00:00Z");
   });
 
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
@@ -1184,6 +1195,27 @@ describe("review thread decoding", () => {
     const threads = decoded.threads.map((entry) => entry.thread);
     expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
     expect(threads).toHaveLength(1);
+  });
+
+  it("reads edit times for issue comments and reviews without using reaction updates", () => {
+    const editedAt = "2026-10-02T12:06:00Z";
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([], {
+          comments: {
+            nodes: [
+              { id: "edited", lastEditedAt: editedAt },
+              { id: "reaction-only", lastEditedAt: null, updatedAt: editedAt },
+            ],
+          },
+          reviews: { nodes: [{ id: "review", lastEditedAt: editedAt }] },
+        }),
+      ),
+    );
+    expect([...result.editedAtById]).toEqual([
+      ["edited", editedAt],
+      ["review", editedAt],
+    ]);
   });
 
   it("puts an issue comment's and a review's reactions in reactionsById, and the pull request's own in reactions", () => {

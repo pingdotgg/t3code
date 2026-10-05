@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { Atom, AsyncResult } from "effect/unstable/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 import {
@@ -28,7 +28,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 }));
 
 vi.mock("../rpc/atomRegistry", async () => {
-  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  const { AtomRegistry } = await import("effect/reactivity");
   return { appAtomRegistry: AtomRegistry.make() };
 });
 

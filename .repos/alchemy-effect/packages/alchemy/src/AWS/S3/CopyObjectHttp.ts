@@ -8,6 +8,6 @@ export const CopyObjectHttp = Layer.effect(
   makeBucketHttpBinding({
     tag: "AWS.S3.CopyObject",
     operation: S3.copyObject,
-    actions: ["s3:PutObject", "s3:GetObject"],
+    actions: ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"],
   }),
 );

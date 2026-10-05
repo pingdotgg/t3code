@@ -12,7 +12,7 @@
 import * as Schema from "effect/Schema";
 // Pulls in the `httpApiStatus` annotation augmentation used by the error
 // classes below.
-import "effect/unstable/httpapi/HttpApiSchema";
+import "effect/http-api/HttpApiSchema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Primitives

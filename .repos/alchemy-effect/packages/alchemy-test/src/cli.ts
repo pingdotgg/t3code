@@ -5,6 +5,7 @@
  * alchemy-test [paths...] [-t pattern] [--exclude path]... [--timeout ms]
  *              [--retry n] [--concurrency n] [--sequential] [--tui]
  *              [--profile name] [--fast]
+ *              [--tags 'unit || (e2e && !live)']
  * ```
  *
  * Runs every `*.test.ts` under the given paths (default `./test`) in a single
@@ -27,9 +28,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
-import * as Argument from "effect/unstable/cli/Argument";
-import * as Command from "effect/unstable/cli/Command";
-import * as Flag from "effect/unstable/cli/Flag";
+import * as Argument from "effect/cli/Argument";
+import * as Command from "effect/cli/Command";
+import * as Flag from "effect/cli/Flag";
+
+import { parsePlan } from "./Plan.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 import { PlainReporterLive, printSummary } from "./PlainReporter.ts";
@@ -54,6 +57,27 @@ const exclude = Flag.String("exclude").pipe(
     "Skip test files under this path (repeatable). Existing files/directories exclude by prefix; anything else is a case-insensitive substring filter. Explicitly passing an excluded path as a positional argument overrides the exclusion.",
   ),
   Flag.atLeast(0),
+);
+
+const tagsFilter = Flag.String("tags").pipe(
+  Flag.withDescription(
+    'Select tags using &&, ||, !, parentheses and * wildcards (e.g. "e2e && provider:aws && !slow"). Repeated filters are ANDed.',
+  ),
+  Flag.atLeast(0),
+);
+
+const plan = Flag.String("plan").pipe(
+  Flag.withDescription(
+    "JSON array of sequential phases; nested arrays run branches in parallel. Each branch has tags (ANDed expressions) and optional file concurrency. First match wins; shared hooks live until the file's final phase.",
+  ),
+  Flag.optional,
+);
+
+const dryRun = Flag.Boolean("dry-run").pipe(
+  Flag.withDescription(
+    "Collect tests and show the execution plan without running tests or hooks",
+  ),
+  Flag.withDefault(false),
 );
 
 const timeout = Flag.Int("timeout").pipe(
@@ -141,6 +165,9 @@ const rootCommand = Command.make(
   {
     paths,
     testNamePattern,
+    tagsFilter,
+    plan,
+    dryRun,
     exclude,
     timeout,
     retry,
@@ -177,7 +204,8 @@ const rootCommand = Command.make(
 
     // Plain line output by default; the TUI is opt-in (`--tui`) and requires
     // an interactive terminal.
-    const interactive = args.tui && process.stdout.isTTY === true;
+    const interactive =
+      !args.dryRun && args.tui && process.stdout.isTTY === true;
     const path = yield* Path.Path;
     const root = process.cwd();
     // Per-run log file (timestamp + pid) so concurrent runs in different
@@ -199,6 +227,9 @@ const rootCommand = Command.make(
       paths: args.paths,
       exclude: args.exclude,
       filter: toFilter(args.testNamePattern),
+      tagsFilter: args.tagsFilter,
+      dryRun: args.dryRun,
+      plan: Option.isSome(args.plan) ? parsePlan(args.plan.value) : undefined,
       timeout: args.timeout,
       retry: args.retry,
       concurrency: toConcurrency(args.concurrency),

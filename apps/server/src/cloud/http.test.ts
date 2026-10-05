@@ -18,7 +18,7 @@ import {
   HttpClientResponse,
   HttpServerRequest,
   type HttpClientRequest,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE, EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
@@ -249,6 +249,7 @@ describe("reconcileDesiredCloudLink", () => {
           applyConfig: unusedSecretStoreOperation,
           recoveryRequests: Stream.empty,
           requestRecovery: () => Effect.void,
+          tunnelConnected: Stream.empty,
           withLinkStateLock: (effect) => effect,
         } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
       ),
@@ -410,6 +411,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
               }),
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
+            tunnelConnected: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
         ),
