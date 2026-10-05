@@ -1,3 +1,4 @@
+import { resolveScheduledLimitResume } from "@t3tools/client-runtime/state/limit-recovery";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -587,7 +588,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const scheduledResume = status === "limited" ? resolveScheduledLimitResume(thread) : null;
+  const rowAccessibilityLabel = [
+    thread.title,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+    scheduledResume?.description,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const statusLabel =
+    (scheduledResume
+      ? { label: scheduledResume.label, className: rowAppearance.tertiaryForegroundClassName }
+      : undefined) ??
     STATUS_LABEL_BY_STATUS[status] ??
     (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);
   // The timestamp is precomputed on the list item (same stamps the settled
@@ -952,6 +964,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             type="monochrome"
           />
         ) : null}
+        {scheduledResume ? (
+          <SymbolView
+            name="clock"
+            size={12}
+            tintColorClassName={rowAppearance.mutedIconTintClassName}
+            type="monochrome"
+          />
+        ) : null}
         <Text
           className={cn(
             "text-xs tabular-nums",
@@ -1116,9 +1136,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -1148,9 +1166,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}
@@ -1201,6 +1217,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {scheduledResume ? (
+            <SymbolView
+              name="clock"
+              size={12}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+              type="monochrome"
+            />
+          ) : null}
           <Text
             className={cn(
               "text-sm tabular-nums",
@@ -1212,9 +1236,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
-              ? props.snoozeWakeLabelText
-              : timeLabel}
+            {scheduledResume?.label ??
+              (snoozedRow && props.snoozeWakeLabelText !== undefined
+                ? props.snoozeWakeLabelText
+                : timeLabel)}
           </Text>
         </View>
       </RowPressable>

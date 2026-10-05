@@ -291,6 +291,10 @@
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"
     },
+    "./state/limit-recovery": {
+      "types": "./src/state/limitRecovery.ts",
+      "default": "./src/state/limitRecovery.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
