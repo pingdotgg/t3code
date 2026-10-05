@@ -2338,6 +2338,7 @@ export const make = Effect.gen(function* () {
         let reviewers: ReadonlyArray<PullRequestActor> = [];
         let reactions: GitHubReviewThreadPage["reactions"] = [];
         const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
+        const editedAtById = new Map<string, string>();
         let commits: GitHubReviewThreadPage["commits"] = [];
         let viewer: GitHubReviewThreadPage["viewer"] = { canUpdate: true, didAuthor: false };
         const dismissalsByReviewId = new Map<string, string>();
@@ -2356,6 +2357,7 @@ export const make = Effect.gen(function* () {
             reviewers = read.reviewers;
             reactions = read.reactions;
             for (const [id, entry] of read.reactionsById) reactionsById.set(id, entry);
+            for (const [id, editedAt] of read.editedAtById) editedAtById.set(id, editedAt);
             commits = read.commits;
             viewer = read.viewer;
             for (const [id, message] of read.dismissalsByReviewId)
@@ -2412,6 +2414,7 @@ export const make = Effect.gen(function* () {
           reviewThreadsTruncated: cursor !== null,
           reactions,
           reactionsById,
+          editedAtById,
           reviewers,
           avatarsByLogin,
           botLogins,
