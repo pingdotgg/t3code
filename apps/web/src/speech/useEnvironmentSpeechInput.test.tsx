@@ -19,6 +19,9 @@ import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotationSpeech";
 
 const mocks = vi.hoisted(() => ({
+  voiceCapability: true as boolean | undefined,
+  cleanupCapability: true as boolean | undefined,
+  statusRequests: vi.fn(),
   postProcessingEnabled: false,
   transcript: null as Promise<string> | null,
   processedTranscript: null as Promise<string> | null,
@@ -81,8 +84,17 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
-  useEnvironment: () =>
-    mocks.originSettings ? { serverConfig: { settings: mocks.originSettings } } : null,
+  useEnvironment: (id: EnvironmentId | null) => ({
+    serverConfig: {
+      settings: mocks.originSettings ?? DEFAULT_SERVER_SETTINGS,
+      environment: {
+        capabilities: {
+          voiceTranscription:
+            id === "project-environment" ? mocks.cleanupCapability : mocks.voiceCapability,
+        },
+      },
+    },
+  }),
 }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettingsHydrated: () => true,
@@ -101,14 +113,16 @@ vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } })
 vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
-  getEnvironmentSpeechStatus: () =>
-    Effect.succeed({
+  getEnvironmentSpeechStatus: () => {
+    mocks.statusRequests();
+    return Effect.succeed({
       supported: true,
       state: mocks.busy ? "transcribing" : mocks.missingModel ? "missing-model" : "ready",
       model: "test",
       modelId: "test-model",
       size: 731_357_568,
-    }),
+    });
+  },
   postProcessEnvironmentTranscript: (...args: unknown[]) => {
     mocks.cleanup(...args);
     return mocks.processedTranscript
@@ -211,6 +225,9 @@ async function mountProbe() {
 afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
+  mocks.voiceCapability = true;
+  mocks.cleanupCapability = true;
+  mocks.statusRequests.mockClear();
   mocks.postProcessingEnabled = false;
   mocks.busy = false;
   mocks.microphoneFailure = true;
@@ -650,3 +667,37 @@ it("does not submit when the recording contains no speech", async () => {
   expect(voice.state.phase).toBe("error");
   expect(submitted).not.toHaveBeenCalled();
 });
+
+it.each([false, undefined])(
+  "does not probe an environment with voice capability %s",
+  async (capability) => {
+    mocks.voiceCapability = capability;
+    await mountProbe();
+    expect(mocks.statusRequests).not.toHaveBeenCalled();
+    expect(voice.available).toBe(false);
+    await act(() => voice.start());
+    expect(mocks.microphoneRequests).toBe(0);
+  },
+);
+
+it("starts probing when an environment advertises voice support after connecting", async () => {
+  mocks.voiceCapability = undefined;
+  await mountProbe();
+  expect(mocks.statusRequests).not.toHaveBeenCalled();
+  mocks.voiceCapability = true;
+  await act(() => root!.render(<Probe />));
+  expect(mocks.statusRequests).toHaveBeenCalledOnce();
+});
+it.each([false, undefined])(
+  "preserves transcription without probing an older cleanup host (%s)",
+  async (capability) => {
+    mocks.cleanupCapability = capability;
+    mocks.microphoneFailure = false;
+    mocks.postProcessingEnabled = true;
+    await mountProbe();
+    await act(() => voice.start());
+    await act(() => voice.stop());
+    expect(mocks.cleanup).not.toHaveBeenCalled();
+    expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
+  },
+);

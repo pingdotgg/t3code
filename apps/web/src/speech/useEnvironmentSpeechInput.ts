@@ -67,10 +67,21 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const transcriptionEnvironmentId = clientSettingsHydrated
     ? (configuredEnvironmentId ?? primaryEnvironmentId)
     : null;
-  const prepared = Option.getOrNull(usePreparedConnection(transcriptionEnvironmentId));
-  const postProcessingPrepared = Option.getOrNull(usePreparedConnection(input.environmentId));
-  const clientSettings = useClientSettings();
+  const transcriptionEnvironment = useEnvironment(transcriptionEnvironmentId);
+  const transcriptionConnection = Option.getOrNull(
+    usePreparedConnection(transcriptionEnvironmentId),
+  );
   const originatingEnvironment = useEnvironment(input.environmentId);
+  const cleanupConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
+  const prepared =
+    transcriptionEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true
+      ? transcriptionConnection
+      : null;
+  const postProcessingPrepared =
+    originatingEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true
+      ? cleanupConnection
+      : null;
+  const clientSettings = useClientSettings();
   const preferencesRef = useRef({ clientSettings, originatingEnvironment });
   useEffect(() => {
     preferencesRef.current = { clientSettings, originatingEnvironment };

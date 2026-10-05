@@ -326,7 +326,13 @@ export function VoiceSettingsPanel() {
   const environmentId = clientSettingsHydrated
     ? (selectedEnvironmentId ?? primaryEnvironmentId)
     : null;
-  const prepared = Option.getOrNull(usePreparedConnection(environmentId));
+  const connection = Option.getOrNull(usePreparedConnection(environmentId));
+  const transcriptionEnvironment = environments.find(
+    (environment) => environment.environmentId === environmentId,
+  );
+  const supportsVoice =
+    transcriptionEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true;
+  const prepared = supportsVoice ? connection : null;
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
   const updateClientSettings = useUpdateClientSettings();
@@ -477,7 +483,16 @@ export function VoiceSettingsPanel() {
     ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
       "Selected microphone (Unavailable)")
     : "System default";
-  const currentStatus = status?.prepared === prepared ? status.value : null;
+  const currentStatus =
+    transcriptionEnvironment?.serverConfig && !supportsVoice
+      ? {
+          supported: false as const,
+          reason:
+            "This environment does not support voice input. Update its T3 Code server to use dictation.",
+        }
+      : status?.prepared === prepared
+        ? status.value
+        : null;
   const acceptStatus = (value: EnvironmentSpeechStatus) => {
     if (prepared) setStatus({ prepared, value });
   };

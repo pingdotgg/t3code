@@ -3,6 +3,8 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  voiceCapability: true as boolean | undefined,
+  statusRequests: vi.fn(),
   toast: vi.fn(),
   cancel: vi.fn(),
   listModels: vi.fn(),
@@ -30,8 +32,9 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
-  getEnvironmentSpeechStatus: () =>
-    Promise.resolve({
+  getEnvironmentSpeechStatus: () => {
+    mocks.statusRequests();
+    return Promise.resolve({
       supported: true,
       acceleration: "auto",
       language: "auto",
@@ -39,7 +42,8 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
       gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
       customWords: mocks.customWords,
       projectCustomWords: mocks.projectWords,
-    }),
+    });
+  },
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   updateEnvironmentSpeechCustomWords: mocks.saveWords,
   updateEnvironmentSpeechTranslation: mocks.saveTranslation,
@@ -95,7 +99,15 @@ vi.mock("../../lib/runtime", () => ({ runtime: { runPromise: (value: unknown) =>
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => "environment",
   useEnvironments: () => ({
-    environments: [{ environmentId: "environment", label: "My Computer" }],
+    environments: [
+      {
+        environmentId: "environment",
+        label: "My Computer",
+        serverConfig: {
+          environment: { capabilities: { voiceTranscription: mocks.voiceCapability } },
+        },
+      },
+    ],
   }),
 }));
 vi.mock("../../state/session", async () => {
@@ -147,6 +159,8 @@ let root: ReactTestRenderer;
 afterEach(async () => {
   if (root) await act(async () => root.unmount());
   vi.unstubAllGlobals();
+  mocks.voiceCapability = true;
+  mocks.statusRequests.mockClear();
   mocks.listModels.mockReset();
   mocks.saveWords.mockReset();
   mocks.saveClient.mockReset();
@@ -720,3 +734,19 @@ it("saves project words through the originating project scope without copying pe
   });
   expect(mocks.saveClient).not.toHaveBeenCalled();
 });
+
+it.each([false, undefined])(
+  "does not request voice status or models from an older environment (%s)",
+  async (capability) => {
+    mocks.voiceCapability = capability;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("navigator", {});
+    vi.stubGlobal("window", { setInterval, clearInterval });
+    await act(async () => {
+      root = create(createElement(VoiceSettingsPanel));
+    });
+    expect(mocks.statusRequests).not.toHaveBeenCalled();
+    expect(mocks.listModels).not.toHaveBeenCalled();
+    expect(JSON.stringify(root.toJSON())).toContain("Update its T3 Code server");
+  },
+);
