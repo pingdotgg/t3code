@@ -35,6 +35,8 @@ const fixture = (
     readonly spawnGate?: Effect.Effect<void>;
     readonly stopGate?: Effect.Effect<void>;
     readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+    readonly preferredAvailable?: boolean;
+    readonly portInUseAfterProbe?: number;
   } = {},
 ) => {
   const commands: ReadonlyArray<string>[] = [];
@@ -45,6 +47,10 @@ const fixture = (
       const args = command._tag === "StandardCommand" ? command.args : [];
       commands.push(args);
       const tunnel = args.includes("-N");
+      const bindCollision =
+        tunnel &&
+        options.portInUseAfterProbe !== undefined &&
+        args.some((arg) => arg.startsWith(`127.0.0.1:${options.portInUseAfterProbe}:`));
       if (tunnel && options.spawnGate) yield* options.spawnGate;
       if (!tunnel && !args.includes("-G") && options.stopGate) yield* options.stopGate;
       const stopped = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -52,12 +58,26 @@ const fixture = (
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(123),
         stdout,
-        stderr: tunnel ? (options.stderr ?? Stream.make(bytes(ready))) : Stream.empty,
+        stderr: bindCollision
+          ? Stream.make(
+              bytes(
+                `debug1: Local forwarding listening on 127.0.0.1 port ${options.portInUseAfterProbe}.\nbind [127.0.0.1]:${options.portInUseAfterProbe}: Address already in use\n`,
+              ),
+            )
+          : tunnel
+            ? (options.stderr ?? Stream.make(bytes(ready)))
+            : Stream.empty,
         all: stdout,
-        exitCode: tunnel
-          ? (options.exitCode ?? Deferred.await(stopped))
-          : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-        isRunning: tunnel ? (options.running ?? Effect.succeed(true)) : Effect.succeed(false),
+        exitCode: bindCollision
+          ? Effect.succeed(ChildProcessSpawner.ExitCode(255))
+          : tunnel
+            ? (options.exitCode ?? Deferred.await(stopped))
+            : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: bindCollision
+          ? Effect.succeed(false)
+          : tunnel
+            ? (options.running ?? Effect.succeed(true))
+            : Effect.succeed(false),
         kill: () =>
           Effect.sync(() => {
             killed++;
@@ -84,7 +104,7 @@ const fixture = (
     Layer.succeed(
       NetService.NetService,
       NetService.NetService.of({
-        canListenOnHost: () => Effect.succeed(false),
+        canListenOnHost: () => Effect.succeed(options.preferredAvailable ?? false),
         isPortAvailableOnLoopback: () => Effect.succeed(false),
         hasListenerOnHost: () => Effect.succeed(true),
         reserveLoopbackPort: () => Effect.sync(() => nextPort++),
@@ -127,6 +147,45 @@ describe("SSH preview port forwards", () => {
       assert.equal(f.spawns(), 2);
       yield* manager.releasePortForward(c.leaseId);
       yield* manager.releasePortForward("unknown");
+      assert.equal(f.kills(), 2);
+    }).pipe(Effect.provide(f.layer), Effect.scoped);
+  });
+
+  it.effect.each([
+    { available: true, remotePort: 5173, localPort: 5173 },
+    { available: false, remotePort: 5173, localPort: 41773 },
+    { available: true, remotePort: 80, localPort: 41773 },
+  ])(
+    "prefers remote port $remotePort when available=$available, using local $localPort",
+    ({ available, remotePort, localPort }) => {
+      const f = fixture({ preferredAvailable: available });
+      return Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const lease = yield* manager.acquirePortForward(target, remotePort);
+        assert.equal(lease.localPort, localPort);
+        assert.equal(f.spawns(), 1);
+        assert.include(
+          f.commands.find((args) => args.includes("-N")) ?? [],
+          `127.0.0.1:${localPort}:localhost:${remotePort}`,
+        );
+        yield* manager.releasePortForward(lease.leaseId);
+        assert.equal(f.kills(), 1);
+      }).pipe(Effect.provide(f.layer), Effect.scoped);
+    },
+  );
+
+  it.effect("falls back once if another listener takes the preferred port after the probe", () => {
+    const f = fixture({ preferredAvailable: true, portInUseAfterProbe: 5173 });
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const lease = yield* manager.acquirePortForward(target, 5173);
+      assert.equal(lease.localPort, 41773);
+      assert.equal(f.spawns(), 2);
+      assert.equal(f.kills(), 1);
+      const commands = f.commands.filter((args) => args.includes("-N"));
+      assert.include(commands[0] ?? [], "127.0.0.1:5173:localhost:5173");
+      assert.include(commands[1] ?? [], "127.0.0.1:41773:localhost:5173");
+      yield* manager.releasePortForward(lease.leaseId);
       assert.equal(f.kills(), 2);
     }).pipe(Effect.provide(f.layer), Effect.scoped);
   });

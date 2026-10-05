@@ -1923,23 +1923,54 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               restore(
                 Effect.raceFirst(
                   Effect.gen(function* () {
-                    const localPort = yield* reserveLocalTunnelPort();
-                    return yield* runWithSshAuth({
-                      key: connectionKey,
-                      target: resolvedTarget,
-                      operation: (authOptions) =>
-                        startSshTunnel({
-                          key,
-                          resolvedTarget,
-                          remotePort,
-                          localPort,
-                          httpBaseUrl: `http://127.0.0.1:${localPort}/`,
-                          wsBaseUrl: `ws://127.0.0.1:${localPort}/`,
-                          remoteServerKind: null,
-                          readiness: "forward",
-                          authOptions,
-                        }).pipe(Effect.provideService(Scope.Scope, scope)),
-                    });
+                    const net = yield* NetService.NetService;
+                    const preferRemotePort =
+                      remotePort >= 1024 && (yield* net.canListenOnHost(remotePort, "127.0.0.1"));
+                    const localPort = preferRemotePort
+                      ? remotePort
+                      : yield* reserveLocalTunnelPort();
+                    const startForward = (port: number) =>
+                      Effect.uninterruptibleMask((restoreStart) =>
+                        Effect.gen(function* () {
+                          const attemptScope = yield* Scope.fork(scope, "sequential");
+                          return yield* restoreStart(
+                            runWithSshAuth({
+                              key: connectionKey,
+                              target: resolvedTarget,
+                              operation: (authOptions) =>
+                                startSshTunnel({
+                                  key,
+                                  resolvedTarget,
+                                  remotePort,
+                                  localPort: port,
+                                  httpBaseUrl: `http://127.0.0.1:${port}/`,
+                                  wsBaseUrl: `ws://127.0.0.1:${port}/`,
+                                  remoteServerKind: null,
+                                  readiness: "forward",
+                                  authOptions,
+                                }).pipe(Effect.provideService(Scope.Scope, attemptScope)),
+                            }),
+                          ).pipe(
+                            Effect.onExit((attemptExit) =>
+                              Exit.isFailure(attemptExit)
+                                ? Scope.close(attemptScope, Exit.void).pipe(Effect.ignore)
+                                : Effect.void,
+                            ),
+                          );
+                        }),
+                      );
+                    return yield* startForward(localPort).pipe(
+                      Effect.catchTag("SshCommandError", (error) =>
+                        // The availability probe cannot reserve the port for ssh. Only
+                        // a confirmed preferred-port bind collision gets one retry.
+                        preferRemotePort &&
+                        error.stderr.includes(
+                          `bind [127.0.0.1]:${localPort}: Address already in use`,
+                        )
+                          ? reserveLocalTunnelPort().pipe(Effect.flatMap(startForward))
+                          : Effect.fail(error),
+                      ),
+                    );
                   }),
                   Deferred.await(cancelled),
                 ),
@@ -1963,7 +1994,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                 message: "SSH environment closed during forward creation.",
               });
             }
-            entry = { ...exit.value, connectionKey, leases: new Set<string>() };
+            entry = { ...exit.value, scope, connectionKey, leases: new Set<string>() };
             portForwards.set(key, entry);
             pendingForwards.delete(key);
             yield* Deferred.succeed(finished, undefined);
