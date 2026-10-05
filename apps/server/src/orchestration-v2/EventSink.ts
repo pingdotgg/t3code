@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -305,6 +306,96 @@ const baseLayer: Layer.Layer<
         });
       });
 
+    const settleScheduledCompletions = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const additions: Array<OrchestrationV2DomainEvent> = [];
+        const terminal = (run: OrchestrationV2Run) =>
+          run.status === "completed" ||
+          run.status === "failed" ||
+          run.status === "cancelled" ||
+          run.status === "interrupted" ||
+          run.status === "rolled_back";
+        const threads = new Set(
+          events.flatMap((event) =>
+            event.type === "run.updated" && terminal(event.payload) ? [event.threadId] : [],
+          ),
+        );
+        for (const threadId of threads) {
+          const current = yield* projectionStore
+            .getThreadRecords(threadId, ["runs", "messages", "runtimeRequests"], {
+              messageRoles: ["user"],
+              messageRunIds: events.flatMap((event) =>
+                event.threadId === threadId &&
+                event.type === "run.updated" &&
+                terminal(event.payload)
+                  ? [event.payload.id]
+                  : [],
+              ),
+            })
+            .pipe(
+              Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)),
+            );
+          if (current === null) continue;
+          let thread = current.thread;
+          const runs = new Map(current.runs.map((run) => [run.id, run]));
+          const messages = new Map(current.messages.map((message) => [message.id, message]));
+          const requests = new Map(current.runtimeRequests.map((request) => [request.id, request]));
+          let completion: OrchestrationV2DomainEvent | undefined;
+          for (const event of events) {
+            if (event.threadId !== threadId) continue;
+            if (event.type === "run.updated" || event.type === "run.created") {
+              const previous = runs.get(event.payload.id);
+              if (previous !== undefined && !terminal(previous) && terminal(event.payload)) {
+                completion = event;
+              }
+              runs.set(event.payload.id, event.payload);
+            } else if (event.type === "message.updated") {
+              messages.set(event.payload.id, event.payload);
+            } else if (event.type === "runtime-request.updated") {
+              requests.set(event.payload.id, event.payload);
+            } else if (event.type.startsWith("thread.")) {
+              if ("settledOverride" in event.payload) thread = event.payload;
+            }
+          }
+          if (completion?.type !== "run.updated") continue;
+          const latest = Array.from(runs.values()).toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          const message = Array.from(messages.values())
+            .filter((candidate) => candidate.role === "user" && candidate.runId === latest?.id)
+            .toSorted(
+              (a, b) => DateTime.toEpochMillis(b.createdAt) - DateTime.toEpochMillis(a.createdAt),
+            )[0];
+          if (
+            latest?.id !== completion.payload.id ||
+            Array.from(runs.values()).some((run) => !terminal(run)) ||
+            Array.from(requests.values()).some((request) => request.status === "pending") ||
+            message?.scheduledTaskId === undefined ||
+            message.settleOnCompletion !== true ||
+            thread.settledOverride === "settled" ||
+            thread.archivedAt !== null ||
+            thread.deletedAt !== null
+          )
+            continue;
+          additions.push({
+            id: EventId.make(`${completion.id}:scheduled-task-settled`),
+            type: "thread.settled",
+            threadId,
+            providerInstanceId: thread.providerInstanceId,
+            occurredAt: completion.occurredAt,
+            payload: {
+              ...thread,
+              settledOverride: "settled",
+              settledAt: completion.occurredAt,
+              unsettledAt: null,
+              pinnedAt: null,
+              pinOrderKey: null,
+              activeOrderKey: null,
+              updatedAt: completion.occurredAt,
+            },
+          });
+        }
+        return [...events, ...additions];
+      });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -325,7 +416,7 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
         { concurrency: 1 },
-      );
+      ).pipe(Effect.flatMap(settleScheduledCompletions));
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>

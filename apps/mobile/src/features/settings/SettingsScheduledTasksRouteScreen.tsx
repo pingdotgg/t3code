@@ -521,6 +521,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
                   prompt: editor.draft.prompt,
                   schedule: editor.draft.schedule,
                   enabled: editor.draft.enabled,
+                  settleOnCompletion: editor.draft.settleOnCompletion,
                 },
               });
             }}
@@ -625,6 +626,7 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
+      settleOnCompletion: draft.settleOnCompletion,
       threadId: draft.task?.threadId ?? null,
       workspaceStrategy:
         draft.workspace === "root"
@@ -919,6 +921,19 @@ function TaskForm({
             accessibilityLabel="Task enabled"
             value={draft.enabled}
             onValueChange={(enabled) => setDraft({ ...draft, enabled })}
+          />
+        </View>
+        <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+          <View className="min-w-0 flex-1 gap-1">
+            <Text className="text-lg text-foreground">Settle thread when complete</Text>
+            <Text className="text-sm text-foreground-muted">
+              Move the task's thread out of the active list after its run finishes.
+            </Text>
+          </View>
+          <ThemedSwitch
+            accessibilityLabel="Settle thread when complete"
+            value={draft.settleOnCompletion}
+            onValueChange={(settleOnCompletion) => setDraft({ ...draft, settleOnCompletion })}
           />
         </View>
       </SettingsSection>

@@ -436,6 +436,7 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     title: input.title,
     prompt: input.prompt,
     enabled: input.enabled,
+    settleOnCompletion: input.settleOnCompletion ?? false,
     schedule: input.schedule,
     projectId: input.projectId,
     threadId: input.threadId ?? null,

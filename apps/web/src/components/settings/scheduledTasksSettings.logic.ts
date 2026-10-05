@@ -51,6 +51,7 @@ export interface DraftState {
   readonly title: string;
   readonly prompt: string;
   readonly enabled: boolean;
+  readonly settleOnCompletion: boolean;
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
@@ -84,6 +85,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
+    settleOnCompletion: task.settleOnCompletion,
     scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
