@@ -10,7 +10,7 @@ import * as Scope from "effect/Scope";
 import * as KeyedLock from "./KeyedLock.ts";
 
 describe("KeyedLock", () => {
-  it.effect("runs one holder of a key at a time, in arrival order", () =>
+  it.effect("runs one holder of a key at a time, waiters in the order they queued", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();
       const events = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -84,6 +84,8 @@ describe("KeyedLock", () => {
       assert.deepStrictEqual(yield* lock.activeKeys, ["key"]);
 
       yield* Fiber.interrupt(abandoned);
+      // The holder and the other waiter still need the lock.
+      assert.deepStrictEqual(yield* lock.activeKeys, ["key"]);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.joinAll([holder, waiting]);
       // A holder that fails releases its key too.

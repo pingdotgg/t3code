@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 export interface KeyedLock<Key> {
-  /** Runs `effect` once no other holder of `key` is running, in arrival order. */
+  /** Runs `effect` once no other holder of `key` is running. Queued waiters go first-in, first-out. */
   readonly withLock: <A, E, R>(key: Key, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** The keys someone holds or waits on right now. */
   readonly activeKeys: Effect.Effect<ReadonlyArray<Key>>;
