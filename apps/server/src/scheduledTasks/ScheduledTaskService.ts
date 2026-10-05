@@ -545,7 +545,8 @@ export const layer = Layer.effect(
                   text: prompt,
                   attachments: [],
                   modelSelection: active.modelSelection,
-                  mode: "auto",
+                  // Scheduled prompts must not interrupt tools in the bound thread.
+                  mode: "queue",
                   createdBy: active.createdBy,
                   creationSource: active.creationSource,
                 }),

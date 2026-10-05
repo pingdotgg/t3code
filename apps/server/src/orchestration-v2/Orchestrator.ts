@@ -4596,7 +4596,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(Effect.orElseSucceed(() => Option.none()));
           if (
             Option.isSome(session) &&
-            session.value.providerSession.capabilities.turns.supportsActiveSteering
+            session.value.providerSession.capabilities.turns.supportsActiveSteering &&
+            session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true
           ) {
             dispatchMode = { type: "steer_active", targetRunId: active.id };
           }
