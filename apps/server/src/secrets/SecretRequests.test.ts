@@ -61,7 +61,7 @@ const withService = <A, E>(
             stored.has(name)
               ? Effect.fail(
                   new ServerSecretStore.SecretStorePersistError({
-                    name,
+                    resource: name,
                     cause: new PlatformError.PlatformError(
                       new PlatformError.SystemError({
                         _tag: "AlreadyExists",
@@ -215,6 +215,24 @@ it.effect("a save whose record failed can be saved again", () =>
         assert.equal(yield* service.consume({ ref, projectId }), "ghp_secret");
       }),
     { failedRecords: 1 },
+  ),
+);
+
+it.effect("a save whose record and cleanup both failed is finished by saving again", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        yield* service
+          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
+          .pipe(Effect.flip);
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "ghp_secret" },
+        });
+        assert.isTrue(Option.isSome(yield* service.savedRef({ threadId, turnItemId })));
+      }),
+    { failedRecords: 1, removeFails: true },
   ),
 );
 

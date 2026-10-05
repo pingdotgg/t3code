@@ -125,6 +125,8 @@ const make = Effect.gen(function* () {
       }
       // Store first: the card only says saved once the value is kept. Create,
       // not set: a second answer racing this one must not replace the value.
+      // A value already there on a card still pending is an earlier save whose
+      // record failed and could not be cleaned up; recording it finishes that save.
       if (input.answer.type === "save") {
         const encoded = yield* encodeStored({
           projectId: records.thread.projectId,
@@ -137,11 +139,8 @@ const make = Effect.gen(function* () {
             new TextEncoder().encode(encoded),
           )
           .pipe(
-            Effect.mapError((error) =>
-              ServerSecretStore.isSecretAlreadyExistsError(error)
-                ? fail("already_answered", error)
-                : fail("store_failed", error),
-            ),
+            Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void),
+            Effect.mapError((error) => fail("store_failed", error)),
           );
       }
       const secretStatus = input.answer.type === "save" ? "saved" : "declined";
