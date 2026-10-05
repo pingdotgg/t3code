@@ -10,7 +10,9 @@ and changes in either version do not sync to the other. Settings, attachments, a
 remain shared.
 
 The V2 desktop app uses a separate browser profile, so browser cookies and caches do not carry
-over from V1. You may need to sign in again to websites opened inside the app.
+over from V1. You may need to sign in again to websites opened inside the app. On its first launch,
+the V2 desktop app copies stashed prompts, unsent drafts, layout, and theme from V1. Anything you
+change in V2 afterwards stays in V2.
 
 The migrated thread keeps its title, project, provider and model selection, permission and
 interaction modes, branch or worktree, archive state, settlement state, snooze and pin state, and
