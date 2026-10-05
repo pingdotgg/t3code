@@ -234,19 +234,18 @@ overrides:
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
   vite: "catalog:"
+  vite-plus: "catalog:"
   yaml: "catalog:"
 
 packageExtensions:
   "@clerk/expo@*":
     dependencies:
       "@expo/config-plugins": 58.0.4
+  # Our patch makes @effect/vitest import vite-plus/test. A catalog: spec here
+  # resolves through the vite-plus override above.
   "@effect/vitest@*":
     dependencies:
-      # Same as the vite-plus catalog entry; pnpm rejects catalog: inside packageExtensions.
-      vite-plus: 1.0.0
-  vite-plus@*:
-    dependencies:
-      vite: "catalog:"
+      vite-plus: "catalog:"
 
 patchedDependencies:
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
