@@ -1,7 +1,7 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
-  GitPreparePullRequestThreadInput,
+  clientRpcRequiredScopes,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -14,7 +14,6 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthReviewWriteScope,
-  AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
   type AuthEnvironmentScope,
@@ -122,15 +121,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsSubmitReview]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsSetReaction]: AuthSourceControlWriteScope,
-  [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
@@ -138,15 +128,8 @@ export const RPC_REQUIRED_SCOPES = {
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
-  [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
-  [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
-  [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
-  [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
-  [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
@@ -169,16 +152,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
-  [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
-  [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
-  [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
-  [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
-  [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
-  [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
-  [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
-  [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthReviewWriteScope,
   [WS_METHODS.reviewGetDiffFileContents]: AuthReviewWriteScope,
   [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
@@ -253,12 +228,8 @@ const requiredScopesForRpcCall = (
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
-  if (method === WS_METHODS.gitPreparePullRequestThread) {
-    const input = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput)(payload);
-    if (input.mode === "worktree" && input.threadId !== undefined) {
-      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
-    }
-  }
+  const guarded = clientRpcRequiredScopes(method, payload);
+  if (guarded.length > 0) return guarded;
   return [requiredScopeForRpcMethod(method)];
 };
 

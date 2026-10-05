@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * Asking someone to review, from the row that says who is already reviewing.
  *
@@ -15,7 +16,6 @@ import { useMemo, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
-import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { toastManager } from "../ui/toast";
@@ -53,7 +53,7 @@ export function PullRequestReviewerPicker({
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
   );
-  const requestReviewers = useSourceControlCommand(pullRequestEnvironment.requestReviewers, {
+  const requestReviewers = useAtomCommand(pullRequestEnvironment.requestReviewers, {
     reportFailure: false,
   });
 

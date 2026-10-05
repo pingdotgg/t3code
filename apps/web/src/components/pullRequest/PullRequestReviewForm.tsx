@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The review half of the floating composer: the summary and the verdict that sends it, together
  * with whatever line comments the review is holding. The count of those lives on the composer's
@@ -9,7 +10,6 @@ import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useSourceControlCommand } from "~/state/use-source-control-command";
 
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
@@ -76,7 +76,7 @@ export function PullRequestReviewForm({
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
-  const submitReview = useSourceControlCommand(pullRequestEnvironment.submitReview, {
+  const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
 

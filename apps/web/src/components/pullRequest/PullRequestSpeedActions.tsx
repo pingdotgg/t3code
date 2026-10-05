@@ -1,5 +1,6 @@
-import { useEnvironmentScope } from "~/state/session";
-import { AuthSourceControlWriteScope, type PullRequestAction } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type { PullRequestAction } from "@t3tools/contracts";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -38,7 +39,9 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   sweeping?: boolean;
   onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
 }) {
-  const canWrite = useEnvironmentScope(entry.environmentId, AuthSourceControlWriteScope);
+  const canWrite = useAtomValue(
+    pullRequestEnvironment.runAction.permissionAtom(entry.environmentId),
+  );
   const resolveProjectDefault = usePullRequestDefaultMergeMethodResolver(
     entry.environmentId,
     entry.projectId,

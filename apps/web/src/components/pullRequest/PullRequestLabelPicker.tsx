@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * Putting a label on, and taking one off, from the row that says which it already wears.
  *
@@ -11,7 +12,6 @@ import { useMemo, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
-import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { toastManager } from "../ui/toast";
@@ -48,7 +48,7 @@ export function PullRequestLabelPicker({
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
   );
-  const setLabels = useSourceControlCommand(pullRequestEnvironment.setLabels, {
+  const setLabels = useAtomCommand(pullRequestEnvironment.setLabels, {
     reportFailure: false,
   });
 

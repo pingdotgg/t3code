@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   PullRequestComment,
@@ -16,7 +17,6 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -575,8 +575,8 @@ export function PullRequestSummaryTab({
     });
   };
 
-  const update = useSourceControlCommand(pullRequestEnvironment.update, { reportFailure: false });
-  const updateComment = useSourceControlCommand(pullRequestEnvironment.updateComment, {
+  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
   // Keyed by the pull request, like the comment window above it, so an editor left open never

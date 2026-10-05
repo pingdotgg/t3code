@@ -55,7 +55,6 @@ import {
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useSourceControlCommand } from "~/state/use-source-control-command";
 
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
@@ -343,13 +342,13 @@ function PullRequestCodeTab({
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
-  const replyToThread = useSourceControlCommand(pullRequestEnvironment.replyToThread, {
+  const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,
   });
-  const setThreadResolution = useSourceControlCommand(pullRequestEnvironment.setThreadResolution, {
+  const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
-  const updateComment = useSourceControlCommand(pullRequestEnvironment.updateComment, {
+  const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
   const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
