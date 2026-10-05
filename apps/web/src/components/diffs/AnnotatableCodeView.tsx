@@ -8,7 +8,15 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { fnv1a32 } from "~/lib/diffRendering";
@@ -133,7 +141,9 @@ export function AnnotatableCodeView({
 
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
   const filesByKeyRef = useRef(filesByKey);
-  filesByKeyRef.current = filesByKey;
+  useLayoutEffect(() => {
+    filesByKeyRef.current = filesByKey;
+  }, [filesByKey]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
       files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {

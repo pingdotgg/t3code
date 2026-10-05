@@ -3,7 +3,15 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
@@ -147,7 +155,9 @@ export function useReviewFilePatches({
   );
   const requestFile = useCallback((index: number) => requestFiles([index]), [requestFiles]);
   const retryInputsRef = useRef({ queries, files });
-  retryInputsRef.current = { queries, files };
+  useLayoutEffect(() => {
+    retryInputsRef.current = { queries, files };
+  }, [queries, files]);
   const retry = useCallback(
     (path: string) => {
       const { queries, files } = retryInputsRef.current;

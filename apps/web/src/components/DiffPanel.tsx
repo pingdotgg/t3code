@@ -21,7 +21,7 @@ import {
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
@@ -672,7 +672,9 @@ export default function DiffPanel({
     [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
   const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFileKeys });
-  collapseDefaultsRef.current = { collapseScopeKey, defaultCollapsedDiffFileKeys };
+  useLayoutEffect(() => {
+    collapseDefaultsRef.current = { collapseScopeKey, defaultCollapsedDiffFileKeys };
+  }, [collapseScopeKey, defaultCollapsedDiffFileKeys]);
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     const { collapseScopeKey, defaultCollapsedDiffFileKeys } = collapseDefaultsRef.current;
     setCollapsedDiffFiles((current) => {
