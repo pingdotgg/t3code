@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 export const CLOUD_MINT_PUBLIC_KEY = "cloud-mint-ed25519-public-key";
 export const CLOUD_ENDPOINT_RUNTIME_CONFIG = "cloud-endpoint-runtime-config";
@@ -75,11 +75,10 @@ export const readAgentActivityPublishingActive = (
     );
   }).pipe(Effect.orElseSucceed(() => false));
 
-const readSecretString = (
-  secrets: ServerSecretStore.ServerSecretStore["Service"],
-  name: string,
-): Effect.Effect<string | null> =>
-  secrets.get(name).pipe(
+/** A non-empty secret as text, or null when it is missing, empty or unreadable. */
+const readSecretString = (name: string) =>
+  ServerSecretStore.ServerSecretStore.pipe(
+    Effect.flatMap((secrets) => secrets.get(name)),
     Effect.map((bytes) =>
       Option.isSome(bytes) && bytes.value.length > 0 ? new TextDecoder().decode(bytes.value) : null,
     ),
@@ -87,20 +86,16 @@ const readSecretString = (
   );
 
 /** The relay URL and environment credential, or null when not linked to T3 Connect. */
-export const readRelayConnection = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
-  Effect.all([
-    readSecretString(secrets, RELAY_URL_SECRET),
-    readSecretString(secrets, RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-  ]).pipe(
-    Effect.map(([url, environmentCredential]) =>
-      url && environmentCredential ? { url, environmentCredential } : null,
-    ),
-  );
+export const readRelayConnection = Effect.all([
+  readSecretString(RELAY_URL_SECRET),
+  readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+]).pipe(
+  Effect.map(([url, environmentCredential]) =>
+    url && environmentCredential ? { url, environmentCredential } : null,
+  ),
+);
 
 /** Whether this environment opted in to T3 Connect holding webhooks while it is offline. */
-export const readHoldWebhooksWhileOffline = (
-  secrets: ServerSecretStore.ServerSecretStore["Service"],
-) =>
-  readSecretString(secrets, HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET).pipe(
-    Effect.map((value) => value === "true"),
-  );
+export const readHoldWebhooksWhileOffline = readSecretString(
+  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
+).pipe(Effect.map((value) => value === "true"));

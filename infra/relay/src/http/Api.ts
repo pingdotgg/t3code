@@ -67,6 +67,7 @@ import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as HookForwarder from "../hooks/HookForwarder.ts";
+import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as LiveActivities from "../agentActivity/LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -554,7 +555,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     // is already gone, and its inbox drops anything left after its TTL.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
-        ? HookForwarder.endpointKeyForTunnelName(
+        ? HeldHooks.endpointKeyForTunnelName(
             input.managedEndpointNamespace,
             deprovisionTarget.tunnelName,
           )
@@ -1176,39 +1177,13 @@ export const serverApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
-    const links = yield* EnvironmentLinks.EnvironmentLinks;
-    const inbox = yield* HookInbox.HookInbox;
-    const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-    const settings = yield* RelayConfiguration.RelayConfiguration;
+    const heldHooks = yield* HeldHooks.HeldHooks;
     const requireOwnEnvironment = (environmentId: string) =>
       Effect.gen(function* () {
         const principal = yield* RelayEnvironmentPrincipal;
         if (principal.environmentId !== environmentId) {
           return yield* new HttpApiError.Unauthorized({});
         }
-      });
-    /**
-     * Endpoint keys of the managed links the calling environment key proved.
-     * The environment id alone would also match other accounts' links of it.
-     */
-    const ownEndpointKeys = (environmentId: string) =>
-      Effect.gen(function* () {
-        const principal = yield* RelayEnvironmentPrincipal;
-        const namespace = settings.managedEndpointNamespace;
-        if (!namespace) return [];
-        const ownLinks = yield* links.findActiveManagedForEnvironment({
-          environmentId,
-          environmentPublicKey: principal.environmentPublicKey,
-        });
-        const keys: Array<string> = [];
-        for (const link of ownLinks) {
-          const allocation = yield* allocations.get({ userId: link.userId, environmentId });
-          const key = allocation
-            ? HookForwarder.endpointKeyForTunnelName(namespace, allocation.tunnelName)
-            : null;
-          if (key !== null) keys.push(key);
-        }
-        return keys;
       });
     const activityHandlers = handlers.handle(
       "publishAgentActivity",
@@ -1425,18 +1400,11 @@ export const serverApi = HttpApiBuilder.group(
         Effect.fn("relay.api.server.updateLinkPreferences")(function* ({ params, payload }) {
           yield* requireOwnEnvironment(params.environmentId);
           const principal = yield* RelayEnvironmentPrincipal;
-          yield* links.setHoldWebhooksWhileOffline({
+          yield* heldHooks.setHoldWhileOffline({
             environmentId: params.environmentId,
             environmentPublicKey: principal.environmentPublicKey,
             holdWebhooksWhileOffline: payload.holdWebhooksWhileOffline,
           });
-          // Opting out also drops what is already held, rather than delivering
-          // it later to an environment that said it does not want it.
-          if (!payload.holdWebhooksWhileOffline) {
-            for (const endpointKey of yield* ownEndpointKeys(params.environmentId)) {
-              yield* inbox.clear({ endpointKey });
-            }
-          }
           return payload;
         }, mapRelayCommonApiErrors("not_authorized")),
       )
@@ -1444,21 +1412,11 @@ export const serverApi = HttpApiBuilder.group(
         "wakeHeldHooks",
         Effect.fn("relay.api.server.wakeHeldHooks")(function* ({ params }) {
           yield* requireOwnEnvironment(params.environmentId);
-          let pending = false;
-          for (const endpointKey of yield* ownEndpointKeys(params.environmentId)) {
-            const endpoint = yield* HookForwarder.resolveHookEndpoint(endpointKey).pipe(
-              Effect.provideService(EnvironmentLinks.EnvironmentLinks, links),
-              Effect.provideService(
-                ManagedEndpointAllocations.ManagedEndpointAllocations,
-                allocations,
-              ),
-              Effect.provideService(RelayConfiguration.RelayConfiguration, settings),
-            );
-            if (endpoint === null) continue;
-            if (yield* inbox.wake({ endpointKey, baseUrl: endpoint.httpBaseUrl })) {
-              pending = true;
-            }
-          }
+          const principal = yield* RelayEnvironmentPrincipal;
+          const pending = yield* heldHooks.wake({
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+          });
           return { pending };
         }, mapRelayCommonApiErrors("not_authorized")),
       );

@@ -8,7 +8,6 @@ import {
   EnvironmentCloudRelayConfigResult,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
-  type EnvironmentCloudPreferencesRequest,
   EnvironmentHttpConflictError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
@@ -70,7 +69,6 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
@@ -89,8 +87,6 @@ import {
   encodeConfirmedOriginJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
-  readHoldWebhooksWhileOffline,
-  readRelayConnection,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
@@ -102,6 +98,7 @@ import {
   setCliDesiredCloudLink,
 } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
+import * as CloudPreferences from "./CloudPreferences.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 import { filterRelayResponse, relayRequestError, shouldRetryCloudLink } from "./relayResponse.ts";
@@ -1358,65 +1355,6 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
   ),
 );
 
-const pushHoldWebhooksWhileOffline = Effect.fn("environment.cloud.pushHoldWebhooksWhileOffline")(
-  function* (dependencies: CloudHttpDependencies, holdWebhooksWhileOffline: boolean) {
-    const connection = yield* readRelayConnection(dependencies.secrets);
-    if (connection === null) {
-      return yield* new EnvironmentHttpBadRequestError({
-        message: "Link this environment to T3 Connect first.",
-      });
-    }
-    const environmentId = yield* dependencies.environment.getEnvironmentId;
-    const client = yield* makeRelayEnvironmentClient(connection);
-    yield* client.server
-      .updateLinkPreferences({
-        params: { environmentId },
-        payload: { holdWebhooksWhileOffline },
-      })
-      .pipe(
-        Effect.timeout("10 seconds"),
-        Effect.catch(
-          failEnvironmentCloudInternalError("Could not update T3 Connect webhook settings."),
-        ),
-      );
-  },
-);
-
-const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
-  function* (dependencies: CloudHttpDependencies, payload: EnvironmentCloudPreferencesRequest) {
-    yield* requireEnvironmentScope(AuthRelayWriteScope);
-    if (payload.holdWebhooksWhileOffline !== undefined) {
-      // The relay decides whether to hold a request, so it is told first; the
-      // local copy is only saved once the relay has the same value, and the
-      // relay is put back if that save fails.
-      const previous = yield* readHoldWebhooksWhileOffline(dependencies.secrets);
-      yield* pushHoldWebhooksWhileOffline(dependencies, payload.holdWebhooksWhileOffline);
-      yield* dependencies.secrets
-        .set(
-          HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
-          stringToBytes(String(payload.holdWebhooksWhileOffline)),
-        )
-        .pipe(
-          Effect.tapError(() =>
-            previous === payload.holdWebhooksWhileOffline
-              ? Effect.void
-              : pushHoldWebhooksWhileOffline(dependencies, previous).pipe(Effect.ignore),
-          ),
-        );
-    }
-    yield* dependencies.secrets.set(
-      PUBLISH_AGENT_ACTIVITY_SECRET,
-      stringToBytes(String(payload.publishAgentActivity)),
-    );
-    yield* dependencies.awarenessRelay.requestCatchUp();
-    return yield* readCloudLinkState(dependencies);
-  },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
-  ),
-);
-
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
     const cloudMintPublicKey = yield* dependencies.secrets
@@ -1661,12 +1599,26 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   "connect",
   Effect.fnUntraced(function* (handlers) {
     const dependencies = yield* cloudHttpDependencies;
+    const preferences = yield* CloudPreferences.CloudPreferences;
     return handlers
       .handle("linkProof", ({ payload }) => cloudLinkProofHandler(dependencies, payload))
       .handle("relayConfig", ({ payload }) => cloudRelayConfigHandler(dependencies, payload))
       .handle("linkState", () => cloudLinkStateHandler(dependencies))
       .handle("unlink", () => cloudUnlinkHandler(dependencies))
-      .handle("preferences", ({ payload }) => cloudPreferencesHandler(dependencies, payload))
+      .handle(
+        "preferences",
+        Effect.fn("environment.cloud.preferences")(
+          function* ({ payload }) {
+            yield* requireEnvironmentScope(AuthRelayWriteScope);
+            yield* preferences.update(payload);
+            return yield* readCloudLinkState(dependencies);
+          },
+          Effect.catchIf(
+            ServerSecretStore.isSecretStoreError,
+            failEnvironmentCloudInternalError("Could not read environment cloud preferences."),
+          ),
+        ),
+      )
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>

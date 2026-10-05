@@ -119,6 +119,8 @@ import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { webhookHttpApiLayer } from "./scheduledTasks/webhookRoute.ts";
+import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
+import * as CloudPreferences from "./cloud/CloudPreferences.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import {
   relayHookBaseUrl,
@@ -679,12 +681,12 @@ const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
-      Layer.provide(connectHttpApiLayer),
+      Layer.provide(connectHttpApiLayer.pipe(Layer.provide(CloudPreferences.layer))),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
-      Layer.provide(webhookHttpApiLayer),
+      Layer.provide(webhookHttpApiLayer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,

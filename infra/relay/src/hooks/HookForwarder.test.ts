@@ -37,6 +37,7 @@ import {
 } from "../http/Api.ts";
 import * as HookForwarder from "./HookForwarder.ts";
 import { RELAY_HOOK_DELIVERY_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
+import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import type { HeldHook } from "./HookInboxStore.ts";
 import { RELAY_HOOK_UPSTREAM_TIMEOUT_MS } from "./upstream.ts";
@@ -114,6 +115,7 @@ function makeHarness(options: Harness = {}) {
         ),
       ));
   const forwarderLayer = HookForwarder.layer.pipe(
+    Layer.provideMerge(HeldHooks.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
