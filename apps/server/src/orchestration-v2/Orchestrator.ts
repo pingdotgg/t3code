@@ -6951,7 +6951,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "secret_request",
         label: command.label,
         reason: command.reason,
-        target: command.target,
+        ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
         secretStatus: command.secretStatus,
       };
       yield* emit(

@@ -1,4 +1,4 @@
-import { ScheduledTaskError, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { SecretRequestError, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -66,7 +66,7 @@ describe("secretRequestFailureMessage", () => {
   it("passes through server errors but hides anything that could echo the payload", () => {
     expect(
       secretRequestFailureMessage(
-        new ScheduledTaskError({ message: "This secret request was already answered." }),
+        new SecretRequestError({ message: "This secret request was already answered." }),
       ),
     ).toBe("This secret request was already answered.");
     expect(secretRequestFailureMessage(new Error('Expected string, got "whsec_1"'))).toBe(

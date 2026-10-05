@@ -1,12 +1,13 @@
-import type {
-  OrchestrationV2TurnItem,
-  ScheduledTaskAnswerSecretRequestInput,
-} from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem, SecretRequestAnswerInput } from "@t3tools/contracts";
 
 export type SecretRequestItem = Extract<
   OrchestrationV2TurnItem,
   { readonly type: "secret_request" }
 >;
+
+/** Shown under the field: the one promise the card makes about the value. */
+export const SECRET_REQUEST_PRIVACY_NOTE = "Stored securely, never shown to the agent";
+export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
 /** What a secret request card shows: the form while pending, otherwise a one-line outcome. */
 export type SecretRequestDisplay =
@@ -66,7 +67,7 @@ export function secretRequestDisplay(
 export function secretRequestAnswerInput(
   item: Pick<SecretRequestItem, "id" | "threadId">,
   answer: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
-): ScheduledTaskAnswerSecretRequestInput | null {
+): SecretRequestAnswerInput | null {
   if (answer.type === "decline") {
     return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
   }
@@ -76,7 +77,7 @@ export function secretRequestAnswerInput(
 }
 
 /** Failures whose message is written for the user and never echoes the request payload. */
-const USER_FACING_FAILURE_TAGS = new Set(["ScheduledTaskError", "EnvironmentAuthorizationError"]);
+const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
 
 /**
  * Inline error copy for a failed answer. Only known server errors pass their

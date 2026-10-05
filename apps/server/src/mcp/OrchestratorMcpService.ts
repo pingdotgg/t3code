@@ -82,6 +82,7 @@ import {
   type McpThreadInvocationScope,
   requireThreadScope,
 } from "./McpInvocationContext.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -237,13 +238,7 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     ...(task.webhook?.url == null ? {} : { webhookUrl: task.webhook.url }),
     ...(task.webhook === undefined
       ? {}
-      : {
-          webhookSignature: task.webhook.hasSecret
-            ? "set"
-            : task.schedule.type === "webhook" && task.schedule.signature !== null
-              ? "secret_pending"
-              : "none",
-        }),
+      : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
   };
 }
 
@@ -831,6 +826,7 @@ const make = Effect.gen(function* () {
           ),
         )
       : Effect.succeed(project.defaultModelSelection);
+  const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1541,20 +1537,14 @@ const make = Effect.gen(function* () {
       }),
     requestSecret: (scope, input) =>
       Effect.gen(function* () {
-        yield* requireCapability(scope);
-        const parent = yield* loadProjection(scope.threadId);
-        const task = yield* loadScopedScheduledTask(parent.thread.projectId, input.scheduledTaskId);
-        if (task.schedule.type !== "webhook" || task.schedule.signature === null) {
-          return yield* failure(
-            "invalid_request",
-            "Only a webhook task with a signature check takes a signing secret. Set schedule.signature (with allowPendingSecret: true) first.",
-          );
-        }
+        // The card is shown in, and answered from, the caller's own thread.
+        const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
+        const threadId = threadScope.thread.threadId;
         const run = ThreadManagementService.latestActiveRun(parent);
         if (
           run === undefined ||
           run.rootNodeId === null ||
-          run.providerInstanceId !== scope.providerInstanceId
+          run.providerInstanceId !== threadScope.thread.providerInstanceId
         ) {
           return yield* failure(
             "parent_not_active",
@@ -1574,13 +1564,13 @@ const make = Effect.gen(function* () {
                 requestKey: key,
                 operation: `secret-${secretStatus}`,
               }),
-              threadId: scope.threadId,
+              threadId: threadId,
               runId,
               nodeId,
               turnItemId,
               label: input.label,
-              reason: input.reason ?? "",
-              target: { kind: "scheduled_task_webhook_signature", scheduledTaskId: task.id },
+              reason: input.reason,
+              ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
               secretStatus,
             })
             .pipe(
@@ -1593,12 +1583,12 @@ const make = Effect.gen(function* () {
             );
         yield* record("pending");
 
-        // The card is answered by the user (scheduledTasks.answerSecretRequest)
-        // or ends with the run; poll it like a delegated task.
+        // The user answers the card (secrets.answerRequest), or it ends with
+        // the run; poll it like a delegated task.
         const answered = yield* Effect.gen(function* () {
           while (true) {
             const projection = yield* threadManagement
-              .getThreadRecords(scope.threadId, ["runs", "turnItems"], {
+              .getThreadRecords(threadId, ["runs", "turnItems"], {
                 turnItemTypes: ["secret_request"],
                 messageRoles: [],
               })
@@ -1631,10 +1621,13 @@ const make = Effect.gen(function* () {
             ),
           ),
         );
-        return {
-          scheduledTaskId: task.id,
-          status: Option.getOrElse(answered, () => "pending" as const),
-        };
+        const status = Option.getOrElse(answered, () => "pending" as const);
+        if (status !== "saved") return { status };
+        const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
+        return Option.match(secretRef, {
+          onNone: () => ({ status }),
+          onSome: (ref) => ({ status, secretRef: ref }),
+        });
       }),
     capabilities: (scope) =>
       Effect.gen(function* () {
@@ -2314,4 +2307,5 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | SecretRequests.SecretRequests
 > = Layer.effect(OrchestratorMcpService, make);

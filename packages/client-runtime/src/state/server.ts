@@ -1299,11 +1299,11 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    // Off the config lane like run-now: answering a card must not queue
-    // behind settings edits. One answer per card at a time.
-    answerScheduledTaskSecretRequest: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:scheduled-task:answer-secret-request",
-      tag: WS_METHODS.scheduledTasksAnswerSecretRequest,
+    // Off the config lane: answering a card must not queue behind settings
+    // edits. One answer per card at a time.
+    answerSecretRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:secrets:answer-request",
+      tag: WS_METHODS.secretsAnswerRequest,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) => `${environmentId}:${input.threadId}:${input.turnItemId}`,

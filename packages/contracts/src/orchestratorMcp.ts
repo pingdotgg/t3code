@@ -12,6 +12,7 @@ import {
   ProjectId,
   RunId,
   ScheduledTaskId,
+  SecretRef,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -546,9 +547,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
     description:
       "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",
   }),
-  webhookSignature: Schema.optional(Schema.Literals(["none", "secret_pending", "set"])).annotate({
-    description:
-      "Signature check state: none, secret_pending (call request_secret; requests are rejected until it is set), or set.",
+  webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
+    description: "Whether requests must carry a valid signature.",
   }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
@@ -585,15 +585,15 @@ export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
 
 export const OrchestratorMcpRequestSecretInput = Schema.Struct({
-  scheduledTaskId: ScheduledTaskId.annotate({
-    description:
-      "Webhook task (with a signature check) whose signing secret the user should provide.",
-  }),
   label: TrimmedNonEmptyString.annotate({
-    description: "Short name shown on the card, e.g. 'GitHub webhook signing secret'.",
+    description: "What you need, shown as the card's title, e.g. 'GitHub webhook secret'.",
   }),
-  reason: Schema.optional(Schema.String).annotate({
-    description: "One sentence on what the secret is for and where the user will also enter it.",
+  reason: TrimmedNonEmptyString.annotate({
+    description:
+      "One or two sentences on what it is for and where the user gets or also enters it.",
+  }),
+  placeholder: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Hint inside the input, e.g. 'Paste your GitHub token'.",
   }),
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
@@ -602,10 +602,13 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
 export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
 
 export const OrchestratorMcpRequestSecretResult = Schema.Struct({
-  scheduledTaskId: ScheduledTaskId,
   status: Schema.Literals(["saved", "declined", "cancelled", "pending"]).annotate({
     description:
-      "saved: the secret is stored and the task verifies requests with it. declined: the user chose not to. cancelled: the request ended with the run. pending: the wait timed out and the card is still open.",
+      "saved: secretRef holds the value. declined: the user chose not to. cancelled: the request ended with the run. pending: the wait timed out and the card is still open.",
+  }),
+  secretRef: Schema.optional(SecretRef).annotate({
+    description:
+      "Present when saved. Pass it to a tool that accepts a secretRef; it works once, and you never see the value.",
   }),
 });
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;

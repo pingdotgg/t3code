@@ -1,4 +1,6 @@
 import {
+  SECRET_REQUEST_DEFAULT_PLACEHOLDER,
+  SECRET_REQUEST_PRIVACY_NOTE,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
@@ -24,6 +26,7 @@ import { RequestActionButton } from "./RequestActionButton";
  * alerted, or persisted, and the field clears once the answer is sent.
  */
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
+const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
 
 export function SecretRequestCard(props: {
   readonly environmentId: EnvironmentId;
@@ -64,8 +67,8 @@ function PendingSecretRequestForm(props: {
   readonly iconColor: ColorValue;
 }) {
   const { item } = props;
-  const answer = useAtomCommand(serverEnvironment.answerScheduledTaskSecretRequest, {
-    label: "scheduled task answer secret request",
+  const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
+    label: "answer secret request",
     // The failure cause holds the request; keep it out of the console.
     reportFailure: false,
     reportDefect: false,
@@ -93,24 +96,19 @@ function PendingSecretRequestForm(props: {
     }
   };
 
+  // Same hierarchy as web: what is asked, why, the field, then the promise
+  // about where the value goes.
   return (
-    <View className="mb-3 gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
-      <View className="flex-row items-start gap-2">
-        <View className="pt-0.5">
-          <SymbolView name={LOCK_SYMBOL} size={14} tintColor={props.iconColor} type="monochrome" />
-        </View>
-        <View className="flex-1 gap-1">
-          <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
-          {item.reason.trim() ? (
-            <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
-          ) : null}
-          <Text className="font-sans text-xs text-foreground-muted">
-            Stored for this task only. The agent never sees it.
-          </Text>
-        </View>
+    <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
+      <View className="gap-1">
+        <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
+        {item.reason.trim() ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
+        ) : null}
       </View>
       <TextInput
         accessibilityLabel={item.label}
+        placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
         value={secret}
         onChangeText={setSecret}
         editable={!submitting}
@@ -129,22 +127,29 @@ function PendingSecretRequestForm(props: {
           {error}
         </Text>
       ) : null}
-      <View className="flex-row gap-2">
-        <View className="flex-1">
-          <RequestActionButton
-            label="Decline"
-            tone="secondary"
-            disabled={submitting}
-            onPress={() => void send({ type: "decline" })}
+      <RequestActionButton
+        label="Save securely"
+        disabled={submitting || secret.trim().length === 0}
+        onPress={() => void send({ type: "save", secret })}
+      />
+      <View className="flex-row items-center justify-between gap-2">
+        <View className="flex-1 flex-row items-center gap-1.5">
+          <SymbolView
+            name={PRIVATE_SYMBOL}
+            size={13}
+            tintColor={props.iconColor}
+            type="monochrome"
           />
+          <Text className="flex-1 font-sans text-xs text-foreground-muted">
+            {SECRET_REQUEST_PRIVACY_NOTE}
+          </Text>
         </View>
-        <View className="flex-1">
-          <RequestActionButton
-            label="Save"
-            disabled={submitting || secret.trim().length === 0}
-            onPress={() => void send({ type: "save", secret })}
-          />
-        </View>
+        <RequestActionButton
+          label="Decline"
+          tone="secondary"
+          disabled={submitting}
+          onPress={() => void send({ type: "decline" })}
+        />
       </View>
     </View>
   );

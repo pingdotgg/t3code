@@ -6,8 +6,8 @@ import {
   IsoDateTime,
   ProjectId,
   ScheduledTaskId,
+  SecretRef,
   ThreadId,
-  TurnItemId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -105,12 +105,11 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
       Schema.Struct({
         ...ScheduledTaskWebhookSignatureFields,
         secret: Schema.optional(TrimmedNonEmptyString).annotate({
-          description:
-            "Shared signing secret. Omit to keep the stored secret; a new task without one rejects every request until a secret is set.",
+          description: "Shared signing secret. Omit to keep the stored secret.",
         }),
-        allowPendingSecret: Schema.optional(Schema.Boolean).annotate({
+        secretRef: Schema.optional(SecretRef).annotate({
           description:
-            "Save the check without a secret yet; requests are rejected until one is provided. For agents that ask the user for the secret afterwards.",
+            "A secret the user entered through request_secret, used instead of secret. It is consumed by this save.",
         }),
       }),
     ),
@@ -248,28 +247,6 @@ export const ScheduledTaskRotateWebhookTokenInput = Schema.Struct({
   id: ScheduledTaskId,
 });
 export type ScheduledTaskRotateWebhookTokenInput = typeof ScheduledTaskRotateWebhookTokenInput.Type;
-
-/** Sets only a webhook task's signing secret, leaving the rest of the task as it is. */
-export const ScheduledTaskSetWebhookSecretInput = Schema.Struct({
-  id: ScheduledTaskId,
-  secret: TrimmedNonEmptyString,
-});
-export type ScheduledTaskSetWebhookSecretInput = typeof ScheduledTaskSetWebhookSecretInput.Type;
-
-/**
- * The user's answer to an agent's request for a webhook signing secret. The
- * secret goes straight to the task; the thread only learns it was saved.
- */
-export const ScheduledTaskAnswerSecretRequestInput = Schema.Struct({
-  threadId: ThreadId,
-  turnItemId: TurnItemId,
-  answer: Schema.Union([
-    Schema.Struct({ type: Schema.Literal("save"), secret: TrimmedNonEmptyString }),
-    Schema.Struct({ type: Schema.Literal("decline") }),
-  ]),
-});
-export type ScheduledTaskAnswerSecretRequestInput =
-  typeof ScheduledTaskAnswerSecretRequestInput.Type;
 
 export const ScheduledTaskWebhookDeliveryId = TrimmedNonEmptyString.pipe(
   Schema.brand("ScheduledTaskWebhookDeliveryId"),

@@ -1346,19 +1346,6 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
-/**
- * What a secret an agent asked for is used for. The server stores the value
- * for that purpose and never puts it in the transcript, projections, or
- * model context; the turn item only ever carries this target and a status.
- */
-export const OrchestrationV2SecretRequestTarget = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("scheduled_task_webhook_signature"),
-    scheduledTaskId: ScheduledTaskId,
-  }),
-]);
-export type OrchestrationV2SecretRequestTarget = typeof OrchestrationV2SecretRequestTarget.Type;
-
 export const OrchestrationV2SecretRequestStatus = Schema.Literals([
   "pending",
   "saved",
@@ -1367,11 +1354,15 @@ export const OrchestrationV2SecretRequestStatus = Schema.Literals([
 ]);
 export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
 
+/**
+ * A secret an agent asked the user for. The value never passes through
+ * orchestration: the item carries only what was asked and how it was answered.
+ */
 const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
   label: TrimmedNonEmptyString,
   reason: Schema.String,
-  target: OrchestrationV2SecretRequestTarget,
+  placeholder: Schema.optional(Schema.String),
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 
@@ -3062,7 +3053,7 @@ export const OrchestrationV2Command = Schema.Union([
     turnItemId: TurnItemId,
     label: TrimmedNonEmptyString,
     reason: Schema.String,
-    target: OrchestrationV2SecretRequestTarget,
+    placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
   Schema.Struct({

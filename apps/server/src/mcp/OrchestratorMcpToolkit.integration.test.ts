@@ -74,6 +74,8 @@ import {
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -476,6 +478,18 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
   };
 }
 
+/** In-memory server secret store for tests that exercise secret requests. */
+const memorySecretStoreLayer = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
+  const stored = new Map<string, Uint8Array>();
+  return ServerSecretStore.ServerSecretStore.of({
+    get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+    set: (name, value) => Effect.sync(() => void stored.set(name, value)),
+    create: (name, value) => Effect.sync(() => void stored.set(name, value)),
+    getOrCreateRandom: () => Effect.die("unused in this test"),
+    remove: (name) => Effect.sync(() => void stored.delete(name)),
+  });
+});
+
 const unusedScheduledTaskStubLayer = Layer.succeed(
   ScheduledTaskService.ScheduledTaskService,
   ScheduledTaskService.ScheduledTaskService.of({
@@ -486,8 +500,6 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
     rotateWebhookToken: () => Effect.die("unused in this test"),
-    setWebhookSecret: () => Effect.die("unused in this test"),
-    answerSecretRequest: () => Effect.die("unused in this test"),
     listWebhookDeliveries: () => Effect.die("unused in this test"),
     getWebhookDelivery: () => Effect.die("unused in this test"),
     triggerWebhook: () => Effect.die("unused in this test"),
@@ -649,8 +661,6 @@ describe("orchestrator MCP toolkit", () => {
                 ).pipe(Effect.as({ id: input.id })),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
               rotateWebhookToken: () => Effect.die("unused in this test"),
-              setWebhookSecret: () => Effect.die("unused in this test"),
-              answerSecretRequest: () => Effect.die("unused in this test"),
               listWebhookDeliveries: () => Effect.die("unused in this test"),
               getWebhookDelivery: () => Effect.die("unused in this test"),
               triggerWebhook: () => Effect.die("unused in this test"),
@@ -674,6 +684,12 @@ describe("orchestrator MCP toolkit", () => {
                       : Option.none(),
                   ),
               }),
+            ),
+            Layer.provideMerge(
+              SecretRequests.layer.pipe(
+                Layer.provide(memorySecretStoreLayer),
+                Layer.provide(orchestrationLayer),
+              ),
             ),
             Layer.provide(NodeServices.layer),
           );
@@ -1489,35 +1505,17 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
-            // A signed webhook task waits for its secret, which the agent asks
-            // the user for. The tool only ever learns the answer's status.
-            const webhookCall = yield* invoke("schedule_task", {
-              prompt:
-                "Release {{body.release.tag_name}} was published. Delegate the release notes.",
-              schedule: {
-                type: "webhook",
-                signature: {
-                  header: "x-hub-signature-256",
-                  encoding: "hex",
-                  prefix: "sha256=",
-                  allowPendingSecret: true,
-                },
-              },
-              clientRequestId: "schedule-github-releases-1",
-            });
-            expect(webhookCall.isError).toBe(false);
-            const webhookTaskId = (webhookCall.structuredContent as { scheduledTaskId: string })
-              .scheduledTaskId;
-            // Not linked to T3 Connect here, so there is no public URL to share.
-            expect(webhookCall.structuredContent).not.toHaveProperty("webhookUrl");
+            // The agent asks for a secret; the tool waits for the user and
+            // returns a one-use ref, never the value, which a signed webhook
+            // task then consumes.
+            const secretRequests = yield* SecretRequests.SecretRequests;
             const secretFiber = yield* invoke("request_secret", {
-              scheduledTaskId: webhookTaskId,
-              label: "GitHub webhook signing secret",
-              reason: "Enter the same secret in the repository's webhook settings.",
+              label: "GitHub webhook secret",
+              reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
+              placeholder: "Paste the webhook secret",
             }).pipe(Effect.forkChild);
-            // The card is recorded before the tool starts waiting, so poll for it
-            // without the helper's short budget: under load the tool's own reads
-            // come first.
+            // Polled without the helper's short budget: under load the tool's
+            // own reads come first.
             const asked = yield* Effect.gen(function* () {
               while (true) {
                 const projection = yield* orchestrator.getThreadProjection(parentThreadId);
@@ -1532,33 +1530,40 @@ describe("orchestrator MCP toolkit", () => {
               }
             });
             const card = asked.turnItems.find((item) => item.type === "secret_request");
-            if (card?.type !== "secret_request" || card.runId === null || card.nodeId === null) {
+            if (card?.type !== "secret_request") {
               return yield* Effect.die(new Error("Secret request card missing."));
             }
             expect(card).toMatchObject({
-              label: "GitHub webhook signing secret",
-              target: { kind: "scheduled_task_webhook_signature", scheduledTaskId: webhookTaskId },
+              label: "GitHub webhook secret",
+              placeholder: "Paste the webhook secret",
             });
-            // What scheduledTasks.answerSecretRequest dispatches once the secret is stored.
-            yield* orchestrator.dispatch({
-              type: "secret_request.record",
-              commandId: CommandId.make("command:mcp-secret:saved"),
+            // What the card's Save sends (secrets.answerRequest).
+            yield* secretRequests.answer({
               threadId: parentThreadId,
-              runId: card.runId,
-              nodeId: card.nodeId,
               turnItemId: card.id,
-              label: card.label,
-              reason: card.reason,
-              target: card.target,
-              secretStatus: "saved",
+              answer: { type: "save", secret: "github-webhook-secret" },
             });
             const secretCall = yield* Fiber.join(secretFiber);
             expect(secretCall.isError).toBe(false);
-            expect(secretCall.structuredContent).toEqual({
-              scheduledTaskId: webhookTaskId,
-              status: "saved",
-            });
-            yield* invoke("delete_scheduled_task", { scheduledTaskId: webhookTaskId });
+            const secretResult = secretCall.structuredContent as {
+              status: string;
+              secretRef?: string;
+            };
+            expect(secretResult.status).toBe("saved");
+            expect(secretResult.secretRef).toMatch(/^secret-ref:[0-9a-f]{32}$/);
+            expect(JSON.stringify(secretCall)).not.toContain("github-webhook-secret");
+
+            // The ref is the secret for exactly one consumer.
+            expect(
+              yield* secretRequests.consume({
+                ref: secretResult.secretRef as never,
+                projectId,
+              }),
+            ).toBe("github-webhook-secret");
+            const reused = yield* secretRequests
+              .consume({ ref: secretResult.secretRef as never, projectId })
+              .pipe(Effect.flip);
+            expect(reused.message).toContain("already used");
 
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
@@ -3658,6 +3663,12 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provideMerge(
+            SecretRequests.layer.pipe(
+              Layer.provide(memorySecretStoreLayer),
+              Layer.provide(orchestrationLayer),
+            ),
+          ),
           Layer.provide(NodeServices.layer),
         );
 

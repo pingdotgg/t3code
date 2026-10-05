@@ -1,4 +1,6 @@
 import {
+  SECRET_REQUEST_DEFAULT_PLACEHOLDER,
+  SECRET_REQUEST_PRIVACY_NOTE,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
@@ -9,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
-import { CheckIcon, LockIcon, MinusIcon } from "lucide-react";
+import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -59,8 +61,8 @@ function PendingSecretRequestForm(props: {
   const { item } = props;
   const inputId = useId();
   const errorId = useId();
-  const answer = useAtomCommand(serverEnvironment.answerScheduledTaskSecretRequest, {
-    label: "scheduled task answer secret request",
+  const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
+    label: "answer secret request",
     // The failure cause holds the request; keep it out of the console.
     reportFailure: false,
     reportDefect: false,
@@ -93,57 +95,44 @@ function PendingSecretRequestForm(props: {
     void send({ type: "save", secret });
   };
 
+  // Same hierarchy as a chat card: what is asked, why, the field, then the
+  // promise about where the value goes.
   return (
     <form
       data-v2-item-type={item.type}
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border/60 p-3"
+      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
       onSubmit={onSubmit}
       autoComplete="off"
     >
-      <div className="flex min-w-0 items-start gap-2">
-        <LockIcon className="mt-0.5 size-4 shrink-0 text-icon-muted" aria-hidden />
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <label htmlFor={inputId} className="text-sm font-medium text-foreground">
-            {item.label}
-          </label>
-          {item.reason.trim() ? (
-            <p className="text-xs text-muted-foreground">{item.reason}</p>
-          ) : null}
-          <p className="text-xs text-muted-foreground">
-            Stored for this task only. The agent never sees it.
-          </p>
-        </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
+          {item.label}
+        </label>
+        {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
       </div>
       <div className="flex min-w-0 items-center gap-2">
-        <Input
-          id={inputId}
-          type="password"
-          size="sm"
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          // Password managers otherwise offer to save or fill this field.
-          data-1p-ignore
-          data-lpignore="true"
-          data-bwignore
-          value={secret}
-          disabled={submitting}
-          aria-invalid={error !== null || undefined}
-          aria-describedby={error !== null ? errorId : undefined}
-          onChange={(event) => setSecret(event.currentTarget.value)}
-        />
-        <Button type="submit" size="sm" disabled={submitting || secret.trim().length === 0}>
-          Save
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={submitting}
-          onClick={() => void send({ type: "decline" })}
-        >
-          Decline
+        <div className="min-w-0 flex-1">
+          <Input
+            id={inputId}
+            type="password"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            // Password managers otherwise offer to save or fill this field.
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
+            placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+            value={secret}
+            disabled={submitting}
+            aria-invalid={error !== null || undefined}
+            aria-describedby={error !== null ? errorId : undefined}
+            onChange={(event) => setSecret(event.currentTarget.value)}
+          />
+        </div>
+        <Button type="submit" disabled={submitting || secret.trim().length === 0}>
+          Save securely
         </Button>
       </div>
       {error !== null ? (
@@ -151,6 +140,21 @@ function PendingSecretRequestForm(props: {
           {error}
         </p>
       ) : null}
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
+          {SECRET_REQUEST_PRIVACY_NOTE}
+        </p>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost-muted"
+          disabled={submitting}
+          onClick={() => void send({ type: "decline" })}
+        >
+          Decline
+        </Button>
+      </div>
     </form>
   );
 }
