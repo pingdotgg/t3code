@@ -107,6 +107,11 @@ function stacksEqual(
   );
 }
 
+function skipReason(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  return error instanceof Error ? error.message : String(error);
+}
+
 function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
@@ -141,6 +146,8 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
+  // The reason of the last reported host read failure, so repeats are not logged every sweep.
+  let lastSkipReason: string | undefined;
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
@@ -312,18 +319,41 @@ export const make = Effect.gen(function* () {
       );
     });
 
+    let attempted = 0;
+    let skipped = 0;
+    let firstSkip: { readonly key: string; readonly reason: string } | undefined;
     yield* Effect.forEach(
       groups,
-      ([key, entries]) =>
-        (scope === "all" || requested.has(key)) && isDue(key, entries, nowMs)
-          ? syncGroup(key, entries).pipe(
-              Effect.catchCause(logSkipped("pull request sync skipped", { key })),
-            )
-          : Effect.void,
+      ([key, entries]) => {
+        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+          return Effect.void;
+        }
+        attempted += 1;
+        return syncGroup(key, entries).pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+            skipped += 1;
+            firstSkip ??= { key, reason: skipReason(cause) };
+            return Effect.void;
+          }),
+        );
+      },
       // As wide as one batched summary read, so the sweep's reads on a host arrive together and
       // GitHub answers them in one request rather than one `gh pr view` apiece.
       { concurrency: 25, discard: true },
     );
+    // A rate limit pause or a signed-out CLI fails every due pull request the same way each
+    // minute. Report it once, then again only when the reason changes or a sweep succeeds.
+    if (firstSkip === undefined) {
+      if (attempted > 0) lastSkipReason = undefined;
+    } else if (firstSkip.reason !== lastSkipReason) {
+      lastSkipReason = firstSkip.reason;
+      yield* Effect.logWarning("pull request sync skipped", {
+        count: skipped,
+        key: firstSkip.key,
+        reason: firstSkip.reason,
+      });
+    }
   });
 
   const worker = yield* makeDrainableWorker((scope: "all" | "requested") =>

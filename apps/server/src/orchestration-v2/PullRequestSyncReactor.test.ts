@@ -24,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -907,6 +908,54 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+
+  it.effect("reports a host failure shared by every pull request once until it changes", () => {
+    const skips: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      const parts = Array.isArray(message) ? message : [message];
+      if (logLevel === "Warn" && parts[0] === "pull request sync skipped") skips.push(parts);
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const hostDown = yield* Ref.make(true);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("first", { pullRequests: [makeLink(7, { state: "open" })] }),
+            makeThread("second", { pullRequests: [makeLink(8, { state: "open" })] }),
+          ]),
+          summary: (input) =>
+            Ref.get(hostDown).pipe(
+              Effect.flatMap((down) =>
+                down
+                  ? Effect.fail(
+                      new PullRequestOperationError({ operation: "summary", detail: "paused" }),
+                    )
+                  : Effect.succeed(makeSummary(input, { state: "open" })),
+              ),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(skips.length, 1);
+          assert.deepInclude(skips[0]![1], { count: 2 });
+
+          yield* Ref.set(hostDown, false);
+          yield* sweepAgain(fixture, reactor);
+          yield* Ref.set(hostDown, true);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(skips.length, 2);
+        }).pipe(
+          // The reactor forks its worker while its layer builds, so the logger must reach it there.
+          Effect.provide(
+            fixture.layer.pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+          ),
+        );
+      }),
+    );
+  });
 
   it.effect("reads open links fresh only when a run that ran a merge command ends", () =>
     Effect.scoped(
