@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   settings: {
     voiceTranscriptionEnvironmentId: null as string | null,
     voiceMicrophone: "",
+    speechLanguage: "auto",
   },
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
@@ -160,6 +161,7 @@ afterEach(async () => {
   mocks.scope = null;
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
+  mocks.settings.speechLanguage = "auto";
 });
 
 it("shows translation for capable models and updates the client preference", async () => {
@@ -465,6 +467,53 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
   );
   expect(languageList.findAllByType("button")).toHaveLength(8);
 });
+it.each([
+  { preference: "auto", languages: ["en", "de", "es", "fr"], expected: "English" },
+  { preference: "ja", languages: ["en", "de", "es", "fr"], expected: "English" },
+  { preference: "auto", languages: ["fr", "de"], expected: "French" },
+])(
+  "shows the effective language without Auto for $preference on $languages",
+  async ({ preference, languages, expected }) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("navigator", {});
+    vi.stubGlobal("window", { setInterval, clearInterval });
+    mocks.settings.speechLanguage = preference;
+    mocks.listModels.mockResolvedValue({
+      models: [
+        {
+          id: "multilingual",
+          name: "Multilingual Model",
+          description: "Multilingual speech",
+          languages,
+          supportsLanguageDetection: false,
+          state: "installed",
+          active: true,
+          recommended: false,
+          supportsStreaming: false,
+          size: 100,
+          accuracy: 90,
+          speed: 90,
+        },
+      ],
+    });
+    await act(async () => {
+      root = create(createElement(VoiceSettingsPanel));
+    });
+    const picker = root.root.findByProps({ "aria-label": "Transcription language" });
+    expect(picker.findByType("span").children).toEqual([expected]);
+    const options = picker
+      .parent!.findAllByType("option")
+      .map((option) => option.children.join(""));
+    expect(options).not.toContain("Auto");
+    expect(options).toContain("German");
+    await act(async () => picker.parent!.props.onValueChange("de"));
+    expect(mocks.saveClient).toHaveBeenCalledWith({ speechLanguage: "de" });
+    expect(
+      root.root.findByProps({ "aria-label": "Transcription language" }).findByType("span").children,
+    ).toEqual(["German"]);
+  },
+);
+
 it("puts the active model first, then installed and downloading models", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});

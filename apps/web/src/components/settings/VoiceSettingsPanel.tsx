@@ -17,7 +17,7 @@ import type {
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import { SpeechCustomWords as SpeechCustomWordsSchema } from "@t3tools/contracts";
-import { mergeSpeechCustomWords } from "@t3tools/shared/speech";
+import { effectiveSpeechLanguage, mergeSpeechCustomWords } from "@t3tools/shared/speech";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -559,6 +559,9 @@ export function VoiceSettingsPanel() {
   };
   const currentModels = currentStatus?.supported ? models : [];
   const activeModel = currentModels.find((model) => model.active);
+  const transcriptionLanguage = activeModel
+    ? effectiveSpeechLanguage(activeModel, clientSettings.speechLanguage)
+    : clientSettings.speechLanguage;
   const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
     compareLanguages,
   );
@@ -782,25 +785,19 @@ export function VoiceSettingsPanel() {
                 activeModel.languages.length === 1 ||
                 operation !== null
               }
-              value={clientSettings.speechLanguage}
+              value={transcriptionLanguage}
               onValueChange={(value) => {
                 if (value) void updateClientSettings({ speechLanguage: value });
               }}
             >
               <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-80">
                 <SelectValue>
-                  {clientSettings.speechLanguage === "auto"
-                    ? "Auto"
-                    : languageLabel(clientSettings.speechLanguage)}
+                  {transcriptionLanguage === "auto" ? "Auto" : languageLabel(transcriptionLanguage)}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto</SelectItem>
-                {clientSettings.speechLanguage !== "auto" &&
-                !activeModel?.languages.includes(clientSettings.speechLanguage) ? (
-                  <SelectItem value={clientSettings.speechLanguage}>
-                    {languageLabel(clientSettings.speechLanguage)} (Unavailable on this model)
-                  </SelectItem>
+                {activeModel?.supportsLanguageDetection ? (
+                  <SelectItem value="auto">Auto</SelectItem>
                 ) : null}
                 {[...(activeModel?.languages ?? [])].sort(compareLanguages).map((code) => (
                   <SelectItem key={code} value={code}>
