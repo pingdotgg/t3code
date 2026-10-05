@@ -1038,6 +1038,35 @@ describe("orchestration V2 contracts", () => {
   });
 });
 
+it("preserves tool cancellation and denial metadata through persisted and wire schemas", () => {
+  for (const kind of ["cancelled", "denied", undefined]) {
+    const item = decodeOrchestrationV2TurnItem({
+      id: "tool-result",
+      threadId: "thread",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "dynamic_tool",
+      toolName: "task_status",
+      input: { taskId: "child" },
+      status: kind === "cancelled" ? "cancelled" : "failed",
+      ...(kind === undefined ? {} : { toolNonExecutionKind: kind }),
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      output: "Tool did not execute",
+    });
+    const wire = encodeOrchestrationV2TurnItemJson(item);
+    expect(wire.toolNonExecutionKind).toBe(kind);
+    expect(decodeOrchestrationV2TurnItemJson(wire)).toEqual(item);
+  }
+});
+
 it("round-trips typed notifications and keeps work outcome separate from item status", () => {
   const now = DateTime.makeUnsafe("2026-09-09T00:00:00Z");
   const base = {
