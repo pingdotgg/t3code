@@ -49,7 +49,8 @@ const withService = <A, E>(
       Layer.succeed(
         ServerSecretStore.ServerSecretStore,
         ServerSecretStore.ServerSecretStore.of({
-          get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+          // Yields like a real file read, so concurrent callers can interleave.
+          get: (name) => Effect.yieldNow.pipe(Effect.as(Option.fromNullishOr(stored.get(name)))),
           set: (name, value) => Effect.sync(() => void stored.set(name, value)),
           create: (name, value) =>
             stored.has(name)
@@ -144,6 +145,26 @@ it.effect("a saved answer becomes a one-use ref, and the thread only learns it w
       assert.isFalse(valuesOf(stored).some((value) => value.includes("ghp_secret")));
       const again = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
       assert.include(again.message, "already used");
+    }),
+  ),
+);
+
+it.effect("two concurrent uses of one ref hand the value out once", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      yield* service.answer({
+        threadId,
+        turnItemId,
+        answer: { type: "save", secret: "ghp_secret" },
+      });
+      const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+      const results = yield* Effect.all(
+        [service.consume({ ref, projectId }), service.consume({ ref, projectId })].map(
+          Effect.result,
+        ),
+        { concurrency: "unbounded" },
+      );
+      assert.deepEqual(results.map((result) => result._tag).toSorted(), ["Failure", "Success"]);
     }),
   ),
 );

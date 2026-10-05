@@ -1306,7 +1306,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.secretsAnswerRequest,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}:${input.turnItemId}`,
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
     }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {

@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
@@ -178,8 +179,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // get and remove are separate store calls; one consumer at a time keeps two
+  // concurrent calls from both reading a ref before either deletes it.
+  const consumeLock = yield* Semaphore.make(1);
   const consume: SecretRequests["Service"]["consume"] = (input) =>
     consumeRef(input).pipe(
+      consumeLock.withPermits(1),
       Effect.tap(() => Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "used" })),
       Effect.tapError(() =>
         Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "rejected" }),
