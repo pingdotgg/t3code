@@ -1,3 +1,9 @@
+import { htmlRenderThemeFragment, htmlRenderThemeMessage } from "@t3tools/shared/htmlRender";
+import { useEffect, useRef, useState } from "react";
+
+import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
+import { cn } from "~/lib/utils";
+
 /**
  * Chromium's viewer opens with its own toolbar, a thumbnail rail and a small
  * zoom. The panel header is the only chrome we want, so ask for the page
@@ -13,11 +19,13 @@ export const isPdfPreviewFile = (path: string): boolean =>
  * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
  * with an opaque origin, so a page cannot reach the app's session or storage.
  * The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
+ * An agent's HTML render also wears the app theme.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;
+  readonly htmlRender?: boolean;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -28,6 +36,13 @@ export function BrowserDocumentFrame(props: {
       title={props.title}
       className={className}
     />
+  ) : props.htmlRender ? (
+    <HtmlRenderDocument
+      key={props.src}
+      src={props.src}
+      title={props.title}
+      className="min-h-0 flex-1"
+    />
   ) : (
     <iframe
       key={props.src}
@@ -35,6 +50,47 @@ export function BrowserDocumentFrame(props: {
       title={props.title}
       className={className}
       sandbox="allow-scripts allow-forms allow-popups allow-modals"
+    />
+  );
+}
+
+/**
+ * A sandboxed agent HTML render in the app theme. The page reads the theme from
+ * its URL fragment before first paint, then follows changes posted to its
+ * bootstrap. The first URL is kept for the frame's lifetime: signed asset URLs
+ * re-mint while it stays mounted, and a new src would reload the page.
+ */
+export function HtmlRenderDocument(props: {
+  readonly src: string;
+  readonly title: string;
+  readonly className?: string;
+}) {
+  const theme = useHtmlRenderTheme();
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [loaded, setLoaded] = useState(false);
+  const postTheme = () => {
+    frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
+  };
+  useEffect(postTheme, [theme]);
+  return (
+    <iframe
+      ref={frameRef}
+      src={src}
+      title={props.title}
+      // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
+      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+      loading="lazy"
+      onLoad={() => {
+        setLoaded(true);
+        // Covers a theme change that landed while the page was loading.
+        postTheme();
+      }}
+      // A frame whose color scheme differs from its document's paints an opaque
+      // canvas, so the blank document a frame starts with would flash white in
+      // dark mode. Once the page is in, its prefers-color-scheme follows the app.
+      className={cn("border-0 scheme-light", props.className)}
+      style={loaded ? { colorScheme: theme.appearance } : undefined}
     />
   );
 }

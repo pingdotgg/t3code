@@ -1,5 +1,12 @@
 import * as Predicate from "effect/Predicate";
 
+import {
+  HTML_RENDER_TOOL_NAME,
+  readHtmlRenderReference,
+  type HtmlRenderReference,
+} from "./htmlRender.ts";
+import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
+
 const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
@@ -27,6 +34,7 @@ interface CompactToolOutput {
   taskId?: string;
   scheduledTaskId?: string;
   status?: "rolled_back";
+  htmlRender?: HtmlRenderReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
 }
@@ -110,6 +118,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    const htmlRender = readHtmlRenderReference(data.htmlRender);
+    if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const nestedThreadId = Predicate.isObject(data.thread)
       ? boundedId(data.thread.threadId)
       : undefined;
@@ -151,6 +161,16 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.status;
   }
   return Object.keys(output).length === 0 ? undefined : output;
+}
+
+/** The page a completed `html_render` tool call published, if this item is one. */
+export function htmlRenderFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): HtmlRenderReference | undefined {
+  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.htmlRender;
 }
 
 /** Some providers report completion even when command output describes a failure. */

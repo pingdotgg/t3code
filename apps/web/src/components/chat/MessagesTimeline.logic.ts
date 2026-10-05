@@ -48,6 +48,7 @@ import {
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -64,6 +65,7 @@ function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
+  if (entry.kind === "html-render") return entry.runId;
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -587,6 +589,12 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "html-render";
+      id: string;
+      createdAt: string;
+      htmlRender: HtmlRenderReference;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -1606,6 +1614,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "html-render") {
+      nextRows.push({
+        kind: "html-render",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        htmlRender: timelineEntry.htmlRender,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "event") {
       const previous = nextRows.at(-1);
       if (
@@ -2015,6 +2033,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "html-render": {
+      // Entries rebuild on any tool update; an equal page must keep its mounted frame.
+      const bh = b as typeof a;
+      return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+    }
 
     case "event":
       return (

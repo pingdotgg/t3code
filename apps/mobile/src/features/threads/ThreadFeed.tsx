@@ -183,6 +183,8 @@ import {
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
+import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
+import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import {
   assetEnvironment,
@@ -1536,6 +1538,8 @@ function renderFeedEntry(
     readonly userBubbleMaxWidth: number;
     /** Width assistant markdown lays out in, so images can size their frame before layout. */
     readonly markdownContentWidth: number;
+    /** Width full-bleed rows (HTML renders) lay out in. */
+    readonly contentWidth: number;
     readonly threadTitle: string;
   },
 ) {
@@ -1572,6 +1576,18 @@ function renderFeedEntry(
 
   if (entry.type === "thinking") {
     return <ThreadThinkingRow rowSizing={props.workRowSizing} iconSubtleColor={iconSubtleColor} />;
+  }
+
+  if (entry.type === "html-render") {
+    return (
+      <ThreadHtmlRender
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        render={entry.render}
+        frameWidth={props.contentWidth}
+        iconColor={iconSubtleColor}
+      />
+    );
   }
 
   if (entry.type === "work-toggle") {
@@ -2869,6 +2885,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // cards and related-thread links can exceed the compact row height.
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
+      if (entry.type === "html-render") {
+        return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      }
       if (workRowSizing.fixedRowHeight === undefined) {
         return undefined;
       }
@@ -2902,7 +2921,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return undefined;
       }
     },
-    [expandedWorkRows, workRowSizing.fixedRowHeight],
+    [contentWidth, expandedWorkRows, workRowSizing.fixedRowHeight],
   );
 
   // Disclosures can mount existing offscreen rows as well as new work rows.
@@ -2946,6 +2965,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             themeAppearance,
             userBubbleMaxWidth,
             markdownContentWidth,
+            contentWidth,
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
@@ -2982,6 +3002,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       themeAppearance,
       userBubbleMaxWidth,
       markdownContentWidth,
+      contentWidth,
       onCopyWorkRow,
       markdownLinkHandlers,
       onPressPreview,

@@ -168,6 +168,7 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
+import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
@@ -1779,7 +1780,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   !row.showAssistantMeta) ||
                 row.kind === "worktree-setup" ||
                 row.kind === "event" ||
-                row.kind === "attempt-fold"
+                row.kind === "attempt-fold" ||
+                row.kind === "html-render"
               ? "pb-2"
               : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1827,6 +1829,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
@@ -2695,6 +2698,22 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+      />
+    </div>
+  );
+}
+
+function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "html-render" }> }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="min-w-0 px-1">
+      <HtmlRenderFrame
+        // A recycled row must not keep another page's frozen frame.
+        key={row.htmlRender.attachmentId}
+        environmentId={ctx.activeThreadEnvironmentId}
+        htmlRender={row.htmlRender}
+        onOpen={ctx.onFileOpen}
       />
     </div>
   );
