@@ -545,6 +545,8 @@ describe("ssh tunnel scripts", () => {
         assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
         const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
         assert.isDefined(firstTunnelArgs);
+        assert.include(firstTunnelArgs, "-L");
+        assert.include(firstTunnelArgs, "127.0.0.1:41773:127.0.0.1:3773");
         assert.include(firstTunnelArgs, "ControlMaster=no");
         assert.include(firstTunnelArgs, "ControlPath=none");
         assert.include(firstTunnelArgs, "ControlPersist=no");

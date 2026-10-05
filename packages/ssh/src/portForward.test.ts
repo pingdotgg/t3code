@@ -37,6 +37,8 @@ const fixture = (
     readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
     readonly preferredAvailable?: boolean;
     readonly portInUseAfterProbe?: number;
+    readonly collisionStderr?: Stream.Stream<Uint8Array>;
+    readonly listening?: boolean;
   } = {},
 ) => {
   const commands: ReadonlyArray<string>[] = [];
@@ -59,11 +61,12 @@ const fixture = (
         pid: ChildProcessSpawner.ProcessId(123),
         stdout,
         stderr: bindCollision
-          ? Stream.make(
+          ? (options.collisionStderr ??
+            Stream.make(
               bytes(
                 `debug1: Local forwarding listening on 127.0.0.1 port ${options.portInUseAfterProbe}.\nbind [127.0.0.1]:${options.portInUseAfterProbe}: Address already in use\n`,
               ),
-            )
+            ))
           : tunnel
             ? (options.stderr ?? Stream.make(bytes(ready)))
             : Stream.empty,
@@ -104,9 +107,18 @@ const fixture = (
     Layer.succeed(
       NetService.NetService,
       NetService.NetService.of({
-        canListenOnHost: () => Effect.succeed(options.preferredAvailable ?? false),
+        canListenOnHost: (port) =>
+          Effect.succeed(
+            options.portInUseAfterProbe === port &&
+              commands.some(
+                (args) =>
+                  args.includes("-N") && args.some((arg) => arg.startsWith(`127.0.0.1:${port}:`)),
+              )
+              ? false
+              : (options.preferredAvailable ?? false),
+          ),
         isPortAvailableOnLoopback: () => Effect.succeed(false),
-        hasListenerOnHost: () => Effect.succeed(true),
+        hasListenerOnHost: () => Effect.succeed(options.listening ?? true),
         reserveLoopbackPort: () => Effect.sync(() => nextPort++),
         findAvailablePort: (port) => Effect.succeed(port),
       }),
@@ -189,6 +201,56 @@ describe("SSH preview port forwards", () => {
       assert.equal(f.kills(), 2);
     }).pipe(Effect.provide(f.layer), Effect.scoped);
   });
+
+  it.effect("preferred-port fallback does not depend on delivery of the final stderr chunk", () => {
+    const f = fixture({
+      preferredAvailable: true,
+      portInUseAfterProbe: 5173,
+      collisionStderr: Stream.fromEffect(Effect.never),
+    });
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const lease = yield* manager.acquirePortForward(target, 5173);
+      assert.equal(lease.localPort, 41773);
+      assert.equal(f.spawns(), 2);
+      assert.equal(f.kills(), 1);
+      yield* manager.releasePortForward(lease.leaseId);
+      assert.equal(f.kills(), 2);
+    }).pipe(Effect.provide(f.layer), Effect.scoped);
+  });
+
+  it.effect("rejects a live child with the session marker but no loopback listener", () => {
+    const f = fixture({ listening: false });
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const error = yield* manager.acquirePortForward(target, 5173).pipe(Effect.flip);
+      assert.instanceOf(error, SshReadinessError);
+      assert.equal(error.message, "SSH forward stopped before becoming ready.");
+      assert.equal(f.kills(), 1);
+    }).pipe(Effect.provide(f.layer), Effect.scoped);
+  });
+
+  it.effect("remote stop stays interruptible after local forwards are torn down", () =>
+    Effect.gen(function* () {
+      const stopping = yield* Deferred.make<void>();
+      const f = fixture({
+        stopGate: Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const old = yield* manager.acquirePortForward(target, 5173);
+        const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(target));
+        yield* Deferred.await(stopping);
+        yield* Fiber.interrupt(disconnect);
+        assert.isTrue(Exit.isFailure(yield* Fiber.await(disconnect)));
+        assert.equal(f.kills(), 1);
+        yield* manager.releasePortForward(old.leaseId);
+        const fresh = yield* manager.acquirePortForward(target, 5173);
+        yield* manager.releasePortForward(fresh.leaseId);
+        assert.equal(f.kills(), 2);
+      }).pipe(Effect.provide(f.layer), Effect.scoped);
+    }),
+  );
 
   it.effect("keeps different remote ports independent", () => {
     const f = fixture();

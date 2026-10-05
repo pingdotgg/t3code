@@ -1123,6 +1123,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly remoteServerKind: "external" | "managed" | null;
   readonly scope: Scope.Closeable;
   readonly readiness?: "forward";
+  readonly remoteHost: "127.0.0.1" | "localhost";
 }): Effect.fn.Return<
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
@@ -1172,7 +1173,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-n",
     "-N",
     "-L",
-    `127.0.0.1:${input.localPort}:${input.readiness === "forward" ? "localhost" : "127.0.0.1"}:${input.remotePort}`,
+    `127.0.0.1:${input.localPort}:${input.remoteHost}:${input.remotePort}`,
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1678,6 +1679,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           wsBaseUrl,
           authOptions,
           remoteServerKind: remoteLaunch.remoteServerKind,
+          remoteHost: "127.0.0.1",
           scope: entryScope,
         }),
     }).pipe(
@@ -1947,6 +1949,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                                   wsBaseUrl: `ws://127.0.0.1:${port}/`,
                                   remoteServerKind: null,
                                   readiness: "forward",
+                                  remoteHost: "localhost",
                                   authOptions,
                                 }).pipe(Effect.provideService(Scope.Scope, attemptScope)),
                             }),
@@ -1961,14 +1964,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                       );
                     return yield* startForward(localPort).pipe(
                       Effect.catchTag("SshCommandError", (error) =>
-                        // The availability probe cannot reserve the port for ssh. Only
-                        // a confirmed preferred-port bind collision gets one retry.
-                        preferRemotePort &&
-                        error.stderr.includes(
-                          `bind [127.0.0.1]:${localPort}: Address already in use`,
-                        )
-                          ? reserveLocalTunnelPort().pipe(Effect.flatMap(startForward))
-                          : Effect.fail(error),
+                        Effect.gen(function* () {
+                          // The port probe cannot reserve the port for ssh. Re-probe
+                          // after an exited preferred attempt, independent of stderr
+                          // delivery order or localized bind diagnostics.
+                          if (
+                            !preferRemotePort ||
+                            error.exitCode === null ||
+                            (yield* net.canListenOnHost(localPort, "127.0.0.1"))
+                          ) {
+                            return yield* error;
+                          }
+                          return yield* reserveLocalTunnelPort().pipe(Effect.flatMap(startForward));
+                        }),
                       ),
                     );
                   }),
@@ -2051,53 +2059,57 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
-    yield* Effect.suspend(() => {
-      targetGenerations.set(key, (targetGenerations.get(key) ?? 0) + 1);
-      disconnecting.set(key, (disconnecting.get(key) ?? 0) + 1);
-      return Effect.gen(function* () {
-        yield* cancelPendingForwards(key);
-        yield* withTargetLock(
-          key,
-          Effect.gen(function* () {
-            yield* Effect.forEach(
-              [...portForwards.values()].filter((entry) => entry.connectionKey === key),
-              closePortForward,
-              { discard: true },
-            );
-            const entry = tunnels.get(key) ?? null;
-            yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
-              ...sshTargetLogFields(resolvedTarget),
-              key,
-              hasTunnel: entry !== null,
-            });
-            if (entry !== null) {
-              // Explicit disconnect owns the remote stop so its failure reaches the caller.
-              yield* Effect.gen(function* () {
-                tunnels.delete(key);
-                yield* closeTunnelEntry(entry);
-              }).pipe(Effect.uninterruptible);
-            }
-            yield* runWithSshAuth({
-              key,
-              target: resolvedTarget,
-              operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
-            });
-            yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
-              ...sshTargetLogFields(resolvedTarget),
-              key,
-            });
-          }),
+    yield* Effect.uninterruptibleMask((restoreDisconnect) =>
+      Effect.suspend(() => {
+        targetGenerations.set(key, (targetGenerations.get(key) ?? 0) + 1);
+        disconnecting.set(key, (disconnecting.get(key) ?? 0) + 1);
+        return Effect.gen(function* () {
+          yield* cancelPendingForwards(key);
+          yield* withTargetLock(
+            key,
+            Effect.gen(function* () {
+              yield* Effect.forEach(
+                [...portForwards.values()].filter((entry) => entry.connectionKey === key),
+                closePortForward,
+                { discard: true },
+              );
+              const entry = tunnels.get(key) ?? null;
+              yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
+                ...sshTargetLogFields(resolvedTarget),
+                key,
+                hasTunnel: entry !== null,
+              });
+              if (entry !== null) {
+                // Explicit disconnect owns the remote stop so its failure reaches the caller.
+                yield* Effect.gen(function* () {
+                  tunnels.delete(key);
+                  yield* closeTunnelEntry(entry);
+                }).pipe(Effect.uninterruptible);
+              }
+              yield* restoreDisconnect(
+                runWithSshAuth({
+                  key,
+                  target: resolvedTarget,
+                  operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
+                }),
+              );
+              yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
+                ...sshTargetLogFields(resolvedTarget),
+                key,
+              });
+            }),
+          );
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              const remaining = (disconnecting.get(key) ?? 1) - 1;
+              if (remaining === 0) disconnecting.delete(key);
+              else disconnecting.set(key, remaining);
+            }),
+          ),
         );
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            const remaining = (disconnecting.get(key) ?? 1) - 1;
-            if (remaining === 0) disconnecting.delete(key);
-            else disconnecting.set(key, remaining);
-          }),
-        ),
-      );
-    }).pipe(Effect.uninterruptible);
+      }),
+    );
   });
 
   return SshEnvironmentManager.of({

@@ -6,11 +6,6 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
-import {
-  DesktopSshEnvironmentBootstrapSchema,
-  DesktopSshPortForwardSchema,
-} from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
@@ -64,7 +59,7 @@ if (clientPlatform === "darwin") {
   window.addEventListener("resize", syncWindowControlInset);
 }
 
-function unwrapSshPasswordPromptResult<T>(result: unknown, decode: (result: unknown) => T) {
+function unwrapSshPasswordPromptResult<T>(result: T): T {
   if (
     typeof result === "object" &&
     result !== null &&
@@ -77,7 +72,7 @@ function unwrapSshPasswordPromptResult<T>(result: unknown, decode: (result: unkn
         : "SSH authentication cancelled.";
     throw new Error(message);
   }
-  return decode(result);
+  return result;
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -152,7 +147,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         target,
         ...(options === undefined ? {} : { options }),
       }),
-      Schema.decodeUnknownSync(DesktopSshEnvironmentBootstrapSchema),
     ),
   disconnectSshEnvironment: (target) =>
     ipcRenderer.invoke(IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL, target),
@@ -162,7 +156,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         target,
         remotePort,
       }),
-      Schema.decodeUnknownSync(DesktopSshPortForwardSchema),
     ),
   releaseSshPortForward: (leaseId) =>
     ipcRenderer.invoke(IpcChannels.RELEASE_SSH_PORT_FORWARD_CHANNEL, { leaseId }),
