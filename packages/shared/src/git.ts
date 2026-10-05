@@ -16,8 +16,9 @@ export const WORKTREE_BRANCH_PREFIX = "t3code";
 // via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
 // that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
 // eligible for branch regeneration without loosening beyond what was ever generated.
+// `t3code-<8 hex>` is the fallback when a plain `t3code` branch blocks the namespace.
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
-  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
+  `^${WORKTREE_BRANCH_PREFIX}(?:-[0-9a-f]{8}$|\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$)`,
 );
 
 /**
@@ -121,6 +122,14 @@ export function buildTemporaryWorktreeBranchName(
     .replace(/[^0-9a-f]/g, "")
     .slice(0, 8);
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+/**
+ * Git stores refs as paths, so a plain `t3code` branch makes every `t3code/<hex>`
+ * ref impossible. This moves a temporary name to the flat `t3code-<hex>` sibling.
+ */
+export function flattenTemporaryWorktreeBranchName(refName: string): string {
+  return refName.replace(`${WORKTREE_BRANCH_PREFIX}/`, `${WORKTREE_BRANCH_PREFIX}-`);
 }
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {
