@@ -118,7 +118,7 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
-// Header content re-renders only when its own file changes.
+/** Collapse control for one file header; re-renders only when its own file changes. */
 function DiffFileCollapseToggle({
   filePath,
   fileKey,
@@ -162,7 +162,7 @@ function DiffFileCollapseToggle({
   );
 }
 
-// Header content re-renders only when its own file changes.
+/** Copy and status controls for one file header; re-renders only when its own file changes. */
 function DiffFileHeaderSuffix({
   filePath,
   hasStat,
@@ -186,7 +186,7 @@ function DiffFileHeaderSuffix({
   );
 }
 
-// Header content re-renders only when its own file changes.
+/** Line counts for one file header; re-renders only when its own file changes. */
 function DiffFileHeaderStat({ additions, deletions }: { additions: number; deletions: number }) {
   return <DiffStatLabel additions={additions} deletions={deletions} />;
 }
