@@ -75,6 +75,18 @@ export class EnvironmentLinkLookupPersistenceError extends Schema.TaggedError<En
   }
 }
 
+export class EnvironmentLinkEnvironmentLookupPersistenceError extends Schema.TaggedError<EnvironmentLinkEnvironmentLookupPersistenceError>()(
+  "EnvironmentLinkEnvironmentLookupPersistenceError",
+  {
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to look up active managed links for environment '${this.environmentId}'`;
+  }
+}
+
 export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedError<EnvironmentLinkRevokePersistenceError>()(
   "EnvironmentLinkRevokePersistenceError",
   {
@@ -114,6 +126,13 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
+    /** Active relay-managed links for an environment, across all users (webhook forwarding). */
+    readonly findActiveManagedForEnvironment: (input: {
+      readonly environmentId: string;
+    }) => Effect.Effect<
+      ReadonlyArray<RelayLinkedEnvironmentRecord & { readonly userId: string }>,
+      EnvironmentLinkEnvironmentLookupPersistenceError
+    >;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -315,6 +334,59 @@ const make = Effect.gen(function* () {
             (cause) =>
               new EnvironmentLinkLookupPersistenceError({
                 userId: input.userId,
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    findActiveManagedForEnvironment: Effect.fn(
+      "relay.environment_links.find_active_managed_for_environment",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      return yield* db
+        .select({
+          userId: relayEnvironmentLinks.userId,
+          environmentId: relayEnvironmentLinks.environmentId,
+          environmentLabel: relayEnvironmentLinks.environmentLabel,
+          environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+          endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
+          endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
+          endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
+          createdAt: relayEnvironmentLinks.createdAt,
+        })
+        .from(relayEnvironmentLinks)
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
+            eq(relayEnvironmentLinks.managedTunnelsEnabled, true),
+          ),
+        )
+        // One row per user who linked this environment; every row is checked
+        // until one has a ready endpoint, so none may be cut off.
+        .pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              userId: row.userId,
+              environmentId: row.environmentId as RelayClientEnvironmentRecord["environmentId"],
+              label:
+                row.environmentLabel.trim().length > 0 ? row.environmentLabel : row.environmentId,
+              endpoint: {
+                httpBaseUrl: row.endpointHttpBaseUrl,
+                wsBaseUrl: row.endpointWsBaseUrl,
+                providerKind:
+                  row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
+              },
+              environmentPublicKey: row.environmentPublicKey,
+              linkedAt: row.createdAt,
+            })),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
                 environmentId: input.environmentId,
                 cause,
               }),

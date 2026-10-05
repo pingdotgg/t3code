@@ -11,6 +11,7 @@ import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as Headers from "effect/http/Headers";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -75,6 +76,7 @@ import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllo
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../observability.ts";
+import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
 
 // Delegated thread IDs carry escaped command provenance and exceed the router's
@@ -150,6 +152,10 @@ export const relayCors = HttpRouter.middleware(
     >,
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    // Public webhook forwarding is server-to-server: no preflight, no CORS grants.
+    if (isRelayHookPath(request.url)) {
+      return yield* httpEffect;
+    }
     if (request.method === "OPTIONS") {
       return HttpServerResponse.empty({
         status: 204,
@@ -222,10 +228,45 @@ export const traceRelayHttpRequest = <E, R>(
     HttpServerRequest.HttpServerRequest | R
   >,
 ) =>
-  // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-  HttpMiddleware.tracer(
-    appendRelayTraceContextResponseHeader.pipe(Effect.andThen(relayRequestDeadline(httpEffect))),
-  ).pipe(Effect.ensuring(Effect.yieldNow));
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const traced = appendRelayTraceContextResponseHeader.pipe(
+      Effect.andThen(relayRequestDeadline(httpEffect)),
+    );
+    if (!isRelayHookPath(request.url)) {
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
+      return yield* HttpMiddleware.tracer(traced).pipe(Effect.ensuring(Effect.yieldNow));
+    }
+    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
+    // request, while the route itself still receives the original.
+    const redacted = request.modify({ url: redactRelayHookUrl(request.url) });
+    return yield* HttpMiddleware.tracer(
+      appendRelayTraceContextResponseHeader.pipe(
+        Effect.andThen(
+          relayRequestDeadline(
+            httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
+          ),
+        ),
+      ),
+    ).pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+      Effect.ensuring(Effect.yieldNow),
+    );
+  });
+
+// Webhook senders put shared secrets and signatures in headers such as
+// x-hub-signature-256, stripe-signature, x-gitlab-token and x-webhook-key.
+const webhookHeaderRedactionLayer = Layer.effect(
+  Headers.CurrentRedactedNames,
+  Effect.map(Headers.CurrentRedactedNames, (names) => [
+    ...names,
+    /signature/i,
+    /token/i,
+    /secret/i,
+    /key/i,
+    /auth/i,
+  ]),
+);
 
 export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(
   httpEffect: Effect.Effect<
@@ -236,7 +277,12 @@ export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(
   tracerLayer: Layer.Layer<never, LayerError, LayerRequirements>,
 ) =>
   traceRelayHttpRequest(httpEffect).pipe(
-    Effect.provide(Layer.merge(tracerLayer, httpHeaderRedactionLayer)),
+    Effect.provide(
+      Layer.merge(
+        tracerLayer,
+        webhookHeaderRedactionLayer.pipe(Layer.provide(httpHeaderRedactionLayer)),
+      ),
+    ),
   );
 
 export const withoutCapturedParentSpan = <A, E, R>(

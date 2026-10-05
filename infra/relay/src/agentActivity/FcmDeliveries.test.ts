@@ -171,6 +171,7 @@ function harness() {
             : [],
         ),
       listForUser: () => Effect.succeed([]),
+      findActiveManagedForEnvironment: () => Effect.succeed([]),
       revokeForUser: () => Effect.succeed(false),
       getForUser: (input) =>
         Effect.sync(() =>
