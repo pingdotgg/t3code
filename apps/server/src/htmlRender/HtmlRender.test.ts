@@ -347,7 +347,8 @@ describe("HtmlRender", () => {
           yield* htmlRender.preview({
             html: [
               `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
-              `<script>fetch("${origin}/").catch(() => {});</script>`,
+              `<script>fetch("${origin}/").catch(() => {});`,
+              `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
             ].join(""),
           });
         }).pipe(Effect.provide(htmlRenderLayer(executable)));

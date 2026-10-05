@@ -46,7 +46,11 @@ const CAPTURE_TIMEOUT = "20 seconds";
 // read files the agent's provider withholds; local images reach it already
 // inlined as data URIs. `.localhost` keeps it a secure context that may still
 // load plain-http resources, and the request never leaves the browser.
-const PAGE_URL = "http://t3-page.localhost/page.html";
+// Chrome's Local Network Access keeps its subresources, frames, fetches, and
+// sockets off this machine's local network; the page itself may not navigate
+// away, and the browser opens no popups, since neither of those is covered.
+const PAGE_ORIGIN = "http://t3-page.localhost";
+const PAGE_URL = `${PAGE_ORIGIN}/page.html`;
 // Stack traces and load errors name the page this way instead of its URL.
 const PAGE_NAME = "page.html";
 // Each measuring load reads its own copy of the page off the pipe.
@@ -93,7 +97,12 @@ const decodeExceptionThrown = Schema.decodeUnknownOption(
   }),
 );
 const decodeRequestPaused = Schema.decodeUnknownOption(
-  Schema.Struct({ requestId: Schema.String, request: Schema.Struct({ url: Schema.String }) }),
+  Schema.Struct({
+    requestId: Schema.String,
+    request: Schema.Struct({ url: Schema.String }),
+    frameId: Schema.optional(Schema.String),
+    resourceType: Schema.optional(Schema.String),
+  }),
 );
 const decodeLogEntryAdded = Schema.decodeUnknownOption(
   Schema.Struct({
@@ -158,6 +167,8 @@ const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
 interface PageEvents {
+  /** The page's main frame, which only ever shows `PAGE_URL`. */
+  readonly mainFrameId: string;
   /** The page served for `PAGE_URL`, from `pageBody`. */
   body: Uint8Array | undefined;
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
@@ -190,6 +201,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--disable-gpu",
           "--hide-scrollbars",
           "--mute-audio",
+          "--block-new-web-contents",
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
@@ -282,8 +294,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       const paused = Option.getOrUndefined(decodeRequestPaused(message.params));
       if (!paused) return Effect.void;
       const body = page.body;
-      return paused.request.url.split("#", 1)[0] === PAGE_URL && body !== undefined
-        ? fulfillPage(sessionId, paused.requestId, body)
+      const url = paused.request.url.split("#", 1)[0]!;
+      if (url === PAGE_URL && body !== undefined) {
+        return fulfillPage(sessionId, paused.requestId, body);
+      }
+      // A frame inside the page may show another site; Local Network Access
+      // still covers it. The main frame and T3's own origin serve nothing else.
+      const otherSiteFrame =
+        paused.resourceType === "Document" &&
+        paused.frameId !== page.mainFrameId &&
+        !url.startsWith(`${PAGE_ORIGIN}/`);
+      return otherSiteFrame
+        ? post("Fetch.continueRequest", { requestId: paused.requestId }, sessionId)
         : post(
             "Fetch.failRequest",
             { requestId: paused.requestId, errorReason: "AccessDenied" },
@@ -385,6 +407,8 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Schema.Struct({ sessionId: Schema.String }),
     );
     const events: PageEvents = {
+      // A page target's id is its main frame's id.
+      mainFrameId: targetId,
       body: undefined,
       loaded: undefined,
       consoleMessages: [],
@@ -394,10 +418,16 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
-    // Serves the page at `PAGE_URL`; anything else on that origin fails.
+    // Pauses T3's own origin, to serve the page, and every document, to keep
+    // the main frame on it.
     yield* send(
       "Fetch.enable",
-      { patterns: [{ urlPattern: "http://t3-page.localhost/*" }] },
+      {
+        patterns: [
+          { urlPattern: `${PAGE_ORIGIN}/*` },
+          { urlPattern: "*", resourceType: "Document" },
+        ],
+      },
       Ignored,
       sessionId,
     );
