@@ -80,7 +80,7 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { ModelOptionProviderIcon } from "../../components/ProviderIcon";
+import { ProviderAccountIcon } from "../../components/ProviderIcon";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -1129,8 +1129,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
                         renderIcon={(size) => (
-                          <ModelOptionProviderIcon
-                            option={currentModelOption}
+                          <ProviderAccountIcon
+                            provider={currentModelOption?.providerDriver}
+                            iconUrl={currentModelOption?.providerIconUrl}
+                            badge={currentModelOption?.providerBadge}
                             size={size}
                             surfaceColor={composerSurfaceColor}
                           />

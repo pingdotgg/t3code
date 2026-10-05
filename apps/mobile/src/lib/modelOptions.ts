@@ -24,14 +24,51 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
-  /** Set when the instance needs the account badge, by the rule the thread rows use. */
-  readonly providerBadge?: { readonly displayName: string; readonly accentColor?: string };
+  /** Set when the instance needs the account badge. */
+  readonly providerBadge?: ProviderBadge;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
+
+/** The account badge an instance's glyph carries. */
+export type ProviderBadge = { readonly displayName: string; readonly accentColor?: string };
+
+type ServerProvider = T3ServerConfig["providers"][number];
+
+/**
+ * The badge an instance needs by the shared rule: an accent colour, or another
+ * instance of the same provider. Settings carry each ACP instance's agent,
+ * whose own glyph already tells it apart.
+ */
+export function resolveProviderBadge(
+  config: T3ServerConfig | null | undefined,
+  provider: ServerProvider,
+): ProviderBadge | undefined {
+  const badgeEntry = (candidate: ServerProvider) => {
+    const settings = config?.settings?.providerInstances[candidate.instanceId]?.config;
+    const agentId =
+      typeof settings === "object" && settings ? Reflect.get(settings, "agentId") : null;
+    return {
+      driverKind: candidate.driver,
+      ...(typeof agentId === "string" && agentId.trim()
+        ? { acpRegistryAgentId: agentId.trim() }
+        : {}),
+    };
+  };
+  const accentColor = normalizeProviderAccentColor(provider.accentColor);
+  return shouldShowInstanceBadge(
+    { ...badgeEntry(provider), accentColor },
+    (config?.providers ?? []).map(badgeEntry),
+  )
+    ? {
+        displayName: resolveProviderInstanceDisplayName(provider),
+        ...(accentColor ? { accentColor } : {}),
+      }
+    : undefined;
+}
 
 export type ProviderGroup = {
   readonly providerKey: string;
@@ -168,25 +205,6 @@ export function buildModelOptions(
   providerInstanceId?: ModelSelection["instanceId"],
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
-  // Settings carry each ACP instance's agent, whose own glyph already tells it apart.
-  const badgeEntry = (provider: T3ServerConfig["providers"][number]) => {
-    const settings = config?.settings?.providerInstances[provider.instanceId]?.config;
-    const agentId = typeof settings === "object" && settings ? Reflect.get(settings, "agentId") : null;
-    return {
-      driverKind: provider.driver,
-      ...(typeof agentId === "string" && agentId.trim() ? { acpRegistryAgentId: agentId.trim() } : {}),
-    };
-  };
-  const badgeEntries = (config?.providers ?? []).map(badgeEntry);
-  const providerBadgeFor = (provider: T3ServerConfig["providers"][number]) => {
-    const accentColor = normalizeProviderAccentColor(provider.accentColor);
-    return shouldShowInstanceBadge({ ...badgeEntry(provider), accentColor }, badgeEntries)
-      ? {
-          displayName: resolveProviderInstanceDisplayName(provider),
-          ...(accentColor ? { accentColor } : {}),
-        }
-      : undefined;
-  };
 
   for (const provider of config?.providers ?? []) {
     if (
@@ -200,7 +218,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
-    const providerBadge = providerBadgeFor(provider);
+    const providerBadge = resolveProviderBadge(config, provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -258,7 +276,7 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
-      const providerBadge = provider ? providerBadgeFor(provider) : undefined;
+      const providerBadge = provider ? resolveProviderBadge(config, provider) : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,

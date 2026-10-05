@@ -5,7 +5,7 @@ import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider
 import { useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import type { ModelOption } from "../lib/modelOptions";
+import type { ProviderBadge } from "../lib/modelOptions";
 import { AppText as Text } from "./AppText";
 
 type ProviderIconProps = {
@@ -224,31 +224,25 @@ export function ProviderInstanceIcon(props: {
   );
 }
 
-/** A model option's provider glyph, with its account badge when the option carries one. */
-export function ModelOptionProviderIcon(props: {
-  readonly option:
-    | Pick<ModelOption, "providerDriver" | "providerIconUrl" | "providerBadge">
-    | null
-    | undefined;
+/** A provider glyph that carries the account badge when its instance needs one. */
+export function ProviderAccountIcon(props: {
+  readonly provider: string | null | undefined;
+  readonly iconUrl?: string | null | undefined;
+  readonly badge: ProviderBadge | undefined;
   readonly size: number;
   readonly surfaceColor: string;
 }) {
-  const badge = props.option?.providerBadge;
-  return badge ? (
+  return props.badge ? (
     <ProviderInstanceIcon
-      provider={props.option?.providerDriver}
-      iconUrl={props.option?.providerIconUrl}
+      provider={props.provider}
+      iconUrl={props.iconUrl}
       size={props.size}
-      displayName={badge.displayName}
-      {...(badge.accentColor ? { accentColor: badge.accentColor } : {})}
+      displayName={props.badge.displayName}
+      {...(props.badge.accentColor ? { accentColor: props.badge.accentColor } : {})}
       showBadge
       surfaceColor={props.surfaceColor}
     />
   ) : (
-    <ProviderIcon
-      provider={props.option?.providerDriver}
-      iconUrl={props.option?.providerIconUrl}
-      size={props.size}
-    />
+    <ProviderIcon provider={props.provider} iconUrl={props.iconUrl} size={props.size} />
   );
 }
