@@ -8,6 +8,7 @@ import {
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   isUnknownUnionMember,
+  UnknownUnionMember,
 } from "./baseSchemas.ts";
 
 const at = "2026-10-05T00:00:00.000Z";
@@ -50,7 +51,7 @@ describe("ForwardCompatibleUnion", () => {
   it("decodes a member from a newer server as unknown", () => {
     const decoded = decode({ kind: "triangle", corners: 3 });
     expect(isUnknownUnionMember(decoded)).toBe(true);
-    expect(decoded).toEqual({ _unknown: true, tag: "kind", value: "triangle" });
+    expect(decoded).toEqual(new UnknownUnionMember("kind", "triangle"));
   });
 
   it("decodes known members in full, transformations included", () => {
@@ -65,11 +66,22 @@ describe("ForwardCompatibleUnion", () => {
 
   it("refuses to encode an unknown member", () => {
     const encode = Schema.encodeSync(ForwardCompatibleUnion(members, "kind") as never);
-    expect(() => encode({ _unknown: true, tag: "kind", value: "triangle" } as never)).toThrow();
+    expect(() => encode(new UnknownUnionMember("kind", "triangle") as never)).toThrow();
   });
 });
 
 describe("ForwardCompatibleUnionArray", () => {
+  it("keeps a known member however its fields are named", () => {
+    const Flagged = Schema.Struct({
+      kind: Schema.Literal("flag"),
+      _unknown: Schema.Literal(true),
+      tag: Schema.String,
+      value: Schema.String,
+    });
+    const flag = { kind: "flag", _unknown: true, tag: "kind", value: "x" };
+    expect(fromWire(ForwardCompatibleUnionArray([Flagged], "kind"))([flag])).toEqual([flag]);
+  });
+
   const decode = fromWire(ForwardCompatibleUnionArray(members, "kind"));
 
   it("drops members a newer server added and keeps the rest", () => {

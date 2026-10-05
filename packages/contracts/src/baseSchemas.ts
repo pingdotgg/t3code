@@ -139,11 +139,18 @@ export type ForwardCompatibleArray<Element extends Schema.Top> = Schema.Codec<
   Element["EncodingServices"]
 >;
 
-/** A member of a {@link ForwardCompatibleUnion} whose tag this build does not know. */
-export interface UnknownUnionMember<Tag extends string> {
-  readonly _unknown: true;
+/**
+ * A member of a {@link ForwardCompatibleUnion} whose tag this build does not
+ * know. A class, so only the codec can make one: no decoded payload, however
+ * it is shaped, is ever mistaken for it.
+ */
+export class UnknownUnionMember<Tag extends string = string> {
   readonly tag: Tag;
   readonly value: string;
+  constructor(tag: Tag, value: string) {
+    this.tag = tag;
+    this.value = value;
+  }
 }
 
 /**
@@ -170,21 +177,12 @@ export const ForwardCompatibleUnion = <
       ),
     ),
   } as Record<Tag, Schema.String>).pipe(
-    Schema.decodeTo(
-      Schema.Struct({
-        _unknown: Schema.Literal(true),
-        tag: Schema.Literal(tag),
-        value: Schema.String,
-      }),
-      {
-        decode: SchemaGetter.transform((raw: Record<string, string>) => ({
-          _unknown: true as const,
-          tag,
-          value: raw[tag]!,
-        })),
-        encode: SchemaGetter.forbidden(() => `Unknown ${tag} values are never sent.`),
-      },
-    ),
+    Schema.decodeTo(Schema.instanceOf(UnknownUnionMember<Tag>), {
+      decode: SchemaGetter.transform(
+        (raw: Record<string, string>) => new UnknownUnionMember(tag, raw[tag]!),
+      ),
+      encode: SchemaGetter.forbidden(() => `Unknown ${tag} values are never sent.`),
+    }),
   );
   return Schema.Union([...members, unknownMember]) as unknown as ForwardCompatibleUnion<
     Members,
@@ -221,8 +219,7 @@ export const hasUnknownUnionTag = (
 /** Whether a decoded {@link ForwardCompatibleUnion} value is a member this build does not know. */
 export const isUnknownUnionMember = <A>(
   value: A,
-): value is Extract<A, UnknownUnionMember<string>> =>
-  typeof value === "object" && value !== null && "_unknown" in value && value._unknown === true;
+): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
 
 /**
  * An array of a growing tagged union that drops members this build does not
