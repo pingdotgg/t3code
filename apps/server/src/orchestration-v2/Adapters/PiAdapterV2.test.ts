@@ -34,6 +34,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import { parseAgentSessionTranscript } from "../../project/AgentSessionScanner.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
@@ -461,6 +462,75 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(testLayer));
 
 describe("PiAdapterV2", () => {
+  it.effect("continues an imported session by file path and sends only the follow-up prompt", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const baseline = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const importedPath = "/external/pi/sessions/imported.jsonl";
+      const imported = parseAgentSessionTranscript({
+        source: "pi",
+        providerInstanceId: PI_INSTANCE_ID,
+        fallbackSessionId: "unused",
+        filePath: importedPath,
+        lastActiveAtMs: 0,
+        contents: [
+          {
+            type: "session",
+            version: 3,
+            id: "external-session-uuid",
+            cwd: "/workspace",
+            timestamp: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            type: "message",
+            id: "prior-user",
+            parentId: null,
+            message: { role: "user", content: "Remember PI-CANARY-4413" },
+          },
+          {
+            type: "message",
+            id: "prior-answer",
+            parentId: "prior-user",
+            message: { role: "assistant", content: [{ type: "text", text: "Remembered" }] },
+          },
+        ]
+          .map((record) => encodeJsonLine(record))
+          .join("\n"),
+      });
+      assert.isNotNull(imported);
+      fake.queueState({ sessionFile: imported!.nativeThreadId });
+      fake.queueEntries({ entries: [], leafId: imported!.nativeConversationHeadId });
+      const resumed = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: {
+          ...baseline,
+          providerSessionId: null,
+          nativeThreadRef: {
+            driver: PI_PROVIDER,
+            nativeId: imported!.nativeThreadId!,
+            strength: "strong",
+          },
+        },
+      });
+      assert.equal(resumed.nativeThreadRef?.nativeId, importedPath);
+      assert.deepInclude(
+        fake.allRequests().find((request) => request.type === "switch_session"),
+        { type: "switch_session", sessionPath: importedPath },
+      );
+      yield* startTurn(runtime, resumed, "default", [], "What is the canary?");
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.equal(prompt.message, "What is the canary?");
+      assert.equal(fake.allRequests().filter((request) => request.type === "prompt").length, 1);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

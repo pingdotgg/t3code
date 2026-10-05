@@ -18,6 +18,18 @@ parts of the process lifecycle.
 
 ## What Carries Over
 
+To bring existing conversations into T3 Code, enable Pi in Settings, then open `/welcome`
+on your T3 Code web or desktop client and select the computer and projects to import.
+Pi history includes older sessions and the user and assistant text on each session's
+current branch. Tool output and alternative branches stay in the original Pi session file.
+Imported threads start settled; open one and send a message to continue its native Pi
+conversation. Importing the same session again does not create a second conversation.
+
+Discovery uses Pi's agent directory, or a custom session directory configured through
+`PI_CODING_AGENT_SESSION_DIR` or `--session-dir`. Keep the session files on the server
+machine so imported conversations remain resumable. Very large imports are bounded;
+retry an incomplete import to pick up sessions that did not fit in the previous batch.
+
 T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
 thinking picker marks Pi's current configured level as the default without overriding it. Threads
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks

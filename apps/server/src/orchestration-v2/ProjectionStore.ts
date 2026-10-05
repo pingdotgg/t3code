@@ -307,6 +307,10 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getProviderThreadOwner: (input: {
+    readonly threadId: ThreadId;
+    readonly providerThreadId: ProviderThreadId;
+  }) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
@@ -5567,6 +5571,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadSnapshot,
       getThreadSnapshotWindow,
       getTimelinePage,
+      getProviderThreadOwner: ({ threadId, providerThreadId }) =>
+        sql<{
+          thread_id: string;
+        }>`SELECT thread_id FROM orchestration_v2_projection_provider_threads WHERE provider_thread_id = ${providerThreadId}`.pipe(
+          Effect.map((rows) => (rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id))),
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       getThreadAttachmentIds,
     } satisfies ProjectionStoreV2Shape;
   }),
@@ -5579,6 +5590,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const sequence = yield* Ref.make(0);
 
     const service: ProjectionStoreV2Shape = {
+      getProviderThreadOwner: ({ providerThreadId }) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            for (const projection of state.projections.values()) {
+              const providerThread = projection.providerThreads.find(
+                (thread) => thread.id === providerThreadId,
+              );
+              if (providerThread !== undefined) return providerThread.appThreadId;
+            }
+            return null;
+          }),
+        ),
       apply: (event) =>
         Effect.gen(function* () {
           const result = yield* Ref.modify(replayState, (existing) => {
