@@ -21,7 +21,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type AssistantCitation,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ScopedThreadRef,
@@ -2689,13 +2689,22 @@ function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      <ProposedPlanCard
-        planMarkdown={row.proposedPlan.planMarkdown}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadRef={ctx.threadRef ?? undefined}
-        cwd={ctx.markdownCwd}
-        workspaceRoot={ctx.workspaceRoot}
-      />
+      <AssistantCitationSource
+        messageId={MessageId.make(row.id)}
+        {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+        itemKey={row.id}
+        request={ctx.citationRequest}
+        listRef={ctx.listRef}
+      >
+        <ProposedPlanCard
+          planMarkdown={row.proposedPlan.planMarkdown}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadRef={ctx.threadRef ?? undefined}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={ctx.workspaceRoot}
+          forceExpanded={ctx.citationRequest?.citation.messageId === row.id}
+        />
+      </AssistantCitationSource>
     </div>
   );
 }

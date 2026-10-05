@@ -2,7 +2,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import type { RunId } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { TimelineEntry } from "../../session-logic";
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { citationSourceId, type MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { AssistantCitationRequest, AssistantCitationTarget } from "./AssistantCitationSource";
 import { toastManager } from "../ui/toast";
 
@@ -83,10 +83,8 @@ export function useAssistantCitationTarget({
       setFinishedKey(navigation.target.key);
       toastManager.add({ type: "warning", title, description });
     };
-    const source = entries.find(
-      (entry) =>
-        entry.kind === "message" && entry.message.id === navigation.target.citation.messageId,
-    );
+    const targetId = navigation.target.citation.messageId;
+    const source = entries.find((entry) => citationSourceId(entry) === targetId);
     if (!source) {
       if (loadEarlier) {
         if (loadEarlier.loading) return;
@@ -108,18 +106,21 @@ export function useAssistantCitationTarget({
       );
       return;
     }
-    if (source.kind !== "message" || source.message.role !== "assistant") {
+    if (
+      source.kind !== "proposed-plan" &&
+      (source.kind !== "message" || source.message.role !== "assistant")
+    ) {
       fail(
         "The citation does not refer to an assistant response",
         "The selected text is still saved in your citation.",
       );
       return;
     }
-    const index = rows.findIndex(
-      (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
-    );
+    const index = rows.findIndex((row) => citationSourceId(row) === targetId);
     if (index < 0) {
-      if (source.message.runId) onExpandTurn(source.message.runId);
+      const runId =
+        source.kind === "proposed-plan" ? source.proposedPlan.runId : source.message.runId;
+      if (runId) onExpandTurn(runId);
       return;
     }
     if (listLoaded && listRef.current) setReady(navigation.target);
@@ -180,7 +181,7 @@ export function useAssistantCitationTarget({
   const positioning = request !== null && finishedKey !== request.key;
   const sourceRow =
     target && positioning
-      ? rows.find((row) => row.kind === "message" && row.message.id === target.citation.messageId)
+      ? rows.find((row) => citationSourceId(row) === target.citation.messageId)
       : undefined;
   return {
     target,

@@ -589,6 +589,18 @@ type MessagesTimelineRowContent =
       proposedPlan: ProposedPlan;
     };
 
+/** Id a citation uses to find its source: the message id, or the plan row id. */
+export function citationSourceId(
+  row:
+    | { readonly kind: "message"; readonly message: { readonly id: string } }
+    | { readonly kind: "proposed-plan"; readonly id: string }
+    | { readonly kind: string },
+): string | null {
+  if (row.kind === "message" && "message" in row) return row.message.id;
+  if (row.kind === "proposed-plan" && "id" in row) return row.id;
+  return null;
+}
+
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];
