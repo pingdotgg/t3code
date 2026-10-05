@@ -279,24 +279,25 @@ export const make = Effect.gen(function* () {
     thread.settledAt !== null ||
     thread.lineage.relationshipToParent === "subagent";
 
-  /** Runs one thread's step for each thread in a group, so one refusal does not skip the rest. */
+  /**
+   * Runs one thread's step for each thread in a group, so one refusal does not skip the rest.
+   * Succeeds with whether every step landed.
+   */
   const eachTarget = <E>(
     group: WatchGroup,
     step: (target: WatchTarget) => Effect.Effect<void, E>,
   ) =>
-    Effect.forEach(
-      group.targets,
-      (target) =>
-        step(target).pipe(
-          Effect.catchCause(
-            logFailure("pull request watch update failed", {
-              threadId: target.thread.id,
-              pullRequest: group.key,
-            }),
-          ),
+    Effect.forEach(group.targets, (target) =>
+      step(target).pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          logFailure("pull request watch update failed", {
+            threadId: target.thread.id,
+            pullRequest: group.key,
+          })(cause).pipe(Effect.as(false)),
         ),
-      { discard: true },
-    );
+      ),
+    ).pipe(Effect.map((landed) => landed.every(Boolean)));
 
   const readGroup = Effect.fn("PullRequestWatchReactor.readGroup")(function* (group: WatchGroup) {
     const now = yield* Clock.currentTimeMillis;
@@ -319,9 +320,9 @@ export const make = Effect.gen(function* () {
       if (isRateLimited(read.cause)) return;
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      // The count stays until the stops land, so a failed stop is tried again next pass.
-      if (failures >= READ_FAILURE_LIMIT) {
-        yield* eachTarget(group, giveUp);
+      // The count stays until every stop lands, so a failed stop is tried again on the next
+      // failed read, and a watch started after the stops begins from zero.
+      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(read.cause);
