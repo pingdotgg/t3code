@@ -124,6 +124,8 @@ export function HtmlRenderWebView(props: {
         allowsInlineMediaPlayback
         automaticallyAdjustContentInsets={!props.nested}
         bounces={!props.nested}
+        showsVerticalScrollIndicator={!props.nested}
+        showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
         nestedScrollEnabled={props.nested && overflows}
         overScrollMode={props.nested ? "never" : "always"}

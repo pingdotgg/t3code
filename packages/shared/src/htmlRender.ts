@@ -241,7 +241,7 @@ export const HTML_RENDER_THEME_GUIDE = [
   "--destructive, --destructive-foreground, --destructive-surface, --warning, --warning-foreground, --warning-surface,",
   "--success, --success-foreground, --info, --info-foreground, --code-background, --code-foreground,",
   "--chart-1 … --chart-6 (categorical series for charts), --radius, --font-sans, --font-mono.",
-  "The base stylesheet sets html background/color/font from these and body margin to 0; your own CSS overrides it.",
+  "The base stylesheet sets html background/color/font from these, body margin to 0, and hides the page's scrollbar; your own CSS overrides it.",
 ].join(" ");
 
 /** Agent-facing layout rules for a page that sits inside a reply. */
@@ -265,9 +265,11 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
   return { type: HTML_RENDER_THEME_MESSAGE_TYPE, theme };
 }
 
+// The frame scrolls a page taller than itself, but a scrollbar inside the
+// reply reads as a box within the thread, so it stays hidden.
 const BASE_CSS =
-  "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}" +
-  "body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}";
+  "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
+  "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}";
 
 function rootRule(theme: HtmlRenderTheme): string {
   const declarations = Object.entries(theme.variables)
