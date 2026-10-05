@@ -42,9 +42,13 @@ const makeScope = (
   capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId,
-  threadId,
-  providerSessionId: "provider-session-worktree-test",
-  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+  requestNamespace: "provider-session-worktree-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session-worktree-test",
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+  },
+  client: undefined,
   capabilities,
   issuedAt: 1,
 });

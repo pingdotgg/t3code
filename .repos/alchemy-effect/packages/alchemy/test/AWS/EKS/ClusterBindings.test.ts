@@ -4,7 +4,7 @@ import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import EKSClusterTestFunctionLive, {
   EKSClusterTestFunction,
@@ -129,5 +129,8 @@ test.provider.skipIf(
       }).pipe(Effect.ensuring(slowStack.destroy().pipe(Effect.orDie)));
     }),
   // cluster create (~10 min) + probes + delete (~10 min) in one test.
-  { timeout: 2_400_000 },
+  {
+    tags: ["provider:aws", "provider:aws:eks", "provider:aws:lambda", "live"],
+    timeout: 2_400_000,
+  },
 );

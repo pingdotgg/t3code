@@ -3,7 +3,7 @@ import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 

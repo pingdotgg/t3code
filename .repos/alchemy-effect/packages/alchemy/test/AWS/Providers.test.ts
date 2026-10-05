@@ -12,7 +12,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { v4 as uuidv4 } from "uuid";
 
 it.live(
@@ -63,4 +63,5 @@ it.live(
         ),
       ),
     ),
+  { tags: ["unit", "provider:aws", "local"] },
 );

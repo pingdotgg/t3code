@@ -42,7 +42,7 @@ const statePath = (...segments: string[]) =>
     return path.join(initialCwd, ".alchemy", "state", ...segments);
   });
 
-describe("makeLocalState", () => {
+describe("makeLocalState", { tags: ["unit", "local"] }, () => {
   it.effect("reads of absent state recover to empty results", () =>
     Effect.gen(function* () {
       const state = yield* makeLocalState();

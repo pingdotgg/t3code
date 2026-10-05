@@ -10,11 +10,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
@@ -87,6 +88,7 @@ const testLayer = Layer.mergeAll(
   IdAllocator.layer,
   serverConfigLayer,
   registryLayer,
+  ServerSettings.layerTest(),
 );
 
 describe("AcpRegistryAdapterV2", () => {
@@ -121,6 +123,8 @@ describe("AcpRegistryAdapterV2", () => {
     assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
     assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
     assert.deepEqual(AcpRegistryAdapterV2Driver.defaultConfig(), {
+      source: "registry",
+      commandArgs: [],
       enabled: true,
       agentId: "",
       commandPath: "",

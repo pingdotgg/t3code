@@ -138,6 +138,7 @@ export type AppsSecret = Resource<
  * ```
  *
  * @resource
+ * @product Secrets
  */
 export const AppsSecret = Resource<AppsSecret>("Stripe.AppsSecret");
 

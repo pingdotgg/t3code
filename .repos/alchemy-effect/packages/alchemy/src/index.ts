@@ -8,6 +8,7 @@ export * as AdoptPolicy from "./AdoptPolicy.ts";
 export * from "./AI/index.ts";
 export * from "./AlchemyContext.ts";
 export * from "./Apply.ts";
+export * from "./Callback.ts";
 export {
   Service as BindingService,
   type ServiceLike as BindingServiceLike,
@@ -33,9 +34,10 @@ export * as RemovalPolicy from "./RemovalPolicy.ts";
 export { renamedFrom } from "./Rename.ts";
 export * from "./Resource.ts";
 export * as Schema from "./Schema.ts";
+export * as Secrets from "./Secrets/index.ts";
 export * as Server from "./Server/index.ts";
 export * as Serverless from "./Serverless/index.ts";
-export { Stack } from "./Stack.ts";
+export { Stack, type SecretProviders, type StackSecrets } from "./Stack.ts";
 export * from "./Stage.ts";
 export { inMemoryState, localState } from "./State/index.ts";
 export * as Drift from "./Drift.ts";

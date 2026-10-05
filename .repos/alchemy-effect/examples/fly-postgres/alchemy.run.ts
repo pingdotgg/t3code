@@ -9,7 +9,7 @@ import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import Api from "./src/api.ts";
-import { Db, PublicIp, Schema, Site } from "./src/shared.ts";
+import { Db, Schema } from "./src/shared.ts";
 
 export default Alchemy.Stack(
   "FlyPostgres",
@@ -18,20 +18,16 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const site = yield* Site;
     const schema = yield* Schema;
     const db = yield* Db;
-    const ip = yield* PublicIp;
     const api = yield* Api;
 
     return {
-      appName: site.appName,
-      appUrl: site.url,
+      appName: api.appName,
       clusterId: db.clusterId,
       clusterName: db.name,
       region: db.region,
       migrations: schema.migrations,
-      ip: ip.ip,
       apiUrl: api.url,
     };
   }),

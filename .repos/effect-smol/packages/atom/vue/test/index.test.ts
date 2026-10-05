@@ -1,6 +1,6 @@
 import { useAtomRef } from "@effect/atom-vue"
 import { assert, describe, it } from "@effect/vitest"
-import * as AtomRef from "effect/unstable/reactivity/AtomRef"
+import * as AtomRef from "effect/reactivity/AtomRef"
 import { effectScope, nextTick, shallowRef } from "vue"
 
 describe("atom-vue", () => {

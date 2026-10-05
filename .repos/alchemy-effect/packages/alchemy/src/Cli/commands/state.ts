@@ -1,8 +1,8 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Argument from "effect/unstable/cli/Argument";
-import { Command, Flag } from "effect/unstable/cli";
+import * as Argument from "effect/cli/Argument";
+import { Command, Flag } from "effect/cli";
 import * as AlchemistState from "../../Alchemist/routes/state.ts";
 import type { StateSource } from "../../Alchemist/routes/state.ts";
 import * as State from "../../State/index.ts";

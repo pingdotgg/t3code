@@ -6,7 +6,7 @@ import * as iotfleetwise from "@distilled.cloud/aws/iotfleetwise";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import FleetWiseBindingsFunctionLive, {
   FleetWiseBindingsFunction,
 } from "./bindings-handler";
@@ -44,6 +44,7 @@ test.provider(
         error._tag,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:iotfleetwise", "live"] },
 );
 
 test.provider(
@@ -59,6 +60,7 @@ test.provider(
         error._tag,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:iotfleetwise", "live"] },
 );
 
 const sharedStack = Core.scratchStack(testOptions, "FleetWiseBindings");
@@ -70,122 +72,137 @@ const get = (path: string) =>
 const post = (path: string) =>
   HttpClient.post(`${baseUrl}${path}`).pipe(Effect.flatMap((r) => r.json));
 
-describe("IoTFleetWise Bindings (E2E)", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      if (!RUN_LIVE) return;
-      yield* Effect.logInfo("FleetWise E2E setup: destroying previous run");
-      yield* sharedStack.destroy();
+describe(
+  "IoTFleetWise Bindings (E2E)",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:iotfleetwise",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        if (!RUN_LIVE) return;
+        yield* Effect.logInfo("FleetWise E2E setup: destroying previous run");
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo(
-        "FleetWise E2E setup: deploying resources + Lambda",
-      );
-      const { functionUrl } = yield* sharedStack.deploy(
+        yield* Effect.logInfo(
+          "FleetWise E2E setup: deploying resources + Lambda",
+        );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* FleetWiseBindingsFunction;
+          }).pipe(Effect.provide(FleetWiseBindingsFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        // Readiness probe — fresh function URLs take seconds to serve 200s.
+        yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(60),
+            ]),
+          }),
+        );
+      }),
+      { timeout: 600_000 },
+    );
+    afterAll(
+      Effect.gen(function* () {
+        if (!RUN_LIVE) return;
+        yield* sharedStack.destroy();
+      }),
+      { timeout: 600_000 },
+    );
+
+    test.provider.skipIf(!RUN_LIVE)(
+      "all 13 capabilities initialize in the runtime",
+      () =>
         Effect.gen(function* () {
-          return yield* FleetWiseBindingsFunction;
-        }).pipe(Effect.provide(FleetWiseBindingsFunctionLive)),
-      );
-
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      // Readiness probe — fresh function URLs take seconds to serve 200s.
-      yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({
-          schedule: Schedule.max([
-            Schedule.fixed("2 seconds"),
-            Schedule.recurs(60),
-          ]),
+          const response = (yield* get("/bindings")) as any;
+          expect(response.bound).toHaveLength(13);
         }),
-      );
-    }),
-    { timeout: 600_000 },
-  );
-  afterAll(
-    Effect.gen(function* () {
-      if (!RUN_LIVE) return;
-      yield* sharedStack.destroy();
-    }),
-    { timeout: 600_000 },
-  );
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "all 13 capabilities initialize in the runtime",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/bindings")) as any;
-        expect(response.bound).toHaveLength(13);
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "GetVehicleStatus reads the bound vehicle's campaign deployments",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/vehicle-status")) as any;
+          expect(typeof response.campaigns).toBe("number");
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "GetVehicleStatus reads the bound vehicle's campaign deployments",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/vehicle-status")) as any;
-        expect(typeof response.campaigns).toBe("number");
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "Associate/Disassociate + ListVehiclesInFleet + ListFleetsForVehicle round-trip",
+      () =>
+        Effect.gen(function* () {
+          const associated = (yield* post("/fleet/associate")) as any;
+          expect(associated.count).toBeGreaterThanOrEqual(1);
+          const fleets = (yield* get("/vehicle-fleets")) as any;
+          expect(fleets.count).toBeGreaterThanOrEqual(1);
+          const disassociated = (yield* post("/fleet/disassociate")) as any;
+          expect(disassociated.ok).toBe(true);
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "Associate/Disassociate + ListVehiclesInFleet + ListFleetsForVehicle round-trip",
-    () =>
-      Effect.gen(function* () {
-        const associated = (yield* post("/fleet/associate")) as any;
-        expect(associated.count).toBeGreaterThanOrEqual(1);
-        const fleets = (yield* get("/vehicle-fleets")) as any;
-        expect(fleets.count).toBeGreaterThanOrEqual(1);
-        const disassociated = (yield* post("/fleet/disassociate")) as any;
-        expect(disassociated.ok).toBe(true);
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "signal-definition reads cover catalog, model, and decoder",
+      () =>
+        Effect.gen(function* () {
+          const catalogNodes = (yield* get("/catalog-nodes")) as any;
+          expect(catalogNodes.count).toBe(3);
+          const modelNodes = (yield* get("/model-nodes")) as any;
+          expect(modelNodes.count).toBeGreaterThanOrEqual(2);
+          const interfaces = (yield* get("/decoder-interfaces")) as any;
+          expect(interfaces.count).toBe(1);
+          const signals = (yield* get("/decoder-signals")) as any;
+          expect(signals.count).toBe(1);
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "signal-definition reads cover catalog, model, and decoder",
-    () =>
-      Effect.gen(function* () {
-        const catalogNodes = (yield* get("/catalog-nodes")) as any;
-        expect(catalogNodes.count).toBe(3);
-        const modelNodes = (yield* get("/model-nodes")) as any;
-        expect(modelNodes.count).toBeGreaterThanOrEqual(2);
-        const interfaces = (yield* get("/decoder-interfaces")) as any;
-        expect(interfaces.count).toBe(1);
-        const signals = (yield* get("/decoder-signals")) as any;
-        expect(signals.count).toBe(1);
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "ListVehicles filters by the bound model manifest",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/vehicles")) as any;
+          expect(response.count).toBeGreaterThanOrEqual(1);
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "ListVehicles filters by the bound model manifest",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/vehicles")) as any;
-        expect(response.count).toBeGreaterThanOrEqual(1);
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "UpdateCampaign suspends and resumes the running campaign",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* post("/campaign/suspend-resume")) as any;
+          expect(response.ok).toBe(true);
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "UpdateCampaign suspends and resumes the running campaign",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* post("/campaign/suspend-resume")) as any;
-        expect(response.ok).toBe(true);
-      }),
-  );
-
-  test.provider.skipIf(!RUN_LIVE)(
-    "BatchUpdateVehicle succeeds and BatchCreateVehicle surfaces per-item errors",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* post("/vehicles/batch")) as any;
-        expect(response.updated).toBe(1);
-        expect(response.updateErrors).toBe(0);
-        expect(response.createErrors).toBe(1);
-      }),
-  );
-});
+    test.provider.skipIf(!RUN_LIVE)(
+      "BatchUpdateVehicle succeeds and BatchCreateVehicle surfaces per-item errors",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* post("/vehicles/batch")) as any;
+          expect(response.updated).toBe(1);
+          expect(response.updateErrors).toBe(0);
+          expect(response.createErrors).toBe(1);
+        }),
+    );
+  },
+);
