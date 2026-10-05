@@ -10,6 +10,8 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { publicProxy } from "./publicProxy.ts";
+
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
   "HtmlRenderBrowserError",
   { reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -46,9 +48,10 @@ const CAPTURE_TIMEOUT = "20 seconds";
 // read files the agent's provider withholds; local images reach it already
 // inlined as data URIs. `.localhost` keeps it a secure context that may still
 // load plain-http resources, and the request never leaves the browser.
-// Chrome's Local Network Access keeps its subresources, frames, fetches, and
-// sockets off this machine's local network; the page itself may not navigate
-// away, and the browser opens no popups, since neither of those is covered.
+// All of the browser's traffic goes through `publicProxy`, which only reaches
+// public addresses, so a page cannot reach this machine's local network. The
+// main frame also stays on the page and the browser opens no popups, so a
+// capture always shows the page itself.
 const PAGE_ORIGIN = "http://t3-page.localhost";
 const PAGE_URL = `${PAGE_ORIGIN}/page.html`;
 // Stack traces and load errors name the page this way instead of its URL.
@@ -188,6 +191,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const proxyPort = yield* publicProxy;
   const outgoing = yield* Queue.unbounded<Uint8Array>();
   const child = yield* spawner
     .spawn(
@@ -202,6 +206,9 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--hide-scrollbars",
           "--mute-audio",
           "--block-new-web-contents",
+          `--proxy-server=http://127.0.0.1:${proxyPort}`,
+          // Loopback would otherwise skip the proxy.
+          "--proxy-bypass-list=<-loopback>",
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
