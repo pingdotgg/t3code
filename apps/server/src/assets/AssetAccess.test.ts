@@ -1083,14 +1083,55 @@ describe("AssetAccess", () => {
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.png$/);
       expect(
         yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
-      ).toEqual({ kind: "file", path: canonicalPath });
+      ).toMatchObject({ kind: "file", path: canonicalPath });
       const tamperedSuffixResult = yield* resolveAsset(
         suffix.slice(0, separatorIndex),
         "sibling.png",
       );
-      expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
-      expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
+      expect(tamperedSuffixResult).toMatchObject({ kind: "file", path: canonicalPath });
+      expect(tamperedSuffixResult).not.toMatchObject({ kind: "file", path: canonicalSiblingPath });
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "streams a saved favicon outside the workspace from the file opened during resolution",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-favicon-workspace-",
+        });
+        const pictures = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-favicon-pictures-",
+        });
+        const externalPath = path.join(pictures, "custom.png");
+        const savedPath = path.join(pictures, "saved.png");
+        const secretPath = path.join(pictures, "secret.txt");
+        yield* fileSystem.writeFile(externalPath, new Uint8Array([1, 2, 3]));
+        yield* fileSystem.writeFileString(secretPath, "private");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "project-favicon", cwd: root },
+          projectFaviconPath: externalPath,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separatorIndex = suffix.indexOf("/");
+        const asset = yield* resolveAsset(
+          suffix.slice(0, separatorIndex),
+          suffix.slice(separatorIndex + 1),
+        );
+        if (asset?.kind !== "file") throw new Error("Expected a resolved favicon");
+
+        yield* fileSystem.rename(externalPath, savedPath);
+        yield* fileSystem.symlink(secretPath, externalPath);
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+          new Uint8Array([1, 2, 3]),
+        );
+        expect(
+          yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+        ).toBeNull();
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("ignores a client favicon path hint", () =>
