@@ -26,7 +26,10 @@ function workspaceConnectionStatusLabel(state: WorkspaceState): string {
   }
   if (state.connectionError !== null) return state.connectionError;
   if (state.hasPendingShellSnapshot) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+    if (!state.hasLoadedShellSnapshot) return "Loading threads...";
+    const count = state.pendingShellThreadCount;
+    if (count === 0) return "Syncing threads...";
+    return `Syncing ${count} ${count === 1 ? "thread" : "threads"}...`;
   }
   return "Not connected";
 }

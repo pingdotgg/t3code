@@ -9,6 +9,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
+    pendingShellThreadCount: 0,
     hasReadyEnvironment: true,
     hasConnectingEnvironment: false,
     connectingEnvironments: [],
@@ -71,13 +72,15 @@ describe("workspace connection status", () => {
     });
   });
 
-  it("shows shell catch-up while cached threads remain visible", () => {
-    const state = workspaceState({ hasPendingShellSnapshot: true });
+  it("counts the cached threads still catching up", () => {
+    const label = (pendingShellThreadCount: number) =>
+      workspaceConnectionStatusPresentation(
+        workspaceState({ hasPendingShellSnapshot: true, pendingShellThreadCount }),
+      )?.label;
 
-    expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "Syncing threads...",
-      showsProgress: true,
-    });
+    expect(label(12)).toBe("Syncing 12 threads...");
+    expect(label(1)).toBe("Syncing 1 thread...");
+    expect(label(0)).toBe("Syncing threads...");
   });
 
   it("distinguishes initial shell loading from cached catch-up", () => {

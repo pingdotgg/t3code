@@ -105,6 +105,7 @@ describe("environment shell projections", () => {
     expect(summary).toEqual({
       hasSnapshot: true,
       hasSynchronizingShell: true,
+      synchronizingThreadCount: 1,
       hasCachedShell: true,
       hasLiveShell: false,
       firstError: "Retrying.",
@@ -161,6 +162,7 @@ describe("environment shell projections", () => {
       expect(setCatalog([])).toEqual({
         hasSnapshot: false,
         hasSynchronizingShell: false,
+        synchronizingThreadCount: 0,
         hasCachedShell: false,
         hasLiveShell: false,
         firstError: null,

@@ -317,6 +317,8 @@ function shellStateChanges(environmentId: EnvironmentId) {
 export interface EnvironmentShellSummary {
   readonly hasSnapshot: boolean;
   readonly hasSynchronizingShell: boolean;
+  /** Active threads in environments that are still catching up. */
+  readonly synchronizingThreadCount: number;
   readonly hasCachedShell: boolean;
   readonly hasLiveShell: boolean;
   readonly firstError: string | null;
@@ -325,6 +327,7 @@ export interface EnvironmentShellSummary {
 const EMPTY_ENVIRONMENT_SHELL_SUMMARY: EnvironmentShellSummary = Object.freeze({
   hasSnapshot: false,
   hasSynchronizingShell: false,
+  synchronizingThreadCount: 0,
   hasCachedShell: false,
   hasLiveShell: false,
   firstError: null,
@@ -339,6 +342,7 @@ function shellSummariesEqual(
   return (
     left.hasSnapshot === right.hasSnapshot &&
     left.hasSynchronizingShell === right.hasSynchronizingShell &&
+    left.synchronizingThreadCount === right.synchronizingThreadCount &&
     left.hasCachedShell === right.hasCachedShell &&
     left.hasLiveShell === right.hasLiveShell &&
     left.firstError === right.firstError
@@ -365,6 +369,7 @@ export function createEnvironmentShellSummaryAtom(input: {
   return Atom.make((get) => {
     let hasSnapshot = false;
     let hasSynchronizingShell = false;
+    let synchronizingThreadCount = 0;
     let hasCachedShell = false;
     let hasLiveShell = false;
     let firstError: string | null = null;
@@ -381,11 +386,15 @@ export function createEnvironmentShellSummaryAtom(input: {
         continue;
       }
       hasSnapshot = true;
+      if (state.status === "synchronizing") {
+        synchronizingThreadCount += state.snapshot.value.threads.length;
+      }
     }
 
     const next: EnvironmentShellSummary = {
       hasSnapshot,
       hasSynchronizingShell,
+      synchronizingThreadCount,
       hasCachedShell,
       hasLiveShell,
       firstError,

@@ -25,6 +25,7 @@ export interface WorkspaceConnectionState {
 export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
+  readonly pendingShellThreadCount: number;
   readonly shellSnapshotError: string | null;
 }
 
@@ -99,6 +100,7 @@ export function projectWorkspaceState(input: {
     ...projectWorkspaceConnectionState(input),
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
+    pendingShellThreadCount: input.shellSummary.synchronizingThreadCount,
     shellSnapshotError: input.shellSummary.firstError,
   };
 }
