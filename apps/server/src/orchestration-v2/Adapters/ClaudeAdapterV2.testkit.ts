@@ -184,6 +184,11 @@ interface ClaudeQuerySetModelFrame {
   readonly model: string;
 }
 
+interface ClaudeQuerySetPermissionModeFrame {
+  readonly type: "query.set_permission_mode";
+  readonly mode: string;
+}
+
 interface ClaudeQueryInterruptFrame {
   readonly type: "query.interrupt";
 }
@@ -239,6 +244,7 @@ type ClaudeOutboundFrame =
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
+  | ClaudeQuerySetPermissionModeFrame
   | ClaudeQueryInterruptFrame
   | ClaudePermissionResponseFrame
   | ClaudeSessionForkFrame
@@ -809,6 +815,13 @@ function makeReplayQueryRunner(
             assertNextOutboundFrame({
               type: "query.set_model",
               model,
+            });
+          }),
+        setPermissionMode: (mode) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({
+              type: "query.set_permission_mode",
+              mode,
             });
           }),
         interrupt: replayEffect(() => {

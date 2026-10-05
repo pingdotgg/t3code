@@ -31,6 +31,7 @@ import type {
   ProviderInstanceEnvironment,
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -59,6 +60,9 @@ export interface ProviderDriverMetadata {
   readonly supportsMultipleInstances?: boolean;
 }
 
+export type ProviderWorkspaceSnapshot = ServerProvider &
+  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending">;
+
 /**
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
@@ -76,7 +80,9 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
-  readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  readonly snapshotForCwd?: (
+    cwd: string,
+  ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;

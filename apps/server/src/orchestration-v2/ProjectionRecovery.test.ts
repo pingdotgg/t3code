@@ -420,6 +420,73 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("reads the run that owns a background roster, not a queued or resumed one", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const withRoster = Effect.fn(function* (threadId: ThreadId) {
+      yield* projections.apply({
+        id: EventId.make(`event:${threadId}:roster`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make(`provider-thread:${threadId}`),
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks: [
+            { taskId: "background", description: "Still running", kind: "command" },
+          ],
+        },
+      });
+    });
+    const runIds = (threadId: ThreadId) =>
+      projections
+        .getRuntimeRecoveryProjection(threadId)
+        .pipe(Effect.map((state) => state.runs.map((run) => run.id)));
+    // Settled with background work left, then a queued follow-up.
+    const settled = yield* createThread("roster-before-queue");
+    const settledRun = yield* createRun(settled, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${settled}`),
+    });
+    const queuedRun = yield* createRun(settled, "queued", { ordinal: 2, completedAt: null });
+    yield* withRoster(settled);
+    assert.deepEqual(yield* runIds(settled), [settledRun, queuedRun]);
+    // A resumed queued run (ordinal 1) ended after a continuation (ordinal 2).
+    const resumed = yield* createThread("roster-after-resume");
+    const resumedRun = yield* createRun(resumed, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${resumed}`),
+      completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00.000Z"),
+    });
+    const continuationRun = yield* createRun(resumed, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${resumed}`),
+      ordinal: 2,
+      completedAt: DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"),
+    });
+    yield* withRoster(resumed);
+    assert.deepEqual(yield* runIds(resumed), [resumedRun, continuationRun]);
+    // Without a roster, settled history is not read.
+    const quiet = yield* createThread("no-roster-before-queue");
+    yield* createRun(quiet, "completed");
+    const quietQueued = yield* createRun(quiet, "queued", { ordinal: 2, completedAt: null });
+    assert.deepEqual(yield* runIds(quiet), [quietQueued]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

@@ -18,6 +18,8 @@ import {
   type OrchestrationV2Run,
   ProjectId,
   type PullRequestDetail,
+  type PullRequestComment,
+  PullRequestOperationError,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
@@ -2307,11 +2309,18 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("wakes a watched thread once for failed checks and a review comment", () =>
+  it.effect.each([
+    "single page",
+    "paginated",
+    "page failure",
+    "repeated cursor",
+    "missing comments",
+    "thread list truncated",
+  ])("wakes a watched thread once: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-wake");
-      const projectId = ProjectId.make("pr-watch-wake-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-wake-${mode}`);
+      const projectId = ProjectId.make(`pr-watch-wake-project-${mode}`);
       yield* seedProject({
         projectId,
         title: "Watch wake",
@@ -2323,7 +2332,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-wake-create"),
+        commandId: CommandId.make(`pr-watch-wake-create-${mode}`),
         threadId,
         projectId,
         title: "Watch wake",
@@ -2337,7 +2346,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const url = "https://github.com/pingdotgg/t3code/pull/7";
       yield* orchestrator.dispatch({
         type: "thread.pull-request.link",
-        commandId: CommandId.make("pr-watch-wake-link"),
+        commandId: CommandId.make(`pr-watch-wake-link-${mode}`),
         threadId,
         ...key,
         url,
@@ -2345,7 +2354,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-wake-start"),
+        commandId: CommandId.make(`pr-watch-wake-start-${mode}`),
         threadId,
         ...key,
         watching: true,
@@ -2398,6 +2407,38 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         mergeCapabilities: { merge: true, squash: true, rebase: true },
         viewer: "agent-user",
       };
+      const initialWatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(initialWatch);
+      const remark: PullRequestComment = {
+        id: "review-1",
+        kind: "review-comment",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        body: "One more thing.",
+        createdAt: "2999-01-01T00:00:03.000Z",
+        url: null,
+        path: "src/index.ts",
+        reviewState: null,
+      };
+      const firstTen = Array.from({ length: 10 }, (_, index) => ({
+        ...remark,
+        id: `old-${index}`,
+        createdAt: "1900-01-01T00:00:00.000Z",
+      }));
+      const eleventh = {
+        ...remark,
+        id: "reply-11",
+        body: "Eleventh reply.",
+        createdAt: "2999-01-01T00:00:01.000Z",
+      };
+      const twelfth = {
+        ...remark,
+        id: "reply-12",
+        body: "Twelfth reply.",
+        createdAt: "2999-01-01T00:00:02.000Z",
+      };
+      const incomplete = mode !== "single page" && mode !== "paginated";
+      let recovering = false;
+      let pagesRead = 0;
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2406,41 +2447,101 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
               detail: () => Effect.succeed(detail),
               activity: () =>
                 Effect.succeed({
-                  comments: [
-                    {
-                      id: "review-1",
-                      kind: "review-comment",
-                      author: { login: "reviewer", name: null, avatarUrl: null },
-                      body: "One more thing.",
-                      createdAt: "2999-01-01T00:00:00.000Z",
-                      url: null,
-                      path: "src/index.ts",
-                      reviewState: null,
-                    },
-                  ],
-                  commentCount: 1,
-                  commentsTruncated: false,
-                  reviewThreads: [],
+                  comments:
+                    mode === "single page"
+                      ? [remark]
+                      : [...firstTen, { ...remark, kind: "issue-comment" }],
+                  commentCount: mode === "single page" ? 1 : 13,
+                  commentsTruncated: mode !== "single page",
+                  reviewThreadsTruncated: mode === "thread list truncated" && !recovering,
+                  reviewThreads:
+                    mode === "single page"
+                      ? []
+                      : [
+                          {
+                            id: "review-thread",
+                            path: "src/index.ts",
+                            line: 1,
+                            side: "right",
+                            isResolved: false,
+                            isOutdated: false,
+                            comments: firstTen,
+                            commentCount: 12,
+                            nextCommentsCursor: "after-10",
+                          },
+                        ],
                   commits: [],
                 }),
+              threadComments: (input) => {
+                pagesRead += 1;
+                assert.equal(input.threadId, "review-thread");
+                if (input.cursor === "after-10") {
+                  return Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                }
+                assert.equal(input.cursor, "after-11");
+                if (!recovering && mode === "page failure") {
+                  return Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "threadComments",
+                      detail: "Page unavailable",
+                    }),
+                  );
+                }
+                if (!recovering && mode === "repeated cursor") {
+                  return Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                }
+                if (!recovering && mode === "missing comments") {
+                  return Effect.succeed({ comments: [], nextCursor: null });
+                }
+                // Overlapping pages must not report the same reply twice.
+                return Effect.succeed({ comments: [eleventh, twelfth], nextCursor: null });
+              },
             }),
           ),
         ),
       );
+      if (incomplete) {
+        yield* reactor.sweep;
+        const held = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.equal(held?.remarksThrough, initialWatch?.remarksThrough);
+        assert.deepEqual(held?.remarkIds, initialWatch?.remarkIds);
+        assert.deepEqual(held?.failedChecks, ["lint"]);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.map((message) => message.notification?.summary),
+          ["#7: checks failed"],
+        );
+        // Keep the two notifications ordered independently of their random message IDs.
+        yield* TestClock.adjust("1 millis");
+        recovering = true;
+      }
       yield* reactor.sweep;
+      // A thread whose count has not moved is not paged again.
+      const pagesBefore = pagesRead;
       yield* reactor.sweep;
+      assert.equal(pagesRead, pagesBefore);
 
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(
         messages.flatMap((message) =>
           message.notification === undefined ? [] : [message.notification.summary],
         ),
-        ["#7: checks failed, new comments"],
+        incomplete
+          ? ["#7: checks failed", "#7: new comments"]
+          : ["#7: checks failed, new comments"],
       );
+      if (mode !== "single page") {
+        const wake = messages.at(-1);
+        assert.include(wake?.text ?? "", "3 new comments");
+        assert.include(wake?.text ?? "", "Eleventh reply.");
+        assert.include(wake?.text ?? "", "Twelfth reply.");
+      }
       const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.equal(watch?.remarksThrough, remark.createdAt);
+      assert.deepEqual(watch?.remarkIds, [remark.id]);
       assert.deepEqual(
         { headSha: watch?.headSha, failedChecks: watch?.failedChecks, wakes: watch?.wakes },
-        { headSha: "abc1234def", failedChecks: ["lint"], wakes: 0 },
+        { headSha: "abc1234def", failedChecks: ["lint"], wakes: incomplete ? 1 : 0 },
       );
     }),
   );
@@ -2544,84 +2645,86 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("does not admit a restart continuation of a failed run that lost background work", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("runtime-layer-restart-failed-source");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("restart-failed-create"),
-        threadId,
-        projectId: ProjectId.make("restart-project"),
-        title: "Restart",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: "/tmp/runtime-layer-restart-failed",
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("restart-failed-user-message"),
-        threadId,
-        messageId: MessageId.make("restart-failed-user-message"),
-        text: "Original work",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      const now = yield* DateTime.now;
-      yield* eventSink.commitCommand({
-        commandId: CommandId.make("restart-failed-reconcile"),
-        threadId,
-        commandType: "provider-runtime.reconcile",
-        acceptedAt: now,
-        events: [
-          {
-            id: EventId.make("restart-failed-run"),
-            type: "run.updated",
-            threadId,
-            runId: original.id,
-            occurredAt: now,
-            payload: { ...original, status: "failed", completedAt: now },
-          },
-          {
-            id: EventId.make("restart-failed-work"),
-            type: "run.background-work-cancelled",
-            threadId,
-            runId: original.id,
-            occurredAt: now,
-            payload: {
+  it.effect.each(["failed", "completed", "waiting", "cancelled"] as const)(
+    "does not admit a restart continuation of a %s run with only lost background work",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-restart-${status}-source`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`restart-${status}-create`),
+          threadId,
+          projectId: ProjectId.make("restart-project"),
+          title: "Restart",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-restart-failed",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`restart-${status}-user-message`),
+          threadId,
+          messageId: MessageId.make(`restart-${status}-user-message`),
+          text: "Original work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`restart-${status}-reconcile`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`restart-${status}-run`),
+              type: "run.updated",
+              threadId,
               runId: original.id,
-              restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+              occurredAt: now,
+              payload: { ...original, status, completedAt: now },
             },
-          },
-        ],
-        effects: [],
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "agent",
-        creationSource: "server",
-        commandId: CommandId.make("restart-failed-continuation"),
-        threadId,
-        messageId: MessageId.make("restart-failed-continuation"),
-        text: "Note: the T3 server restarted.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-        restartContinuationOfRunId: original.id,
-      });
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.lengthOf(projection.runs, 1);
-      assert.equal(projection.runs[0]?.status, "failed");
-    }),
+            {
+              id: EventId.make(`restart-${status}-work`),
+              type: "run.background-work-cancelled",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: {
+                runId: original.id,
+                restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+              },
+            },
+          ],
+          effects: [],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make(`restart-${status}-continuation`),
+          threadId,
+          messageId: MessageId.make(`restart-${status}-continuation`),
+          text: "Note: the T3 server restarted.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          restartContinuationOfRunId: original.id,
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(projection.runs, 1);
+        assert.equal(projection.runs[0]?.status, status);
+      }),
   );
 
   it.effect("rejects settling a thread while a run is active", () =>

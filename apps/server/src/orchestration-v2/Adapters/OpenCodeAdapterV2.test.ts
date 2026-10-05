@@ -833,10 +833,12 @@ describe("OpenCodeAdapterV2", () => {
         Stream.runCollect,
         Effect.forkScoped,
       );
-      for (const [tool, input] of [
-        ["read", { filePath: "src/env.ts" }],
-        ["grep", { pattern: "TODO", path: "apps/web" }],
-        ["websearch", { query: "OpenCode documentation" }],
+      for (const [tool, input, output] of [
+        ["read", { filePath: "src/env.ts" }, "---\nfile body"],
+        ["grep", { pattern: "TODO", path: "apps/web" }, "---\nfile body"],
+        ["websearch", { query: "OpenCode documentation" }, "---\nfile body"],
+        ["glob", { pattern: "missing", path: "apps/web" }, ""],
+        ["codesearch", {}, " \n\t"],
       ] as const) {
         yield* Effect.promise(() =>
           nativeEvents.push({
@@ -853,7 +855,7 @@ describe("OpenCodeAdapterV2", () => {
                 state: {
                   status: "completed",
                   input,
-                  output: "---\nfile body",
+                  output,
                   title: tool,
                   metadata: {},
                   time: { start: 1, end: 2 },
@@ -877,10 +879,26 @@ describe("OpenCodeAdapterV2", () => {
       const grep = items.find((item) => item.type === "file_search");
       assert.equal(grep?.title, "Searched TODO in web");
       assert.equal(grep?.type === "file_search" ? grep.pattern : null, "TODO");
+      assert.deepEqual(grep?.type === "file_search" ? grep.results : null, [
+        { fileName: "apps/web", preview: "---\nfile body" },
+      ]);
       const webSearch = items.find((item) => item.type === "web_search");
       assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
         "OpenCode documentation",
       ]);
+      assert.deepEqual(webSearch?.type === "web_search" ? webSearch.results : null, [
+        { snippet: "---\nfile body" },
+      ]);
+      const emptyFileSearch = items.find(
+        (item) => item.type === "file_search" && item.pattern === "missing",
+      );
+      assert.ok(emptyFileSearch?.type === "file_search");
+      assert.equal(emptyFileSearch.results, undefined);
+      const emptyWebSearch = items.find(
+        (item) => item.type === "web_search" && item.patterns === undefined,
+      );
+      assert.ok(emptyWebSearch?.type === "web_search");
+      assert.equal(emptyWebSearch.results, undefined);
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 

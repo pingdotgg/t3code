@@ -19,6 +19,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
+  type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ProviderInstanceId,
@@ -847,11 +848,14 @@ function textFromUnknown(value: unknown): string | undefined {
     return undefined;
   }
   // Prefer prompt-facing Grok fields before nested envelopes.
+  // Antigravity reports shell output as combinedOutput.
   for (const key of [
     "output_for_prompt",
     "stdout",
     "stderr",
     "output",
+    "combinedOutput",
+    "combined_output",
     "content",
     "text",
     "message",
@@ -988,6 +992,46 @@ function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Grok runs X and web searches server-side as `search` tools whose rawInput is
+ * only `{ variant: "XSearch" | "WebSearch", backend: true }`. The query arrives
+ * with completion: web searches report `action: { query, sources }`, X searches
+ * the backend call `{ name, input }` with JSON-encoded arguments.
+ */
+function acpBackendWebSearch(
+  rawInput: Record<string, unknown> | undefined,
+  rawOutput: Record<string, unknown> | undefined,
+):
+  | { readonly query: string | undefined; readonly results: OrchestrationV2WebSearchResult[] }
+  | undefined {
+  const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
+  const action = unknownRecord(rawOutput?.action);
+  if (variant !== "xsearch" && variant !== "websearch" && action?.type !== "search") {
+    return undefined;
+  }
+  let args: Record<string, unknown> | undefined;
+  if (typeof rawOutput?.input === "string") {
+    try {
+      args = unknownRecord(JSON.parse(rawOutput.input));
+    } catch {
+      args = undefined;
+    }
+  }
+  const argsText = Object.entries(args ?? {})
+    .filter(([, value]) => typeof value === "string" || typeof value === "number")
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ");
+  const query = [action?.query, args?.query, argsText]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim();
+  const urls = new Set<string>();
+  for (const source of Array.isArray(action?.sources) ? action.sources : []) {
+    const url = unknownRecord(source)?.url;
+    if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
+  }
+  return { query, results: [...urls].map((url) => ({ url })) };
 }
 
 function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
@@ -3311,7 +3355,30 @@ export function makeAcpAdapterV2(
                   ...(rawOutput === undefined ? {} : { output: rawOutput }),
                 };
                 break;
-              case "search":
+              case "search": {
+                const backendSearch = acpBackendWebSearch(rawInputRecord, rawOutputRecord);
+                if (backendSearch !== undefined) {
+                  // Grok titles these "X search:" / "Web search:" awaiting the query.
+                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
+                    /:\s*$/u,
+                    "",
+                  );
+                  turnItem = {
+                    ...base,
+                    title:
+                      backendSearch.query === undefined
+                        ? label
+                        : `${label}: ${backendSearch.query}`,
+                    type: "web_search",
+                    ...(backendSearch.query === undefined
+                      ? {}
+                      : { patterns: [backendSearch.query] }),
+                    ...(backendSearch.results.length === 0
+                      ? {}
+                      : { results: backendSearch.results }),
+                  };
+                  break;
+                }
                 turnItem = {
                   ...base,
                   title:
@@ -3336,6 +3403,7 @@ export function makeAcpAdapterV2(
                       }),
                 };
                 break;
+              }
               case "execute": {
                 const exitCode = acpProjectedCommandExitCode(status, rawOutput);
                 turnItem = {
@@ -3359,7 +3427,11 @@ export function makeAcpAdapterV2(
                   ...(diffText === undefined ? {} : { diffStr: diffText }),
                 };
                 break;
-              case "fetch":
+              case "fetch": {
+                // Grok nests the page under rawOutput.Content, which textFromUnknown
+                // cannot read; the (bounded) content blocks carry the same text.
+                const snippet =
+                  textFromUnknown(toolCall.data.content) ?? textFromUnknown(rawOutput);
                 turnItem = {
                   ...base,
                   type: "web_search",
@@ -3370,14 +3442,13 @@ export function makeAcpAdapterV2(
                         results: [
                           {
                             url: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { snippet: textFromUnknown(rawOutput) }),
+                            ...(snippet === undefined ? {} : { snippet }),
                           },
                         ],
                       }),
                 };
                 break;
+              }
               default:
                 if (projectAsCommandExecution) {
                   const exitCode = acpProjectedCommandExitCode(status, rawOutput);
