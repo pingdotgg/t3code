@@ -190,9 +190,10 @@ export const make = Effect.gen(function* () {
           .filter((thread) => thread.driver === "kilo-cloud")
           .map((thread) => thread.id),
       );
-      const cloudRuns = nonterminalRuns(projection).filter(
-        (run) => run.providerThreadId !== null && cloudThreads.has(run.providerThreadId),
-      );
+      const cloudRuns = [
+        ...nonterminalRuns(projection),
+        ...projection.runs.filter((run) => run.status === "queued"),
+      ].filter((run) => run.providerThreadId !== null && cloudThreads.has(run.providerThreadId));
       if (cloudThreads.size > 0) {
         const events: OrchestrationV2DomainEvent[] = [];
         const effects: EffectOutbox.PendingOrchestrationEffectV2[] = [];
@@ -210,20 +211,19 @@ export const make = Effect.gen(function* () {
                   (cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
                 ),
               );
-            if (
-              existing.some(
-                (effect) =>
-                  effect.request.type === "provider-turn.reattach" &&
-                  (effect.status === "pending" || effect.status === "running"),
-              )
-            )
-              continue;
-            effects.push({
-              id: `effect:cloud-reattach:${run.id}:${run.activeAttemptId}:${DateTime.formatIso(now)}`,
-              commandId,
-              threadId: projection.thread.id,
-              request: { type: "provider-turn.reattach", runId: run.id },
-            });
+            const reuse = existing.some(
+              (effect) =>
+                effect.request.type === "provider-turn.reattach" &&
+                (effect.status === "pending" || effect.status === "running"),
+            );
+            if (reuse && run.status === "starting") continue;
+            if (!reuse)
+              effects.push({
+                id: `effect:cloud-reattach:${run.id}:${run.activeAttemptId}:${DateTime.formatIso(now)}`,
+                commandId,
+                threadId: projection.thread.id,
+                request: { type: "provider-turn.reattach", runId: run.id },
+              });
           }
           events.push({
             id: yield* ids.allocate

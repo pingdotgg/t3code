@@ -266,6 +266,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     runId: RunId,
+    // Set only when the adapter can prove no native turn was submitted.
+    notSubmitted: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

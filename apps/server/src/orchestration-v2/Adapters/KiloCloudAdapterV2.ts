@@ -1112,9 +1112,14 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                     entry.providerTurn.runAttemptId === request.attemptId,
                 );
                 if (!saved)
-                  return yield* error(
-                    "No durable cloud intent exists for this run. No task was resubmitted.",
-                  );
+                  return yield* new Adapter.ProviderAdapterTurnStartError({
+                    driver,
+                    threadId: request.threadId,
+                    providerThreadId: request.providerThread.id,
+                    runId: request.runId,
+                    notSubmitted: true,
+                    cause: "No durable cloud intent exists for this run. No task was submitted.",
+                  });
                 active = saved;
                 yield* emit({
                   type: "provider_turn.updated",

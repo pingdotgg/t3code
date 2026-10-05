@@ -1509,9 +1509,11 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(Layer.fresh(TestLayer))),
   );
 
-  it.effect("does not publish a stale provider start after an interrupt wins", () =>
+  it.effect.each([true, false])("guards recovery effects (%s)", (interrupted) =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-guarded-recovery");
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-stale-provider-start");
@@ -1566,6 +1568,14 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           runId,
           activeAttemptId: attemptId,
           expectedStatus: "starting",
+          effects: [
+            {
+              id: "effect:foundation-guarded-recovery",
+              commandId,
+              threadId,
+              request: { type: "provider-turn.reattach", runId },
+            },
+          ],
           events: [
             {
               id: EventId.make("event:foundation-stale-provider-start:running"),
@@ -1586,32 +1596,34 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
 
       yield* Deferred.await(reachedPrecommitGap);
       const interruptedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("event:foundation-stale-provider-start:cancelled"),
-            type: "run.updated",
-            threadId,
-            runId,
-            providerInstanceId,
-            occurredAt: interruptedAt,
-            payload: {
-              ...startingRun,
-              status: "cancelled",
-              completedAt: interruptedAt,
+      if (interrupted)
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:foundation-stale-provider-start:cancelled"),
+              type: "run.updated",
+              threadId,
+              runId,
+              providerInstanceId,
+              occurredAt: interruptedAt,
+              payload: {
+                ...startingRun,
+                status: "cancelled",
+                completedAt: interruptedAt,
+              },
             },
-          },
-        ],
-      });
+          ],
+        });
       yield* Deferred.succeed(releaseStaleStart, undefined);
 
       const staleResult = yield* Fiber.join(staleStartFiber);
-      assert.isFalse(staleResult.committed);
-      assert.deepEqual(staleResult.storedEvents, []);
-      assert.equal(yield* Ref.get(providerStartCount), 0);
+      assert.equal(staleResult.committed, !interrupted);
+      assert.equal(staleResult.storedEvents.length, interrupted ? 0 : 1);
+      assert.equal(yield* Ref.get(providerStartCount), interrupted ? 0 : 1);
+      assert.equal((yield* outbox.listByCommandId(commandId)).length, interrupted ? 0 : 1);
       const projection = yield* projectionStore.getThreadProjection(threadId);
-      assert.equal(projection.runs[0]?.status, "cancelled");
-    }),
+      assert.equal(projection.runs[0]?.status, interrupted ? "cancelled" : "running");
+    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
   );
 
   it.effect("guards post-terminal provider-thread writes by attempt and run ordinal", () =>

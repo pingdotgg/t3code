@@ -1357,6 +1357,25 @@ const uncertainAdmission = Effect.gen(function* () {
   return { remote, directory };
 });
 
+it.live("proves a missing recovery intent was not submitted without creating a task", () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture;
+    const harness = yield* admissionHarness(remote, yield* authorizedDirectory);
+    const { runtime, thread } = yield* harness.open;
+    const result = yield* Effect.result(
+      runtime.startTurn({ ...harness.turn(thread), reattach: true }),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag !== "Failure") return;
+    assert.equal(result.failure._tag, "ProviderAdapterTurnStartError");
+    if (result.failure._tag !== "ProviderAdapterTurnStartError") return;
+    assert.isTrue(result.failure.notSubmitted);
+    assert.include(String(result.failure.cause), "No durable cloud intent");
+    assert.equal(remote.submissions(), 0);
+    assert.isEmpty(yield* harness.journal.read);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
 it.live.each([
   "404",
   "503",

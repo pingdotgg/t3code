@@ -75,6 +75,8 @@ export interface InheritedBackgroundTurnItemRoute {
   readonly runId: OrchestrationV2Run["id"];
 }
 
+const isTurnStartError = Schema.is(ProviderAdapterTurnStartError);
+
 type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
 
 function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["status"]): boolean {
@@ -811,6 +813,56 @@ export const layer: Layer.Layer<
           // losing it locally is not the turn's outcome, and recovery reattaches it.
           const checkpointFilesystem =
             input.session.providerSession.capabilities.checkpointing.appCanCheckpointFilesystem;
+          const prepareCloudReattach = Effect.fn("RunExecutionService.prepareCloudReattach")(
+            function* (enqueue: boolean) {
+              const now = yield* DateTime.now;
+              const commandId = CommandId.make(
+                `command:cloud-reattach:${input.run.id}:${input.attempt.id}`,
+              );
+              yield* eventSink.writeIfRunCurrent({
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                activeAttemptId: input.attempt.id,
+                expectedStatus: "running",
+                events: [
+                  {
+                    id: yield* idAllocator.allocate.event({
+                      threadId: input.run.threadId,
+                      commandId,
+                    }),
+                    type: "run.updated",
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: now,
+                    payload: { ...input.run, status: "starting" },
+                  },
+                ],
+                effects: enqueue
+                  ? [
+                      {
+                        id: `effect:cloud-reattach:${input.run.id}:${input.attempt.id}:${DateTime.formatIso(now)}`,
+                        commandId,
+                        threadId: input.run.threadId,
+                        request: {
+                          type: "provider-turn.reattach",
+                          runId: input.run.id,
+                        },
+                      },
+                    ]
+                  : [],
+              });
+            },
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+            ),
+          );
           // Startup failure and stream shutdown can report the same attempt.
           const refreshAfterTurn = yield* Effect.cached(
             finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
@@ -878,6 +930,8 @@ export const layer: Layer.Layer<
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 if (Cause.hasInterruptsOnly(cause) || input.reattach === true) {
+                  if (input.reattach === true && !Cause.hasInterruptsOnly(cause))
+                    yield* prepareCloudReattach(false);
                   return yield* Effect.failCause(cause);
                 }
                 yield* Effect.logError("orchestration V2 run preparation failed", {
@@ -1298,6 +1352,13 @@ export const layer: Layer.Layer<
                     cause,
                   }).pipe(
                     Effect.andThen(
+                      !finalized &&
+                        input.session.driver === "kilo-cloud" &&
+                        !Cause.hasInterruptsOnly(cause)
+                        ? prepareCloudReattach(true)
+                        : Effect.void,
+                    ),
+                    Effect.andThen(
                       finalized || !checkpointFilesystem
                         ? Effect.void
                         : Ref.get(latestProviderThread).pipe(
@@ -1409,13 +1470,18 @@ export const layer: Layer.Layer<
               ))
             : input.session.startTurn(turnInput);
           const started = yield* Effect.exit(Effect.andThen(shouldStart, startTurn));
+          const startError = Exit.isFailure(started) ? Cause.squash(started.cause) : undefined;
+          const notSubmitted = isTurnStartError(startError) && startError.notSubmitted === true;
           // A remote turn outlives a lost start; recovery reattaches it instead of failing the run.
           if (
             Exit.isFailure(started) &&
+            !notSubmitted &&
             (input.reattach === true ||
               (!checkpointFilesystem && Cause.hasInterruptsOnly(started.cause)))
           ) {
             yield* stopProviderEvents;
+            if (input.reattach === true && !Cause.hasInterruptsOnly(started.cause))
+              yield* prepareCloudReattach(false);
             return yield* new RunExecutionStartError({
               commandId: input.commandId,
               runId: input.run.id,
@@ -1452,6 +1518,12 @@ export const layer: Layer.Layer<
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),
+                                ...(notSubmitted
+                                  ? {
+                                      message:
+                                        "No task was submitted. Send a new message to try again.",
+                                    }
+                                  : {}),
                                 // A failed ownership read is not the provider's fault.
                                 class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
                               }),

@@ -730,12 +730,11 @@ it.effect.each(readFailures)("ownership read failure $driverName/$reattach/$fail
     assert.equal(yield* Ref.get(guardCalls), failAt + 1);
     assert.equal(yield* Ref.get(baselineCalls), checkpointFilesystem ? 1 : 0);
     assert.equal(yield* Ref.get(closedSubscriptions), failAt);
-    if (reattach) assert.isEmpty(yield* Ref.get(writes));
     assert.equal(yield* Ref.get(providerStarts), 0);
     const runUpdate = (yield* Ref.get(writes)).find((event) => event.type === "run.updated");
     assert.equal(
       runUpdate?.type === "run.updated" ? runUpdate.payload.status : undefined,
-      reattach ? undefined : "failed",
+      reattach ? "starting" : "failed",
     );
   }),
 );
@@ -3436,8 +3435,75 @@ it.effect(
         assert.deepEqual(delivered, [{ reattach: true, nativeThreadHasTurns }]);
         assert.isTrue(result.startFailed);
         assert.deepEqual(result.written, []);
-        assert.deepEqual(result.observed, []);
+        assert.deepEqual(result.observed, ["run:starting"]);
+        assert.isEmpty(result.effects);
       }
+    }),
+);
+
+it.effect("settles a cloud reattach as failed when the adapter proves it was never submitted", () =>
+  Effect.gen(function* () {
+    const result = yield* captureRootRunTermination({
+      key: "cloud-reattach-missing-intent",
+      cloudReattach: true,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.never,
+      startTurn: (input) =>
+        Effect.fail(
+          new ProviderAdapterTurnStartError({
+            driver: ProviderDriverKind.make("kilo-cloud"),
+            threadId: input.threadId,
+            providerThreadId: input.providerThread.id,
+            runId: input.runId,
+            notSubmitted: true,
+            cause: "No durable cloud intent exists for this run. No task was submitted.",
+          }),
+        ),
+    });
+    assert.isFalse(result.startFailed);
+    assert.deepEqual(result.observed, ["run:failed"]);
+    assert.include(
+      result.written.find((item) => item.type === "error")?.failure.message ?? "",
+      "No task was submitted",
+    );
+    assert.isEmpty(result.effects);
+    assert.equal(result.baselineCalls, 0);
+  }),
+);
+
+it.effect.each([true, false])(
+  "reattaches a failed cloud observer only while its run is current: %s",
+  (runCurrent) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const result = yield* captureRootRunTermination({
+        key: `cloud-ingestion-failure-${runCurrent}`,
+        cloudReattach: true,
+        runCurrent,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        startTurn: () => Deferred.succeed(started, undefined),
+        events: () =>
+          Stream.unwrap(
+            Deferred.await(started).pipe(
+              Effect.as(
+                Stream.fail(
+                  new ProviderAdapterEventStreamError({
+                    driver: ProviderDriverKind.make("kilo-cloud"),
+                    providerSessionId: ProviderSessionId.make("cloud-session-lost"),
+                    cause: "provider observer lost",
+                  }),
+                ),
+              ),
+            ),
+          ),
+      });
+      assert.deepEqual(result.observed, runCurrent ? ["run:starting"] : []);
+      assert.deepEqual(
+        result.effects.map((effect) => effect.request.type),
+        runCurrent ? ["provider-turn.reattach"] : [],
+      );
+      assert.isEmpty(result.written);
+      assert.equal(result.baselineCalls, 0);
     }),
 );
 
@@ -3505,6 +3571,7 @@ it.effect.each([true, false])(
 
 function captureRootRunTermination(input: {
   readonly key: string;
+  readonly runCurrent?: boolean;
   readonly cloudReattach?: boolean;
   readonly nativeThreadHasTurns?: boolean;
   readonly checkpointFilesystem?: boolean;
@@ -3568,9 +3635,14 @@ function captureRootRunTermination(input: {
                 Effect.as([]),
               ),
             writeIfRunCurrent: (payload) =>
-              captureFinalEvents(payload.events).pipe(
-                Effect.as({ committed: true, storedEvents: [] }),
-              ),
+              input.runCurrent === false
+                ? Effect.succeed({ committed: false, storedEvents: [] })
+                : captureFinalEvents(payload.events).pipe(
+                    Effect.andThen(
+                      Ref.update(effects, (current) => [...current, ...(payload.effects ?? [])]),
+                    ),
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  ),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({

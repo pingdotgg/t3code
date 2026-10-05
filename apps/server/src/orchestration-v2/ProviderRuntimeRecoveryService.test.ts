@@ -1273,15 +1273,17 @@ it.effect(
   },
 );
 
-it.effect(
-  "preserves remote work and deduplicates reattach while still cancelling local work",
-  () => {
+it.effect.each(["pending", "running"] as const)(
+  "preserves remote work and reuses a %s reattach while still cancelling local work",
+  (effectStatus) => {
     const threadId = ThreadId.make("mixed-cloud-local");
     const cloudThread = ProviderThreadId.make("remote-thread");
     const localThread = ProviderThreadId.make("local-thread");
     const cloudTurn = ProviderTurnId.make("remote-turn");
     const localTurn = ProviderTurnId.make("local-turn");
     const cloudRun = RunId.make("remote-run");
+    const queuedRun = RunId.make("remote-queued-run");
+    const heldRun = RunId.make("remote-held-run");
     const localRun = RunId.make("local-run");
     const cloudInstance = ProviderInstanceId.make("cloud-instance");
     const localInstance = ProviderInstanceId.make("local-instance");
@@ -1301,6 +1303,15 @@ it.effect(
       ],
       providerSessions: [],
       runs: [
+        ...[queuedRun, heldRun].map((id) => ({
+          id,
+          providerThreadId: cloudThread,
+          providerInstanceId: cloudInstance,
+          status: "queued",
+          queueHeld: id === heldRun,
+          rootNodeId: null,
+          activeAttemptId: null,
+        })),
         {
           id: cloudRun,
           providerThreadId: cloudThread,
@@ -1376,7 +1387,7 @@ it.effect(
                 () =>
                   pending
                     .filter((effect) => effect.commandId === id)
-                    .map((effect) => ({ ...effect, status: "pending" })) as never,
+                    .map((effect) => ({ ...effect, status: effectStatus })) as never,
               ),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
             cancelUnsettled: () => Effect.succeed([]),
@@ -1390,14 +1401,30 @@ it.effect(
       yield* service.reconcile("shutdown");
       assert.isTrue(events.some((run) => run.id === localRun && run.status === "cancelled"));
       assert.isFalse(events.some((run) => run.id === cloudRun));
+      assert.isTrue(events.some((run) => run.id === queuedRun && run.queueHeld === true));
+      assert.isFalse(events.some((run) => run.id === heldRun));
       assert.equal(requests.length, 0);
+      events.length = 0;
       yield* service.reconcile("startup");
       yield* service.reconcile("startup");
       assert.equal(
         pending.filter((effect) => effect.request.type === "provider-turn.reattach").length,
         1,
       );
-      assert.isTrue(events.some((run) => run.id === cloudRun && run.status === "starting"));
+      assert.equal(
+        events.filter((run) => run.id === cloudRun && run.status === "starting").length,
+        2,
+      );
+      assert.isTrue(events.some((run) => run.id === queuedRun && run.queueHeld === true));
+      assert.isFalse(events.some((run) => run.id === heldRun));
+      events.length = 0;
+      Object.assign(
+        projection.runs.find((run) => run.id === cloudRun)!,
+        { status: "starting" },
+      );
+      yield* service.reconcile("startup");
+      assert.isFalse(events.some((run) => run.id === cloudRun));
+      assert.equal(pending.length, 1);
       assert.isFalse(events.some((run) => run.id === cloudRun && run.status === "cancelled"));
       assert.equal(requests.length, 0);
     }).pipe(Effect.provide(layer));
