@@ -1045,13 +1045,21 @@ export const layer = Layer.effect(
                 const signature =
                   input.schedule.type === "webhook" ? input.schedule.signature : null;
                 // A secretRef is a value the user entered for an agent; this
-                // save consumes it, so it cannot be used again.
+                // save consumes it, so it cannot be used again. A replay of a
+                // save that already used it keeps the secret that save stored.
+                const replay = input.commandId !== undefined && existing?.secret != null;
                 const fromRef =
                   signature?.secretRef === undefined
                     ? undefined
                     : yield* secretRequests
                         .consume({ ref: signature.secretRef, projectId: input.projectId })
-                        .pipe(Effect.mapError((error) => taskError(error.message, { taskId: id })));
+                        .pipe(
+                          Effect.catch((error) =>
+                            replay
+                              ? Effect.succeed(undefined)
+                              : Effect.fail(taskError(error.message, { taskId: id })),
+                          ),
+                        );
                 const provided = fromRef ?? signature?.secret;
                 const secret = signature == null ? null : (provided ?? existing?.secret ?? null);
                 const secretChanged =

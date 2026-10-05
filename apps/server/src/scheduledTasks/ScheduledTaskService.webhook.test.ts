@@ -763,6 +763,41 @@ it.effect("a signature can take the user's secret by ref, which works only once"
   ),
 );
 
+it.effect("a retried save with an already used secretRef keeps the stored secret", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      secretsByRef.set("secret-ref:00000000000000000000000000000002", "github-secret");
+      const save = webhookTaskInput({
+        id: undefined,
+        commandId: "command:mcp:schedule-task:release-hook",
+        schedule: {
+          type: "webhook",
+          signature: {
+            header: "x-hub-signature-256",
+            encoding: "hex",
+            prefix: "sha256=",
+            secretRef: "secret-ref:00000000000000000000000000000002",
+          },
+        },
+      });
+      const first = yield* service.upsert(yield* save);
+      // The agent never saw the first result, so it sends the same call again.
+      const retried = yield* service.upsert(yield* save);
+      assert.equal(retried.task.id, first.task.id);
+      const signed = yield* service.triggerWebhook(
+        requestFor(retried.task, {
+          headers: {
+            "content-type": "application/json",
+            "x-hub-signature-256": githubSignature("github-secret"),
+          },
+        }),
+      );
+      assert.equal(signed._tag, "accepted");
+      yield* Queue.take(launches);
+    }),
+  ),
+);
+
 it.effect("a signature without any secret is refused", () =>
   withService(({ service }) =>
     Effect.gen(function* () {

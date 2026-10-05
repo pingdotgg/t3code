@@ -1521,6 +1521,7 @@ describe("orchestrator MCP toolkit", () => {
               label: "GitHub webhook secret",
               reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
               placeholder: "Paste the webhook secret",
+              clientRequestId: "release-webhook-secret",
             }).pipe(Effect.forkChild);
             // Polled without the helper's short budget: under load the tool's
             // own reads come first.
@@ -1576,6 +1577,20 @@ describe("orchestrator MCP toolkit", () => {
               ...Object.values(secretResult),
             ];
             expect(received.some((value) => value.includes("github-webhook-secret"))).toBe(false);
+
+            // A retry that lost the first result gets the same answer, with no
+            // second card for the user.
+            const retried = yield* invoke("request_secret", {
+              label: "GitHub webhook secret",
+              reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
+              clientRequestId: "release-webhook-secret",
+            });
+            expect(retried.structuredContent).toEqual(secretResult);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.filter(
+                (item) => item.type === "secret_request",
+              ),
+            ).toHaveLength(1);
 
             // The ref is the secret for exactly one consumer.
             expect(

@@ -598,6 +598,10 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
   ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Reuse when retrying, so the user sees one card and a saved answer is returned again.",
+  }),
 });
 export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
 

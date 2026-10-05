@@ -1554,8 +1554,12 @@ const make = Effect.gen(function* () {
         }
         const runId = run.id;
         const nodeId = run.rootNodeId;
-        const key = yield* requestKey(undefined);
-        const turnItemId = TurnItemId.make(`turn-item:secret-request:${stablePart(key)}`);
+        const key = yield* requestKey(input.clientRequestId);
+        // Turn item ids are global; scope the key to this thread. A retry with
+        // the same clientRequestId finds this card, answered or not.
+        const turnItemId = TurnItemId.make(
+          `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
+        );
         const record = (secretStatus: "pending" | "cancelled") =>
           threadManagement
             .dispatch({
