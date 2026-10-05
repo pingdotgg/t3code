@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import { readThread, unavailable } from "../../threadAccess.ts";
 import * as Effect from "effect/Effect";
@@ -20,8 +21,26 @@ const handlers = {
         });
       const { threadId, ...refs } = input;
       const {
-        projection: { thread },
-      } = yield* readThread(threadId);
+        projection: { thread, providerThreads },
+      } = yield* readThread(threadId, ["providerThreads"]);
+      // A cloud thread's project is a UI grouping, not its remote checkout.
+      // Prefer its durable binding over a provider configuration changed since launch.
+      const binding = providerThreads.find((item) => item.id === thread.activeProviderThreadId);
+      const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+      const driver =
+        binding?.driver ??
+        (yield* (
+          adapters.getMetadata
+            ? adapters
+                .getMetadata(thread.providerInstanceId)
+                .pipe(Effect.map((adapter) => adapter.driver))
+            : adapters.get(thread.providerInstanceId).pipe(Effect.map((adapter) => adapter.driver))
+        ).pipe(Effect.mapError(unavailable)));
+      if (driver === "kilo-cloud")
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Kilo Cloud has no local workspace refs. Inspect its remote repository instead.",
+        });
       const projects = yield* Project.ProjectService;
       const project = yield* projects.getById(thread.projectId).pipe(Effect.mapError(unavailable));
       if (Option.isNone(project))

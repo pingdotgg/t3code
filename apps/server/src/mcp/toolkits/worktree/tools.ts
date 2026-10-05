@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { Tool, Toolkit } from "effect/unstable/ai";
@@ -74,6 +75,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
     GitWorkflowService.GitWorkflowService,
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
   ],
 })
   .annotate(Tool.Readonly, true)

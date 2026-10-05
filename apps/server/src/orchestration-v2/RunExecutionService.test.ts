@@ -3413,18 +3413,30 @@ it.effect(
   () =>
     Effect.gen(function* () {
       for (let attempt = 0; attempt < 3; attempt++) {
+        const nativeThreadHasTurns = [undefined, false, true][attempt];
+        const delivered: Array<{
+          reattach: boolean | undefined;
+          nativeThreadHasTurns: boolean | undefined;
+        }> = [];
         const started = yield* Deferred.make<void>();
         const stopped = yield* Deferred.make<void>();
         const result = yield* captureRootRunTermination({
           key: `cloud-reattach-failure-${attempt}`,
           cloudReattach: true,
+          ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           shouldFinalizeRun: () => Effect.succeed(true),
           events: () =>
             Stream.unwrap(Deferred.succeed(started, undefined).pipe(Effect.as(Stream.never))).pipe(
               Stream.ensuring(Deferred.succeed(stopped, undefined)),
             ),
           startTurn: (input) =>
-            Deferred.await(started).pipe(
+            Effect.sync(() =>
+              delivered.push({
+                reattach: input.reattach,
+                nativeThreadHasTurns: input.nativeThreadHasTurns,
+              }),
+            ).pipe(
+              Effect.andThen(Deferred.await(started)),
               Effect.andThen(
                 Effect.fail(
                   new ProviderAdapterTurnStartError({
@@ -3439,6 +3451,7 @@ it.effect(
             ),
         });
         yield* Deferred.await(stopped);
+        assert.deepEqual(delivered, [{ reattach: true, nativeThreadHasTurns }]);
         assert.isTrue(result.startFailed);
         assert.deepEqual(result.written, []);
         assert.deepEqual(result.observed, []);
@@ -3511,6 +3524,7 @@ it.effect.each([true, false])(
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly cloudReattach?: boolean;
+  readonly nativeThreadHasTurns?: boolean;
   readonly checkpointFilesystem?: boolean;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -3600,6 +3614,9 @@ function captureRootRunTermination(input: {
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make(`session:${input.key}`),
           reattach: input.cloudReattach ?? false,
+          ...(input.nativeThreadHasTurns === undefined
+            ? {}
+            : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
           session: {
             driver: input.cloudReattach ? ProviderDriverKind.make("kilo-cloud") : driver,
             providerSession: {
