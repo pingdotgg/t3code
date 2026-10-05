@@ -21,6 +21,21 @@ interrupted, and threads without saved provider resume state need a new message.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 
+Updates from the previous orchestration system preserve conversation transcripts but cannot carry
+every kind of runtime history forward. Read [Threads from older T3 Code versions](./thread-migration.md)
+before continuing an important older thread.
+
+## When versions don't match
+
+A client and server must speak the same orchestration protocol. If they do not, the connection is
+refused rather than running half-upgraded:
+
+- An app newer than the server is blocked before connecting, with a notice telling you to update
+  T3 Code on the machine named in the notice.
+- A server newer than your app refuses the connection with an update message.
+
+Update the side the notice names, then reconnect.
+
 ## Update a connected server
 
 The offered action depends on how the server runs:
@@ -29,7 +44,8 @@ The offered action depends on how the server runs:
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
+| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
+| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
 
 On the host, run:
 
@@ -55,6 +71,13 @@ update can roll back to the previous version. If the update still fails:
 1. Retry the offered action once.
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
+
+## Update providers
+
+**Settings → Providers** shows provider updates for the selected environment.
+**Update all** updates every outdated provider on every connected environment
+at once. Hover it to see which providers it will update. Providers that only
+offer a manual update command are not included.
 
 ## Mobile updates
 

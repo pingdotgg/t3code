@@ -20,6 +20,10 @@ describe("KeybindingsSettings.logic", () => {
   it("lists composer, provider, and pull request commands with editable defaults", () => {
     const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
     for (const command of [
+      "composer.sendAlternate",
+      "composer.sendBackground",
+      "thread.steerQueuedMessage",
+      "thread.editQueuedMessage",
       "composer.host",
       "composer.effort",
       "composer.mode",
@@ -37,6 +41,14 @@ describe("KeybindingsSettings.logic", () => {
       });
     }
   });
+  it("finds the editable shortcut for sending the first queued message", () => {
+    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "first queued")).toContainEqual(
+      expect.objectContaining({
+        command: "thread.steerQueuedMessage",
+        key: "mod+shift+enter",
+      }),
+    );
+  });
   it.each(["pu", "pull request", "copy link", "thread id"])(
     "finds the copy link shortcut with %s",
     (query) => {
@@ -48,6 +60,7 @@ describe("KeybindingsSettings.logic", () => {
   );
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
+      "usage.open",
       "usage.cost",
       "usage.tokens",
       "usage.limits",
@@ -55,13 +68,17 @@ describe("KeybindingsSettings.logic", () => {
       "usage.period.week",
       "usage.period.month",
       "usage.period.quarter",
-      "usage.open",
     ];
-    const bindings = DEFAULT_RESOLVED_KEYBINDINGS.toReversed();
-    expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
-    expect(
-      buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
-    ).toEqual(expected);
+    // The order must not depend on the order of the configured bindings.
+    for (const bindings of [
+      DEFAULT_RESOLVED_KEYBINDINGS,
+      DEFAULT_RESOLVED_KEYBINDINGS.toReversed(),
+    ]) {
+      expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+      expect(
+        buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
+      ).toEqual(expected);
+    }
   });
 
   it("builds searchable rows with readable key and when values", () => {
@@ -284,15 +301,19 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).toEqual(
       expect.arrayContaining([
         "chat.new",
+        "threadPanel.toggle",
         "rightPanel.toggleMaximized",
+        "composer.cycleHost",
         "thread.stop",
         "usage.open",
         "script.setup-db.run",
       ]),
     );
-    expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
-      false,
-    );
+    for (const command of ["thread.stop", "composer.cycleHost"]) {
+      expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command)).toBe(
+        false,
+      );
+    }
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

@@ -42,6 +42,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -286,6 +287,11 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
+        Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+          register: () => Effect.void,
+          recordMetrics: () => Effect.void,
+          shutdown: Effect.void,
+        }),
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
@@ -314,6 +320,7 @@ function makeTestLayer(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
+          prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           reapplyZoom: () =>
@@ -400,6 +407,11 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       Layer.provide(
         Layer.mergeAll(
           desktopAssetsLayer,
+          Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+            register: () => Effect.void,
+            recordMetrics: () => Effect.void,
+            shutdown: Effect.void,
+          }),
           desktopEnvironmentLayer,
           DesktopAppSettings.layerTest(),
           desktopClientSettingsLayer,

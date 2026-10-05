@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { commandProgramName } from "./commandLabel.ts";
+import {
+  commandDisplayText,
+  commandHighlightLanguage,
+  commandProgramName,
+} from "./commandLabel.ts";
 
 describe("commandProgramName", () => {
   it.each([
@@ -475,5 +479,125 @@ describe("commandProgramName", () => {
 
   it("bounds nested command wrappers", () => {
     expect(commandProgramName(`${"command ".repeat(9)}git status`)).toBeNull();
+  });
+});
+
+describe("commandDisplayText", () => {
+  it.each([
+    ["/bin/zsh -lc 'git diff --stat'", "git diff --stat"],
+    ['bash -c "printf \\"%s\\" hello; git status"', 'printf "%s" hello; git status'],
+    ["/usr/bin/fish --command 'rg TODO src | head -20'", "rg TODO src | head -20"],
+    ["zsh -lc 'pwd\nls'", "pwd\nls"],
+    ["git status", "git status"],
+    ["zsh script.sh", "zsh script.sh"],
+    ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"],
+    ["zsh -lc 'pwd'; git status", "zsh -lc 'pwd'; git status"],
+    ["zsh -lc 'unterminated", "zsh -lc 'unterminated"],
+  ])("shows the script without hiding meaningful outer commands: %s", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commands recorded from each provider", () => {
+  // Inputs are copied from the recorded replay transcripts in
+  // apps/server/src/orchestration-v2/testkit/fixtures (turn_interrupt_mid_tool,
+  // todo_list, grok_background_bash and
+  // opencode_running_child_approval). In turn_interrupt_mid_tool every provider
+  // ran the same script, and only Codex wraps it in a login shell.
+  const interruptScript = `node -e "console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)"`;
+  it.each([
+    ["Claude", interruptScript, interruptScript],
+    ["Cursor", interruptScript, interruptScript],
+    ["Pi", interruptScript, interruptScript],
+    [
+      "Codex",
+      `/bin/bash -lc "node -e \\"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\\""`,
+      interruptScript,
+    ],
+    [
+      "Codex",
+      "/bin/bash -lc 'cat package.json && cat tsconfig.json'",
+      "cat package.json && cat tsconfig.json",
+    ],
+    [
+      "Grok",
+      "for i in 1 2 3; do sleep 8; echo tock $i; done",
+      "for i in 1 2 3; do sleep 8; echo tock $i; done",
+    ],
+    [
+      "OpenCode",
+      "printf 'running child approval' > running-child.txt",
+      "printf 'running child approval' > running-child.txt",
+    ],
+  ])("%s shows the script it ran: %s", (_provider, input, script) => {
+    expect(commandDisplayText(input)).toBe(script);
+    expect(commandHighlightLanguage(commandDisplayText(input))).toBe("shellscript");
+  });
+});
+
+describe("commandDisplayText with redacted Codex commands", () => {
+  // Codex replaces secrets in command text before sending it
+  // (codex-rs/secrets/src/sanitizer.rs). Usually the quoting survives.
+  it("unwraps a redacted command whose quoting is intact", () => {
+    expect(
+      commandDisplayText(
+        `/bin/zsh -lc 'curl -H "Authorization: Bearer [REDACTED_SECRET]" https://example.com'`,
+      ),
+    ).toBe('curl -H "Authorization: Bearer [REDACTED_SECRET]" https://example.com');
+  });
+
+  // Its secret-assignment pattern can also swallow the backslash of an escaped
+  // quote: `token=config[\"apiToken\"]` becomes `token=[REDACTED_SECRET]"apiToken\"]`.
+  // The bare quote ends the -lc argument early, so where the script ends is unknown.
+  it("keeps the wrapper when redaction broke the quoting", () => {
+    const input = `/bin/zsh -lc "python3 -c 'token=[REDACTED_SECRET]"apiToken\\"]; print(token)'"`;
+    expect(commandDisplayText(input)).toBe(input);
+  });
+});
+
+describe("commandDisplayText control characters", () => {
+  it.each([
+    ["printf '\u001b[31mred\u001b[0m'", "printf '␛[31mred␛[0m'"],
+    ["zsh -lc 'printf \"\u001b[1m\"'", 'printf "␛[1m"'],
+    ["echo bell\u0007 delete\u007f", "echo bell␇ delete␡"],
+    ["printf 'a\\tb'\r\necho done", "printf 'a\\tb'\r\necho done"],
+    ["cat <<'EOF'\n\tindented\nEOF", "cat <<'EOF'\n\tindented\nEOF"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandHighlightLanguage", () => {
+  it.each([
+    [
+      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command "Get-ChildItem -Recurse"',
+      "powershell",
+    ],
+    [
+      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
+      "powershell",
+    ],
+    ["& pwsh -c 'Get-Date'", "powershell"],
+    ["PWSH.EXE -Command Get-Date", "powershell"],
+    ["pwsh-preview -c 'Get-Date'", "shellscript"],
+    ["git status; pwsh -c 'Get-Date'", "shellscript"],
+    ["cat <<'EOF' > notes.txt\npwsh\nEOF", "shellscript"],
+    ["", "shellscript"],
+    // Windows agents also run PowerShell directly, without a pwsh wrapper.
+    ["Get-Content package.json | Select-String version", "powershell"],
+    ["$env:CI='1'; npm test", "powershell"],
+    ["$tmp = Join-Path $env:TEMP repo; git clone example", "powershell"],
+    ['"=== CHECK FILE ==="; Get-Content file.txt', "powershell"],
+    ["& 'C:\\Python312\\python.exe' -c 'print(1)'", "powershell"],
+    ["Install-Module Pester -Scope CurrentUser", "powershell"],
+    ["ConvertTo-Json @{ a = 1 }", "powershell"],
+    ["update-alternatives --list java", "shellscript"],
+    ["install-info --version", "shellscript"],
+    ["Make-Thing now", "shellscript"],
+    ["echo Get-Content; git status", "shellscript"],
+    ["FOO=1 npm test", "shellscript"],
+    ["echo $HOME && ls", "shellscript"],
+  ])("%s", (command, language) => {
+    expect(commandHighlightLanguage(command)).toBe(language);
   });
 });

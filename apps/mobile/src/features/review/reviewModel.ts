@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
-import type { OrchestrationCheckpointSummary, ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -8,9 +9,9 @@ import * as Order from "effect/Order";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
-const DIRTY_WORKTREE_SECTION_ID = "git:working-tree";
-const DIRTY_WORKTREE_TITLE = "Dirty worktree";
-const DIRTY_WORKTREE_SUBTITLE = "Tracked, staged, and untracked worktree changes";
+const CHANGES_SECTION_ID = "git:branch-range";
+const CHANGES_TITLE = "Changes";
+const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -94,11 +95,11 @@ export type ReviewParsedDiff =
       readonly notice: string | null;
     };
 
-function checkpointTitle(checkpoint: OrchestrationCheckpointSummary): string {
+function checkpointTitle(checkpoint: ThreadCheckpointSummary): string {
   return `Turn ${checkpoint.checkpointTurnCount}`;
 }
 
-function checkpointSubtitle(checkpoint: OrchestrationCheckpointSummary): string {
+function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
   const fileCount = checkpoint.files.length;
   if (checkpoint.status !== "ready") {
     return `Diff ${checkpoint.status}`;
@@ -107,8 +108,8 @@ function checkpointSubtitle(checkpoint: OrchestrationCheckpointSummary): string 
 }
 
 function compareCheckpointTurnCountDescending(
-  left: OrchestrationCheckpointSummary,
-  right: OrchestrationCheckpointSummary,
+  left: ThreadCheckpointSummary,
+  right: ThreadCheckpointSummary,
 ): -1 | 0 | 1 {
   if (left.checkpointTurnCount === right.checkpointTurnCount) {
     return 0;
@@ -117,13 +118,13 @@ function compareCheckpointTurnCountDescending(
   return left.checkpointTurnCount > right.checkpointTurnCount ? -1 : 1;
 }
 
-const readyCheckpointOrder = Order.make<OrchestrationCheckpointSummary>(
+const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
 function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   if (section.kind === "working-tree") {
-    return DIRTY_WORKTREE_SUBTITLE;
+    return UNCOMMITTED_SUBTITLE;
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
@@ -395,14 +396,14 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
 }
 
 export function getReviewSectionIdForCheckpoint(
-  checkpoint: Pick<OrchestrationCheckpointSummary, "checkpointTurnCount">,
+  checkpoint: Pick<ThreadCheckpointSummary, "checkpointTurnCount">,
 ): string {
   return `turn:${checkpoint.checkpointTurnCount}`;
 }
 
 export function getReadyReviewCheckpoints(
-  checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
-): ReadonlyArray<OrchestrationCheckpointSummary> {
+  checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
+): ReadonlyArray<ThreadCheckpointSummary> {
   return pipe(
     checkpoints,
     Arr.filter((checkpoint) => checkpoint.status === "ready"),
@@ -411,7 +412,7 @@ export function getReadyReviewCheckpoints(
 }
 
 export function buildReviewSectionItems(input: {
-  readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingTurnIds: Readonly<Record<string, boolean | undefined>>;
@@ -442,15 +443,16 @@ export function buildReviewSectionItems(input: {
     truncated: section.truncated,
     isLoading: false,
   }));
-  const hasDirtyWorktreeItem = gitItems.some((item) => item.id === DIRTY_WORKTREE_SECTION_ID);
+  // Changes is the default section, so it holds the place while git sources load.
+  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
-    input.loadingGitSections && !hasDirtyWorktreeItem
+    input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: DIRTY_WORKTREE_SECTION_ID,
-            kind: "working-tree",
-            title: DIRTY_WORKTREE_TITLE,
-            subtitle: DIRTY_WORKTREE_SUBTITLE,
+            id: CHANGES_SECTION_ID,
+            kind: "branch-range",
+            title: CHANGES_TITLE,
+            subtitle: null,
             diff: null,
             isLoading: true,
           } satisfies ReviewSectionItem,
@@ -461,10 +463,11 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
+/** Prefers Changes, then the first section (a turn when the project is not a git repo). */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return sections[0]?.id ?? null;
+  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
 }
 
 export function buildReviewParsedDiff(
