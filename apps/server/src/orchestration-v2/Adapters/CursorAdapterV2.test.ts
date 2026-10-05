@@ -359,6 +359,22 @@ describe("CursorAdapterV2", () => {
         numFiles: 0,
       };
       const updates: ReadonlyArray<InteractionUpdate> = [
+        ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
+          type,
+          modelCallId: "native-model-call",
+          callId: "mcp-weather",
+          toolCall: {
+            type: "mcp" as const,
+            args: {
+              providerIdentifier: "weather",
+              toolName: "get_weather",
+              args: { city: "Berlin" },
+            },
+            ...(type === "tool-call-completed"
+              ? { result: { status: "success" as const, value: { content: [], isError: false } } }
+              : {}),
+          },
+        })),
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
@@ -625,6 +641,30 @@ describe("CursorAdapterV2", () => {
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
+      const mcpItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        event.turnItem.toolName === "mcp__weather__get_weather"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        mcpItems.map((item) => item.status),
+        ["running", "completed"],
+      );
+      for (const item of mcpItems) {
+        assert.equal(item.title, "get weather");
+        assert.deepEqual(item.toolSource, {
+          key: "mcp:weather",
+          name: "weather",
+          kind: "integration",
+        });
+        assert.deepEqual(item.input, {
+          providerIdentifier: "weather",
+          toolName: "get_weather",
+          args: { city: "Berlin" },
+        });
+      }
       const fileSearchItems = events.flatMap((event) =>
         event.type === "turn_item.updated" &&
         event.turnItem.type === "file_search" &&

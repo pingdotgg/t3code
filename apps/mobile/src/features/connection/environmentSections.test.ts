@@ -157,4 +157,21 @@ describe("mobile environment settings sections", () => {
     expect(sections.connectedCloudEnvironments).toEqual([cloud]);
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
+
+  it("offers T3 Connect for a machine saved only over the LAN, as an added route", () => {
+    const local = connectedEnvironment({
+      environmentId: "environment-desk",
+      isRelayManaged: false,
+    });
+
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [local],
+      cloudEnvironments: [cloudEnvironment("environment-desk")],
+    });
+
+    expect(sections.localEnvironments).toEqual([local]);
+    expect(
+      sections.availableCloudEnvironments.map((environment) => environment.environmentId),
+    ).toEqual([EnvironmentId.make("environment-desk")]);
+  });
 });

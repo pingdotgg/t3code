@@ -26,15 +26,22 @@ const install = NodeChildProcess.spawnSync("vp i", {
 });
 if (install.status !== 0) process.exit(install.status ?? 1);
 
-// In the main checkout itself, relinking would replace the real env files.
-if (NodeFS.realpathSync(projectRoot) !== NodeFS.realpathSync(worktree)) {
-  for (const file of ENV_FILES) {
-    const source = NodePath.join(projectRoot, file);
-    if (!NodeFS.existsSync(source)) continue;
-    const target = NodePath.join(worktree, file);
-    NodeFS.rmSync(target, { force: true });
-    NodeFS.symlinkSync(source, target);
+// Env files live as real files in the main checkout; worktrees only get
+// symlinks to them. Only a symlink is ever replaced, so a real env file is
+// never deleted, including when this runs in the main checkout itself.
+for (const file of ENV_FILES) {
+  const source = NodePath.join(projectRoot, file);
+  const sourceStat = NodeFS.lstatSync(source, { throwIfNoEntry: false });
+  if (!sourceStat) continue;
+  if (!sourceStat.isFile()) {
+    console.warn(`Skipping ${file}: ${source} is not a regular file.`);
+    continue;
   }
+  const target = NodePath.join(worktree, file);
+  const existing = NodeFS.lstatSync(target, { throwIfNoEntry: false });
+  if (existing && !existing.isSymbolicLink()) continue;
+  if (existing) NodeFS.rmSync(target);
+  NodeFS.symlinkSync(source, target);
 }
 
 const warm = NodeChildProcess.spawnSync(
