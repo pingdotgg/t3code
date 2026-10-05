@@ -23,9 +23,6 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
-/** Secrets the user entered for an agent, by ref; consuming one removes it. */
-const secretsByRef = new Map<string, string>();
-
 type LaunchInput = ThreadLaunchService.ThreadLaunchInput;
 
 const webhookTaskInput = (overrides: Record<string, unknown> = {}) =>
@@ -70,11 +67,14 @@ const withService = <A, E>(
   body: (input: {
     readonly service: ScheduledTaskService.ScheduledTaskService["Service"];
     readonly launches: Queue.Queue<LaunchInput>;
+    /** Secrets the user entered for an agent, by ref; consuming one removes it. */
+    readonly secretsByRef: Map<string, string>;
   }) => Effect.Effect<A, E, never>,
   options: { readonly gate?: Deferred.Deferred<void>; readonly relayHookBaseUrl?: string } = {},
 ) =>
   Effect.gen(function* () {
     const launches = yield* Queue.unbounded<LaunchInput>();
+    const secretsByRef = new Map<string, string>();
     const dependencies = Layer.mergeAll(
       NodePlatformCrypto.layer,
       Scheduler.layer,
@@ -102,7 +102,7 @@ const withService = <A, E>(
     );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      return yield* body({ service, launches });
+      return yield* body({ service, launches, secretsByRef });
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 
@@ -725,7 +725,7 @@ const githubSignature = (secret: string) =>
   `sha256=${NodeCrypto.createHmac("sha256", secret).update(pullRequestBody).digest("hex")}`;
 
 it.effect("a signature can take the user's secret by ref, which works only once", () =>
-  withService(({ service, launches }) =>
+  withService(({ service, launches, secretsByRef }) =>
     Effect.gen(function* () {
       secretsByRef.set("secret-ref:00000000000000000000000000000001", "github-secret");
       const githubSchedule = (secretRef: string) => ({
@@ -764,7 +764,7 @@ it.effect("a signature can take the user's secret by ref, which works only once"
 );
 
 it.effect("a retried save with an already used secretRef keeps the stored secret", () =>
-  withService(({ service, launches }) =>
+  withService(({ service, launches, secretsByRef }) =>
     Effect.gen(function* () {
       secretsByRef.set("secret-ref:00000000000000000000000000000002", "github-secret");
       const save = webhookTaskInput({

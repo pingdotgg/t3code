@@ -158,7 +158,16 @@ const make = Effect.gen(function* () {
           ...(item.placeholder === undefined ? {} : { placeholder: item.placeholder }),
           secretStatus,
         })
-        .pipe(Effect.mapError((cause) => fail("record_failed", cause)));
+        .pipe(
+          Effect.mapError((cause) => fail("record_failed", cause)),
+          // The card still says pending, so the user can save again; the value
+          // stored above would make that retry look already answered.
+          Effect.tapError(() =>
+            input.answer.type === "save"
+              ? removeLogged(storeName(refFor(salt, input.threadId, item.id)))
+              : Effect.void,
+          ),
+        );
       if (input.answer.type !== "save") return;
       // A request is answered once: if the agent's wait closed the card between
       // the checks above and this record, the record changed nothing. Nobody

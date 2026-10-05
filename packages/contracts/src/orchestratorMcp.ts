@@ -600,7 +600,7 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
     description:
-      "Reuse when retrying, so the user sees one card and a saved answer is returned again.",
+      "Reuse when retrying a call that lost its result, so the user sees one card and its answer is returned again. Use a new id to ask again after timed_out or cancelled.",
   }),
 });
 export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
@@ -608,7 +608,7 @@ export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSec
 export const OrchestratorMcpRequestSecretResult = Schema.Struct({
   status: Schema.Literals(["saved", "declined", "cancelled", "timed_out"]).annotate({
     description:
-      "saved: secretRef holds the value. declined: the user chose not to. cancelled: the request ended with the run. timed_out: the user did not answer in time; the card is closed, so ask again if still needed.",
+      "saved: secretRef holds the value. declined: the user chose not to. cancelled: the request ended with the run. timed_out: the user did not answer in time; the card is closed, so ask again with a new clientRequestId if still needed.",
   }),
   secretRef: Schema.optional(SecretRef).annotate({
     description:

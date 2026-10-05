@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -71,16 +71,21 @@ function PendingSecretRequestForm(props: {
   const [secret, setSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Enter then a click can both run before a re-render; this guard is synchronous.
+  const inFlight = useRef(false);
 
   const send = async (
     reply: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
   ) => {
     const input = secretRequestAnswerInput(item, reply);
-    if (input === null || submitting) return;
+    if (input === null || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
-    const result = await answer({ environmentId: props.environmentId, input });
-    setSubmitting(false);
+    const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
+      inFlight.current = false;
+      setSubmitting(false);
+    });
     if (result._tag === "Success") {
       // The card switches to its answered row once the item updates.
       setSecret("");

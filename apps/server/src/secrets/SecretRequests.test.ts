@@ -38,12 +38,15 @@ const withService = <A, E>(
     readonly removeFails?: boolean;
     /** The agent's wait closes the card just before the answer's record lands. */
     readonly closedFirst?: boolean;
+    /** How many record dispatches fail before one succeeds. */
+    readonly failedRecords?: number;
   } = {},
 ) =>
   Effect.gen(function* () {
     const stored = new Map<string, Uint8Array>();
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
     let secretStatus = "pending";
+    let failedRecords = options.failedRecords ?? 0;
     const requestThreadId = options.threadId ?? threadId;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -106,8 +109,12 @@ const withService = <A, E>(
               },
             ],
           } as never),
-        dispatch: (command) =>
-          Effect.sync(() => {
+        dispatch: (command) => {
+          if (command.type === "secret_request.record" && failedRecords > 0) {
+            failedRecords -= 1;
+            return Effect.fail(new Error("orchestrator unavailable") as never);
+          }
+          return Effect.sync(() => {
             dispatched.push(command);
             // Like the orchestrator, a card that is no longer pending keeps its answer.
             if (options.closedFirst && command.type === "secret_request.record") {
@@ -116,7 +123,8 @@ const withService = <A, E>(
               secretStatus = command.secretStatus;
             }
             return {} as never;
-          }),
+          });
+        },
       }),
     );
     return yield* Effect.gen(function* () {
@@ -187,6 +195,26 @@ it.effect("a save that loses to the card closing deletes the value and says so",
         assert.isFalse(valuesOf(stored).some((value) => value.includes("ghp_secret")));
       }),
     { closedFirst: true },
+  ),
+);
+
+it.effect("a save whose record failed can be saved again", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        const failed = yield* service
+          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
+          .pipe(Effect.flip);
+        assert.equal(failed.reason, "record_failed");
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "ghp_secret" },
+        });
+        const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+        assert.equal(yield* service.consume({ ref, projectId }), "ghp_secret");
+      }),
+    { failedRecords: 1 },
   ),
 );
 
