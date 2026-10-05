@@ -63,6 +63,7 @@ import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryServic
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
+import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -165,6 +166,58 @@ const TestProviderInstanceRegistry = Layer.succeed(
 );
 
 /** Seed a project row the way a committed `project.created` event folds into it. */
+/** A watched pull request as the host reports it: open, mergeable, with a failing lint check. */
+const watchedPullRequestDetail = (input: {
+  readonly projectId: ProjectId;
+  readonly number: number;
+  readonly at: string;
+}): PullRequestDetail => ({
+  provider: "github",
+  capabilities: {
+    diff: true,
+    comment: true,
+    actions: [],
+    mergeMethods: [],
+    search: false,
+    review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+    reviewers: { request: false, listCandidates: false },
+  },
+  viewerPermissions: {
+    actions: [],
+    comment: true,
+    resolve: true,
+    verdicts: [],
+    requestReviewers: false,
+  },
+  projectId: input.projectId,
+  projectTitle: "Watch wake",
+  workspaceRoot: "/workspace/watch",
+  repository: "pingdotgg/t3code",
+  number: input.number,
+  title: "Watched pull request",
+  body: "",
+  url: `https://github.com/pingdotgg/t3code/pull/${input.number}`,
+  author: { login: "agent-user", name: null, avatarUrl: null },
+  state: "open",
+  isDraft: false,
+  mergeability: "mergeable",
+  additions: 1,
+  deletions: 0,
+  changedFiles: 1,
+  headBranch: "feature",
+  headSha: "abc1234def",
+  baseBranch: "main",
+  createdAt: input.at,
+  updatedAt: input.at,
+  mergedAt: null,
+  closedAt: null,
+  reviewers: [],
+  labels: [],
+  checks: [{ name: "lint", status: "failure", description: null, url: null }],
+  mergeCapabilities: { merge: true, squash: true, rebase: true },
+  viewer: "agent-user",
+});
+
 const seedProject = (input: {
   readonly projectId: ProjectId;
   readonly title: string;
@@ -2352,6 +2405,63 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("archiving ends watches, and an archived thread cannot start one", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-archive");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-archive-create"),
+        threadId,
+        projectId: ProjectId.make("pr-watch-archive-project"),
+        title: "Archive watched PR",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = {
+        type: "thread.pull-request.watch" as const,
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" as const },
+      };
+      const watched = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch !== undefined,
+      );
+      yield* orchestrator.dispatch({
+        ...watch,
+        commandId: CommandId.make("pr-watch-archive-start"),
+      });
+      assert.isTrue(yield* watched);
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("pr-watch-archive"),
+        threadId,
+      });
+      assert.isFalse(yield* watched);
+      const refused = yield* orchestrator
+        .dispatch({ ...watch, commandId: CommandId.make("pr-watch-archive-restart") })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorDispatchError");
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("pr-watch-unarchive"),
+        threadId,
+      });
+      assert.isFalse(yield* watched);
+    }),
+  );
+
   it.effect("ends a watch it cannot read, and tells the agent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2411,6 +2521,141 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "reads a watched pull request once a pass, waits out rate limits, and skips quiet passes",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make("pr-watch-shared-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch shared",
+          workspaceRoot: "/workspace/watch-shared",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        const threadIds = ["one", "two"].map((name) =>
+          ThreadId.make(`runtime-pull-request-watch-shared-${name}`),
+        );
+        for (const threadId of threadIds) {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`create:${threadId}`),
+            threadId,
+            projectId,
+            title: "Watch shared",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`watch:${threadId}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 9,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/9", source: "agent" },
+          });
+        }
+        const rateLimited = new PullRequestOperationError({
+          operation: "getChangeRequest",
+          detail: "github requests are paused until the rate limit resets",
+          cause: new PullRequestProviderError({
+            provider: "github",
+            operation: "getChangeRequest",
+            reason: "rate-limited",
+            detail: "paused",
+          }),
+        });
+        let host: "rate-limited" | "open" | "closed" = "rate-limited";
+        let reads = 0;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                detail: () =>
+                  Effect.suspend(() => {
+                    reads += 1;
+                    return host === "rate-limited"
+                      ? Effect.fail(rateLimited)
+                      : Effect.succeed({
+                          ...watchedPullRequestDetail({
+                            projectId,
+                            number: 9,
+                            at: "2026-10-02T12:00:00.000Z",
+                          }),
+                          state: host,
+                          checks: [
+                            { name: "lint", status: "success", description: null, url: null },
+                          ],
+                        });
+                  }),
+                activity: () =>
+                  host === "rate-limited"
+                    ? Effect.fail(rateLimited)
+                    : Effect.succeed({
+                        comments: [],
+                        commentCount: 0,
+                        commentsTruncated: false,
+                        reviewThreads: [],
+                        commits: [],
+                      }),
+              }),
+            ),
+          ),
+        );
+        const summaries = (threadId: ThreadId) =>
+          Effect.map(orchestrator.getThreadRecords(threadId, ["messages"]), ({ messages }) =>
+            messages.flatMap((message) => message.notification?.summary ?? []),
+          );
+        const watching = (threadId: ThreadId) =>
+          Effect.map(
+            orchestrator.getThreadShell(threadId),
+            (thread) => thread?.pullRequests?.[0]?.watch !== undefined,
+          );
+
+        // However long the host stays rate limited, the watch waits instead of giving up, and
+        // both threads share one read a pass.
+        for (let pass = 0; pass < 20; pass += 1) yield* reactor.sweep;
+        assert.equal(reads, 20);
+        for (const threadId of threadIds) {
+          assert.isTrue(yield* watching(threadId));
+          assert.deepEqual(yield* summaries(threadId), []);
+        }
+
+        host = "open";
+        yield* reactor.sweep;
+        assert.equal(reads, 21);
+        for (const threadId of threadIds) {
+          assert.deepEqual(yield* summaries(threadId), ["#9: checks passed"]);
+        }
+
+        // Nothing in flight and nothing moved, so the next pass spends no request.
+        yield* reactor.sweep;
+        assert.equal(reads, 21);
+
+        // The quiet reread finds the pull request closed, ends both watches, and says so.
+        host = "closed";
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+        assert.equal(reads, 22);
+        for (const threadId of threadIds) {
+          assert.isFalse(yield* watching(threadId));
+          assert.deepEqual(yield* summaries(threadId), [
+            "#9: checks passed",
+            "#9: closed, stopped watching",
+          ]);
+        }
+      }),
+  );
+
   it.effect.each([
     "single page",
     "paginated",
@@ -2463,52 +2708,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
 
       const at = "2026-10-02T12:00:00.000Z";
-      const detail: PullRequestDetail = {
-        provider: "github",
-        capabilities: {
-          diff: true,
-          comment: true,
-          actions: [],
-          mergeMethods: [],
-          search: false,
-          review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
-          reviewers: { request: false, listCandidates: false },
-        },
-        viewerPermissions: {
-          actions: [],
-          comment: true,
-          resolve: true,
-          verdicts: [],
-          requestReviewers: false,
-        },
-        projectId,
-        projectTitle: "Watch wake",
-        workspaceRoot: "/workspace/watch",
-        repository: key.repository,
-        number: key.number,
-        title: "Watched pull request",
-        body: "",
-        url,
-        author: { login: "agent-user", name: null, avatarUrl: null },
-        state: "open",
-        isDraft: false,
-        mergeability: "mergeable",
-        additions: 1,
-        deletions: 0,
-        changedFiles: 1,
-        headBranch: "feature",
-        headSha: "abc1234def",
-        baseBranch: "main",
-        createdAt: at,
-        updatedAt: at,
-        mergedAt: null,
-        closedAt: null,
-        reviewers: [],
-        labels: [],
-        checks: [{ name: "lint", status: "failure", description: null, url: null }],
-        mergeCapabilities: { merge: true, squash: true, rebase: true },
-        viewer: "agent-user",
-      };
+      const detail = watchedPullRequestDetail({ projectId, number: key.number, at });
       const initialWatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
       assert.isDefined(initialWatch);
       const remark: PullRequestComment = {

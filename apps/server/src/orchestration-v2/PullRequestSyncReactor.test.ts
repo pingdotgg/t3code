@@ -232,6 +232,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
               .map((thread) => ({
                 id: thread.id,
                 projectId: thread.projectId,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: thread.id,
+                },
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt === null ? null : DateTime.makeUnsafe(thread.settledAt),
                 pullRequests: thread.pullRequests,
