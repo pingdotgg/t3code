@@ -316,7 +316,7 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
-  it.effect("does not dispose delivery when the child interrupt fails", () =>
+  it.effect("does not dispose delivery when the child stop fails", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-failed-parent");
       const childThreadId = ThreadId.make("thread:mcp-cancel-failed-child");
@@ -355,7 +355,7 @@ describe("OrchestratorMcpService", () => {
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-              Effect.andThen(Effect.fail(new Error("simulated interrupt failure") as never)),
+              Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -386,13 +386,13 @@ describe("OrchestratorMcpService", () => {
         assert.equal(error.code, "task_not_cancellable");
         assert.deepEqual(
           (yield* Ref.get(dispatched)).map((command) => (command as { type: string }).type),
-          ["run.interrupt"],
+          ["thread.stop"],
         );
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );
 
-  it.effect("returns cancel requested when post-interrupt disposal fails", () =>
+  it.effect("returns cancel requested when post-stop disposal fails", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-dispose-failed-parent");
       const childThreadId = ThreadId.make("thread:mcp-cancel-dispose-failed-child");
@@ -437,6 +437,7 @@ describe("OrchestratorMcpService", () => {
                   : Effect.succeed({} as never),
               ),
             ),
+          stopDelegatedTasks: () => Effect.void,
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
@@ -467,7 +468,7 @@ describe("OrchestratorMcpService", () => {
         assert.equal(result.status, "cancel_requested");
         assert.deepEqual(
           (yield* Ref.get(dispatched)).map((command) => (command as { type: string }).type),
-          ["run.interrupt", "delegated_task.completion-delivery.dispose"],
+          ["thread.stop", "delegated_task.completion-delivery.dispose"],
         );
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),

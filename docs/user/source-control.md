@@ -113,6 +113,12 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
+agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
+co-authors stay credited. The setting is off by default and projects can override it. It also
+applies to auto-merge, but not merge queues or native stack merges. Original commits keep their
+messages, so merge and rebase can still retain agent credits in those commits.
+
 On web and desktop, hold **Shift** in the GitHub pull request list for quick actions.
 To close several, press **Close**, drag across the rows in the same group, and release.
 Press **Escape** before releasing to cancel. Failed closes stay in the list so you can retry them.
@@ -189,9 +195,10 @@ Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_p
 the thread is active, the server checks the pull request every minute and wakes the agent when a check
 fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict.
 Comments from your own account do not wake it. Watching ends when the pull request merges or closes,
-after 10 wakes in a row that bring only comments, or when the server cannot read the pull request for
-15 minutes. Settling a thread also ends all its watches. Unsettle the thread before starting a new
-watch. To start or stop it yourself, use the row menu in the **Linked pull requests** panel.
+after 10 wakes in a row that bring only comments, when the server cannot read the pull request for
+15 minutes, or when you press Stop on the thread. Settling a thread also ends all its watches.
+Unsettle the thread before starting a new watch. To start or stop it yourself, use the row menu in
+the **Linked pull requests** panel.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.

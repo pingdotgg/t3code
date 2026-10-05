@@ -116,6 +116,14 @@ resumes a run, queues behind active work, or steers when the adapter supports it
 retain the provider's live response path. Do not infer that a request has disappeared merely because
 it is outside the recent history window.
 
+Native `/goal` state belongs to the provider and is mirrored on the provider thread. Codex starts
+the next goal turn on its own milliseconds after the last one completes, so the
+[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) keeps the run open
+and adds that turn to it. One run can therefore own several native turns. `/goal` commands that
+start no Codex turn settle on a provider turn without a native ref, which native rollback must
+not count. Claude's SDK mode emits no goal events; its adapter reads goal state from the
+synthetic command output and Stop hook feedback in the transcript.
+
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
 therefore rejects revert before touching files. Native permission and question option IDs must

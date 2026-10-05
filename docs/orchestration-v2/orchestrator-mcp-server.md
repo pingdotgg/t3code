@@ -279,13 +279,13 @@ the published task result.
 
 ### `task_cancel`
 
-Interrupts the currently active task run through the normal V2 `run.interrupt`
-command and disposes automatic parent delivery. Native background work between
-turns currently has no interruptible run. For a terminal task, it returns the
-existing status and disposes delivery without interrupting later child-thread runs,
-even when `task_status` reports `hasPendingChildRuns: true`. Published task results
-remain available. It accepts an optional cancellation reason. Use
-`t3_thread_interrupt` to stop a later active run.
+Stops the child thread with the internal `thread.stop` command, then stops every
+task the child delegated, and disposes automatic parent delivery. Like a user Stop,
+`thread.stop` interrupts the running turn, holds queued turns, and ends pull request
+watches. A nonterminal task with no interruptible run is rejected. A terminal task
+returns its existing status, and its child thread still stops, including later
+runs and watch wakes. Published task results remain available. It accepts an
+optional cancellation reason.
 
 ### `create_threads`
 
