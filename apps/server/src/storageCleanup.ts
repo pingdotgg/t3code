@@ -35,6 +35,7 @@ import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementSer
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import { managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 
@@ -176,7 +177,15 @@ export const make = Effect.gen(function* () {
     now: number,
   ) {
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
-    if (!(yield* fs.exists(config.worktreesDir))) return;
+    const roots: Array<string> = [];
+    for (const directory of managedWorktreesDirectories(
+      serverSettings.worktreesDirectory,
+      config.worktreesDir,
+      path,
+    )) {
+      if (yield* fs.exists(directory)) roots.push(yield* fs.realPath(directory));
+    }
+    if (roots.length === 0) return;
     const hasDeleteRule = anyWorktreePolicy(serverSettings, (rules) => rules.worktreeOnDelete);
     const deletedRows = hasDeleteRule
       ? yield* sql<{ payload_json: string; workspaceRoot: string }>`
@@ -197,7 +206,6 @@ export const make = Effect.gen(function* () {
         resolveWorktreeCleanup(serverSettings, thread.projectId).worktreeOnDelete,
     );
     const snapshot = yield* readThreads();
-    const root = yield* fs.realPath(config.worktreesDir);
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
@@ -222,7 +230,8 @@ export const make = Effect.gen(function* () {
       )
         continue;
       yield* Effect.gen(function* () {
-        if (!inside(root, worktreePath) || !(yield* fs.exists(worktreePath))) return;
+        if (!roots.some((root) => inside(root, worktreePath)) || !(yield* fs.exists(worktreePath)))
+          return;
         if ((yield* fs.realPath(worktreePath)) !== worktreePath) return;
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.

@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ReviewService from "./ReviewService.ts";
@@ -28,6 +29,7 @@ function makeLayer(input: {
       }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );

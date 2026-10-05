@@ -18,6 +18,8 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { managedWorktreesDirectories } from "../worktreesDirectory.ts";
 
 export class ReviewService extends Context.Service<
   ReviewService,
@@ -38,6 +40,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -67,13 +70,23 @@ export const make = Effect.gen(function* () {
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
   ) {
-    const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
+    const worktreesDirectory = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.worktreesDirectory),
+      Effect.orElseSucceed(() => ""),
+    );
+    const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
-      canonicalizePath(config.worktreesDir),
+      Effect.forEach(
+        managedWorktreesDirectories(worktreesDirectory, config.worktreesDir, path),
+        canonicalizePath,
+      ),
     ]);
 
-    if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+    if (
+      isWithinRoot(candidate, workspaceRoot) ||
+      worktreesRoots.some((root) => isWithinRoot(candidate, root))
+    ) {
       return;
     }
 
