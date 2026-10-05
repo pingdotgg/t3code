@@ -107,7 +107,6 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
   readonly directory: string;
   readonly baseUrl: string;
   readonly serverPassword?: string;
-  readonly serverUsername?: string;
   readonly beforeRequest?: Effect.Effect<void, KiloSessionError>;
 }) {
   const client = createKiloClient({
@@ -120,7 +119,7 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
       ? {}
       : {
           headers: {
-            Authorization: `Basic ${Buffer.from(`${input.serverUsername ?? "kilo"}:${input.serverPassword}`).toString("base64")}`,
+            Authorization: `Basic ${Buffer.from(`kilo:${input.serverPassword}`).toString("base64")}`,
           },
         }),
   });
@@ -180,11 +179,14 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
     run: (signal: AbortSignal) => Promise<{ data?: A }>,
   ) => read(ref).pipe(Effect.andThen(request(operation, run)));
 
-  const reference = (session: { id: string; directory: string }): KiloSessionRef => ({
-    instanceId: input.instanceId,
-    directory: session.directory,
-    sessionId: session.id,
-  });
+  const ownedReference = (operation: string) => (session: unknown) =>
+    isSessionOwner(session) && session.directory === input.directory
+      ? Effect.succeed<KiloSessionRef>({
+          instanceId: input.instanceId,
+          directory: session.directory,
+          sessionId: session.id,
+        })
+      : Effect.fail(new KiloSessionError({ operation, reason: "wrong_owner" }));
 
   const ownerCheck = (ref: KiloSessionRef, signal: AbortSignal) => {
     const owners = new Map<string, boolean>([[ref.sessionId, true]]);
@@ -239,15 +241,7 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
     ) =>
       request("session.create", (signal) =>
         client.session.create(permission === undefined ? {} : { permission }, { signal }),
-      ).pipe(
-        Effect.flatMap((session) =>
-          isSessionOwner(session) && session.directory === input.directory
-            ? Effect.succeed(reference(session))
-            : Effect.fail(
-                new KiloSessionError({ operation: "session.create", reason: "wrong_owner" }),
-              ),
-        ),
-      ),
+      ).pipe(Effect.flatMap(ownedReference("session.create"))),
     read,
     history: (ref: KiloSessionRef) =>
       owned(ref, "session.messages", (signal) =>
@@ -259,21 +253,7 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
           { sessionID: ref.sessionId, ...(messageID === undefined ? {} : { messageID }) },
           { signal },
         ),
-      ).pipe(
-        Effect.flatMap((session) =>
-          isSessionOwner(session) && session.directory === input.directory
-            ? Effect.succeed(reference(session))
-            : Effect.fail(
-                new KiloSessionError({ operation: "session.fork", reason: "wrong_owner" }),
-              ),
-        ),
-      ),
-    // Native revert can modify files. The orchestration adapter must coordinate it with
-    // T3 checkpoints and exclude concurrent writers before exposing this operation.
-    revert: (ref: KiloSessionRef, messageID: string) =>
-      owned(ref, "session.revert", (signal) =>
-        client.session.revert({ sessionID: ref.sessionId, messageID }, { signal }),
-      ),
+      ).pipe(Effect.flatMap(ownedReference("session.fork"))),
     prompt: (
       ref: KiloSessionRef,
       prompt: Omit<
@@ -362,15 +342,7 @@ export const make = Effect.fn("KiloSessionClient.make")(function* (input: {
     abort: (ref: KiloSessionRef) =>
       owned(ref, "session.abort", (signal) =>
         client.session.abort({ sessionID: ref.sessionId }, { signal }),
-      ).pipe(
-        Effect.flatMap((accepted) =>
-          accepted === true
-            ? Effect.void
-            : Effect.fail(
-                new KiloSessionError({ operation: "session.abort", reason: "invalid_response" }),
-              ),
-        ),
-      ),
+      ).pipe(Effect.flatMap(acknowledge("session.abort"))),
     replyPermission: (
       ref: KiloSessionRef,
       requestID: string,

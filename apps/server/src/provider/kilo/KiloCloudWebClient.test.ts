@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Redacted from "effect/Redacted";
 import * as Cloud from "./KiloCloudWebClient.ts";
-import { KiloCloudError } from "./KiloCloudClient.ts";
+import { KiloCloudError } from "./KiloCloudError.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

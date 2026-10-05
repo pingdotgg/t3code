@@ -592,6 +592,7 @@ it.live(
           instanceId: "native-parallel",
           binaryPath: process.env.KILO_BIN,
           profileDirectory: `${directory}/native-profile`,
+          processStateDirectory: `${directory}/native-state`,
           environment: {
             PATH: process.env.PATH,
             HOME: directory,

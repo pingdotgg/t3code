@@ -14,7 +14,6 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
-import * as KiloProcessCleanup from "./KiloProcessCleanup.ts";
 import * as KiloSessionClient from "./KiloSessionClient.ts";
 import * as ServerLedger from "../OpenCodeServerLedger.ts";
 
@@ -93,8 +92,8 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   readonly profileDirectory: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly authContent?: string;
-  /** Stable T3 state directory; process ownership must survive profile removal. */
-  readonly processStateDirectory?: string;
+  /** T3's state directory, where OpenCodeServerLedger records owned processes for the boot reaper. */
+  readonly processStateDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
@@ -105,24 +104,8 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   const fail = (operation: string, detail: string) => (cause: unknown) =>
     new KiloRuntimeError({ operation, detail, cause });
   const profile = path.resolve(input.profileDirectory);
-  const processCleanup =
-    platform === "linux"
-      ? yield* KiloProcessCleanup.make({
-          profile,
-          stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
-        }).pipe(Effect.mapError(fail("cleanup", "Could not prepare Kilo process cleanup.")))
-      : undefined;
-  const ledger = yield* ServerLedger.make({
-    stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
-  });
-  // Await profile handoff before any caller can spawn a replacement. Removed
-  // profiles are also covered by OpenCodeServerLedger.layer's boot reaper,
-  // which shares this stateDir/opencode-servers directory.
-  yield* ledger.reapOrphans;
-  if (input.processStateDirectory) {
-    const legacy = yield* ServerLedger.make({ stateDir: path.join(profile, "t3-processes") });
-    yield* legacy.reapOrphans;
-  }
+  // OpenCodeServerLedger.layer reaps this directory when T3 boots after a crash.
+  const ledger = yield* ServerLedger.make({ stateDir: input.processStateDirectory });
   const authContent = input.authContent ?? (yield* readAuth(profile, input.environment));
   const environment: NodeJS.ProcessEnv = {
     ...input.environment,
@@ -195,7 +178,7 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
         );
         // Forget only after the owned group is stopped, including failed readiness.
         const ledgerScope = yield* Scope.fork(scope);
-        const spawn = spawner
+        const child = yield* spawner
           .spawn(
             ChildProcess.make(command.command, command.args, {
               cwd: directory,
@@ -206,16 +189,6 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
             }),
           )
           .pipe(Effect.mapError(fail("spawn", "Could not start Kilo. Check the binary path.")));
-        const child = yield* (processCleanup ? processCleanup.withStart(spawn) : spawn).pipe(
-          Effect.mapError((cause) =>
-            isRuntimeError(cause)
-              ? cause
-              : fail(
-                  "cleanup",
-                  "Kilo could not start while previous process cleanup is unconfirmed.",
-                )(cause),
-          ),
-        );
         // Only this captured process group is signalled. No process-name matching.
         const signal = Effect.uninterruptible(
           platform === "win32"
@@ -241,39 +214,15 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
                 ),
               ),
         );
-        let verified = false;
-        const cleanup = yield* Effect.cached(
-          (processCleanup
-            ? processCleanup.verify(
-                Number(child.pid),
-                signal.pipe(
-                  // Await/reap our own child as well as observing non-child members.
-                  // This wait stays inside the bounded, interruptible verification.
-                  // The Node spawner reports signal termination as an exitCode
-                  // error after the actual exit event. PID observation still follows.
-                  Effect.andThen(child.exitCode.pipe(Effect.ignore)),
-                ),
-              )
-            : signal
-          ).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                verified = true;
-              }),
-            ),
-            Effect.orDie,
-          ),
-        );
+        const cleanup = yield* Effect.cached(signal);
+        // Registered before recording, so an interrupt while the ledger writes still stops the group.
         yield* Effect.addFinalizer(() => cleanup);
         const forget = yield* ledger.track({
           pid: Number(child.pid),
           port: 0,
           args: ["serve", "--hostname=127.0.0.1", "--port=0"],
         });
-        yield* Scope.addFinalizer(
-          ledgerScope,
-          Effect.suspend(() => (verified ? forget : Effect.void)),
-        );
+        yield* Scope.addFinalizer(ledgerScope, forget);
         const guard = checkAuth.pipe(Effect.onError(() => cleanup));
         // Observe idle or in-flight account replacement as well as request boundaries.
         // Never read credential files once per SSE event.

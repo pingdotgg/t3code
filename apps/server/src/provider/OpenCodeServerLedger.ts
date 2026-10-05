@@ -6,16 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../config.ts";
 import { signalProcessGroup } from "../process/processGroup.ts";
-
-// Boot and provider runtimes create separate ledger instances in one T3 process.
-// Serialize their scans, including the process-group grace period. A second scan
-// must still run afterward to cover entries created since the first scan began.
-const reapers = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
 
 const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.String });
 type ProcessIdentity = typeof ProcessIdentity.Type;
@@ -286,14 +280,12 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         pid: entry.pgid,
         port: entry.port,
       });
-      yield* Effect.gen(function* () {
-        signalGroup(entry.pgid, "SIGTERM");
-        for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
-          yield* Effect.sleep(STOP_POLL_INTERVAL);
-        }
-        // The group never emptied, so its pgid cannot have been reused.
-        if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
-      }).pipe(Effect.uninterruptible);
+      signalGroup(entry.pgid, "SIGTERM");
+      for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
+        yield* Effect.sleep(STOP_POLL_INTERVAL);
+      }
+      // The group never emptied, so its pgid cannot have been reused.
+      if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
     });
 
   const reapEntry = (entryPath: string) =>
@@ -311,35 +303,12 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     );
 
   /** Stops recorded servers whose owning T3 server is gone and drops stale entries. */
-  const reapOnce = Effect.gen(function* () {
+  const reapOrphans = Effect.gen(function* () {
     const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       names.filter((name) => ENTRY_FILE.test(name)),
       (name) => reapEntry(path.join(directory, name)),
       { concurrency: "unbounded", discard: true },
-    );
-  });
-
-  const reapOrphans = Effect.gen(function* () {
-    const resolved = path.resolve(input.stateDir);
-    const key = yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        let entry = reapers.get(key);
-        if (!entry) {
-          entry = { gate: Semaphore.makeUnsafe(1), users: 0 };
-          reapers.set(key, entry);
-        }
-        entry.users++;
-        return entry;
-      }),
-      // Discovery and filesystem cleanup remain interruptible. stopOrphan holds
-      // this permit through its bounded post-signal process-group cleanup.
-      (entry) => entry.gate.withPermit(reapOnce),
-      (entry) =>
-        Effect.sync(() => {
-          if (--entry.users === 0) reapers.delete(key);
-        }),
     );
   });
 

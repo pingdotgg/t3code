@@ -4,7 +4,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { KiloCloudError } from "./KiloCloudClient.ts";
+import { KiloCloudError } from "./KiloCloudError.ts";
 
 const isKiloCloudError = Schema.is(KiloCloudError);
 

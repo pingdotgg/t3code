@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Cloud from "../../provider/kilo/KiloCloudWebClient.ts";
-import { KiloCloudError } from "../../provider/kilo/KiloCloudClient.ts";
+import { KiloCloudError } from "../../provider/kilo/KiloCloudError.ts";
 import * as Journal from "../../provider/kilo/KiloCloudJournal.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as Adapter from "../ProviderAdapter.ts";
@@ -32,6 +32,7 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { openCodePermissionRules } from "./OpenCodeAdapterV2.ts";
 import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
+import { kiloInteraction, kiloPermissionReply, kiloQuestionAnswers } from "./KiloAdapterV2.ts";
 
 export const KILO_CLOUD_PROVIDER = ProviderDriverKind.make("kilo-cloud");
 const capabilities: OrchestrationV2ProviderCapabilities = {
@@ -557,106 +558,37 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         const intent = active;
         const correlation =
           intent?.providerThread.nativeMetadata?.turnCorrelations?.[intent.messageId];
-        if (
-          !intent ||
-          !correlation ||
-          !thread?.appThreadId ||
-          requests.has(RuntimeRequestId.make(key(native.id)))
-        )
-          return;
-        const running = {
-          turn: intent.providerTurn,
-          input: {
-            threadId: thread.appThreadId,
-            runId: correlation.runId,
-            rootNodeId: correlation.nodeId,
-          },
-        };
-        const at = yield* DateTime.now;
         const requestId = RuntimeRequestId.make(key(native.id));
-        const nodeId = ids.derive.approvalNode({ requestId });
-        const question = "questions" in native;
-        const kind = question
-          ? "user_input"
-          : /edit|write|patch/.test(native.permission)
-            ? "file-change"
-            : /read|glob|grep/.test(native.permission)
-              ? "file-read"
-              : "command";
-        const runtime: OrchestrationV2RuntimeRequest = {
-          id: requestId,
-          nodeId,
-          providerTurnId: running.turn.id,
-          nativeRequestRef: nativeRef(native.id),
-          kind,
-          status: "pending",
-          responseCapability: { type: "live", providerSessionId: input.providerSessionId },
-          createdAt: at,
-          resolvedAt: null,
-        };
-        const node: OrchestrationV2ExecutionNode = {
-          id: nodeId,
-          threadId: running.input.threadId,
-          runId: running.input.runId,
-          parentNodeId: running.input.rootNodeId,
-          rootNodeId: running.input.rootNodeId,
-          kind: question ? "user_input_request" : "approval_request",
-          status: "waiting",
-          countsForRun: false,
+        if (!intent || !correlation || !thread?.appThreadId || requests.has(requestId)) return;
+        const interaction = kiloInteraction({
+          native,
+          requestId,
+          nodeId: ids.derive.approvalNode({ requestId }),
+          turnItemId: ids.derive.approvalTurnItem({ requestId }),
+          nativeRef: nativeRef(native.id),
+          threadId: thread.appThreadId,
+          runId: correlation.runId,
+          rootNodeId: correlation.nodeId,
           providerThreadId: thread.id,
-          providerTurnId: running.turn.id,
-          nativeItemRef: nativeRef(native.id),
-          runtimeRequestId: requestId,
-          checkpointScopeId: null,
-          startedAt: at,
-          completedAt: null,
-        };
-        yield* emit({ type: "node.updated", driver, node });
+          providerTurnId: intent.providerTurn.id,
+          providerSessionId: input.providerSessionId,
+          ordinal: ordinal(native.id),
+          at: yield* DateTime.now,
+        });
+        requests.set(requestId, {
+          runtime: interaction.runtime,
+          native,
+          node: interaction.node,
+          item: interaction.turnItem,
+        });
+        yield* emit({ type: "node.updated", driver, node: interaction.node });
         yield* emit({
           type: "runtime_request.updated",
-          driver: driver,
-          threadId: running.input.threadId,
-          runtimeRequest: runtime,
+          driver,
+          threadId: thread.appThreadId,
+          runtimeRequest: interaction.runtime,
         });
-        const base = {
-          id: ids.derive.approvalTurnItem({ requestId }),
-          threadId: running.input.threadId,
-          runId: running.input.runId,
-          nodeId,
-          providerThreadId: thread.id,
-          providerTurnId: running.turn.id,
-          nativeItemRef: nativeRef(native.id),
-          parentItemId: null,
-          ordinal: ordinal(native.id),
-          status: "waiting" as const,
-          startedAt: at,
-          completedAt: null,
-          updatedAt: at,
-          requestId,
-        };
-        const turnItem: OrchestrationV2TurnItem = question
-          ? {
-              ...base,
-              type: "user_input_request",
-              title: "Kilo question",
-              questions: native.questions.map((q, index) => ({
-                id: String(index),
-                header: q.header,
-                question: q.question,
-                options: q.options,
-                multiSelect: q.multiple ?? false,
-                allowCustomAnswer: q.custom ?? true,
-              })),
-            }
-          : {
-              ...base,
-              type: "approval_request",
-              title: native.permission,
-              requestKind: kind === "user_input" ? "command" : kind,
-              prompt: native.patterns.join("\n"),
-            };
-        requests.set(requestId, { runtime, native, node, item: turnItem });
-        yield* emit({ type: "turn_item.updated", driver: driver, turnItem });
+        yield* emit({ type: "turn_item.updated", driver, turnItem: interaction.turnItem });
       });
       const refreshIntent = Effect.gen(function* () {
         if (!active) return;
@@ -1711,16 +1643,11 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 return yield* error("The cloud interaction has already ended.");
               let reply;
               if ("questions" in pending.native) {
-                const answers = pending.native.questions.map((_, index) => {
-                  const value = response.answers?.[String(index)];
-                  return typeof value === "string"
-                    ? [value]
-                    : Array.isArray(value) && value.every((answer) => typeof answer === "string")
-                      ? value
-                      : [];
-                });
-                if (answers.some((answer) => answer.length === 0))
-                  return yield* error("Each cloud question requires an answer.");
+                const answers = kiloQuestionAnswers(
+                  pending.native.questions,
+                  response.answers ?? {},
+                );
+                if (!answers) return yield* error("Each cloud question requires an answer.");
                 reply = options.client.replyQuestion(binding, pending.native.id, answers);
               } else {
                 if (!response.decision)
@@ -1728,12 +1655,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 reply = options.client.replyPermission(
                   binding,
                   pending.native.id,
-                  response.decision === "accept"
-                    ? "once"
-                    : response.decision === "acceptForSession" ||
-                        response.decision === "acceptAlways"
-                      ? "always"
-                      : "reject",
+                  kiloPermissionReply(response.decision),
                 );
               }
               yield* save({

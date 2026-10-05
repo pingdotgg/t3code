@@ -6,7 +6,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { KiloCloudError } from "./KiloCloudClient.ts";
+import { KiloCloudError } from "./KiloCloudError.ts";
 
 // Customer routes used by Kilo's web/mobile clients (Kilo-Org/cloud 78ea0a5e).
 // workspace_* is the control-plane session; ses_* is its conversation; worktree_*

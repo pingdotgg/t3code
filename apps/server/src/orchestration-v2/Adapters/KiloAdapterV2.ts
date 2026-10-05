@@ -183,6 +183,137 @@ const permissions = (policy: Adapter.ProviderAdapterV2RuntimePolicy) => {
   return effective;
 };
 
+type KiloInteraction =
+  | { readonly id: string; readonly permission: string; readonly patterns: ReadonlyArray<string> }
+  | {
+      readonly id: string;
+      readonly questions: ReadonlyArray<{
+        readonly header: string;
+        readonly question: string;
+        readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+        readonly multiple?: boolean | undefined;
+        readonly custom?: boolean | undefined;
+      }>;
+    };
+
+/** The runtime request, node and turn item that present a native Kilo permission or question. */
+export const kiloInteraction = (input: {
+  readonly native: KiloInteraction;
+  readonly requestId: RuntimeRequestId;
+  readonly nodeId: OrchestrationV2ExecutionNode["id"];
+  readonly turnItemId: OrchestrationV2TurnItem["id"];
+  readonly nativeRef: NonNullable<OrchestrationV2ExecutionNode["nativeItemRef"]>;
+  readonly threadId: OrchestrationV2ExecutionNode["threadId"];
+  readonly runId: OrchestrationV2ExecutionNode["runId"];
+  readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly providerSessionId: Adapter.ProviderAdapterV2SessionRuntime["providerSessionId"];
+  readonly ordinal: number;
+  readonly at: DateTime.Utc;
+}) => {
+  const { native, at } = input;
+  const question = "questions" in native;
+  const kind = question
+    ? "user_input"
+    : /edit|write|patch/.test(native.permission)
+      ? "file-change"
+      : /read|glob|grep/.test(native.permission)
+        ? "file-read"
+        : "command";
+  const runtime: OrchestrationV2RuntimeRequest = {
+    id: input.requestId,
+    nodeId: input.nodeId,
+    providerTurnId: input.providerTurnId,
+    nativeRequestRef: input.nativeRef,
+    kind,
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId: input.providerSessionId },
+    createdAt: at,
+    resolvedAt: null,
+  };
+  const node: OrchestrationV2ExecutionNode = {
+    id: input.nodeId,
+    threadId: input.threadId,
+    runId: input.runId,
+    parentNodeId: input.rootNodeId,
+    rootNodeId: input.rootNodeId,
+    kind: question ? "user_input_request" : "approval_request",
+    status: "waiting",
+    countsForRun: false,
+    providerThreadId: input.providerThreadId,
+    providerTurnId: input.providerTurnId,
+    nativeItemRef: input.nativeRef,
+    runtimeRequestId: input.requestId,
+    checkpointScopeId: null,
+    startedAt: at,
+    completedAt: null,
+  };
+  const base = {
+    id: input.turnItemId,
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.nodeId,
+    providerThreadId: input.providerThreadId,
+    providerTurnId: input.providerTurnId,
+    nativeItemRef: input.nativeRef,
+    parentItemId: null,
+    ordinal: input.ordinal,
+    status: "waiting" as const,
+    startedAt: at,
+    completedAt: null,
+    updatedAt: at,
+    requestId: input.requestId,
+  };
+  const turnItem: OrchestrationV2TurnItem = question
+    ? {
+        ...base,
+        type: "user_input_request",
+        title: "Kilo question",
+        questions: native.questions.map((q, index) => ({
+          id: String(index),
+          header: q.header,
+          question: q.question,
+          options: q.options,
+          multiSelect: q.multiple ?? false,
+          allowCustomAnswer: q.custom ?? true,
+        })),
+      }
+    : {
+        ...base,
+        type: "approval_request",
+        title: native.permission,
+        requestKind: kind === "user_input" ? "command" : kind,
+        prompt: native.patterns.join("\n"),
+      };
+  return { runtime, node, turnItem };
+};
+
+/** Native answers in question order, or undefined when any question is unanswered. */
+export const kiloQuestionAnswers = (
+  questions: ReadonlyArray<unknown>,
+  answers: NonNullable<Adapter.ProviderAdapterV2RuntimeRequestResponseInput["answers"]>,
+) => {
+  const native = questions.map((_, index) => {
+    const answer = answers[String(index)];
+    return typeof answer === "string"
+      ? [answer]
+      : Array.isArray(answer) && answer.every((value) => typeof value === "string")
+        ? answer
+        : [];
+  });
+  return native.some((answer) => answer.length === 0) ? undefined : native;
+};
+
+export const kiloPermissionReply = (
+  decision: NonNullable<Adapter.ProviderAdapterV2RuntimeRequestResponseInput["decision"]>,
+) =>
+  decision === "accept"
+    ? ("once" as const)
+    : decision === "acceptForSession" || decision === "acceptAlways"
+      ? ("always" as const)
+      : ("reject" as const);
+
 export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly continuationKey: string;
@@ -831,95 +962,36 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
         native: PermissionRequest | QuestionRequest,
       ) {
         const running = active;
-        if (!running || !thread || requests.has(RuntimeRequestId.make(itemKey(native.id)))) return;
-        const at = yield* DateTime.now;
         const requestId = RuntimeRequestId.make(itemKey(native.id));
-        const nodeId = ids.derive.approvalNode({ requestId });
-        const question = "questions" in native;
-        const kind = question
-          ? "user_input"
-          : /edit|write|patch/.test(native.permission)
-            ? "file-change"
-            : /read|glob|grep/.test(native.permission)
-              ? "file-read"
-              : "command";
-        const runtime: OrchestrationV2RuntimeRequest = {
-          id: requestId,
-          nodeId,
+        if (!running || !thread || requests.has(requestId)) return;
+        const interaction = kiloInteraction({
+          native,
+          requestId,
+          nodeId: ids.derive.approvalNode({ requestId }),
+          turnItemId: ids.derive.approvalTurnItem({ requestId }),
+          nativeRef: nativeRef(native.id),
+          threadId: running.input.threadId,
+          runId: running.input.runId,
+          rootNodeId: running.input.rootNodeId,
+          providerThreadId: thread.id,
           providerTurnId: running.turn.id,
-          nativeRequestRef: nativeRef(native.id),
-          kind,
-          status: "pending",
-          responseCapability: { type: "live", providerSessionId: input.providerSessionId },
-          createdAt: at,
-          resolvedAt: null,
-        };
-        requests.set(requestId, { runtime, native });
-        yield* emit({
-          type: "node.updated",
-          driver: KILO_PROVIDER,
-          node: {
-            id: nodeId,
-            threadId: running.input.threadId,
-            runId: running.input.runId,
-            parentNodeId: running.input.rootNodeId,
-            rootNodeId: running.input.rootNodeId,
-            kind: question ? "user_input_request" : "approval_request",
-            status: "waiting",
-            countsForRun: false,
-            providerThreadId: thread.id,
-            providerTurnId: running.turn.id,
-            nativeItemRef: nativeRef(native.id),
-            runtimeRequestId: requestId,
-            checkpointScopeId: null,
-            startedAt: at,
-            completedAt: null,
-          },
+          providerSessionId: input.providerSessionId,
+          ordinal: ordinal(native.id),
+          at: yield* DateTime.now,
         });
+        requests.set(requestId, { runtime: interaction.runtime, native });
+        yield* emit({ type: "node.updated", driver: KILO_PROVIDER, node: interaction.node });
         yield* emit({
           type: "runtime_request.updated",
           driver: KILO_PROVIDER,
           threadId: running.input.threadId,
-          runtimeRequest: runtime,
+          runtimeRequest: interaction.runtime,
         });
-        const base = {
-          id: ids.derive.approvalTurnItem({ requestId }),
-          threadId: running.input.threadId,
-          runId: running.input.runId,
-          nodeId,
-          providerThreadId: thread.id,
-          providerTurnId: running.turn.id,
-          nativeItemRef: nativeRef(native.id),
-          parentItemId: null,
-          ordinal: ordinal(native.id),
-          status: "waiting" as const,
-          startedAt: at,
-          completedAt: null,
-          updatedAt: at,
-          requestId,
-        };
-        const turnItem: OrchestrationV2TurnItem = question
-          ? {
-              ...base,
-              type: "user_input_request",
-              title: "Kilo question",
-              questions: native.questions.map((q, index) => ({
-                id: String(index),
-                header: q.header,
-                question: q.question,
-                options: q.options,
-                multiSelect: q.multiple ?? false,
-                allowCustomAnswer: q.custom ?? true,
-              })),
-            }
-          : {
-              ...base,
-              type: "approval_request",
-              title: native.permission,
-              requestKind: kind === "user_input" ? "command" : kind,
-              prompt: native.patterns.join("\n"),
-            };
-        yield* emit({ type: "turn_item.updated", driver: KILO_PROVIDER, turnItem });
+        yield* emit({
+          type: "turn_item.updated",
+          driver: KILO_PROVIDER,
+          turnItem: interaction.turnItem,
+        });
       });
       const handle = Effect.fn("KiloAdapterV2.event")(function* (event: Event) {
         const eventSession =
@@ -1311,6 +1383,35 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
           );
           return yield* bind(native, saved.appThreadId, saved);
         });
+      // Native revert changes files, so rewind and fork copy only the conversation before
+      // `next`; T3 owns filesystem rewind. Aliases map original message IDs to the copies.
+      const forkBefore = Effect.fn("KiloAdapterV2.forkBefore")(function* (
+        native: KiloSessionRef,
+        history: Effect.Success<ReturnType<typeof client.history>>,
+        next: string | undefined,
+      ) {
+        const fork = yield* wire(client.fork(native, next));
+        const retained = next
+          ? history.slice(
+              0,
+              history.findIndex((m) => m.info.id === next),
+            )
+          : history;
+        const copied = yield* wire(client.history(fork));
+        if (
+          copied.length !== retained.length ||
+          copied.some((m, i) => m.info.role !== retained[i]?.info.role)
+        )
+          return yield* error("Kilo fork returned an unexpected conversation boundary");
+        const aliases = { ...thread?.nativeMetadata?.messageAliases };
+        for (const [i, entry] of retained.entries()) {
+          const replacement = copied[i]!.info.id;
+          for (const [old, currentId] of Object.entries(aliases))
+            if (currentId === entry.info.id) aliases[old] = replacement;
+          aliases[entry.info.id] = replacement;
+        }
+        return { fork, aliases };
+      });
       const runtime: Adapter.ProviderAdapterV2SessionRuntime = {
         instanceId: options.instanceId,
         driver: KILO_PROVIDER,
@@ -1513,16 +1614,8 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
               // The client rechecks both the session owner and pending request before replying.
               if ("questions" in pending.native) {
                 if (!request.answers) return yield* error("Kilo question requires answers");
-                const answers = pending.native.questions.map((_, index) => {
-                  const answer = request.answers?.[String(index)];
-                  return typeof answer === "string"
-                    ? [answer]
-                    : Array.isArray(answer) && answer.every((value) => typeof value === "string")
-                      ? answer
-                      : [];
-                });
-                if (answers.some((answer) => answer.length === 0))
-                  return yield* error("Each Kilo question requires a text answer");
+                const answers = kiloQuestionAnswers(pending.native.questions, request.answers);
+                if (!answers) return yield* error("Each Kilo question requires a text answer");
                 yield* wire(client.replyQuestion(native, pending.native.id, answers));
               } else {
                 if (!request.decision) return yield* error("Kilo approval requires a decision");
@@ -1530,12 +1623,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
                   client.replyPermission(
                     native,
                     pending.native.id,
-                    request.decision === "accept"
-                      ? "once"
-                      : request.decision === "acceptForSession" ||
-                          request.decision === "acceptAlways"
-                        ? "always"
-                        : "reject",
+                    kiloPermissionReply(request.decision),
                   ),
                 );
               }
@@ -1599,25 +1687,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
               const next = history.slice(targetIndex + 1).find((m) => m.info.role === "user")
                 ?.info.id;
               if (!next) return yield* snapshot();
-              // Native revert changes files. Fork only the conversation; T3 owns filesystem rewind.
-              const fork = yield* wire(client.fork(native, next));
-              const retained = history.slice(
-                0,
-                history.findIndex((m) => m.info.id === next),
-              );
-              const copied = yield* wire(client.history(fork));
-              if (
-                copied.length !== retained.length ||
-                copied.some((m, i) => m.info.role !== retained[i]?.info.role)
-              )
-                return yield* error("Kilo fork returned an unexpected conversation boundary");
-              const aliases = { ...thread?.nativeMetadata?.messageAliases };
-              for (const [i, entry] of retained.entries()) {
-                const replacement = copied[i]!.info.id;
-                for (const [old, currentId] of Object.entries(aliases))
-                  if (currentId === entry.info.id) aliases[old] = replacement;
-                aliases[entry.info.id] = replacement;
-              }
+              const { fork, aliases } = yield* forkBefore(native, history, next);
               if (eventFiber) yield* Fiber.interrupt(eventFiber);
               subscribed = false;
               ref = fork;
@@ -1664,25 +1734,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
               const next = boundary
                 ? history.slice(boundaryIndex + 1).find((m) => m.info.role === "user")?.info.id
                 : undefined;
-              const fork = yield* wire(client.fork(native, next));
-              const retained = next
-                ? history.slice(
-                    0,
-                    history.findIndex((m) => m.info.id === next),
-                  )
-                : history;
-              const copied = yield* wire(client.history(fork));
-              if (
-                copied.length !== retained.length ||
-                copied.some((m, i) => m.info.role !== retained[i]?.info.role)
-              )
-                return yield* error("Kilo fork returned an unexpected conversation boundary");
-              const aliases = { ...thread?.nativeMetadata?.messageAliases };
-              for (const [i, entry] of retained.entries()) {
-                for (const [old, currentId] of Object.entries(aliases))
-                  if (currentId === entry.info.id) aliases[old] = copied[i]!.info.id;
-                aliases[entry.info.id] = copied[i]!.info.id;
-              }
+              const { fork, aliases } = yield* forkBefore(native, history, next);
               if (!thread) return yield* error("Kilo thread is not loaded");
               return {
                 ...thread,

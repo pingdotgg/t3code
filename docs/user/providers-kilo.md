@@ -1,133 +1,63 @@
 # Kilo
 
-Add **Kilo** in Settings > Providers, select the Kilo CLI 7.8.3 binary and an
-account profile, then refresh the provider. Profiles isolate credentials and native
-session storage. Sign in with the official Kilo CLI separately; T3 never signs in
-automatically. Changing credentials retires the old runtime and requires a new
-thread. Saved history remains available.
+T3 Code supports two Kilo providers: **Kilo** runs the Kilo CLI on the machine
+running your environment, and **Kilo Cloud** runs tasks in Kilo's hosted sandboxes.
+Add either one in **Settings > Providers**.
 
-## Local configuration and approvals
+## Local Kilo
 
-Like T3's OpenCode provider, Kilo trusts native runtime configuration, plugins and
-MCP servers. Only open repositories and profiles whose configuration you trust.
-Trusted native configuration and plugins can access this profile's credentials.
-Configured MCP processes or connections can start before a model tool call or
-approval. Supervised and Plan modes govern supported tool calls; they are not an
-OS sandbox and do not isolate native configuration or MCP initialization.
+Install Kilo CLI 7.8.3, then add **Kilo** with its binary path and an account
+profile. Each profile keeps its own credentials and session history. Sign in with
+the official Kilo CLI against that profile; T3 Code never signs in for you. Refresh
+the provider after signing in to load your models and agents.
 
-Kilo 7.8.3 loads legacy `.kilo/mcp.json` and `.kilocode/mcp.json` even when
-`KILO_DISABLE_PROJECT_CONFIG` is enabled. `KILO_PURE` suppresses external plugins,
-not all MCP loading. T3 does not force either flag as a security boundary, rewrite
-configuration, or patch the installed runtime. Explicit native settings remain
-trusted. Background subagents stay disabled. Foreground child agents require Full
-access with the default interaction mode. Plan mode disables them, even with Full
-access, because Kilo does not inherit parent `ask` rules reliably.
+Changing a profile's credentials ends its running sessions. Start a new thread to
+continue with the new account; saved history stays readable.
 
-T3 stops owned processes on normal shutdown. On Linux and macOS, it records their
-process identity in T3's state directory and reaps processes from a dead T3 owner
-on server startup, including when that account profile was removed or moved. Cleanup checks the recorded PID, start time, command and owner;
-it never kills by executable name. Crash recovery on macOS and native Windows
-process cleanup have not been verified in this environment. Older profile-local
-records are recovered only if that original profile is reopened. Deleting or moving
-T3's own state directory can lose cleanup records; T3 never guesses ownership from
-a process name.
+Like [OpenCode](./providers-opencode.md), Kilo trusts its native configuration,
+plugins, and MCP servers. Only open repositories and profiles whose configuration
+you trust. Kilo 7.8.3 also loads `.kilo/mcp.json` and `.kilocode/mcp.json` from the
+project. Configured MCP servers can start before any approval, so
+[permission modes](./permission-modes.md) govern tool calls, not what Kilo loads.
 
-On Linux, normal cleanup snapshots the current process group before signalling.
-T3 waits for each recorded PID/start-time identity to disappear or reach a
-non-executing zombie/dead state before cleanup returns. Its owned child exit is
-reaped through the process spawner. Within one T3 server, a per-profile gate covers cleanup and this
-verification, and is checked before another local process starts; it does not
-prevent concurrent live sessions or lock out another T3 server. Observation errors and timeouts leave a pending
-record and block new starts for that profile. Retry can clear it only after a
-successful exit observation, not merely because time elapsed. Incomplete snapshots
-require a complete fresh scan showing no executing members in the original group.
+Subagents run only with **Full access** in the default interaction mode. Restricted
+modes and Plan mode disable them, because Kilo does not pass approval rules on to
+child agents reliably.
 
-This is not a supervisor or sandbox. Enumeration is not atomic: newly forked or
-escaped descendants, process-group changes and PID reuse between a native signal
-check and delivery are not fully contained. The stronger exit observation is
-Linux-only; macOS and Windows retain their existing cleanup behavior. Persisted
-pending records survive an ordinary T3 restart if the state directory remains
-intact. Failed initial writes only retain uncertainty in memory; power loss,
-corrupted/deleted records and crashes before cleanup starts do not gain a stronger
-guarantee than the existing orphan reaper. T3 does not rewrite native MCP or plugin
-configuration to enforce this lifecycle boundary.
+## Kilo Cloud
 
-| Capability                                 | Local Kilo                                                           | Kilo Cloud                                                                              |
-| ------------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Prompts and follow-up                      | Native streaming, tools and reasoning                                | Full access; history updates, no token-streaming claim                                  |
-| Concurrent sessions                        | Separate processes and account profiles                              | Separate task identities and remote worktrees; runs alongside local sessions            |
-| History and recovery                       | Native history and resume                                            | Durable admission and result recovery; no blind paid resubmission                       |
-| Stop                                       | Native abort and owned-process cleanup                               | Inference interrupt while running; local retrieval cancellation after remote completion |
-| Approvals and questions                    | Native supported tool approvals and questions                        | Handles emitted interactions; cannot enforce restricted policy                          |
-| Rewind, fork, checkpoints, text generation | Integrated with native sessions and T3 checkpoints                   | Not supported                                                                           |
-| Subagents                                  | Foreground Full access and default mode only; restricted/Plan denied | Remote Full access may run them; child history not integrated                           |
-| Clients                                    | Web/desktop/mobile selection, models, status and controls            | Account/repository/model settings and task status; local workspace actions disabled     |
+Add **Kilo Cloud** with a profile directory signed in through the official Kilo
+CLI, a GitHub repository Kilo can access, its branch, and a model. Then turn on
+**Allow paid cloud execution**. Personal accounts are supported.
 
-## Cloud execution and costs
+Prompts and the selected repository go to Kilo. T3 Code never uploads local files
+or uncommitted changes, and each cloud thread works in its own remote worktree.
+Start cloud threads at the project root. Local attachments, terminals, Git
+actions, checkpoints, rewind, forks, and generated titles are unavailable in cloud
+threads.
 
-Add a separate **Kilo Cloud** instance in Settings > Providers. Select a profile
-signed in through the official Kilo login, an accessible GitHub repository, its
-branch and a model. Personal accounts are supported. Enabling paid cloud execution
-allows prompts and that remote repository to be sent to Kilo. T3 never uploads
-local checkout files or uncommitted changes. Each cloud thread has a remote worktree.
-Start cloud threads at the project root. T3 skips local setup scripts and managed
-folders, and rejects local worktree strategies for cloud launches and setup retries.
+Cloud tasks require **Full access**: Kilo Cloud cannot apply restricted permissions
+or Plan mode, so remote shell commands, edits, and subagents can run. Automatic
+commits are disabled. Profiles with inherited setup commands, MCP servers, skills,
+agents, or environment variables are rejected before a task starts.
 
-Cloud requires **Full access**. The deployed runtime does not apply custom agent
-permissions, so T3 rejects restricted and Plan modes before paid admission. Remote
-shell commands, edits and subagents can run. Automatic commits are disabled, but
-this is not a read-only execution policy. Profiles with inherited setup commands,
-MCP, skills, agents or environment variables are rejected before a new cloud task.
-The local trust choice does not relax this cloud restriction.
+### Costs
 
-A cloud thread cannot use local attachments, terminals, Git actions, checkpoints,
-rewind, forks or background text generation. Switching accounts does not transfer
-existing tasks or stop them. Reconnecting uses the saved task identity. Uncertain
-admission is reconciled through paginated customer APIs, never automatically resent.
+Cloud tasks spend Kilo credit on inference and sandbox time. The thread shows task,
+result, sandbox, and billing status separately. A compute estimate can cover a
+sandbox shared across your account, so it is not a per-task invoice. Closing T3 Code
+does not stop a remote task, and **Stop** does not put the sandbox to sleep. T3 Code
+never tops up credit.
 
-Cloud tasks spend Kilo credit for inference and sandbox use. Inference interruption,
-a closed stream, remote completion and sandbox sleep are separate events. Task,
-result, sandbox and compute status are shown separately. Compute estimates can cover
-a shared account sandbox and are not a per-task invoice. Unknown or settling status
-does not mean billing has stopped. T3 does not top up credit or force sandbox sleep.
+### Stop, reconnect, and results
 
-## Results after remote completion
+**Stop** asks Kilo to interrupt a running task and waits for confirmation. Once Kilo
+reports the task complete, T3 Code keeps retrieving its result for up to five
+minutes; **Stop** then cancels only that retrieval. If the result does not arrive in
+time, the turn fails with a result-retrieval error. Reopening the thread's history
+can still retrieve a late result without submitting the task again.
 
-The customer `workspace_` API reports execution status separately from history.
-T3 marks a completed task `awaiting_result` until it retrieves output correlated to
-the original message, account, worktree and native session. A completed, textless
-assistant or terminal tool-only outcome is valid; unrelated replies, unfinished
-tools and outstanding interactions cannot finish the local turn.
-
-Retrieval reads at most four pages per attempt, with a 100-cursor cycle limit,
-backoff up to 30 seconds and a five-minute recovery window. Progress, next attempt
-and deadline survive restart. A confirmed outstanding interaction gives the user
-time to respond and renews that window. Missing output after the window produces a
-specific local result-retrieval failure while preserving remote `completed`.
-Reopening history can retrieve a late result without restarting the failed turn,
-duplicating its messages or submitting a new paid task.
-
-Stop while `awaiting_result` cancels local result retrieval. It does not send a
-remote interrupt or claim the sandbox is sleeping. Stop during running inference
-requests remote interruption and waits for confirmation; billing remains separate.
-
-Local/cloud concurrency and recovery are covered by actual local CLI sessions and
-loopback customer-contract tests. These do not replace live verification of every
-deployed cloud behavior or native platform testing.
-
-If preflight fails before the paid request is attempted, T3 ends that turn locally
-and permits an explicit new turn. Interrupted or older admission records without
-proof of that boundary remain uncertain. A timeout or an incomplete search never
-permits automatic resubmission. Repeatedly unreadable admission candidates pause
-automatic scanning; reopening history retries only reads. A search also stops at
-100 history pages. Reopening cannot bypass that limit; resolving such an operation
-requires provider support, not another submission. Journal failures pause recovery
-in memory if the pause cannot be saved. After storage is repaired or T3 restarts,
-the durable uncertain request still prevents a second paid start. Remote task and
-billing status remain unknown until Kilo confirms the original operation.
-
-If Kilo explicitly rejects a submitted request while local storage is unavailable,
-T3 holds the reservation and keeps that rejection in memory until it can save the
-outcome. Reopen history after repairing storage. If T3 exits before that save, the
-journal cannot prove the rejection and the request remains uncertain. Stop does
-not send a remote interrupt for a known rejected request.
+T3 Code never resends a prompt automatically. If it cannot confirm that Kilo
+accepted a prompt, the thread keeps checking Kilo's history for it instead. When
+that check cannot finish, the thread pauses and explains why; reopening history
+retries the check. Switching accounts does not move or stop existing tasks.
