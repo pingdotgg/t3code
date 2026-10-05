@@ -42,6 +42,11 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedRightPanelToggle.command, "rightPanel.toggle");
 
+    const parsedThreadPanelToggle = yield* decode(KeybindingRule, {
+      key: "mod+shift+b",
+      command: "threadPanel.toggle",
+    });
+    assert.strictEqual(parsedThreadPanelToggle.command, "threadPanel.toggle");
     const parsedRightPanelToggleMaximized = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "rightPanel.toggleMaximized",
@@ -77,6 +82,12 @@ it.effect("parses keybinding rules", () =>
       command: "projectSearch.toggle",
     });
     assert.strictEqual(parsedProjectSearch.command, "projectSearch.toggle");
+
+    const parsedUsageOpen = yield* decode(KeybindingRule, {
+      key: "mod+u",
+      command: "usage.open",
+    });
+    assert.strictEqual(parsedUsageOpen.command, "usage.open");
 
     const parsedThemeEditor = yield* decode(KeybindingRule, {
       key: "mod+alt+shift+t",
@@ -114,6 +125,26 @@ it.effect("parses keybinding rules", () =>
       when: "!terminalFocus",
     });
     assert.strictEqual(parsedThreadSettle.command, "thread.settle");
+
+    const parsedThreadCopyReference = yield* decode(KeybindingRule, {
+      key: "mod+shift+c",
+      command: "thread.copyReference",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedThreadCopyReference.command, "thread.copyReference");
+
+    const parsedPullRequestCopyNumber = yield* decode(KeybindingRule, {
+      key: "mod+shift+k",
+      command: "pullRequest.copyNumber",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedPullRequestCopyNumber.command, "pullRequest.copyNumber");
+
+    const parsedThreadStop = yield* decode(KeybindingRule, {
+      key: "mod+escape",
+      command: "thread.stop",
+    });
+    assert.strictEqual(parsedThreadStop.command, "thread.stop");
   }),
 );
 

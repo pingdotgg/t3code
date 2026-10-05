@@ -1,0 +1,230 @@
+---
+title: Protect a Worker with Access
+description: Put Cloudflare Access in front of a Worker with the access prop — per-Worker policies, shared applications, ctx.access identity at runtime, and a local dev simulation.
+sidebar:
+  order: 20
+---
+
+Cloudflare Access puts a login wall in front of your Worker — covering
+its custom domains, routes, `workers.dev` URL, and version preview
+URLs — and hands your code the authenticated identity at runtime. In
+alchemy this is a property of the Worker: set the `access` prop.
+
+The prop has two forms — a **dedicated application** owned by the
+Worker (`access: { policies }`) for per-Worker rules, and a **shared
+application** (`access: App`) when several Workers sit behind one
+policy set. Each has its own section below.
+
+## Dedicated application (per-Worker policies)
+
+The simplest form declares the policies right on the Worker. Alchemy
+creates a dedicated Access application for it (Cloudflare attaches
+policies to *applications*, so per-Worker policies mean a per-Worker
+application — created, updated, and deleted with the Worker, and
+namespaced under it as `Api/Access`):
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Api",
+  {
+    main: import.meta.url,
+    access: {
+      policies: [
+        { decision: "allow", include: [{ emailDomain: "example.com" }] },
+      ],
+    },
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("team only");
+      }),
+    };
+  }),
+);
+```
+
+Unauthenticated requests are redirected to your team's Access login
+page before they ever reach the Worker. Anyone with a verified
+`@example.com` email gets through.
+
+## Read who's calling
+
+Once a request passes Access, the identity is available from
+`ctx.access` — one yield away via `Cloudflare.Access.Context`:
+
+```typescript
+fetch: Effect.gen(function* () {
+  const access = yield* Cloudflare.Access.Context;
+  if (access === undefined) {
+    return HttpServerResponse.text("Access required", { status: 403 });
+  }
+  const identity = yield* access.getIdentity();
+  return yield* HttpServerResponse.json({
+    aud: access.aud,
+    email: identity?.email,
+    groups: identity?.groups,
+  });
+}),
+```
+
+`access` is `undefined` when the request did not come through
+Cloudflare Access (for example a route you deliberately left open).
+`getIdentity()` resolves the user's email, name, groups, identity
+provider, device posture, and service-token fields.
+
+## Test locally
+
+In production, `ctx.access` is populated by Cloudflare's edge after a
+request passes the Access login wall. Under `alchemy dev` your Worker
+runs in local workerd — there is no edge and no login — so `ctx.access`
+would always be `undefined` and the authenticated branch of your
+handler could never run locally.
+
+`dev.access` stubs that state: when set, every local request behaves
+as if this one user had logged in — `ctx.access` carries the given
+`aud` and `getIdentity()` resolves the given identity:
+
+```typescript
+export default Cloudflare.Worker(
+  "Api",
+  {
+    main: import.meta.url,
+    access: {
+      policies: [
+        { decision: "allow", include: [{ emailDomain: "example.com" }] },
+      ],
+    },
+    dev: {
+      access: {
+        aud: "dev",
+        identity: { email: "dev@example.com" },
+      },
+    },
+  },
+  /* ... */
+);
+```
+
+Remove the `dev.access` block to simulate unauthenticated requests
+(`Cloudflare.Access.Context` yields `undefined`), so both branches of
+your handler are exercisable without deploying. Changing the block
+restarts the dev server with the new identity. It is inert on deploy:
+the deployed Worker always gets the real edge-populated `ctx.access`,
+never the stub.
+
+## Writing policy rules
+
+Rules use Cloudflare's own shapes, with a scalar shorthand for the
+single-parameter kinds — both spellings are equivalent:
+
+```typescript
+policies: [
+  {
+    decision: "allow",
+    include: [
+      { emailDomain: "example.com" },   // { emailDomain: { domain: "example.com" } }
+      { email: "sam@partner.com" },     // { email: { email: "sam@partner.com" } }
+    ],
+    exclude: [{ email: "intern@example.com" }],
+    require: [{ geo: "US" }],           // { geo: { countryCode: "US" } }
+    sessionDuration: "12h",
+  },
+]
+```
+
+`include` rules combine with OR, `require` with AND, `exclude` with
+NOT. Parameter-less kinds collapse to bare strings (`"everyone"`,
+`"certificate"`, `"anyValidServiceToken"`); multi-parameter kinds
+(`gsuite`, `okta`, `saml`, `oidc`, `azureAD`, `githubOrganization`,
+...) keep Cloudflare's wire shape, so anything in the
+[Access policy docs](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+pastes in directly.
+
+## Shared application (one policy set, many Workers)
+
+When several Workers should sit behind the same policy set, declare
+the application once and pass it to each Worker directly:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const TeamOnly = Cloudflare.Access.Application("TeamOnly", {
+  type: "self_hosted",
+  policies: [
+    { decision: "allow", include: [{ emailDomain: "example.com" }] },
+  ],
+});
+```
+
+```typescript
+import { TeamOnly } from "./stack.ts";
+
+export default Cloudflare.Worker(
+  "Api",
+  {
+    main: import.meta.url,
+    access: TeamOnly,
+  },
+  /* ... */
+);
+```
+
+Each enrolled Worker contributes its destinations to the application
+through the engine's binding contract, so the application always
+converges on exactly the set of currently-enrolled Workers — removing
+the `access` prop (or the Worker itself) un-enrolls it on the next
+deploy. Keep in mind Access policies are **application-wide**: every
+Worker enrolled in `TeamOnly` is gated by the same policy set. For
+per-Worker rules, use the dedicated `{ policies }` form above.
+
+On the dedicated form, set `previews: false` to protect production
+traffic only, leaving version preview URLs open.
+
+## Protect every Worker on the account
+
+An account-level application covers all current **and future**
+Workers. Hostname policies beat Worker policies beat account policies,
+so an individual Worker can still be opened up (or locked down
+tighter) with its own application:
+
+```typescript
+yield* Cloudflare.Access.Application("ProtectAllWorkers", {
+  type: "self_hosted",
+  destinations: [
+    Cloudflare.Access.AllWorkers,
+    Cloudflare.Access.AllWorkerPreviews,
+  ],
+  policies: [
+    { decision: "allow", include: [{ emailDomain: "example.com" }] },
+  ],
+});
+```
+
+## Websites too
+
+`access` is part of the shared Worker props, so every
+`Cloudflare.Website.*` framework accepts it unchanged:
+
+```typescript
+const app = yield* Cloudflare.Website.Astro("Docs", {
+  access: {
+    policies: [
+      { decision: "allow", include: [{ emailDomain: "example.com" }] },
+    ],
+  },
+});
+```
+
+## See also
+
+- [Application API reference](/providers/cloudflare/access/application)
+- [Policy API reference](/providers/cloudflare/access/policy)
+- [Worker API reference](/providers/cloudflare/workers/worker)
+- [Secrets & env](/cloudflare/security/secrets-env) — for service-to-service
+  auth without a human login, pair Access service tokens with policies
+  using `serviceToken` / `"anyValidServiceToken"` rules.

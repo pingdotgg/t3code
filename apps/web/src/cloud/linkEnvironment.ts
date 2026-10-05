@@ -16,8 +16,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import {
-  type RelayClientDeviceRecord,
-  type RelayClientEnvironmentRecord,
   type RelayEnvironmentLinkResponse,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
@@ -26,10 +24,6 @@ import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay, relayProtectedErrorMessage } from "@t3tools/client-runtime/relay";
 
-import {
-  readPrimaryEnvironmentDescriptor,
-  readPrimaryEnvironmentTarget,
-} from "../environments/primary";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {
@@ -37,14 +31,6 @@ import {
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
 } from "./relayClientInstallDialog";
-
-export function normalizeRelayBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.replace(/\/+$/g, "");
-}
 
 function relayUrl(): string | null {
   return resolveCloudPublicConfig().relayUrl;
@@ -64,9 +50,9 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
 
 function ensureRelayClientAvailable(
   environmentId: EnvironmentId,
-): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry> {
+): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry.EnvironmentRegistry> {
   return Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const status = yield* registry
       .run(environmentId, request(WS_METHODS.cloudGetRelayClientStatus, {}))
       .pipe(Effect.mapError(relayClientRpcError("Could not check relay client availability.")));
@@ -199,93 +185,6 @@ export interface CloudLinkTarget {
 
 export type CloudLinkState = EnvironmentCloudLinkStateResult;
 
-export function collectCloudLinkTargets(input: {
-  readonly primary: CloudLinkTarget | null;
-  readonly saved: ReadonlyArray<CloudLinkTarget>;
-}): ReadonlyArray<CloudLinkTarget> {
-  const byId = new Map<string, CloudLinkTarget>();
-  if (input.primary) {
-    byId.set(input.primary.environmentId, input.primary);
-  }
-  for (const environment of input.saved) {
-    if (!byId.has(environment.environmentId)) {
-      byId.set(environment.environmentId, environment);
-    }
-  }
-  return [...byId.values()];
-}
-
-export function readPrimaryCloudLinkTarget(): CloudLinkTarget | null {
-  const descriptor = readPrimaryEnvironmentDescriptor();
-  const target = readPrimaryEnvironmentTarget();
-  if (!descriptor || !target) {
-    return null;
-  }
-  return {
-    environmentId: descriptor.environmentId,
-    label: descriptor.label,
-    httpBaseUrl: target.target.httpBaseUrl,
-    wsBaseUrl: target.target.wsBaseUrl,
-  };
-}
-
-export function listManagedCloudEnvironments(input: {
-  readonly clerkToken: string;
-}): Effect.Effect<
-  ReadonlyArray<RelayClientEnvironmentRecord>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const configuredRelayUrl = relayUrl();
-    if (!configuredRelayUrl) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
-      });
-    }
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    return yield* relayClient
-      .listEnvironments({
-        clerkToken: input.clerkToken,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new CloudEnvironmentLinkError({
-              message: "Could not list relay-managed environments.",
-              cause,
-            }),
-        ),
-      );
-  });
-}
-
-export function listCloudDevices(input: {
-  readonly clerkToken: string;
-}): Effect.Effect<
-  ReadonlyArray<RelayClientDeviceRecord>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    if (!relayUrl()) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
-      });
-    }
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    return yield* relayClient.listDevices({ clerkToken: input.clerkToken }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new CloudEnvironmentLinkError({
-            message: "Could not list cloud devices.",
-            cause,
-          }),
-      ),
-    );
-  });
-}
-
 export function readPrimaryCloudLinkState(input: {
   readonly target: CloudLinkTarget;
 }): Effect.Effect<CloudLinkState | null, CloudEnvironmentLinkError, HttpClient.HttpClient> {
@@ -361,7 +260,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
-  EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
+  EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const configuredRelayUrl = relayUrl();

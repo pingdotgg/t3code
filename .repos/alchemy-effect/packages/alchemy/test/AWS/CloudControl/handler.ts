@@ -41,7 +41,7 @@ export class CloudControlTestFunction extends Lambda.Function<Lambda.Function>()
 export default CloudControlTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The runtime lifecycle routes poll async Cloud Control operations.
     timeout: Duration.seconds(120),
   },

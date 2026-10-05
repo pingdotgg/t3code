@@ -22,7 +22,7 @@ const ATTACHMENT_ID_PATTERN = new RegExp(
 );
 
 export const PENDING_ATTACHMENT_THREAD_SEGMENT = "pending";
-export const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PARTIAL_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
 export function toSafeThreadAttachmentSegment(threadId: string): string | null {
@@ -86,6 +86,20 @@ export function createAttachmentId(threadId: string, extension?: string): string
     return null;
   }
   return `${threadSegment}-${NodeCrypto.randomUUID()}${attachmentIdExtensionSuffix(extension)}`;
+}
+
+export function createDeterministicAttachmentId(
+  threadId: string,
+  stableKey: string,
+): string | null {
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+  if (!threadSegment) return null;
+  const hash = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([threadId, stableKey]))
+    .digest("hex")
+    .slice(0, 32);
+  const uuid = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
+  return `${threadSegment}-${uuid}`;
 }
 
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
@@ -259,7 +273,7 @@ export function sweepStalePendingAttachments(input: {
   return { deleted };
 }
 
-export function parseAttachmentIdFromRelativePath(relativePath: string): string | null {
+function parseAttachmentIdFromRelativePath(relativePath: string): string | null {
   const normalized = normalizeAttachmentRelativePath(relativePath);
   if (!normalized || normalized.includes("/")) {
     return null;

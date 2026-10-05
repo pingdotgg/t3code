@@ -1,3 +1,4 @@
+import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import type {
   ProjectScript,
   ResolvedKeybindingsConfig,
@@ -7,8 +8,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon, WrenchIcon } from "lucide-react";
+import React, { useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -28,18 +29,32 @@ import {
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
+  MenuItemLabel,
   MenuPopup,
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
+  MenuSub,
+  MenuSubTrigger,
+  MenuSubPopup,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { cn } from "~/lib/utils";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
 interface ProjectScriptsControlProps {
+  displayMode?: "toolbar" | "panel";
+  presentation?: "toolbar" | "menu";
+  onRequestMenuClose?: () => void;
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
@@ -55,6 +70,9 @@ interface ProjectScriptsControlProps {
 }
 
 export default function ProjectScriptsControl({
+  displayMode = "toolbar",
+  presentation = "toolbar",
+  onRequestMenuClose,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
   keybindings,
@@ -64,10 +82,17 @@ export default function ProjectScriptsControl({
   onUpdateScript,
   onDeleteScript,
 }: ProjectScriptsControlProps) {
+  const isPanel = displayMode === "panel";
+  const ActionGroup = isPanel ? "div" : Group;
+  const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
+    presentation,
     scripts: false,
     imports: false,
   });
+  if (actionsMenuOpen.presentation !== presentation) {
+    setActionsMenuOpen({ presentation, scripts: false, imports: false });
+  }
   const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
 
   const primaryScript = useMemo(() => {
@@ -89,15 +114,14 @@ export default function ProjectScriptsControl({
       ),
     [fileScripts, scripts],
   );
-  const dropdownItemClassName =
-    "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
 
   const openAddDialog = () => {
     setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT });
   };
 
   const openEditDialog = (script: ProjectScript) => {
-    setActionsMenuOpen({ scripts: false, imports: false });
+    onRequestMenuClose?.();
+    setActionsMenuOpen({ presentation, scripts: false, imports: false });
     setEditorRequest(editorRequestForScript(script, keybindings));
   };
 
@@ -113,6 +137,7 @@ export default function ProjectScriptsControl({
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -137,13 +162,13 @@ export default function ProjectScriptsControl({
         <MenuGroupLabel>From t3.json</MenuGroupLabel>
         {importableScripts.map((fileScript) => (
           <MenuItem
+            density={presentation === "menu" ? "touch" : "default"}
             key={`${fileScript.name} ${fileScript.command}`}
-            className={dropdownItemClassName}
             onClick={() => void importFileScript(fileScript)}
           >
             <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
-            <span className="truncate">{fileScript.name}</span>
-            <MenuShortcut className="ms-auto">
+            <MenuItemLabel>{fileScript.name}</MenuItemLabel>
+            <MenuShortcut>
               <DownloadIcon className="size-3.5" aria-label="Import" />
             </MenuShortcut>
           </MenuItem>
@@ -152,17 +177,124 @@ export default function ProjectScriptsControl({
     </>
   );
 
+  const scriptItems = (
+    <>
+      {scripts.map((script) => {
+        const shortcutLabel = shortcutLabelForCommand(
+          keybindings,
+          commandForProjectScript(script.id),
+        );
+        return (
+          <MenuItem
+            density={presentation === "menu" ? "touch" : "default"}
+            key={script.id}
+            className="group"
+            onClick={() => onRunScript(script)}
+          >
+            <ScriptIcon icon={script.icon} className="size-4" />
+            <MenuItemLabel>
+              {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+            </MenuItemLabel>
+            <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
+              {shortcutLabel &&
+                (presentation === "menu" ? (
+                  <MenuShortcut className="ms-0 mr-7">{shortcutLabel}</MenuShortcut>
+                ) : (
+                  // The shortcut yields its slot to the edit button on hover.
+                  <span className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
+                    <MenuShortcut className="ms-0">{shortcutLabel}</MenuShortcut>
+                  </span>
+                ))}
+              <span
+                className={`absolute right-0 top-1/2 flex -translate-y-1/2 ${presentation === "menu" ? "" : "opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"}`}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-6"
+                  aria-label={`Edit ${script.name}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openEditDialog(script);
+                  }}
+                >
+                  <SettingsIcon className="size-3.5" />
+                </Button>
+              </span>
+            </span>
+          </MenuItem>
+        );
+      })}
+      {importMenuItems}
+      <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
+        <PlusIcon className="size-4" />
+        <MenuItemLabel>{isPanel ? "Add project script" : "Add action"}</MenuItemLabel>
+      </MenuItem>
+    </>
+  );
+
   return (
     <>
-      {primaryScript ? (
-        <Group aria-label="Project scripts">
+      {presentation === "menu" ? (
+        <>
+          {primaryScript && (
+            <MenuItem
+              density={presentation === "menu" ? "touch" : "default"}
+              onClick={() => onRunScript(primaryScript)}
+            >
+              <ScriptIcon icon={primaryScript.icon} className="size-4" />
+              <MenuItemLabel>Run {primaryScript.name}</MenuItemLabel>
+              <MenuShortcut>
+                {shortcutLabelForCommand(keybindings, commandForProjectScript(primaryScript.id))}
+              </MenuShortcut>
+            </MenuItem>
+          )}
+          {primaryScript || importableScripts.length > 0 ? (
+            <MenuSub
+              open={actionsMenuOpen.scripts}
+              onOpenChange={(open) =>
+                setActionsMenuOpen({ presentation, scripts: open, imports: false })
+              }
+            >
+              <MenuSubTrigger density="touch">
+                <ScriptIcon icon="play" className="size-4" />
+                <MenuItemLabel>Project actions</MenuItemLabel>
+              </MenuSubTrigger>
+              <MenuSubPopup>{scriptItems}</MenuSubPopup>
+            </MenuSub>
+          ) : (
+            <MenuItem
+              density={presentation === "menu" ? "touch" : "default"}
+              onClick={openAddDialog}
+            >
+              <PlusIcon className="size-4" />
+              <MenuItemLabel>Add project action…</MenuItemLabel>
+            </MenuItem>
+          )}
+        </>
+      ) : primaryScript ? (
+        <ActionGroup
+          role="group"
+          aria-label="Project scripts"
+          {...(isPanel
+            ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
+            : {})}
+        >
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button
+                <ThreadDetailsControl
                   size="xs"
-                  variant="outline"
-                  className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="primary"
+                  panel={isPanel}
+                  className={isPanel ? undefined : "w-7 sm:w-6 @3xl/header-actions:w-auto!"}
                   aria-label={`Run ${primaryScript.name}`}
                   // The tooltip wrapper replaces data-slot="button", so themed
                   // toolbar styling needs its own hook.
@@ -171,106 +303,140 @@ export default function ProjectScriptsControl({
                 />
               }
             >
-              <ScriptIcon icon={primaryScript.icon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              <ScriptIcon
+                icon={primaryScript.icon}
+                {...(isPanel ? { className: THREAD_DETAILS_PANEL_ICON_CLASS } : {})}
+              />
+              <span
+                className={cn(
+                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+                  isPanel && "not-sr-only ml-0 truncate",
+                )}
+              >
                 {primaryScript.name}
               </span>
             </TooltipTrigger>
             <TooltipPopup side="top">Run {primaryScript.name}</TooltipPopup>
           </Tooltip>
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          {isPanel ? (
+            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+          ) : (
+            <GroupSeparator className="hidden @3xl/header-actions:block" />
+          )}
           <Menu
-            highlightItemOnHover={false}
             open={actionsMenuOpen.scripts}
-            onOpenChange={(open) => setActionsMenuOpen({ scripts: open, imports: false })}
+            onOpenChange={(open) =>
+              setActionsMenuOpen({ presentation, scripts: open, imports: false })
+            }
           >
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={
+                <ThreadDetailsControl
+                  size={isPanel ? "sm" : "icon-xs"}
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="secondary"
+                  panel={isPanel}
+                  aria-label="Script actions"
+                />
+              }
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon
+                className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+              />
+            </MenuTrigger>
+            <MenuPopup
+              align="end"
+              {...(isPanel ? { anchor: panelAnchorRef } : {})}
+              className={isPanel ? "w-(--anchor-width)" : undefined}
+            >
+              {scriptItems}
+            </MenuPopup>
+          </Menu>
+        </ActionGroup>
+      ) : importableScripts.length > 0 ? (
+        isPanel ? (
+          <div
+            role="group"
+            aria-label="Project actions"
+            className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}
+            ref={panelAnchorRef}
+          >
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="primary"
+              aria-label="Project actions"
+              onClick={() => setActionsMenuOpen({ presentation, scripts: false, imports: true })}
+            >
+              <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+              <span className="min-w-0 truncate">Actions</span>
+            </ThreadDetailsControl>
+            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+            <Menu
+              highlightItemOnHover={false}
+              open={actionsMenuOpen.imports}
+              onOpenChange={(open) =>
+                setActionsMenuOpen({ presentation, scripts: false, imports: open })
+              }
+            >
+              <MenuTrigger
+                render={
+                  <ThreadDetailsControl
+                    size="sm"
+                    variant="ghost"
+                    part="secondary"
+                    aria-label="Choose project action"
+                  />
+                }
+              >
+                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+              </MenuTrigger>
+              <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
+                {importMenuItems}
+                <MenuItem onClick={openAddDialog}>
+                  <PlusIcon className="size-4" />
+                  Add action
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
+        ) : (
+          <Menu
+            highlightItemOnHover={false}
+            open={actionsMenuOpen.imports}
+            onOpenChange={(open) =>
+              setActionsMenuOpen({ presentation, scripts: false, imports: open })
+            }
+          >
+            <MenuTrigger
+              render={<Button size="xs" variant="outline" aria-label="Project actions" />}
+            >
+              <WrenchIcon className="size-3.5" />
+              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                Actions
+              </span>
+              <ChevronDownIcon className="size-3.5" />
             </MenuTrigger>
             <MenuPopup align="end">
-              {scripts.map((script) => {
-                const shortcutLabel = shortcutLabelForCommand(
-                  keybindings,
-                  commandForProjectScript(script.id),
-                );
-                return (
-                  <MenuItem
-                    key={script.id}
-                    className={`group ${dropdownItemClassName}`}
-                    onClick={() => onRunScript(script)}
-                  >
-                    <ScriptIcon icon={script.icon} className="size-4" />
-                    <span className="truncate">
-                      {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
-                    </span>
-                    <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
-                      {shortcutLabel && (
-                        <MenuShortcut className="ms-0 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
-                          {shortcutLabel}
-                        </MenuShortcut>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-0 top-1/2 size-6 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
-                        aria-label={`Edit ${script.name}`}
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openEditDialog(script);
-                        }}
-                      >
-                        <SettingsIcon className="size-3.5" />
-                      </Button>
-                    </span>
-                  </MenuItem>
-                );
-              })}
               {importMenuItems}
-              <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+              <MenuItem onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 Add action
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </Group>
-      ) : importableScripts.length > 0 ? (
-        <Menu
-          highlightItemOnHover={false}
-          open={actionsMenuOpen.imports}
-          onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
-        >
-          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
-            <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
-            </span>
-            <ChevronDownIcon className="size-3.5" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            {importMenuItems}
-            <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
-              <PlusIcon className="size-4" />
-              Add action
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
+        )
       ) : (
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
+              <ThreadDetailsControl
                 size="xs"
-                variant="outline"
-                className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
-                aria-label="Add action"
+                variant={isPanel ? "ghost" : "outline"}
+                part="row"
+                panel={isPanel}
+                className={isPanel ? undefined : "w-7 sm:w-6 @3xl/header-actions:w-auto!"}
+                aria-label={isPanel ? "Add project script" : "Add action"}
                 // The tooltip wrapper replaces data-slot="button", so themed
                 // toolbar styling needs its own hook.
                 data-toolbar-control=""
@@ -279,11 +445,16 @@ export default function ProjectScriptsControl({
             }
           >
             <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
+            <span
+              className={cn(
+                "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+                isPanel && "not-sr-only ml-0.5",
+              )}
+            >
+              {isPanel ? "Add project script" : "Add action"}
             </span>
           </TooltipTrigger>
-          <TooltipPopup side="top">Add action</TooltipPopup>
+          <TooltipPopup side="top">{isPanel ? "Add project script" : "Add action"}</TooltipPopup>
         </Tooltip>
       )}
 

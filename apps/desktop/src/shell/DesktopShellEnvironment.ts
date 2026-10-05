@@ -36,7 +36,7 @@ const desktopShellEnvironmentCommandFields = {
   argumentCount: Schema.Number,
 };
 
-export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandError>()(
+export class DesktopShellEnvironmentCommandError extends Schema.TaggedError<DesktopShellEnvironmentCommandError>()(
   "DesktopShellEnvironmentCommandError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -48,7 +48,7 @@ export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandTimeoutError>()(
+export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedError<DesktopShellEnvironmentCommandTimeoutError>()(
   "DesktopShellEnvironmentCommandTimeoutError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -122,34 +122,13 @@ const linuxRuntimeDirCandidates = (
   return candidates.filter((candidate) => candidate.length > 0);
 };
 
-function resolveDefaultLinuxDbusSessionBusPath(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly uid: number | undefined;
-  readonly exists?: (path: string) => boolean;
-}): string | null {
-  for (const runtimeDir of linuxRuntimeDirCandidates(input.env, input.uid)) {
-    const busPath = `${runtimeDir}/bus`;
-    if (input.exists === undefined || input.exists(busPath)) {
-      return busPath;
-    }
-  }
-
-  return null;
-}
-
-export function resolveDefaultLinuxDbusSessionBusAddress(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly exists: (path: string) => boolean;
-  readonly uid: number | undefined;
-}): string | null {
-  const busPath = resolveDefaultLinuxDbusSessionBusPath(input);
-  return busPath !== null && input.exists(busPath) ? `unix:path=${busPath}` : null;
-}
-
 const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   const normalized = entry.trim().replace(/^"+|"+$/g, "");
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 };
+
+const sanitizePathEntry = (entry: string, platform: NodeJS.Platform) =>
+  platform === "win32" ? entry.replaceAll('"', "") : entry;
 
 const mergePaths = (
   platform: NodeJS.Platform,
@@ -163,14 +142,14 @@ const mergePaths = (
     if (Option.isNone(value)) continue;
 
     for (const entry of value.value.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const key = pathComparisonKey(trimmed, platform);
+      const key = pathComparisonKey(sanitized, platform);
       if (key.length === 0 || seen.has(key)) continue;
 
       seen.add(key);
-      entries.push(trimmed);
+      entries.push(sanitized);
     }
   }
 
@@ -530,6 +509,7 @@ const installShellEnvironment = (
   return Effect.void;
 };
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

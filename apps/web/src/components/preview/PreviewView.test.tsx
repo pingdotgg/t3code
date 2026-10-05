@@ -1,11 +1,13 @@
 import {
+  BUILT_IN_BROWSER_PROFILES,
+  DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, Profiler } from "react";
+import { act, createElement, Profiler } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -25,17 +27,28 @@ const mocks = vi.hoisted(() => ({
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   pickElement: vi.fn(),
-  previewAnnotationScreenshotFile: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
+  serverEpoch: null as string | null,
+  recordingTabIds: new Set<string>(),
+  recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
 }));
 
 const EMPTY_HISTORY: never[] = [];
+
+const STUB_BROWSER_DEFAULTS = {
+  viewport: FILL_PREVIEW_VIEWPORT,
+  zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+  appearance: DEFAULT_PREVIEW_APPEARANCE,
+  autoShowFloatingPreview: true,
+  profiles: BUILT_IN_BROWSER_PROFILES,
+  profileId: DEFAULT_BROWSER_PROFILE_ID,
+};
 
 vi.mock("~/browserHistoryStore", () => ({
   recordVisitForThread: mocks.recordVisitForThread,
@@ -45,7 +58,8 @@ vi.mock("~/browserHistoryStore", () => ({
   useThreadRecentHistory: () => EMPTY_HISTORY,
 }));
 
-vi.mock("~/state/session", () => ({
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
@@ -53,19 +67,10 @@ vi.mock("~/state/session", () => ({
 // `useSettings` -> `state/server`, which would drag the whole settings and
 // connection graph into a test that only cares about the browser chrome.
 vi.mock("~/browser/browserDefaults", () => ({
-  useBrowserDefaults: () => ({
-    viewport: FILL_PREVIEW_VIEWPORT,
-    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
-    appearance: DEFAULT_PREVIEW_APPEARANCE,
-    autoShowFloatingPreview: true,
-  }),
-  getBrowserDefaults: () => ({
-    viewport: FILL_PREVIEW_VIEWPORT,
-    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
-    appearance: DEFAULT_PREVIEW_APPEARANCE,
-    autoShowFloatingPreview: true,
-  }),
+  useBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
+  getBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
   browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
+  browserDefaultOpenProfileId: () => DEFAULT_BROWSER_PROFILE_ID,
   browserDefaultTabState: () => ({
     zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
     colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -87,10 +92,6 @@ vi.mock("~/composerDraftStore", () => ({
     }),
 }));
 
-vi.mock("~/lib/previewAnnotation", () => ({
-  previewAnnotationScreenshotFile: mocks.previewAnnotationScreenshotFile,
-}));
-
 vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(),
 }));
@@ -100,6 +101,7 @@ vi.mock("~/previewStateStore", () => ({
   updatePreviewServerSnapshot: vi.fn(),
   useThreadPreviewState: () => ({
     activeTabId: "tab-1",
+    serverEpoch: mocks.serverEpoch,
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
@@ -148,10 +150,11 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
-  findActiveBrowserRecordingRuntimeTabId: vi.fn(() => null),
+  findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
+  isBrowserRecordingStartCancelledError: vi.fn(() => false),
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabIds: () => new Set(),
+  useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -167,7 +170,7 @@ vi.mock("~/previewMiniPlayerStore", () => {
         byThreadKey: mocks.miniPlayerTabId
           ? {
               "environment-1:thread-1": {
-                tabId: mocks.miniPlayerTabId,
+                source: { kind: "browser", tabId: mocks.miniPlayerTabId },
                 position: null,
               },
             }
@@ -181,9 +184,10 @@ vi.mock("~/previewMiniPlayerStore", () => {
     },
   );
   return {
-    selectThreadPreviewMiniPlayer: (
-      byThreadKey: Record<string, { tabId: string; position: null }>,
-    ) => byThreadKey["environment-1:thread-1"] ?? null,
+    browserMiniPlayerSource: (tabId: string) => ({ kind: "browser", tabId }),
+    selectThreadPreviewMiniPlayerTabId: (
+      byThreadKey: Record<string, { source: { tabId: string }; position: null }>,
+    ) => byThreadKey["environment-1:thread-1"]?.source.tabId ?? null,
     usePreviewMiniPlayerStore,
   };
 });
@@ -244,11 +248,14 @@ vi.mock("./PreviewMoreMenu", () => ({
 }));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
-vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
+vi.mock("./AgentBrowserCursor", () => ({
+  AgentBrowserCursor: () => createElement("agent-cursor"),
+}));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
+import { toastManager } from "~/components/ui/toast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
 const TEST_THREAD_REF = {
@@ -336,14 +343,43 @@ describe("PreviewView navigation", () => {
     mocks.openPictureInPicture.mockClear();
     mocks.closePictureInPicture.mockClear();
     mocks.pickElement.mockReset();
-    mocks.previewAnnotationScreenshotFile.mockReset();
     mocks.addPreviewAnnotation.mockClear();
+    vi.mocked(toastManager.add).mockClear();
     mocks.addImage.mockClear();
     mocks.toggleAnnotation = null;
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
     mocks.loading = false;
+    mocks.serverEpoch = null;
+    mocks.recordingTabIds = new Set();
+    mocks.recordingRuntimeTabId = null;
     mocks.recordVisitForThread.mockClear();
+  });
+
+  it("shows the cursor in a replacement browser while the old instance still records", async () => {
+    const document = installTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const container = document.createElement("div");
+    const root = createRoot(container as unknown as Element);
+    const hasCursor = (node: TestNode): boolean =>
+      node.nodeName === "AGENT-CURSOR" || node.childNodes.some(hasCursor);
+    mocks.recordingTabIds.add(TEST_RUNTIME_TAB_ID);
+    mocks.recordingRuntimeTabId = TEST_RUNTIME_TAB_ID;
+    try {
+      await act(() => {
+        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+      });
+      expect(hasCursor(container)).toBe(false);
+      mocks.serverEpoch = "replacement-server";
+      await act(() => {
+        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+      });
+      expect(hasCursor(container)).toBe(true);
+      expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("does not rerender while loading time passes", async () => {
@@ -478,7 +514,10 @@ describe("PreviewView navigation", () => {
     renderToStaticMarkup(<PreviewView {...props} />);
     expect(mocks.pictureInPicturePressed).toBe(false);
     mocks.togglePictureInPicture?.();
-    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, "tab-1");
+    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, {
+      kind: "browser",
+      tabId: "tab-1",
+    });
     expect(mocks.closeRightPanel).toHaveBeenCalledWith(props.threadRef);
 
     mocks.miniPlayerTabId = "tab-1";
@@ -542,9 +581,9 @@ describe("PreviewView navigation", () => {
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
   });
 
-  it("still sends when screenshot attachment conversion fails", async () => {
+  it("warns when main dropped the crop before handing over the pick", async () => {
     const annotation = {
-      id: "annotation-2",
+      id: "annotation-3",
       pageUrl: "https://example.com/dashboard",
       pageTitle: "Dashboard",
       comment: "Tighten this spacing",
@@ -552,17 +591,11 @@ describe("PreviewView navigation", () => {
       regions: [],
       strokes: [],
       styleChanges: [],
-      screenshot: {
-        dataUrl: "data:image/png;base64,c2NyZWVuc2hvdA==",
-        width: 10,
-        height: 10,
-        cropRect: { x: 0, y: 0, width: 10, height: 10 },
-      },
+      screenshot: null,
       createdAt: "2026-07-27T00:00:00.000Z",
     };
     const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    mocks.previewAnnotationScreenshotFile.mockRejectedValue(new Error("conversion failed"));
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "send", screenshotFailed: true });
 
     renderToStaticMarkup(
       <PreviewView
@@ -575,6 +608,47 @@ describe("PreviewView navigation", () => {
     mocks.toggleAnnotation?.();
 
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    // A null screenshot alone looks like a comment-only pick; the flag is what
+    // separates "no crop requested" from "crop lost to a timeout".
+    expect(toastManager.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("still sends annotation text when the picked element's crop is malformed", async () => {
+    const annotation = {
+      id: "annotation-2",
+      pageUrl: "https://example.com/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Tighten this spacing",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: {
+        dataUrl: "data:image/png;base64,%%%",
+        width: 10,
+        height: 10,
+        cropRect: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const onSendAnnotation = vi.fn();
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
+
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={TEST_THREAD_REF}
+        tabId="tab-1"
+        visible
+        onSendAnnotation={onSendAnnotation}
+      />,
+    );
+    mocks.toggleAnnotation?.();
+
+    // The forwarded and stored annotation both drop the screenshot, so the
+    // prompt does not claim a crop that was never attached.
+    const sent = { ...annotation, screenshot: null };
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });

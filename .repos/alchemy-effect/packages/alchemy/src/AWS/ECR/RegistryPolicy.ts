@@ -39,9 +39,8 @@ export interface RegistryPolicy extends Resource<
  * account/region **singleton** used to grant other AWS accounts
  * registry-level permissions (most commonly `ecr:ReplicateImage` when
  * configuring cross-account replication).
- * @resource
- * @section Managing the Registry Policy
- * @example Allow Cross-Account Replication
+ * ### Managing the Registry Policy
+ * **Example:** Allow Cross-Account Replication
  * ```typescript
  * const policy = yield* RegistryPolicy("ReplicationPolicy", {
  *   policy: {
@@ -58,6 +57,8 @@ export interface RegistryPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const RegistryPolicy = Resource<RegistryPolicy>(
   "AWS.ECR.RegistryPolicy",

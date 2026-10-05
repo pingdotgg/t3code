@@ -1,4 +1,5 @@
 import {
+  type DeviceListInput,
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -6,11 +7,15 @@ import {
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type AuthEnvironmentScope,
+  EnvironmentAuthorizationError,
+  RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -21,43 +26,91 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
-  [ORCHESTRATION_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
-  [ORCHESTRATION_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
-  [ORCHESTRATION_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateProvider]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.chatGptReconnectProfile]: AuthOrchestrationOperateScope,
+  [WS_METHODS.chatGptImportProfile]: AuthOrchestrationOperateScope,
+  [WS_METHODS.chatGptHandoffSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.codexAuthCallbackSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthLogout]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerInstallRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateServer]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverCommitDesktopUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverListAcpRegistrySessions]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverImportAcpRegistrySession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverDeleteAcpRegistrySession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverListAcpRegistryProviders]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverSetAcpRegistryProvider]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverDisableAcpRegistryProvider]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverLogoutAcpRegistry]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetUsageSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverRefreshUsageRates]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
+  [WS_METHODS.scheduledTasksList]: AuthOrchestrationReadScope,
+  [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsComment]: AuthOrchestrationOperateScope,
@@ -66,28 +119,43 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsReplyToThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsSetThreadResolution]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsSetReaction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestsSetFilesViewed]: AuthOrchestrationOperateScope,
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSetLabels]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchContents]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsWriteFile]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,
+  [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
+  [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
@@ -123,6 +191,15 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceConfigure]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceTestHost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceList]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceClose]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceShutdown]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
@@ -139,3 +216,24 @@ export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope 
   }
   return requiredScope;
 }
+
+export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
+  new EnvironmentAuthorizationError({
+    message: `The authenticated token is missing required scope: ${requiredScope}.`,
+    requiredScope,
+  });
+
+/** Authorizes every RPC on one connection against that connection's session scopes. */
+export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
+    const requiredScope = requiredScopeForRpcMethod(rpc._tag);
+    return scopes.includes(requiredScope)
+      ? effect
+      : Effect.fail(rpcAuthorizationError(requiredScope));
+  });
+
+/** Retrying can install or restart tools even though ordinary listing is readable. */
+export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironmentScope =>
+  input.retryHostId || input.updateTool
+    ? AuthOrchestrationOperateScope
+    : AuthOrchestrationReadScope;

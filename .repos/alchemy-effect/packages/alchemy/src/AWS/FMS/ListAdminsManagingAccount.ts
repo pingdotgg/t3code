@@ -13,9 +13,8 @@ export interface ListAdminsManagingAccountRequest
  *
  * Returns the administrators who have the calling account within their administrative scope — usable by any member account to see who manages it. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListAdminsManagingAccountHttp)`.
- * @binding
- * @section Administrator Management
- * @example List the Administrators Managing This Account
+ * ### Administrator Management
+ * **Example:** List the Administrators Managing This Account
  * ```typescript
  * // init — account-level binding takes no resource
  * const listAdminsManagingAccount = yield* AWS.FMS.ListAdminsManagingAccount();
@@ -24,6 +23,8 @@ export interface ListAdminsManagingAccountRequest
  * const result = yield* listAdminsManagingAccount();
  * console.log(result.AdminAccounts?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListAdminsManagingAccount extends Binding.Service<
   ListAdminsManagingAccount,

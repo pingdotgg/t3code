@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Lists the groups in the bound instance's identity store, one page per call (`NextToken` paginates); pass `Filters` to narrow by attribute. The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.ListGroupsHttp)`.
- * @binding
- * @section Looking Up Groups
- * @example Enumerate Groups
+ * ### Looking Up Groups
+ * **Example:** Enumerate Groups
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const listGroups = yield* AWS.IdentityCenter.ListGroups(instance);
@@ -21,6 +20,8 @@ import type { Instance } from "./Instance.ts";
  * const { Groups } = yield* listGroups({ MaxResults: 50 });
  * console.log(Groups?.map((group) => group.DisplayName));
  * ```
+ *
+ * @binding
  */
 export interface ListGroups extends Binding.Service<
   ListGroups,

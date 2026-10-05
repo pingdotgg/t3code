@@ -78,17 +78,16 @@ export interface ObservabilityConfiguration extends Resource<
  * `traceConfiguration` creates a new revision under the same name (the ARN
  * and revision attributes change). A configuration can be shared across
  * multiple App Runner services.
- * @resource
- * @section Creating an Observability Configuration
- * @example X-Ray Tracing Configuration
+ * ### Creating an Observability Configuration
+ * **Example:** X-Ray Tracing Configuration
  * ```typescript
  * const observability = yield* AppRunner.ObservabilityConfiguration("Tracing", {
  *   traceConfiguration: { vendor: "AWSXRAY" },
  * });
  * ```
  *
- * @section Using with an App Runner Service
- * @example Attach to a Service
+ * ### Using with an App Runner Service
+ * **Example:** Attach to a Service
  * ```typescript
  * const service = yield* AppRunner.Service("Api", {
  *   imageRepository: {
@@ -103,6 +102,8 @@ export interface ObservabilityConfiguration extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ObservabilityConfiguration = Resource<ObservabilityConfiguration>(
   "AWS.AppRunner.ObservabilityConfiguration",

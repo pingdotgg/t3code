@@ -12,9 +12,8 @@ import type { InvestigationGroup } from "./InvestigationGroup.ts";
  * ops function can audit or report on the Region's investigation setup. The
  * group's ARN is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.AIOps.GetInvestigationGroupHttp)`.
- * @binding
- * @section Reading the Investigation Group
- * @example Inspect the Group's Configuration
+ * ### Reading the Investigation Group
+ * **Example:** Inspect the Group's Configuration
  * ```typescript
  * // init — grants aiops:GetInvestigationGroup on the group
  * const getInvestigationGroup = yield* AWS.AIOps.GetInvestigationGroup(group);
@@ -25,6 +24,8 @@ import type { InvestigationGroup } from "./InvestigationGroup.ts";
  *   `${detail.name} retains investigations for ${detail.retentionInDays} days`,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetInvestigationGroup extends Binding.Service<
   GetInvestigationGroup,

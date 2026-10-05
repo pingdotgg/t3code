@@ -19,8 +19,6 @@ import * as Predicate from "../../Predicate.ts"
 import * as Record from "../../Record.ts"
 import * as Redactable from "../../Redactable.ts"
 import * as Redacted from "../../Redacted.ts"
-import * as Schema from "../../Schema.ts"
-import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type { Mutable } from "../../Types.ts"
 
 /**
@@ -42,7 +40,7 @@ export type TypeId = typeof TypeId
 /**
  * Returns `true` if the provided value is a `Headers` value.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isHeaders = (u: unknown): u is Headers => Predicate.hasProperty(u, TypeId)
@@ -108,49 +106,6 @@ const make = (input: Record.ReadonlyRecord<string, string>): Mutable<Headers> =>
  * @since 4.0.0
  */
 export const Equivalence: Equ.Equivalence<Headers> = Record.makeEquivalence(Equ.strictEqual<string>())
-
-/**
- * Schema interface for `Headers` values encoded as records of string header values.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface HeadersSchema extends Schema.declare<Headers, { readonly [x: string]: string }> {}
-
-/**
- * Schema for `Headers` values encoded as records of string header values.
- *
- * **Details**
- *
- * Decoding normalizes header names through `fromInput`; encoding returns a plain record.
- *
- * @category schemas
- * @since 4.0.0
- */
-export const HeadersSchema: HeadersSchema = Schema.declare(
-  isHeaders,
-  {
-    representation: {
-      id: "effect/http/Headers",
-      payload: null
-    },
-    toCode: () => ({
-      runtime: "Headers.HeadersSchema",
-      Type: "Headers.Headers",
-      importDeclarations: [`import * as Headers from "effect/unstable/http/Headers"`]
-    }),
-    expected: "Headers",
-    toEquivalence: () => Equivalence,
-    toCodec: () =>
-      Schema.link<Headers>()(
-        Schema.Record(Schema.String, Schema.String),
-        SchemaTransformation.transform({
-          decode: (input) => fromInput(input),
-          encode: (headers) => ({ ...headers })
-        })
-      )
-  }
-)
 
 /**
  * Input accepted when constructing headers.
@@ -399,7 +354,7 @@ export const redact: {
         }
       } else {
         for (const name in self) {
-          if (key.test(name)) {
+          if (name.search(key) !== -1) {
             out[name] = Redacted.make(self[name])
           }
         }
@@ -417,13 +372,42 @@ export const redact: {
 )
 
 /**
+ * Checks whether a header name matches one of the redaction patterns.
+ *
+ * **Details**
+ *
+ * String patterns are compared case-insensitively against the header name;
+ * regular expressions are tested against it. Use to avoid the record copy of
+ * `redact` when only a membership check is needed.
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const isRedactedName = (
+  name: string,
+  patterns: ReadonlyArray<string | RegExp>
+): boolean => {
+  for (let i = 0; i < patterns.length; i++) {
+    const pattern = patterns[i]
+    if (typeof pattern === "string") {
+      if (pattern.toLowerCase() === name.toLowerCase()) {
+        return true
+      }
+    } else if (name.search(pattern) !== -1) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
  * Context reference listing header names or patterns that should be redacted when `Headers` are inspected or rendered.
  *
  * **Details**
  *
  * Defaults include `authorization`, `cookie`, `set-cookie`, and `x-api-key`.
  *
- * @category fiber refs
+ * @category services
  * @since 4.0.0
  */
 export const CurrentRedactedNames = Context.Reference<

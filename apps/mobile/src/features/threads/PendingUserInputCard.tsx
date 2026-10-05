@@ -1,4 +1,7 @@
-import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
+import { RequestActionButton } from "./RequestActionButton";
+import { QuestionAttachments } from "./QuestionAttachments";
+import type { RuntimeRequestId } from "@t3tools/contracts";
+import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -15,7 +18,7 @@ import Animated, {
 import { USER_INPUT_TOGGLE_DURATION_MS } from "./pendingUserInputLayout";
 
 import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
 import {
@@ -54,18 +57,20 @@ export interface PendingUserInputCardProps {
   readonly onInputFocusChange?: (focused: boolean) => void;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
   readonly answers: Record<string, string | ReadonlyArray<string>> | null;
-  readonly respondingUserInputId: ApprovalRequestId | null;
+  readonly respondingUserInputId: RuntimeRequestId | null;
   readonly onSelectOption: (
-    requestId: ApprovalRequestId,
-    question: UserInputQuestion,
-    label: string,
+    requestId: RuntimeRequestId,
+    question: ThreadUserInputQuestion,
+    value: string,
   ) => void;
   readonly onChangeCustomAnswer: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     questionId: string,
     customAnswer: string,
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
+  /** Closes an async question without a reply. Hidden for native callback questions. */
+  readonly onDismiss: () => Promise<unknown>;
 }
 
 /**
@@ -87,6 +92,10 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const questionCount = props.pendingUserInput.questions.length;
+  // Message responses start a new run and remain available after the provider exits.
+  const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
+  const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
+  const responseDisabled = !canRespond || isResponding;
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -161,7 +170,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       pointerEvents={props.collapsed ? "auto" : "none"}
       accessibilityElementsHidden={!props.collapsed}
       importantForAccessibility={props.collapsed ? "auto" : "no-hide-descendants"}
-      className="flex-row items-center gap-2 rounded-full border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 py-1.5 pl-4 pr-1.5"
+      className="flex-row items-center gap-2 rounded-full border border-border bg-card-alt py-1.5 pl-4 pr-1.5"
     >
       <Pressable
         accessibilityRole="button"
@@ -171,10 +180,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
+        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           User input needed
         </Text>
-        <Text className="font-sans text-xs text-adaptive-neutral-500-400">
+        <Text className="font-sans text-xs text-foreground-muted">
           {questionCount} question{questionCount === 1 ? "" : "s"}
         </Text>
         <View className="flex-1" />
@@ -216,7 +225,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           : FadeOutDown.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
       layout={CARD_LAYOUT_TRANSITION}
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 p-4"
+      className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
       style={
         EXPANDED_CARD_IS_OVERLAY
           ? [{ maxHeight: props.maxHeight }, cardAnimatedStyle]
@@ -230,14 +239,12 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
+          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
-          <Text className="font-t3-bold text-lg text-adaptive-neutral-950-50">
-            Fill in the pending answers
-          </Text>
+          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-adaptive-neutral-200-a70-white-a8">
+        <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
           <SymbolView
             name="chevron.down"
             size={13}
@@ -255,35 +262,43 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         showsVerticalScrollIndicator
         style={{ flexShrink: 1 }}
       >
+        {!canRespond ? (
+          <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
+            The provider process for this request is no longer available. Interrupt or restart the
+            run to continue.
+          </Text>
+        ) : null}
         {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500">
+              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
                 {question.header}
               </Text>
-              <Text className="font-sans text-base leading-snug text-adaptive-neutral-950-50">
+              <Text className="font-sans text-base leading-snug text-foreground">
                 {question.question}
               </Text>
               <View className="gap-2">
                 {question.options.map((option) => {
-                  const selected = isPendingUserInputOptionSelected(draft, option.label);
+                  const optionValue = option.value ?? option.label.trim();
+                  const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
                   return (
                     <Pressable
-                      key={option.label}
+                      key={optionValue}
+                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                      disabled={responseDisabled}
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected
-                          ? "border-adaptive-blue-300-a50-blue-400-a28 bg-adaptive-blue-50-blue-400-a14"
-                          : "border-adaptive-neutral-200-white-a6 bg-adaptive-white-neutral-950-a70",
+                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
                       )}
                       onPress={() =>
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
-                          option.label,
+                          optionValue,
                         )
                       }
                     >
@@ -291,15 +306,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         <Text
                           className={cn(
                             "font-t3-bold text-sm",
-                            selected
-                              ? "text-adaptive-sky-700-300"
-                              : "text-adaptive-neutral-600-300",
+                            selected ? "text-foreground" : "text-foreground-secondary",
                           )}
                         >
                           {option.label}
                         </Text>
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-adaptive-neutral-500-400">
+                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
                             {description}
                           </Text>
                         ) : null}
@@ -308,32 +321,42 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   );
                 })}
               </View>
-              <TextInput
-                value={draft?.customAnswer ?? ""}
-                onChangeText={(value) =>
-                  props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
-                }
-                onFocus={() => props.onInputFocusChange?.(true)}
-                onBlur={() => props.onInputFocusChange?.(false)}
-                placeholder="Or type a custom answer"
-                className="min-h-[54px] rounded-2xl border border-adaptive-neutral-200-white-a8 bg-adaptive-white-neutral-950-a70 px-3.5 py-3 font-sans text-base text-adaptive-neutral-950-50"
-              />
+              {question.allowCustomAnswer !== false ? (
+                <QuestionAttachments
+                  requestId={props.pendingUserInput.requestId}
+                  question={question}
+                  questions={props.pendingUserInput.questions}
+                  disabled={responseDisabled}
+                  value={draft?.customAnswer ?? ""}
+                  onChangeText={(value) =>
+                    props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
+                  }
+                  onInputFocusChange={props.onInputFocusChange}
+                />
+              ) : null}
             </View>
           );
         })}
       </ScrollView>
-      <Pressable
-        className={cn(
-          "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-adaptive-neutral-200-700-a60",
-        )}
-        disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
-        }
+      <RequestActionButton
+        label="Submit answers"
+        size="large"
+        tone={props.answers ? "primary" : "secondary"}
+        disabled={responseDisabled || props.answers === null}
         onPress={() => void props.onSubmit()}
-      >
-        <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
-      </Pressable>
+      />
+      {props.pendingUserInput.dismissible ? (
+        <Pressable
+          accessibilityRole="button"
+          className="items-center justify-center rounded-2xl px-4 py-2.5 active:opacity-70"
+          disabled={isResponding}
+          onPress={() => void props.onDismiss()}
+        >
+          <Text className="font-t3-bold text-sm text-foreground-muted">
+            Dismiss without answering
+          </Text>
+        </Pressable>
+      ) : null}
     </Animated.View>
   ) : null;
   return (

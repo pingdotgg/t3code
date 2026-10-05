@@ -8,7 +8,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 
-export const OPENCODE_SERVER_IDLE_TTL = "30 seconds";
+const OPENCODE_SERVER_IDLE_TTL = "30 seconds";
 
 interface OpenCodeServerOwnerState {
   server: OpenCodeRuntime.OpenCodeServerProcess | null;
@@ -32,6 +32,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   readonly directory: string;
   readonly serverPassword?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
 }) {
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const ownerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
@@ -106,6 +107,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
                     ? { serverPassword: input.serverPassword }
                     : {}),
                   ...(input.environment ? { environment: input.environment } : {}),
+                  ...(input.verify ? { verify: input.verify } : {}),
                 })
                 .pipe(Effect.provideService(Scope.Scope, serverScope)),
             ),
@@ -176,9 +178,11 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = (input: {
   readonly binaryPath: string;
   readonly directory: string;
   readonly serverPassword?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
 }) => Layer.effect(OpenCodeServerOwner, make(input));

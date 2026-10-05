@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * Lists pending maintenance actions (engine upgrades, OS patches,
  * certificate rotations) across the account's RDS resources. Provide the implementation with
  * `Effect.provide(AWS.RDS.DescribePendingMaintenanceActionsHttp)`.
- * @binding
- * @section Maintenance
- * @example List Pending Maintenance
+ * ### Maintenance
+ * **Example:** List Pending Maintenance
  * ```typescript
  * const describePendingMaintenanceActions =
  *   yield* AWS.RDS.DescribePendingMaintenanceActions();
  *
  * const page = yield* describePendingMaintenanceActions();
  * ```
+ *
+ * @binding
  */
 export interface DescribePendingMaintenanceActions extends Binding.Service<
   DescribePendingMaintenanceActions,

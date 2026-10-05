@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  MessageId,
-  TurnId,
-  type OrchestrationCheckpointSummary,
-  type ReviewDiffPreviewSource,
-} from "@t3tools/contracts";
+import { MessageId, RunId, type ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 
 import {
-  buildReviewListItems,
+  applyReviewDiffMetadata,
   buildReviewParsedDiff,
   buildReviewSectionItems,
   getDefaultReviewSectionId,
@@ -18,9 +14,9 @@ import {
 } from "./reviewModel";
 
 function makeCheckpoint(
-  input: Partial<OrchestrationCheckpointSummary> &
-    Pick<OrchestrationCheckpointSummary, "turnId" | "checkpointTurnCount" | "completedAt">,
-): OrchestrationCheckpointSummary {
+  input: Partial<ThreadCheckpointSummary> &
+    Pick<ThreadCheckpointSummary, "runId" | "checkpointTurnCount" | "completedAt">,
+): ThreadCheckpointSummary {
   return {
     checkpointRef: `refs/t3/checkpoints/thread/${input.checkpointTurnCount}` as any,
     status: "ready",
@@ -52,12 +48,12 @@ describe("buildReviewSectionItems", () => {
   it("keeps one chip per checkpoint and appends git sources", () => {
     const checkpoints = [
       makeCheckpoint({
-        turnId: TurnId.make("turn-1"),
+        runId: RunId.make("run-1"),
         checkpointTurnCount: 1,
         completedAt: "2026-04-01T00:00:00.000Z",
       }),
       makeCheckpoint({
-        turnId: TurnId.make("turn-2"),
+        runId: RunId.make("run-2"),
         checkpointTurnCount: 2,
         completedAt: "2026-04-02T00:00:00.000Z",
       }),
@@ -66,7 +62,7 @@ describe("buildReviewSectionItems", () => {
       {
         id: "working-tree",
         kind: "working-tree",
-        title: "Dirty worktree",
+        title: "Uncommitted",
         baseRef: "HEAD",
         headRef: null,
         diff: "diff --git a/a.ts b/a.ts",
@@ -76,7 +72,7 @@ describe("buildReviewSectionItems", () => {
       {
         id: "branch-range",
         kind: "branch-range",
-        title: "Against main",
+        title: "Changes vs main",
         baseRef: "main",
         headRef: "feature",
         diff: "diff --git a/a.ts b/a.ts",
@@ -85,7 +81,7 @@ describe("buildReviewSectionItems", () => {
       },
     ];
 
-    const loadedTurnId = getReviewSectionIdForCheckpoint(checkpoints[0]);
+    const loadedTurnId = getReviewSectionIdForCheckpoint(checkpoints[0]!);
     const items = buildReviewSectionItems({
       checkpoints,
       gitSections,
@@ -93,7 +89,7 @@ describe("buildReviewSectionItems", () => {
         [loadedTurnId]: "diff --git a/loaded.ts b/loaded.ts",
       },
       loadingTurnIds: {
-        [getReviewSectionIdForCheckpoint(checkpoints[1])]: true,
+        [getReviewSectionIdForCheckpoint(checkpoints[1]!)]: true,
       },
       loadingGitSections: false,
     });
@@ -109,10 +105,28 @@ describe("buildReviewSectionItems", () => {
       isLoading: false,
       diff: expect.stringContaining("loaded.ts"),
     });
-    expect(getDefaultReviewSectionId(items)).toBe("turn:2");
+    expect(getDefaultReviewSectionId(items)).toBe("git:branch-range");
   });
 
-  it("shows dirty worktree while git preview is loading", () => {
+  it("falls back to the first turn without git sections", () => {
+    const items = buildReviewSectionItems({
+      checkpoints: [
+        makeCheckpoint({
+          runId: RunId.make("run-1"),
+          checkpointTurnCount: 1,
+          completedAt: "2026-04-01T00:00:00.000Z",
+        }),
+      ],
+      gitSections: [],
+      turnDiffById: {},
+      loadingTurnIds: {},
+      loadingGitSections: false,
+    });
+
+    expect(getDefaultReviewSectionId(items)).toBe("turn:1");
+  });
+
+  it("holds the Changes place while git preview is loading", () => {
     const items = buildReviewSectionItems({
       checkpoints: [],
       gitSections: [],
@@ -123,19 +137,47 @@ describe("buildReviewSectionItems", () => {
 
     expect(items).toEqual([
       expect.objectContaining({
-        id: "git:working-tree",
-        kind: "working-tree",
-        title: "Dirty worktree",
-        subtitle: "Tracked, staged, and untracked worktree changes",
+        id: "git:branch-range",
+        kind: "branch-range",
+        title: "Changes",
         diff: null,
         isLoading: true,
       }),
     ]);
-    expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
+    expect(getDefaultReviewSectionId(items)).toBe("git:branch-range");
   });
 });
 
 describe("buildReviewParsedDiff", () => {
+  it.each([
+    ["a/example.ts", "a/example.ts"],
+    ["b/example.ts", "b/example.ts"],
+    ["a/before.ts", "b/after.ts"],
+  ])("preserves repository paths from %s to %s", (previousPath, path) => {
+    const parsed = buildReviewParsedDiff(
+      [
+        `diff --git a/${previousPath} b/${path}`,
+        ...(previousPath === path
+          ? []
+          : ["similarity index 50%", `rename from ${previousPath}`, `rename to ${path}`]),
+        `--- a/${previousPath}`,
+        `+++ b/${path}`,
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+      "repository-paths",
+    );
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+    expect(parsed.files[0]).toMatchObject({
+      path,
+      previousPath: previousPath === path ? null : previousPath,
+      additions: 1,
+      deletions: 1,
+    });
+  });
+
   it("builds renderable rows from a unified patch", () => {
     const parsed = buildReviewParsedDiff(
       [
@@ -271,84 +313,35 @@ describe("buildReviewParsedDiff", () => {
       actionLabel: "Load diff",
     });
   });
+});
 
-  it("flattens expanded file rows into virtualized review items", () => {
-    const file = makeRenderableFile({
-      path: "apps/mobile/src/a.ts",
-      rows: [
-        {
-          kind: "hunk",
-          id: "hunk-1",
-          header: "@@ -1,1 +1,2 @@",
-          context: null,
-        },
-        {
-          kind: "line",
-          id: "line-1",
-          change: "add",
-          oldLineNumber: null,
-          newLineNumber: 1,
-          content: "const after = 2;",
-          additionTokenIndex: 0,
-          deletionTokenIndex: null,
-          comparison: null,
-        },
+describe("applyReviewDiffMetadata", () => {
+  it("uses complete counts even when the preview contains only part of one file", () => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/large.txt b/large.txt",
+        "--- a/large.txt",
+        "+++ b/large.txt",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+      "partial",
+    );
+    const result = applyReviewDiffMetadata(parsed, {
+      truncated: true,
+      files: [
+        { path: "large.txt", previousPath: null, additions: 4000, deletions: 3000 },
+        { path: "unseen.txt", previousPath: null, additions: 100, deletions: 20 },
       ],
     });
-
-    const items = buildReviewListItems({
-      files: [file],
-      expandedFileIds: [file.id],
-      revealedLargeFileIds: [],
-    });
-
-    expect(items).toEqual([
-      expect.objectContaining({ kind: "file-header", fileId: file.id, expanded: true }),
-      expect.objectContaining({
-        kind: "hunk",
-        fileId: file.id,
-        file,
-        row: file.rows[0],
-      }),
-      expect.objectContaining({
-        kind: "line",
-        fileId: file.id,
-        file,
-        row: file.rows[1],
-        lineIndex: 0,
-      }),
-    ]);
-  });
-
-  it("keeps large diffs collapsed into a placeholder item until revealed", () => {
-    const file = makeRenderableFile({
-      path: "apps/mobile/src/big.ts",
-      rows: Array.from({ length: 401 }, (_, index) => ({
-        kind: "line" as const,
-        id: `line-${index}`,
-        change: "add" as const,
-        oldLineNumber: null,
-        newLineNumber: index + 1,
-        content: `const line${index} = ${index};`,
-        additionTokenIndex: index,
-        deletionTokenIndex: null,
-        comparison: null,
-      })),
-    });
-
-    const items = buildReviewListItems({
-      files: [file],
-      expandedFileIds: [file.id],
-      revealedLargeFileIds: [],
-    });
-
-    expect(items).toEqual([
-      expect.objectContaining({ kind: "file-header", fileId: file.id, expanded: true }),
-      expect.objectContaining({
-        kind: "file-suppressed",
-        fileId: file.id,
-        actionLabel: "Load diff",
-      }),
-    ]);
+    expect(result.kind).toBe("files");
+    if (result.kind !== "files") return;
+    expect(result.fileCount).toBe(2);
+    expect(result.additions).toBe(4100);
+    expect(result.deletions).toBe(3020);
+    expect(result.files[0]?.additions).toBe(4000);
+    expect(result.notice).toContain("Counts include all changes");
+    expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
   });
 });

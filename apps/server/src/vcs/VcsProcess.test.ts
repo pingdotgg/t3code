@@ -1,10 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   VcsProcessExitError,
@@ -13,6 +21,8 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+const encodeExitError = Schema.encodeEffect(Schema.fromJsonString(VcsProcessExitError));
 
 const run = (input: VcsProcess.VcsProcessInput) =>
   Effect.gen(function* () {
@@ -45,6 +55,227 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect.each([
+    { stderr: "fatal: Unable to create '/private/repo/index.lock': File exists", retryable: true },
+    {
+      stderr: "fatal: Unable to create '/private/repo/index.lock': Permission denied",
+      retryable: false,
+    },
+    { stderr: 'error: open("/private/repo/file"): No such file or directory', retryable: true },
+    {
+      stderr: "fatal: unable to stat '/private/repo/file': No such file or directory",
+      retryable: true,
+    },
+    { stderr: 'error: open("/private/repo/file"): Permission denied', retryable: false },
+    {
+      stderr: "error: '/private/repo/child/' does not have a commit checked out",
+      retryable: false,
+    },
+    { stderr: "fatal: index file corrupt", retryable: false },
+  ])(
+    "classifies Git exit retryability without retaining stderr: $stderr",
+    ({ stderr, retryable }) =>
+      Effect.gen(function* () {
+        const error = yield* captureProcessResult(
+          Effect.succeed({
+            stdout: "",
+            stderr,
+            code: ChildProcessSpawner.ExitCode(128),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+        );
+        assert.instanceOf(error, VcsProcessExitError);
+        expect(error.retryable === true).toBe(retryable);
+        const encoded = yield* encodeExitError(error);
+        expect(encoded).not.toContain("/private/repo");
+      }),
+  );
+
+  it.effect.each(["timeout", "spawn"] as const)(
+    "checkpoint commands do not retry %s failures",
+    (kind) =>
+      Effect.gen(function* () {
+        let attempts = 0;
+        const fields = { command: "git", argumentCount: 2, cwd: "/workspace" };
+        const failure =
+          kind === "timeout"
+            ? new ProcessRunner.ProcessTimeoutError({ ...fields, timeoutMs: 30_000 })
+            : new ProcessRunner.ProcessSpawnError({ ...fields, cause: new Error("spawn failed") });
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.sync(() => {
+                attempts += 1;
+              }).pipe(Effect.andThen(Effect.fail(failure))),
+          }),
+        );
+        const error = yield* service
+          .run({
+            ...baseInput,
+            operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          })
+          .pipe(Effect.flip);
+        expect(attempts).toBe(1);
+        expect(error._tag).toBe(
+          kind === "timeout" ? "VcsProcessTimeoutError" : "VcsProcessSpawnError",
+        );
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "recovers after two lock failures",
+      failures: 2,
+      attempts: 3,
+      transient: true,
+      capture: true,
+      streaming: false,
+    },
+    {
+      name: "bounds persistent lock failures",
+      failures: Infinity,
+      attempts: 3,
+      transient: true,
+      capture: true,
+      streaming: false,
+    },
+    {
+      name: "does not retry unknown exits",
+      failures: Infinity,
+      attempts: 1,
+      transient: false,
+      capture: true,
+      streaming: false,
+    },
+    {
+      name: "leaves other operations unchanged",
+      failures: Infinity,
+      attempts: 1,
+      transient: true,
+      capture: false,
+      streaming: false,
+    },
+    {
+      name: "does not replay stdout callbacks",
+      failures: Infinity,
+      attempts: 1,
+      transient: true,
+      capture: true,
+      streaming: true,
+    },
+  ])(
+    "checkpoint command retry $name",
+    ({ failures, attempts: expectedAttempts, transient, capture, streaming }) =>
+      Effect.gen(function* () {
+        let attempts = 0;
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.sync(() => {
+                attempts += 1;
+                return {
+                  stdout: "",
+                  stderr:
+                    attempts > failures
+                      ? ""
+                      : transient
+                        ? "fatal: Unable to create '/repo/index.lock': File exists"
+                        : "fatal: index file corrupt",
+                  code: ChildProcessSpawner.ExitCode(attempts > failures ? 0 : attempts),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        );
+        const fiber = yield* service
+          .run({
+            ...baseInput,
+            operation: capture ? VcsProcess.CHECKPOINT_CAPTURE_OPERATION : baseInput.operation,
+            ...(streaming ? { onStdoutChunk: () => {} } : {}),
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* TestClock.adjust("150 millis");
+        const result = yield* Fiber.join(fiber);
+        expect(attempts).toBe(expectedAttempts);
+        if (failures === Infinity) {
+          if (Exit.isSuccess(result))
+            return yield* Effect.die("Expected a capture command failure");
+          const error = Cause.findErrorOption(result.cause);
+          if (error._tag === "None" || error.value._tag !== "VcsProcessExitError") {
+            return yield* Effect.die("Expected a Git exit error");
+          }
+          expect(error.value.exitCode).toBe(expectedAttempts);
+        } else {
+          expect(Exit.isSuccess(result)).toBe(true);
+        }
+      }),
+  );
+
+  it.effect("bounds a synthetic burst of GitHub API processes", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const starts = yield* Queue.unbounded<number>();
+      const active = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const total = yield* Ref.make(0);
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: () =>
+              Effect.gen(function* () {
+                const count = yield* Ref.updateAndGet(active, (held) => held + 1);
+                yield* Ref.update(peak, (held) => Math.max(held, count));
+                yield* Ref.update(total, (held) => held + 1);
+                yield* Queue.offer(starts, count);
+                yield* Deferred.await(gate);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }).pipe(Effect.ensuring(Ref.update(active, (count) => count - 1))),
+          }),
+        ),
+      );
+
+      const burst = yield* Effect.all(
+        Array.from({ length: 32 }, (_, index) =>
+          service.run({
+            operation: `synthetic.github.${index}`,
+            command: "gh",
+            args: ["api", "user"],
+            cwd: "/workspace",
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+
+      yield* Effect.all(Array.from({ length: 4 }, () => Queue.take(starts)));
+      yield* Effect.yieldNow;
+      expect(yield* Queue.size(starts)).toBe(0);
+      expect(yield* Ref.get(peak)).toBe(4);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(burst);
+      expect(yield* Ref.get(total)).toBe(32);
+      expect(yield* Ref.get(peak)).toBe(4);
+    }),
+  );
+
   it.effect("collects stdout", () =>
     Effect.gen(function* () {
       const result = yield* run({
@@ -295,6 +526,42 @@ describe("VcsProcess.run", () => {
 
       expect(result.stdoutTruncated).toBe(true);
       expect(result.stdout).not.toContain("[truncated]");
+    }).pipe(provideLive),
+  );
+
+  it.effect("fails with measured byte counts when output must not be truncated", () =>
+    Effect.gen(function* () {
+      const error = yield* run({
+        operation: "test.output-limit",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(2048))"],
+        cwd: yield* HostProcessWorkingDirectory,
+        maxOutputBytes: 128,
+        outputMode: "error",
+      }).pipe(Effect.flip);
+
+      assert(error._tag === "VcsProcessOutputLimitError");
+      expect(error.stream).toBe("stdout");
+      expect(error.maxBytes).toBe(128);
+      expect(error.observedBytes).toBeGreaterThan(error.maxBytes);
+    }).pipe(provideLive),
+  );
+
+  it.effect("streams all stdout bytes beyond the buffered output cap", () =>
+    Effect.gen(function* () {
+      const chunks: Uint8Array[] = [];
+      const result = yield* run({
+        operation: "test.stream-output",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(131072) + '\\0S final\\0')"],
+        cwd: process.cwd(),
+        maxOutputBytes: 8,
+        onStdoutChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(result.stdout).toBe("xxxxxxxx");
+      expect(result.stdoutTruncated).toBe(true);
+      expect(Buffer.concat(chunks).toString()).toBe("x".repeat(131072) + "\0S final\0");
     }).pipe(provideLive),
   );
 

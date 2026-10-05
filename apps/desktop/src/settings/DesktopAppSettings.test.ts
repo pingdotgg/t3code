@@ -91,6 +91,24 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it.effect(
+    "persists disabling and re-enabling local execution without clearing backend settings",
+    () =>
+      withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setWslBackendEnabled(true);
+          yield* settings.setWslDistro("Ubuntu");
+          yield* settings.setServerExposureMode("network-accessible");
+          const before = yield* settings.get;
+          assert.isTrue((yield* settings.setLocalEnvironmentEnabled(false)).changed);
+          assert.deepEqual(yield* settings.load, { ...before, localEnvironmentEnabled: false });
+          assert.isFalse((yield* settings.setLocalEnvironmentEnabled(false)).changed);
+          yield* settings.setLocalEnvironmentEnabled(true);
+          assert.deepEqual(yield* settings.load, before);
+        }),
+      ),
+  );
   it.effect("loads defaults when no settings file exists", () =>
     withSettings(
       Effect.gen(function* () {
@@ -106,6 +124,7 @@ describe("DesktopSettings", () => {
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
         linuxPasswordStore: "auto",
+        localEnvironmentEnabled: true,
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
@@ -135,6 +154,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "gnome-libsecret",
+          localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -242,6 +262,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -298,6 +319,7 @@ describe("DesktopSettings", () => {
 
           assert.deepEqual(yield* settings.load, {
             linuxPasswordStore: "auto",
+            localEnvironmentEnabled: true,
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
@@ -335,6 +357,34 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("saves through a symlinked settings file without replacing the link", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const dotfiles = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-settings-dotfiles-",
+        });
+        const linkedSettingsPath = `${dotfiles}/desktop-settings.json`;
+        yield* fileSystem.writeFileString(linkedSettingsPath, "{}\n");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.symlink(linkedSettingsPath, environment.desktopSettingsPath);
+
+        yield* settings.setServerExposureMode("network-accessible");
+
+        assert.equal(
+          yield* fileSystem.readLink(environment.desktopSettingsPath),
+          linkedSettingsPath,
+        );
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(linkedSettingsPath),
+        );
+        assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
   it.effect("migrates legacy implicit update channels to the runtime default", () =>
     withSettings(
       Effect.gen(function* () {
@@ -346,6 +396,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -374,6 +425,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -401,6 +453,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",

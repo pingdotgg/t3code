@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * with {@link CreateDataRepositoryTask}. A task that already finished
  * surfaces the typed `DataRepositoryTaskEnded`. Provide the implementation
  * with `Effect.provide(AWS.FSx.CancelDataRepositoryTaskHttp)`.
- * @binding
- * @section Data Repository Tasks
- * @example Cancel a runaway export
+ * ### Data Repository Tasks
+ * **Example:** Cancel a runaway export
  * ```typescript
  * const cancelDataRepositoryTask =
  *   yield* AWS.FSx.CancelDataRepositoryTask();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Effect.catchTag("DataRepositoryTaskEnded", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface CancelDataRepositoryTask extends Binding.Service<
   CancelDataRepositoryTask,

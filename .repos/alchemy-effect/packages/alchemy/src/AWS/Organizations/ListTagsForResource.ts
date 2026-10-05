@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListTagsForResourceHttp)`.
- * @binding
- * @section Tags
- * @example Read an Account's Organization Tags
+ * ### Tags
+ * **Example:** Read an Account's Organization Tags
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listTagsForResource = yield* AWS.Organizations.ListTagsForResource();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Tags } = yield* listTagsForResource({ ResourceId: accountId });
  * ```
+ *
+ * @binding
  */
 export interface ListTagsForResource extends Binding.Service<
   ListTagsForResource,

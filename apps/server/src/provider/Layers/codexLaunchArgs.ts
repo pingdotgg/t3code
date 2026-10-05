@@ -1,14 +1,13 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
-export const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
+const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
   environment: NodeJS.ProcessEnv = process.env,
 ) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
 
-export const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> =>
-  tokenizeCliArgs(launchArgs);
+const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",
@@ -37,12 +36,4 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
   }
 
   return execArgs;
-};
-
-export const codexSessionAppServerArgs = (
-  appServerArgs: ReadonlyArray<string> | undefined,
-  launchArgs: string | undefined,
-) => {
-  const launchAppServerArgs = codexAppServerArgs(launchArgs);
-  return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
 };

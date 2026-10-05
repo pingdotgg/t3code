@@ -10,37 +10,10 @@ import {
   formatRelativeTimeUntilLabel,
   formatShortTimestamp,
   formatTimestamp,
+  formatUpcomingTimestamp,
   getRelativeTimeState,
-  getTimestampFormatOptions,
   resolveTimestampLocale,
 } from "./timestampFormat";
-
-describe("getTimestampFormatOptions", () => {
-  it("omits hour12 when locale formatting is requested", () => {
-    expect(getTimestampFormatOptions("locale", true)).toEqual({
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  });
-
-  it("builds a 12-hour formatter with seconds when requested", () => {
-    expect(getTimestampFormatOptions("12-hour", true)).toEqual({
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-    });
-  });
-
-  it("builds a 24-hour formatter without seconds when requested", () => {
-    expect(getTimestampFormatOptions("24-hour", false)).toEqual({
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: false,
-    });
-  });
-});
 
 describe("resolveTimestampLocale", () => {
   it("defers to the runtime default when the host reports no locale", () => {
@@ -60,19 +33,71 @@ describe("resolveTimestampLocale", () => {
     expect(resolveTimestampLocale("not a locale")).toBeUndefined();
     expect(resolveTimestampLocale("en_GB")).toBeUndefined();
   });
+});
 
-  it("renders the host locale's hour cycle under the locale setting", () => {
-    const formatAt1544 = (systemLocale: string | null) =>
-      new Intl.DateTimeFormat(resolveTimestampLocale(systemLocale), {
-        ...getTimestampFormatOptions("locale", false),
-        timeZone: "UTC",
-      })
-        .format(new Date("2026-04-07T15:44:00.000Z"))
-        // ICU separates the day period with a narrow no-break space.
-        .replace(/[  ]/g, " ");
+describe("formatShortTimestamp", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
 
-    expect(formatAt1544("en-GB")).toBe("15:44");
-    expect(formatAt1544("en-US")).toBe("3:44 PM");
+  it.each([
+    ["en-GB", "15:44"],
+    ["en-US", "3:44 PM"],
+  ])("honors %s and the explicit hour-cycle settings", async (locale, localTime) => {
+    vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => locale } });
+    vi.resetModules();
+    const { formatShortTimestamp: format } = await import("./timestampFormat");
+    const date = new Date(2026, 3, 7, 15, 44).toISOString();
+    // ICU can separate the day period with a narrow no-break space.
+    expect(format(date, "locale").replace(/[  ]/g, " ")).toBe(localTime);
+    expect(format(date, "12-hour").replace(/[  ]/g, " ")).toMatch(/^3:44 [ap]m$/i);
+    expect(format(date, "24-hour")).toBe("15:44");
+  });
+});
+
+describe("resolveWeekStartsOn", () => {
+  it.each([
+    ["en-US", 0],
+    ["en-GB", 1],
+    ["pl-PL", 1],
+    ["ar-EG", 6],
+  ])("starts the %s week on weekday %i", async (locale, weekday) => {
+    const { resolveWeekStartsOn } = await import("./timestampFormat");
+    expect(resolveWeekStartsOn(locale)).toBe(weekday);
+  });
+
+  it("leaves the default to the caller for a malformed locale", async () => {
+    const { resolveWeekStartsOn } = await import("./timestampFormat");
+    expect(resolveWeekStartsOn("not a locale")).toBeUndefined();
+  });
+
+  it("follows the locale the desktop host reports", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-GB" } });
+    vi.resetModules();
+    const { weekStartsOn } = await import("./timestampFormat");
+    expect(weekStartsOn).toBe(1);
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+});
+
+describe("formatChatTimestampTooltip", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it.each(["de-DE", "it-IT"])("keeps the English date label in a %s runtime", async (locale) => {
+    const DateTimeFormat = Intl.DateTimeFormat;
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locales, options) {
+      return new DateTimeFormat(locales ?? locale, options);
+    });
+    vi.resetModules();
+    const { formatChatTimestampTooltip: format } = await import("./timestampFormat");
+    const date = new Date(2026, 5, 4, 14, 4).toISOString();
+
+    expect(format(date, "24-hour")).toBe("14:04, 4th June 2026");
   });
 });
 
@@ -192,6 +217,28 @@ describe("formatDayAwareTimestamp", () => {
 
   it("returns an empty string for invalid input", () => {
     expect(formatDayAwareTimestamp("not-a-date", "12-hour", now)).toBe("");
+  });
+});
+
+describe("formatUpcomingTimestamp", () => {
+  const now = new Date(2026, 7, 14, 12, 0).getTime();
+
+  it.each([
+    [14, ""],
+    [15, "tomorrow at "],
+    [13, "yesterday at "],
+  ])("keeps the reset day visible for day %i", (day, prefix) => {
+    const resetAt = new Date(2026, 7, day, 14, 30).toISOString();
+    expect(formatUpcomingTimestamp(resetAt, "12-hour", now)).toBe(
+      `${prefix}${formatShortTimestamp(resetAt, "12-hour")}`,
+    );
+  });
+
+  it("preserves the date of an older reset in the transcript", () => {
+    const resetAt = new Date(2026, 7, 12, 14, 30).toISOString();
+    expect(formatUpcomingTimestamp(resetAt, "12-hour", now)).toBe(
+      formatDayAwareTimestamp(resetAt, "12-hour", now),
+    );
   });
 });
 

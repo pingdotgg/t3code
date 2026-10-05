@@ -11,15 +11,16 @@ import type { Revision } from "./Revision.ts";
  * injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.UpdateAssetHttp)`.
- * @binding
- * @section Managing Assets
- * @example Rename An Imported Asset
+ * ### Managing Assets
+ * **Example:** Rename An Imported Asset
  * ```typescript
  * const updateAsset = yield* AWS.DataExchange.UpdateAsset(revision);
  *
  * // runtime
  * yield* updateAsset({ AssetId: assetId, Name: "prices/2026-07-14.csv" });
  * ```
+ *
+ * @binding
  */
 export interface UpdateAsset extends Binding.Service<
   UpdateAsset,

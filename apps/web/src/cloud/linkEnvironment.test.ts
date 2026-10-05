@@ -15,9 +15,9 @@ import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
-  EnvironmentSupervisor,
   type PreparedConnection,
   PrimaryConnectionTarget,
+  EnvironmentSupervisor,
 } from "@t3tools/client-runtime/connection";
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -26,10 +26,7 @@ import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 import {
-  collectCloudLinkTargets,
   linkPrimaryEnvironmentToCloud,
-  listManagedCloudEnvironments,
-  normalizeRelayBaseUrl,
   readPrimaryCloudLinkState,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
@@ -80,7 +77,7 @@ function registryLayer(options?: {
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
   return Layer.effect(
-    EnvironmentRegistry,
+    EnvironmentRegistry.EnvironmentRegistry,
     Effect.gen(function* () {
       const client = {
         [WS_METHODS.cloudGetRelayClientStatus]: () =>
@@ -91,6 +88,7 @@ function registryLayer(options?: {
       const session: RpcSession = {
         client,
         initialConfig: Effect.never,
+        subscribeServerConfig: (input) => client.subscribeServerConfig(input),
         ready: Effect.void,
         probe: Effect.void,
         closed: Effect.never,
@@ -101,7 +99,7 @@ function registryLayer(options?: {
         httpBaseUrl: TARGET.httpBaseUrl,
         wsBaseUrl: TARGET.wsBaseUrl,
       });
-      const supervisor = EnvironmentSupervisor.of({
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target,
         state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
         session: yield* SubscriptionRef.make(Option.some(session)),
@@ -109,14 +107,14 @@ function registryLayer(options?: {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor["Service"]);
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const registry = {
         run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
-          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
-          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-      } as unknown as EnvironmentRegistry["Service"];
-      return EnvironmentRegistry.of(registry);
+          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
+      return EnvironmentRegistry.EnvironmentRegistry.of(registry);
     }),
   );
 }
@@ -129,7 +127,9 @@ function withServices<A, E>(
   effect: Effect.Effect<
     A,
     E,
-    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+    | HttpClient.HttpClient
+    | ManagedRelay.ManagedRelayClient
+    | EnvironmentRegistry.EnvironmentRegistry
   >,
   options?: Parameters<typeof registryLayer>[0],
 ) {
@@ -154,48 +154,6 @@ afterEach(() => {
 });
 
 describe("web cloud link environment client", () => {
-  it("normalizes relay URLs and de-duplicates cloud link targets", () => {
-    expect(normalizeRelayBaseUrl(" https://relay.example.test/// ")).toBe(
-      "https://relay.example.test",
-    );
-    expect(normalizeRelayBaseUrl(" ")).toBeNull();
-    expect(
-      collectCloudLinkTargets({
-        primary: TARGET,
-        saved: [TARGET, { ...TARGET, environmentId: "environment-2" }],
-      }).map((target) => target.environmentId),
-    ).toEqual(["environment-1", "environment-2"]);
-  });
-
-  it.effect("lists relay-managed environments through the typed relay client", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn().mockResolvedValue(
-        Response.json({
-          environments: [
-            {
-              environmentId: "environment-1",
-              label: "Desktop",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test",
-                wsBaseUrl: "wss://desktop.example.test",
-                providerKind: "cloudflare_tunnel",
-              },
-              linkedAt: "2026-06-06T00:00:00.000Z",
-            },
-          ],
-        }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const environments = yield* withServices(
-        listManagedCloudEnvironments({ clerkToken: "clerk-token" }),
-      );
-
-      expect(environments).toHaveLength(1);
-      expect(fetchMock.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
-    }),
-  );
-
   it.effect("reads primary cloud link state from the explicit target", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn().mockResolvedValue(

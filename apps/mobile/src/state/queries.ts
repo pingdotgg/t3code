@@ -1,7 +1,9 @@
+import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
-  OrchestrationThread,
+  OrchestrationV2ProjectedTurnItem,
+  ProjectId,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -13,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,8 +24,8 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
+import { composerPullRequests } from "./pull-requests";
 import {
   buildCheckpointDiffTargets,
   normalizeComposerPathSearchQuery,
@@ -50,13 +53,6 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   labelPrefix: "mobile:thread-search",
 });
 
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
-
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
@@ -76,6 +72,79 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
+}
+
+export function useComposerPullRequestSearch(input: {
+  environmentId: EnvironmentId | null;
+  projectId: ProjectId | null;
+  repository: string | null;
+  query: string | null;
+}) {
+  const query = useDebouncedValue(input.query, 180);
+  const ready =
+    query === input.query &&
+    query !== null &&
+    input.environmentId !== null &&
+    input.projectId !== null &&
+    input.repository !== null;
+  const numeric = query !== null && /^\d*$/.test(query);
+  const list = useEnvironmentQuery(
+    ready
+      ? composerPullRequests.list({
+          environmentId: input.environmentId!,
+          input: {
+            projectId: input.projectId!,
+            state: "all",
+            limit: 200,
+            ...(!numeric && query ? { query } : {}),
+          },
+        })
+      : null,
+  );
+  const number = numeric && query ? Number(query) : null;
+  const hasExact = list.data?.entries.some(
+    (entry) =>
+      entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase(),
+  );
+  const exact = useEnvironmentQuery(
+    ready && number !== null && Number.isSafeInteger(number) && number > 0 && !hasExact
+      ? composerPullRequests.detail({
+          environmentId: input.environmentId!,
+          input: { projectId: input.projectId!, repository: input.repository!, number },
+        })
+      : null,
+  );
+  const entries = useMemo(() => {
+    if (!ready) return [];
+    if (numeric) {
+      return filterComposerPullRequestMatches({
+        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        projectId: input.projectId!,
+        repository: input.repository!,
+        query: query ?? "",
+        limit: 20,
+      });
+    }
+    const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const found = [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])].filter(
+      (entry) =>
+        entry.projectId === input.projectId &&
+        entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
+        words.every((word) =>
+          `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
+        ),
+    );
+    const unique = new Map<number, (typeof found)[number]>();
+    for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
+    return [...unique.values()]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 20);
+  }, [ready, exact.data, list.data, input.projectId, input.repository, numeric, query]);
+  return {
+    entries,
+    isPending: input.query !== null && (query !== input.query || list.isPending || exact.isPending),
+    error: list.error ?? list.data?.errors[0]?.message ?? exact.error,
+  };
 }
 
 export function useThreadSearch(
@@ -100,19 +169,6 @@ export function useThreadSearch(
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
-  };
-}
-
-export function useThreadDetail(
-  environmentId: EnvironmentId | null,
-  threadId: ThreadId | null,
-): ThreadDetailView {
-  const state = useEnvironmentThread(environmentId, threadId);
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
   };
 }
 
@@ -296,4 +352,25 @@ export function useCheckpointDiff(target: CheckpointDiffTarget) {
     targets.turn === null ? null : orchestrationEnvironment.turnDiff(targets.turn),
   );
   return targets.fullThread === null ? turn : fullThread;
+}
+
+/** Full input and output for one tool row; pass null to skip fetching. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly row: OrchestrationV2ProjectedTurnItem;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.row.sourceThreadId,
+            itemId: target.row.sourceItemId,
+            revision: turnItemDetailRevision(target.row.item),
+          },
+        }),
+  );
 }

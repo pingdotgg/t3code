@@ -1,16 +1,28 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildDraftActionMenuItems,
+  buildThreadActionMenuItems,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   branch: null,
+  projectFilter: null,
   isPinned: false,
   isSettled: false,
+  autoSettleEnabled: true,
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  supports: {
+    settlement: true,
+    autoSettleOptOut: true,
+    snooze: true,
+    pinning: true,
+    titleRegeneration: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -31,9 +43,47 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          autoSettleOptOut: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+        },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
+    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+  });
+
+  it("groups project settings with utility actions before archive", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const copyIndex = items.findIndex((item) => item.id === "copy");
+    expect(items[copyIndex + 1]).toMatchObject({
+      id: "project-settings",
+      label: "Project settings",
+      icon: "settings",
+    });
+    expect(items[copyIndex + 2]?.id).toBe("archive");
+  });
+
+  it("offers project filtering only for surfaces with a scoped thread list", () => {
+    expect(ids(baseState)).not.toContain("filter-by-project");
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        projectFilter: { label: "Beta Project", isActive: false },
+      }).find((item) => item.id === "filter-by-project"),
+    ).toMatchObject({ label: "Filter by Beta Project", icon: "folder-tree" });
+  });
+
+  it("offers the way back to all projects once the list is scoped", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      projectFilter: { label: "Beta Project", isActive: true },
+    });
+    const filterIndex = items.findIndex((candidate) => candidate.id === "filter-by-project");
+    expect(items[filterIndex]).toMatchObject({ label: "Show all projects", icon: "folder-tree" });
+    expect(items[filterIndex - 1]?.id).toBe("mark-unread");
+    expect(items[filterIndex + 1]?.id).toBe("auto-settle");
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -51,12 +101,31 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
   });
 
+  it("offers auto-settle as a submenu with the current option checked", () => {
+    const find = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).find((item) => item.id === "auto-settle");
+    const on = find(baseState);
+    expect(on?.label).toBe("Auto-settle behavior");
+    expect(on?.children?.map((child) => [child.id, child.checked])).toEqual([
+      ["auto-settle:enabled", true],
+      ["auto-settle:disabled", false],
+    ]);
+    const off = find({ ...baseState, autoSettleEnabled: false });
+    expect(off?.children?.map((child) => child.checked)).toEqual([false, true]);
+    // Sits with the per-thread settings after Mark unread, not the lifecycle verbs.
+    const items = buildThreadActionMenuItems(baseState);
+    expect(items[items.findIndex((item) => item.id === "mark-unread") + 1]?.id).toBe("auto-settle");
+    expect(
+      ids({ ...baseState, supports: { ...baseState.supports, autoSettleOptOut: false } }),
+    ).not.toContain("auto-settle");
+  });
+
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {
     const snooze = buildThreadActionMenuItems({ ...baseState, canSnoozeNow: false }).find(
       (item) => item.id === "snooze",
     );
     expect(snooze?.disabled).toBe(true);
-    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour"]);
+    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour", "snooze:custom"]);
   });
 
   it("disables title regeneration while one is in flight", () => {
@@ -84,7 +153,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          autoSettleOptOut: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+        },
       }),
     ).toContain("archive");
   });
@@ -94,5 +169,26 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+});
+
+describe("buildDraftActionMenuItems", () => {
+  it("offers only the copy values the draft has", () => {
+    const items = buildDraftActionMenuItems({ hasPath: false, hasBranch: true, hasProject: true });
+    expect(items[0]).toMatchObject({ id: "copy", disabled: false });
+    expect(items[0]?.children?.map((item) => item.id)).toEqual(["copy-branch"]);
+
+    const noCopy = buildDraftActionMenuItems({
+      hasPath: false,
+      hasBranch: false,
+      hasProject: true,
+    });
+    expect(noCopy[0]).toMatchObject({ id: "copy", disabled: true, children: [] });
+  });
+
+  it("drops project settings without a project and keeps discard last", () => {
+    const items = buildDraftActionMenuItems({ hasPath: true, hasBranch: false, hasProject: false });
+    expect(items.map((item) => item.id)).toEqual(["copy", "discard"]);
+    expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
   });
 });

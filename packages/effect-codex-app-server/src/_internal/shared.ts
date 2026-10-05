@@ -5,7 +5,7 @@ import * as CodexError from "../errors.ts";
 
 export const JsonRpcId = Schema.Union([Schema.Number, Schema.String]);
 
-export const JsonRpcError = Schema.Struct({
+const JsonRpcError = Schema.Struct({
   code: Schema.Number,
   message: Schema.String,
   data: Schema.optional(Schema.Unknown),
@@ -45,7 +45,7 @@ export const encodeOptionalPayload = <A, I>(
 ): Effect.Effect<I | undefined, CodexError.CodexAppServerRequestError> => {
   if (!schema) {
     if (payload === undefined) {
-      return Effect.sync(() => undefined);
+      return Effect.undefined;
     }
     return Effect.fail(
       CodexError.CodexAppServerRequestError.unexpectedPayload(method, "encode-payload", payload),

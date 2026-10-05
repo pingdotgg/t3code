@@ -1,5 +1,7 @@
 "use client";
 
+import { Spinner } from "~/components/ui/spinner";
+
 import { Toast } from "@base-ui/react/toast";
 import {
   useEffect,
@@ -12,21 +14,12 @@ import {
 } from "react";
 import { useParams } from "@tanstack/react-router";
 import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CopyIcon,
-  InfoIcon,
-  LoaderCircleIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy } from "lucide";
 
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
@@ -83,7 +76,7 @@ const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
-  loading: LoaderCircleIcon,
+  loading: Spinner,
   success: CircleCheckIcon,
   warning: TriangleAlertIcon,
 } as const;
@@ -134,7 +127,10 @@ function CopyErrorButton({ text }: { text: string }) {
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+        <MorphIcon
+          className={cn("size-3", isCopied && "text-success")}
+          icon={isCopied ? Check : Copy}
+        />
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
@@ -164,11 +160,11 @@ function ToastExpandableSection({
         onClick={() => setOpen((prev) => !prev)}
         type="button"
       >
-        {open ? (
-          <ChevronUpIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
-        ) : (
-          <ChevronDownIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
-        )}
+        <MorphIcon
+          className="size-3.5 shrink-0 opacity-80"
+          icon={open ? ChevronUp : ChevronDown}
+          strokeWidth={2.25}
+        />
         {open ? collapseLabel : expandLabel}
       </button>
       {open ? <div className={toastExpandablePanelClassName}>{children}</div> : null}
@@ -248,19 +244,12 @@ function ToastDescriptionAndExpandable({
               data-slot="toast-description"
             />
           </div>
-          {open ? (
-            <ChevronUpIcon
-              aria-hidden
-              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
-              strokeWidth={2.25}
-            />
-          ) : (
-            <ChevronDownIcon
-              aria-hidden
-              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
-              strokeWidth={2.25}
-            />
-          )}
+          <MorphIcon
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
+            icon={open ? ChevronUp : ChevronDown}
+            strokeWidth={2.25}
+          />
         </TooltipTrigger>
         <TooltipPopup side="top">{open ? collapseLabel : expandLabel}</TooltipPopup>
       </Tooltip>
@@ -344,35 +333,35 @@ function ToastBodyContent({
 
   return (
     <>
-      <div className={cn("flex min-w-0 gap-2", !stackedActionLayout && "flex-1")}>
-        {leadingIcon ? (
-          <div
-            className="flex h-lh w-4 shrink-0 items-center justify-center"
-            data-slot="toast-icon"
-          >
-            {leadingIcon}
-          </div>
-        ) : Icon ? (
-          <div
-            className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
-            data-slot="toast-icon"
-          >
-            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
-          </div>
-        ) : null}
-        <div
-          className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col gap-0.5",
-            stackedActionLayout && "pr-5",
-          )}
-        >
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col gap-0.5",
+          stackedActionLayout ? "pr-5" : "flex-1",
+        )}
+      >
+        <div className="flex min-w-0 gap-2">
+          {leadingIcon ? (
+            <div
+              className="flex h-lh w-4 shrink-0 items-center justify-center"
+              data-slot="toast-icon"
+            >
+              {leadingIcon}
+            </div>
+          ) : Icon ? (
+            <div
+              className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+              data-slot="toast-icon"
+            >
+              <Icon className="in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+            </div>
+          ) : null}
           <Toast.Title className="min-w-0 wrap-break-word font-medium" data-slot="toast-title" />
-          <ToastDescriptionAndExpandable
-            toastData={toastData}
-            toastDescription={toastDescription}
-            toastType={toastType}
-          />
         </div>
+        <ToastDescriptionAndExpandable
+          toastData={toastData}
+          toastDescription={toastDescription}
+          toastType={toastType}
+        />
       </div>
       {hasTrailingControls ? (
         <div
@@ -559,7 +548,7 @@ function Toasts({ position }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",

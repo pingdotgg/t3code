@@ -76,8 +76,8 @@ export interface Authorizer extends Resource<
 /**
  * REST API Lambda, Cognito, or gateway authorizer.
  *
- * @section Authorizers
- * @example Lambda TOKEN authorizer
+ * ### Authorizers
+ * **Example:** Lambda TOKEN authorizer
  * ```typescript
  * const authorizer = yield* ApiGateway.Authorizer("Auth", {
  *   restApiId: api.restApiId,

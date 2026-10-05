@@ -1,47 +1,31 @@
 import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
-import { type NetworkStatus } from "@t3tools/client-runtime/connection";
-import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
-import type { EnvironmentPresentation } from "./environments";
+import {
+  type EnvironmentConnectionPhase,
+  type NetworkStatus,
+} from "@t3tools/client-runtime/connection";
 
-export interface WorkspaceEnvironment {
-  readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string;
-  readonly displayUrl: string;
-  readonly isRelayManaged: boolean;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly connectionError: string | null;
-  readonly connectionErrorTraceId: string | null;
-}
+import type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
-export interface WorkspaceState {
+export { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
+export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
+
+export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
   readonly hasConnections: boolean;
-  readonly hasLoadedShellSnapshot: boolean;
-  readonly hasPendingShellSnapshot: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
-  readonly shellSnapshotError: string | null;
-  readonly latestCachedSnapshotReceivedAt: string | null;
   readonly networkStatus: NetworkStatus;
 }
 
-export function projectWorkspaceEnvironment(
-  environment: EnvironmentPresentation,
-): WorkspaceEnvironment {
-  return {
-    environmentId: environment.environmentId,
-    environmentLabel: environment.label,
-    displayUrl: environment.displayUrl ?? "",
-    isRelayManaged: environment.relayManaged,
-    connectionState: environment.connection.phase,
-    connectionError: environment.connection.error,
-    connectionErrorTraceId: environment.connection.traceId,
-  };
+export interface WorkspaceState extends WorkspaceConnectionState {
+  readonly hasLoadedShellSnapshot: boolean;
+  readonly hasPendingShellSnapshot: boolean;
+  readonly shellSnapshotError: string | null;
 }
 
 function overallConnectionState(
@@ -63,6 +47,9 @@ function overallConnectionState(
   if (environments.some((environment) => environment.connectionState === "connecting")) {
     return "connecting";
   }
+  if (environments.some((environment) => environment.connectionState === "unsupported")) {
+    return "unsupported";
+  }
   if (environments.some((environment) => environment.connectionState === "error")) {
     return "error";
   }
@@ -72,13 +59,15 @@ function overallConnectionState(
   return "available";
 }
 
-export function projectWorkspaceState(input: {
+export function projectWorkspaceConnectionState(input: {
   readonly isReady: boolean;
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
-  readonly shellSummary: EnvironmentShellSummary;
-}): WorkspaceState {
-  const connectingEnvironments = input.environments.filter(
+}): WorkspaceConnectionState {
+  // Switched-off environments still count as saved connections, but they do
+  // not drive the overall connection state or surface their last error.
+  const activeEnvironments = input.environments.filter((environment) => environment.isEnabled);
+  const connectingEnvironments = activeEnvironments.filter(
     (environment) =>
       environment.connectionState === "connecting" ||
       environment.connectionState === "reconnecting",
@@ -87,20 +76,30 @@ export function projectWorkspaceState(input: {
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
-    hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
-    hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
-      input.environments.some((environment) => environment.connectionState === "connected"),
+      activeEnvironments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
-    connectionState: overallConnectionState(input.environments, input.networkStatus),
+    connectionState: overallConnectionState(activeEnvironments, input.networkStatus),
     connectionError:
-      input.environments.find((environment) => environment.connectionError !== null)
+      activeEnvironments.find((environment) => environment.connectionError !== null)
         ?.connectionError ?? null,
-    shellSnapshotError: input.shellSummary.firstError,
-    latestCachedSnapshotReceivedAt: input.shellSummary.latestSnapshotUpdatedAt,
     networkStatus: input.networkStatus,
+  };
+}
+
+export function projectWorkspaceState(input: {
+  readonly isReady: boolean;
+  readonly networkStatus: NetworkStatus;
+  readonly environments: ReadonlyArray<WorkspaceEnvironment>;
+  readonly shellSummary: EnvironmentShellSummary;
+}): WorkspaceState {
+  return {
+    ...projectWorkspaceConnectionState(input),
+    hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
+    hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
+    shellSnapshotError: input.shellSummary.firstError,
   };
 }
 

@@ -1,8 +1,4 @@
-import {
-  MessageId,
-  type OrchestrationMessage,
-  type ProviderUploadFeedbackResult,
-} from "@t3tools/contracts";
+import { MessageId, type ProviderUploadFeedbackResult } from "@t3tools/contracts";
 
 import {
   isAtomCommandInterrupted,
@@ -32,10 +28,46 @@ export function parseCodexFeedbackCommand(text: string): { readonly reason?: str
   return reason ? { reason } : {};
 }
 
+export function codexFeedbackNotice(submission: CodexFeedbackSubmission) {
+  switch (submission.status) {
+    case "interrupted":
+      return null;
+    case "uploading":
+      return { title: "Sending feedback to OpenAI...", description: undefined };
+    case "sent":
+      return {
+        title: "Feedback sent to OpenAI",
+        description: `Thread ID: ${submission.feedbackId}`,
+      };
+    case "failed":
+      return { title: "Could not send feedback to OpenAI", description: submission.errorMessage };
+  }
+}
+
+export function beginCodexFeedbackSubmission(
+  submissionsInFlight: Set<string>,
+  threadKey: string,
+): (() => void) | null {
+  if (submissionsInFlight.has(threadKey)) return null;
+  submissionsInFlight.add(threadKey);
+  return () => submissionsInFlight.delete(threadKey);
+}
+
+/** A chat row that exists only on this client, such as a feedback exchange. */
+export interface LocalChatMessage {
+  readonly id: MessageId;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly turnId: null;
+  readonly streaming: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export function codexFeedbackMessage(
   submission: CodexFeedbackSubmission,
   role: "user" | "assistant" = "user",
-): OrchestrationMessage {
+): LocalChatMessage {
   const text =
     role === "user"
       ? submission.command

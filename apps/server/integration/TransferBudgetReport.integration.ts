@@ -12,10 +12,28 @@ import {
   TRANSFER_MEASURED_TOOLS,
 } from "./fixtures/transferBudget.ts";
 
+/** Catch-up delivered to a resubscribing client, and which path the server chose. */
+export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
+  readonly mode: "replay" | "snapshot";
+}
+
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
   readonly threadSnapshot: HttpTransferMeasurement;
+  /** One socket holding only the thread subscription. This is the capped measurement. */
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
+  readonly shellSnapshot: HttpTransferMeasurement;
+  /** One socket holding only the shell (sidebar) subscription during the same turn. */
+  readonly measuredTurnShellWebSocket: WebSocketTransferTotals;
+  /** A second client: one socket holding both the thread and shell subscriptions. */
+  readonly measuredTurnSecondClientWebSocket: WebSocketTransferTotals;
+  /** The second client resubscribes after the turn from the cursor it held before it. */
+  readonly reconnectThread: WebSocketCatchUpMeasurement;
+  readonly reconnectShell: WebSocketCatchUpMeasurement;
+  /** `sql.execute` spans opened server-wide during the measured turn. */
+  readonly measuredTurnSqlStatements: number;
+  /** `sql.execute` spans opened while serving both reconnect catch-ups. */
+  readonly reconnectSqlStatements: number;
 }
 
 interface ProviderTransferBudget {
@@ -26,25 +44,34 @@ interface ProviderTransferBudget {
   readonly measuredTurnWebSocketMessages: number;
 }
 
-// These caps leave roughly 30% headroom above the client projection of the
+// These caps leave at least 30% headroom above the client projection of the
 // deterministic 9 MB retained-result fixture. Full MCP results stay in
 // persistence, so accidentally shipping them again exceeds these caps by
 // orders of magnitude. The CI report preserves exact values for review.
 const TRANSFER_BUDGET = {
-  totalWireBytes: 15_500,
-  threadSnapshotWireBytes: 7_500,
-  measuredTurnWebSocketWireBytes: 8_000,
-  measuredTurnWebSocketDecodedBytes: 68_000,
-  measuredTurnWebSocketMessages: 21,
+  totalWireBytes: 7_000,
+  threadSnapshotWireBytes: 5_000,
+  measuredTurnWebSocketWireBytes: 2_000,
+  measuredTurnWebSocketDecodedBytes: 30_000,
+  measuredTurnWebSocketMessages: 8,
 } satisfies ProviderTransferBudget;
 
-export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
+const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
   codex: TRANSFER_BUDGET,
   claudeAgent: TRANSFER_BUDGET,
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
   return run.threadSnapshot.wireBytes + run.measuredTurnWebSocket.wireBytes;
+}
+
+/** Bytes the server wrote to every measured socket during the turn. */
+function serverEgressWireBytes(run: TransferBudgetRun): number {
+  return (
+    run.measuredTurnWebSocket.wireBytes +
+    run.measuredTurnShellWebSocket.wireBytes +
+    run.measuredTurnSecondClientWebSocket.wireBytes
+  );
 }
 
 function observedTransfer(run: TransferBudgetRun) {
@@ -71,7 +98,7 @@ export function formatTransferBudgetResult(runs: ReadonlyArray<TransferBudgetRun
     {
       schemaVersion: 1,
       scenario: {
-        id: "thread-transfer-v1",
+        id: "thread-transfer-v2",
         historyTurns: TRANSFER_HISTORY_TURN_COUNT,
         historyCommandToolsPerTurn: TRANSFER_HISTORY_TOOLS_PER_TURN,
         historyMcpResultBytes: TRANSFER_HISTORY_MCP_RESULT_BYTES,
@@ -103,6 +130,33 @@ function row(
 ): string {
   const status = observed <= maximum ? "PASS" : "FAIL";
   return `| ${provider} | ${phase} | ${metric} | ${format(observed)} | ${format(maximum)} | ${status} |`;
+}
+
+// Shell, second-client, reconnect, and SQL rows are reported without a cap.
+// Shell delivery coalesces on a 50 ms window, so message counts and bytes move
+// with scheduler timing between runs, and the reconnect and SQL figures follow
+// the same batches. The rows exist so CI shows the numbers next to the capped
+// thread measurement.
+function infoRow(
+  provider: ProviderDriverKind,
+  phase: string,
+  metric: string,
+  observed: number,
+  format: (value: number) => string = formatBytes,
+): string {
+  return `| ${provider} | ${phase} | ${metric} | ${format(observed)} | none | INFO |`;
+}
+
+function webSocketRows(
+  provider: ProviderDriverKind,
+  phase: string,
+  totals: WebSocketTransferTotals,
+): string[] {
+  return [
+    infoRow(provider, phase, "WebSocket wire", totals.wireBytes),
+    infoRow(provider, phase, "WebSocket decoded", totals.decodedBytes),
+    infoRow(provider, phase, "WebSocket messages", totals.messages, String),
+  ];
 }
 
 export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>): string[] {
@@ -146,7 +200,8 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "# T3 Code thread transfer budget",
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
-    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes are calibrated from heavy local Codex and Claude histories and contain no user data.`,
+    "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are `sql.execute` spans counted across V2 persistence and the HTTP/WebSocket handlers.",
+    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
@@ -198,6 +253,32 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
         budget.measuredTurnWebSocketMessages,
         String,
       ),
+      infoRow(run.provider, "shell snapshot", "HTTP wire", run.shellSnapshot.wireBytes),
+      ...webSocketRows(run.provider, "measured turn, shell", run.measuredTurnShellWebSocket),
+      ...webSocketRows(
+        run.provider,
+        "measured turn, second client",
+        run.measuredTurnSecondClientWebSocket,
+      ),
+      infoRow(run.provider, "measured turn", "server egress wire", serverEgressWireBytes(run)),
+      infoRow(
+        run.provider,
+        "measured turn",
+        "SQL statements",
+        run.measuredTurnSqlStatements,
+        String,
+      ),
+      ...webSocketRows(
+        run.provider,
+        `reconnect, thread (${run.reconnectThread.mode})`,
+        run.reconnectThread,
+      ),
+      ...webSocketRows(
+        run.provider,
+        `reconnect, shell (${run.reconnectShell.mode})`,
+        run.reconnectShell,
+      ),
+      infoRow(run.provider, "reconnect", "SQL statements", run.reconnectSqlStatements, String),
     );
   }
 
@@ -205,6 +286,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
   for (const run of runs) {
     lines.push(
       `- ${run.provider}: thread snapshot ${formatBytes(run.threadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.threadSnapshot.encodedBodyBytes)} gzip.`,
+      `- ${run.provider}: shell snapshot ${formatBytes(run.shellSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.shellSnapshot.encodedBodyBytes)} gzip.`,
     );
   }
 

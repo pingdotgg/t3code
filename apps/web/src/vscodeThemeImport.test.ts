@@ -90,6 +90,209 @@ describe("VS Code theme import", () => {
     expect(theme.colors.sidebarRowSelected).not.toBe(theme.colors.sidebar);
   });
 
+  it("keeps a fallback placeholder dimmer than entered text", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Dark placeholder fallback",
+      type: "dark",
+      colors: {
+        "editor.background": "#1e1e2e",
+        "editor.foreground": "#cdd6f4",
+        "input.placeholderForeground": "#cdd6f473",
+      },
+    });
+
+    expect(
+      contrastRatio(theme.colors.placeholder, theme.colors.surfaceRaised),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(theme.colors.placeholder, theme.colors.canvas)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(contrastRatio(theme.colors.placeholder, theme.colors.canvas)).toBeLessThan(
+      contrastRatio(theme.colors.text, theme.colors.canvas),
+    );
+  });
+
+  it("moves reserved VS Code names to a non-reserved id", () => {
+    const darkPlus = parseVsCodeThemeFile({
+      name: "Dark+",
+      type: "dark",
+      colors: { "editor.background": "#1e1e1e" },
+    });
+    expect(darkPlus.label).toBe("Dark+");
+    expect(darkPlus.id).not.toBe("dark");
+    expect(darkPlus.id).toBe("dark-vscode");
+  });
+
+  it("keeps Dark+ and Light+ as separate themes instead of pairing them as +", () => {
+    const themes = pairVsCodeThemes([
+      parseVsCodeThemeFile({
+        name: "Light+",
+        type: "light",
+        colors: { "editor.background": "#ffffff" },
+      }),
+      parseVsCodeThemeFile({
+        name: "Dark+",
+        type: "dark",
+        colors: { "editor.background": "#1e1e1e" },
+      }),
+    ]);
+    expect(themes.map((theme) => [theme.id, theme.label])).toEqual([
+      ["light-vscode", "Light+"],
+      ["dark-vscode", "Dark+"],
+    ]);
+  });
+
+  it("prefers a visible input background over a transparent border", () => {
+    const catppuccin = parseVsCodeThemeFile({
+      name: "Catppuccin Mocha",
+      type: "dark",
+      colors: {
+        "editor.background": "#1e1e2e",
+        "input.border": "#00000000",
+        "input.background": "#313244",
+      },
+    });
+    expect(asHex(catppuccin.colors.input)).toBe("#313244");
+  });
+
+  it("keeps unchecked inputs distinct from the checked action color", () => {
+    const gruvbox = parseVsCodeThemeFile({
+      name: "Gruvbox Light Soft",
+      type: "light",
+      colors: {
+        "editor.background": "#f2e5bc",
+        "button.background": "#45858880",
+        "input.background": "#45858880",
+        "input.border": "#928374",
+      },
+    });
+    expect(
+      contrastRatio(gruvbox.colors.input, gruvbox.colors.messageAction),
+    ).toBeGreaterThanOrEqual(1.1);
+  });
+
+  it("keeps the derived input distinct when a button reuses it", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Derived input collision",
+      type: "dark",
+      colors: {
+        "editor.background": "#1e1e2e",
+        focusBorder: "#89b4fa",
+        "button.background": "#525661",
+      },
+    });
+
+    expect(asHex(theme.colors.messageAction)).toBe("#525661");
+    expect(asHex(theme.colors.input)).not.toBe("#525661");
+    expect(contrastRatio(theme.colors.input, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
+    expect(contrastRatio(theme.colors.input, theme.colors.messageAction)).toBeGreaterThanOrEqual(
+      1.1,
+    );
+  });
+
+  it("skips a transparent focus border for a visible accent key", () => {
+    const vitesse = parseVsCodeThemeFile({
+      name: "Vitesse Dark",
+      type: "dark",
+      colors: {
+        "editor.background": "#121212",
+        focusBorder: "#00000000",
+        "button.background": "#4d9375",
+      },
+    });
+    expect(asHex(vitesse.colors.accent)).toBe("#4d9375");
+    expect(asHex(vitesse.colors.focus)).toBe("#4d9375");
+    expect(contrastRatio(vitesse.colors.focus, vitesse.colors.canvas)).toBeGreaterThanOrEqual(1.1);
+  });
+
+  it("keeps focus visible against an explicit raised surface", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Raised focus",
+      type: "dark",
+      colors: {
+        "editor.background": "#000000",
+        focusBorder: "#111111",
+        "editorWidget.background": "#111111",
+        "button.background": "#4d9375",
+      },
+    });
+    expect(contrastRatio(theme.colors.focus, theme.colors.surfaceRaised)).toBeGreaterThanOrEqual(
+      1.1,
+    );
+    expect(asHex(theme.colors.focus)).toBe("#4d9375");
+  });
+
+  it("keeps the fallback focus visible against an explicit raised surface", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Raised fallback focus",
+      type: "dark",
+      colors: {
+        "editor.background": "#121212",
+        "editorWidget.background": "#346bf1",
+      },
+    });
+    expect(asHex(theme.colors.focus)).toBe("#ffffff");
+    expect(contrastRatio(theme.colors.focus, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
+    expect(contrastRatio(theme.colors.focus, theme.colors.surfaceRaised)).toBeGreaterThanOrEqual(
+      1.1,
+    );
+  });
+
+  it("skips a transparent button background for the action color", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Transparent button",
+      type: "dark",
+      colors: {
+        "editor.background": "#121212",
+        focusBorder: "#4d9375",
+        "button.background": "#00000000",
+      },
+    });
+    expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
+  });
+
+  it("skips a button background that matches the raised surface", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Raised button",
+      type: "dark",
+      colors: {
+        "editor.background": "#121212",
+        focusBorder: "#4d9375",
+        "editorWidget.background": "#2a2d3a",
+        "button.background": "#2a2d3a",
+      },
+    });
+    expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
+  });
+
+  it("uses a visible default accent when the file has no usable accent key", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "No accent",
+      type: "dark",
+      colors: { "editor.background": "#121212", focusBorder: "#121212" },
+    });
+    expect(contrastRatio(theme.colors.focus, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
+  });
+
+  it("validates placeholders against the resolved raised surface", () => {
+    const lightPlus = parseVsCodeThemeFile({
+      name: "Light Plus Shape",
+      type: "light",
+      colors: {
+        "editor.background": "#eaeff3",
+        "editor.foreground": "#1f1f1f",
+        "editorWidget.background": "#ffffff",
+        "input.placeholderForeground": "#767676",
+      },
+    });
+    expect(
+      contrastRatio(lightPlus.colors.placeholder, lightPlus.colors.surfaceRaised),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(lightPlus.colors.placeholder, lightPlus.colors.surfaceRaised),
+    ).toBeLessThan(contrastRatio(lightPlus.colors.text, lightPlus.colors.surfaceRaised));
+  });
+
   it("fills every role the file omits with a readable derived value", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     const colors = getThemeColorsForMode(theme, "dark")!;

@@ -5,8 +5,6 @@ import { DRIVER_OPTION_BY_VALUE } from "./providerDriverMeta";
 import {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
-  readProviderConfigBoolean,
-  readProviderConfigString,
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
@@ -37,6 +35,65 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("uses a dedicated environment field instead of legacy Cursor CLI settings", () => {
+    const cursor = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("cursor")];
+
+    expect(cursor).toBeDefined();
+    expect(deriveProviderSettingsFields(cursor!)).toEqual([]);
+    expect(cursor?.environmentFields).toEqual([
+      {
+        name: "CURSOR_API_KEY",
+        label: "Cursor API key",
+        description: "Optional. Overrides browser sign-in for this provider.",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ]);
+  });
+
+  it("exposes ACP Registry as an instance-only configurable driver", () => {
+    const acpRegistry = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("acpRegistry")];
+
+    expect(acpRegistry).toBeDefined();
+    expect(acpRegistry?.hasDefaultInstance).toBe(false);
+    expect(deriveProviderSettingsFields(acpRegistry!).map((field) => field.key)).toEqual([
+      "source",
+      "agentId",
+      "commandPath",
+      "authMethodId",
+    ]);
+  });
+
+  it("shows the local executable without registry identity or authentication fields", () => {
+    const acpRegistry = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("acpRegistry")];
+    expect(
+      deriveProviderSettingsFields(acpRegistry!, { source: "local" }).map((field) => field.key),
+    ).toEqual(["source", "commandPath"]);
+  });
+
+  it("derives a select control with its choices for the Antigravity sign-in method", () => {
+    const antigravity = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("antigravity")];
+    expect(antigravity).toBeDefined();
+
+    const fields = deriveProviderSettingsFields(antigravity!);
+    expect(fields.map((field) => field.key)).toEqual([
+      "authMethod",
+      "apiKey",
+      "gcpProject",
+      "gcpLocation",
+      "binaryPath",
+    ]);
+    const authMethod = fields.find((field) => field.key === "authMethod");
+    expect(authMethod).toMatchObject({ control: "select", clearWhenEmpty: "omit" });
+    expect(authMethod?.options?.map((option) => option.value)).toEqual([
+      "oauth-personal",
+      "oauth-business",
+      "gemini-api-key",
+      "agent-platform",
+    ]);
+    expect(fields.find((field) => field.key === "apiKey")?.control).toBe("password");
+  });
+
   it("shows the auto-compaction threshold for Claude providers", () => {
     const claude = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("claudeAgent")];
     expect(claude).toBeDefined();
@@ -65,10 +122,6 @@ describe("ProviderSettingsForm helpers", () => {
     );
 
     expect(next).toEqual({ forkOwned: 1 });
-  });
-
-  it("reads non-string config values as blank strings", () => {
-    expect(readProviderConfigString({ binaryPath: 123 }, "binaryPath")).toBe("");
   });
 
   it("omits false boolean fields when clearWhenEmpty is omit", () => {
@@ -132,13 +185,5 @@ describe("ProviderSettingsForm helpers", () => {
     );
 
     expect(next).toEqual({ experimental: false });
-  });
-
-  it("reads non-boolean config values as false booleans", () => {
-    expect(readProviderConfigBoolean({ experimental: "true" }, "experimental")).toBe(false);
-  });
-
-  it("reads missing boolean config values from the supplied default", () => {
-    expect(readProviderConfigBoolean({}, "experimental", true)).toBe(true);
   });
 });

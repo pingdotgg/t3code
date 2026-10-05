@@ -1,11 +1,7 @@
 import {
-  ClientPresentation,
-  CloudSession,
-  EnvironmentOwnedDataCleanup,
+  ClientCapabilities,
   PlatformConnectionSource,
-  PrimaryEnvironmentAuth,
-  RelayDeviceIdentity,
-  SshEnvironmentGateway,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import {
   BearerConnectionCredential,
@@ -30,6 +26,7 @@ import {
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -51,6 +48,7 @@ import {
 } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
@@ -90,28 +88,68 @@ const connectivityLayer = Connectivity.layer({
   ),
 });
 
+interface NetworkInformationLike extends EventTarget {
+  readonly type?: string;
+}
+
+/**
+ * Wakes connections when the browser reports a different network type, such
+ * as a laptop moving from Wi-Fi to a phone hotspot. `change` also fires for
+ * bandwidth and latency estimates on the same network, so only a type change
+ * counts. Browsers without `navigator.connection.type` rely on the periodic
+ * route check instead.
+ */
+const networkPathChanges = Stream.callback<"network-changed">((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const connection =
+        typeof navigator === "undefined"
+          ? undefined
+          : (navigator as Navigator & { readonly connection?: NetworkInformationLike }).connection;
+      if (connection?.type === undefined) return undefined;
+      let previous = connection.type;
+      const listener = () => {
+        const type = connection.type;
+        if (type === undefined || type === previous) return;
+        previous = type;
+        Queue.offerUnsafe(queue, "network-changed");
+      };
+      connection.addEventListener("change", listener);
+      return { connection, listener };
+    }),
+    (subscription) =>
+      Effect.sync(() =>
+        subscription?.connection.removeEventListener("change", subscription.listener),
+      ),
+  ).pipe(Effect.asVoid),
+);
+
 const wakeupsLayer = Wakeups.layer({
-  changes: Stream.merge(
-    Stream.callback<"application-active">((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const listener = () => {
-            if (document.visibilityState === "visible") {
-              Queue.offerUnsafe(queue, "application-active");
-            }
-          };
-          document.addEventListener("visibilitychange", listener);
-          return listener;
-        }),
-        (listener) =>
+  changes: Stream.mergeAll(
+    [
+      Stream.callback<"application-active">((queue) =>
+        Effect.acquireRelease(
           Effect.sync(() => {
-            document.removeEventListener("visibilitychange", listener);
+            const listener = () => {
+              if (document.visibilityState === "visible") {
+                Queue.offerUnsafe(queue, "application-active");
+              }
+            };
+            document.addEventListener("visibilitychange", listener);
+            return listener;
           }),
-      ).pipe(Effect.asVoid),
-    ),
-    managedRelayAccountChanges(appAtomRegistry).pipe(
-      Stream.map(() => "credentials-changed" as const),
-    ),
+          (listener) =>
+            Effect.sync(() => {
+              document.removeEventListener("visibilitychange", listener);
+            }),
+        ).pipe(Effect.asVoid),
+      ),
+      managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
+      ),
+      networkPathChanges,
+    ],
+    { concurrency: "unbounded" },
   ),
 });
 
@@ -144,7 +182,11 @@ function sshPreparationError(cause: unknown) {
 
 export const provisionDesktopSshEnvironment = Effect.fn(
   "web.connectionPlatform.ssh.provisionDesktop",
-)(function* (bridge: DesktopBridge, target: DesktopSshEnvironmentTarget) {
+)(function* (
+  bridge: DesktopBridge,
+  target: DesktopSshEnvironmentTarget,
+  expectedEnvironmentId?: EnvironmentId,
+) {
   const bootstrap = yield* Effect.tryPromise({
     try: () =>
       bridge.ensureSshEnvironment(target, {
@@ -163,6 +205,12 @@ export const provisionDesktopSshEnvironment = Effect.fn(
     try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
     catch: sshPreparationError,
   });
+  if (expectedEnvironmentId !== undefined && descriptor.environmentId !== expectedEnvironmentId) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: `That host reaches ${descriptor.label}, a different machine. Add it as its own environment instead.`,
+    });
+  }
   const access = yield* Effect.tryPromise({
     try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
     catch: sshPreparationError,
@@ -177,11 +225,14 @@ export const provisionDesktopSshEnvironment = Effect.fn(
 
 const capabilitiesLayer = Layer.effectContext(
   Effect.sync(() => {
-    const presentation = ClientPresentation.of({
+    const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: clientMetadata(),
       scopes: AuthStandardClientScopes,
     });
-    const cloudSession = CloudSession.of({
+    const cloudSession = ClientCapabilities.CloudSession.of({
+      identity: Effect.sync(() =>
+        Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
       clerkToken: Effect.gen(function* () {
         const session = appAtomRegistry.get(managedRelaySessionAtom);
         if (session === null) {
@@ -208,10 +259,10 @@ const capabilitiesLayer = Layer.effectContext(
         return token;
       }),
     });
-    const identity = RelayDeviceIdentity.of({
-      deviceId: Effect.succeed(Option.none()),
+    const identity = ClientCapabilities.RelayDeviceIdentity.of({
+      deviceId: Effect.succeedNone,
     });
-    const primaryAuth = PrimaryEnvironmentAuth.of({
+    const primaryAuth = ClientCapabilities.PrimaryEnvironmentAuth.of({
       bearerToken: Effect.tryPromise({
         try: readDesktopPrimaryBearerToken,
         catch: (cause) =>
@@ -221,17 +272,19 @@ const capabilitiesLayer = Layer.effectContext(
           }),
       }).pipe(Effect.map(Option.fromNullishOr)),
     });
-    const ssh = SshEnvironmentGateway.of({
-      provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target) {
-        const bridge = window.desktopBridge;
-        if (bridge === undefined) {
-          return yield* new ConnectionBlockedError({
-            reason: "unsupported",
-            detail: "SSH environments are only available in the desktop app.",
-          });
-        }
-        return yield* provisionDesktopSshEnvironment(bridge, target);
-      }),
+    const ssh = ClientCapabilities.SshEnvironmentGateway.of({
+      provision: Effect.fn("web.connectionPlatform.ssh.provision")(
+        function* (target, expectedEnvironmentId) {
+          const bridge = window.desktopBridge;
+          if (bridge === undefined) {
+            return yield* new ConnectionBlockedError({
+              reason: "unsupported",
+              detail: "SSH environments are only available in the desktop app.",
+            });
+          }
+          return yield* provisionDesktopSshEnvironment(bridge, target, expectedEnvironmentId);
+        },
+      ),
       prepare: Effect.fn("web.connectionPlatform.ssh.prepare")(function* (input) {
         const bridge = window.desktopBridge;
         if (bridge === undefined) {
@@ -279,11 +332,11 @@ const capabilitiesLayer = Layer.effectContext(
       }),
     });
 
-    return Context.make(CloudSession, cloudSession).pipe(
-      Context.add(PrimaryEnvironmentAuth, primaryAuth),
-      Context.add(RelayDeviceIdentity, identity),
-      Context.add(ClientPresentation, presentation),
-      Context.add(SshEnvironmentGateway, ssh),
+    return Context.make(ClientCapabilities.CloudSession, cloudSession).pipe(
+      Context.add(ClientCapabilities.PrimaryEnvironmentAuth, primaryAuth),
+      Context.add(ClientCapabilities.RelayDeviceIdentity, identity),
+      Context.add(ClientCapabilities.ClientPresentation, presentation),
+      Context.add(ClientCapabilities.SshEnvironmentGateway, ssh),
     );
   }),
 );
@@ -459,10 +512,10 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
 }
 
 const platformConnectionSourceLayer = Layer.effect(
-  PlatformConnectionSource,
+  PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
-    if (isHostedStaticApp()) {
-      return PlatformConnectionSource.of({
+    if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
+      return PlatformConnectionSource.PlatformConnectionSource.of({
         registrations: Stream.empty,
       });
     }
@@ -570,7 +623,7 @@ const platformConnectionSourceLayer = Layer.effect(
       return registrations as ReadonlyArray<PlatformConnectionRegistration>;
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
-    return PlatformConnectionSource.of({
+    return PlatformConnectionSource.PlatformConnectionSource.of({
       registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
         Stream.mapEffect(() => buildPlatformRegistrations),
       ),
@@ -579,8 +632,8 @@ const platformConnectionSourceLayer = Layer.effect(
 );
 
 const environmentOwnedDataCleanupLayer = Layer.succeed(
-  EnvironmentOwnedDataCleanup,
-  EnvironmentOwnedDataCleanup.of({
+  Persistence.EnvironmentOwnedDataCleanup,
+  Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
       Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);

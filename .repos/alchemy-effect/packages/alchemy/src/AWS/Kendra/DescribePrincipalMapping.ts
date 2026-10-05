@@ -20,15 +20,16 @@ export interface DescribePrincipalMappingRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.DescribePrincipalMappingHttp)`.
  *
- * @binding
- * @section Principal Mapping
- * @example Inspect Mapping Actions
+ * ### Principal Mapping
+ * **Example:** Inspect Mapping Actions
  * ```typescript
  * const describeMapping = yield* AWS.Kendra.DescribePrincipalMapping(index);
  *
  * const mapping = yield* describeMapping({ GroupId: "engineering" });
  * console.log(mapping.GroupOrderingIdSummaries);
  * ```
+ *
+ * @binding
  */
 export interface DescribePrincipalMapping extends Binding.Service<
   DescribePrincipalMapping,

@@ -1,11 +1,9 @@
 import { describe, it, expect } from "vite-plus/test";
 
 import {
-  DISTRO_NAME_PATTERN,
   extractDistroFromUncPath,
   isValidDistroName,
   parseWslDistroList,
-  resolveWslHomeUncPath,
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "./wslPathParsing.ts";
@@ -116,29 +114,6 @@ describe("wslUncPathToLinuxPath", () => {
   });
 });
 
-describe("resolveWslHomeUncPath", () => {
-  const distros = [
-    { name: "Debian", isDefault: true, version: 2 as const },
-    { name: "Ubuntu", isDefault: false, version: 2 as const },
-  ];
-
-  it("uses the configured distro when one is selected", () => {
-    expect(resolveWslHomeUncPath({ distro: "Ubuntu" }, distros)).toBe(
-      "\\\\wsl.localhost\\Ubuntu\\home",
-    );
-  });
-
-  it("uses the actual default distro when config uses the WSL default", () => {
-    expect(resolveWslHomeUncPath({ distro: null }, distros)).toBe(
-      "\\\\wsl.localhost\\Debian\\home",
-    );
-  });
-
-  it("omits the default path when no default distro is known", () => {
-    expect(resolveWslHomeUncPath({ distro: null }, [])).toBeNull();
-  });
-});
-
 describe("resolveWslPickFolderDefaultPath", () => {
   const config = { distro: null };
   const distros = [{ name: "Debian", isDefault: true, version: 2 as const }];
@@ -184,23 +159,22 @@ describe("resolveWslPickFolderDefaultPath", () => {
   });
 });
 
-describe("DISTRO_NAME_PATTERN / isValidDistroName", () => {
+describe("isValidDistroName", () => {
   it("accepts common distro names", () => {
     for (const name of ["Ubuntu", "Ubuntu-22.04", "kali-linux", "Debian", "Ubuntu 22.04"]) {
-      expect(DISTRO_NAME_PATTERN.test(name)).toBe(true);
       expect(isValidDistroName(name)).toBe(true);
     }
   });
 
   it("rejects names with trailing whitespace, hyphen, or dot", () => {
     for (const name of ["Ubuntu ", "Ubuntu-", "Ubuntu."]) {
-      expect(DISTRO_NAME_PATTERN.test(name)).toBe(false);
+      expect(isValidDistroName(name)).toBe(false);
     }
   });
 
   it("rejects names containing control or shell-meta characters", () => {
     for (const name of ["bad\nname", "bad\tname", "bad/name", "bad!name", "bad;name"]) {
-      expect(DISTRO_NAME_PATTERN.test(name)).toBe(false);
+      expect(isValidDistroName(name)).toBe(false);
     }
   });
 });

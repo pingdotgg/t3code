@@ -17,7 +17,7 @@ import {
  * via {@link isDesktopLocalConnectionTarget}, so the convention can never drift
  * between the two.
  */
-export const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
+const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
   return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${backendId}`;
@@ -36,6 +36,10 @@ export function desktopLocalBackendId(target: ConnectionTarget): string | null {
   return isDesktopLocalConnectionTarget(target)
     ? target.connectionId.slice(DESKTOP_LOCAL_CONNECTION_ID_PREFIX.length)
     : null;
+}
+
+export function isWslConnectionTarget(target: ConnectionTarget): boolean {
+  return desktopLocalBackendId(target)?.startsWith("wsl:") === true;
 }
 
 export type DesktopSecondaryBootstrapsRead =
@@ -67,13 +71,30 @@ export function createDesktopSecondaryBootstrapsReader(
   const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
     if (bridge === undefined) {
-      snapshot = [];
+      if (snapshot.length > 0) snapshot = [];
       return { _tag: "Success", bootstraps: snapshot };
     }
     try {
-      snapshot = bridge
+      const next = bridge
         .getLocalEnvironmentBootstraps()
         .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
+      if (
+        next.length !== snapshot.length ||
+        next.some((entry, index) => {
+          const previous = snapshot[index];
+          return (
+            previous === undefined ||
+            entry.id !== previous.id ||
+            entry.label !== previous.label ||
+            entry.runningDistro !== previous.runningDistro ||
+            entry.httpBaseUrl !== previous.httpBaseUrl ||
+            entry.wsBaseUrl !== previous.wsBaseUrl ||
+            entry.bootstrapToken !== previous.bootstrapToken
+          );
+        })
+      ) {
+        snapshot = next;
+      }
       return { _tag: "Success", bootstraps: snapshot };
     } catch (cause) {
       return { _tag: "Failure", cause };

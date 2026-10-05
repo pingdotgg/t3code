@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly number: number;
@@ -14,6 +14,9 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
 }
 
@@ -35,6 +38,7 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   status: Schema.String,
+  isDraft: Schema.optional(Schema.Boolean),
   creationDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   closedDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   _links: Schema.optional(
@@ -73,11 +77,11 @@ function encodeAzureDevOpsPathSegment(segment: string): string {
 }
 
 /**
- * The organization root a REST url belongs to, which is where a browser url and any further
- * REST call have to be hung. Exported because the pull requests page derives its own urls from
- * whatever Azure returned rather than from the local remote, whose shape varies.
+ * The organization root a REST url belongs to, which is where a browser url has to be hung when
+ * Azure answered with neither a web link nor a repository url. Read from what Azure returned
+ * rather than from the local remote, whose shape varies.
  */
-export function azureDevOpsOrganizationBaseFromRestApiUrl(
+function azureDevOpsOrganizationBaseFromRestApiUrl(
   value: string | null | undefined,
 ): string | null {
   const rawUrl = trimOptionalString(value);
@@ -161,13 +165,21 @@ function normalizeAzureDevOpsPullRequestUrl(
 function normalizeAzureDevOpsPullRequestRecord(
   raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
 ): NormalizedAzureDevOpsPullRequestRecord {
+  const state = normalizeAzureDevOpsPullRequestState(raw.status);
+  const terminalAt = Option.match(raw.closedDate ?? Option.none(), {
+    onNone: () => null,
+    onSome: DateTime.formatIso,
+  });
   return {
     number: raw.pullRequestId,
     title: raw.title,
     url: normalizeAzureDevOpsPullRequestUrl(raw),
     baseRefName: normalizeRefName(raw.targetRefName),
     headRefName: normalizeRefName(raw.sourceRefName),
-    state: normalizeAzureDevOpsPullRequestState(raw.status),
+    state,
+    ...(raw.isDraft === true ? { isDraft: true } : {}),
+    closedAt: state === "closed" ? terminalAt : null,
+    mergedAt: state === "merged" ? terminalAt : null,
     updatedAt: (raw.closedDate ?? Option.none()).pipe(
       Option.orElse(() => raw.creationDate ?? Option.none()),
     ),
@@ -177,8 +189,6 @@ function normalizeAzureDevOpsPullRequestRecord(
 const decodeAzureDevOpsPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeAzureDevOpsPullRequest = decodeJsonResult(AzureDevOpsPullRequestSchema);
 const decodeAzureDevOpsPullRequestEntry = Schema.decodeUnknownExit(AzureDevOpsPullRequestSchema);
-
-export const formatAzureDevOpsJsonDecodeError = formatSchemaError;
 
 export function decodeAzureDevOpsPullRequestListJson(
   raw: string,

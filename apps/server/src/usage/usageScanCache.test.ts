@@ -4,7 +4,9 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  makeScanCacheWriter,
   pruneScanCache,
+  type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
@@ -23,7 +25,18 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       reasoningTokens: 0,
     },
     reportedCostUsd: null,
+    speed: "standard",
     dedupeKey: "msg_1:",
+    ...overrides,
+  };
+}
+
+function position(overrides: Partial<CachedFile["position"]> = {}): CachedFile["position"] {
+  return {
+    resumeOffset: 120,
+    guardLength: 64,
+    guardHash: 0xdeadbeef,
+    codexState: null,
     ...overrides,
   };
 }
@@ -31,7 +44,14 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      provider: "claude",
+      records,
+      tailRecords: [],
+      position: position(),
+    });
   }
   return cache;
 }
@@ -39,7 +59,11 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 describe("scan cache round trip", () => {
   it("restores records unchanged", () => {
     const original = cacheWith([
-      ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
+      [
+        "/a.jsonl",
+        100,
+        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
+      ],
       ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
     ]);
     original.set("/grok.jsonl", {
@@ -49,14 +73,101 @@ describe("scan cache round trip", () => {
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
       ],
+      tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
+      position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
+    });
+    original.set("/codex.jsonl", {
+      size: 80,
+      mtimeMs: 400,
+      provider: "codex",
+      records: [
+        record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null, speed: "ultrafast" }),
+      ],
+      tailRecords: [],
+      position: position({
+        codexState: {
+          model: "gpt-6-astra",
+          speed: "ultrafast",
+          sessionId: "session-c",
+          lastUsageSignature: '{"input_tokens":1}',
+          sawSessionMeta: true,
+          suppressingForkCopies: false,
+          forkCopyAnchorMs: 0,
+        },
+      }),
     });
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(3);
+    expect(restored.size).toBe(4);
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
+    expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+  });
+
+  it("drops an entry whose persisted parse state is corrupt", () => {
+    // Resuming with a bad reducer state would attach appended usage to the
+    // wrong model or replay fork-copied history; that entry must cold parse.
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": { ...encoded.files["/a.jsonl"]!, cs: { model: 42 } },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it("drops an entry whose guard length is outside the supported range", () => {
+    // The guard length sizes a Buffer in the reader; a bogus value would make
+    // every parse of that file fail and silently drop its usage.
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const poisoned = {
+      ...encoded,
+      files: { "/a.jsonl": { ...encoded.files["/a.jsonl"]!, gl: 1e20 } },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it("drops an entry whose speed is not a known index", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record({ speed: "fast" })]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: { "/a.jsonl": { ...encoded.files["/a.jsonl"]!, r: [[...row.slice(0, 10), true]] } },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it("rejects a document from before records carried a speed", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const previous = { ...encoded, version: 3 };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
+  });
+
+  it("rewrites only changed entries and still restores the whole cache", () => {
+    const write = makeScanCacheWriter();
+    const cache = cacheWith([
+      ["/a.jsonl", 100, [record()]],
+      ["/b.jsonl", 200, [record({ sessionId: "session-b" })]],
+    ]);
+    const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
+    expect(decodeScanCache(JSON.parse(write(cache, { sources })))).toEqual(cache);
+
+    // The replacement adds intern entries; /a's memoised indexes must hold.
+    cache.set("/b.jsonl", {
+      ...cache.get("/b.jsonl")!,
+      size: 30,
+      records: [record({ sessionId: "session-c", model: "claude-opus-5-5", dedupeKey: "msg_3:" })],
+    });
+    const document = JSON.parse(write(cache, { sources }));
+    expect(decodeScanCache(document)).toEqual(cache);
+    expect(document.sources).toEqual(sources);
   });
 
   it("interns repeated model and session strings", () => {
@@ -88,7 +199,7 @@ describe("scan cache round trip", () => {
 
   it("rejects the whole cache when an intern table holds a non-string", () => {
     // models: [1] would pass the undefined guard, put a number in a record's
-    // model, and crash normalizeModelName at aggregate time.
+    // model, and crash lookupRate at aggregate time.
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const poisoned = { ...encoded, models: [1] };
 
@@ -123,74 +234,17 @@ describe("pruneScanCache", () => {
   it("drops entries older than retention", () => {
     const cache = cacheWith([["/old.jsonl", 500, [record()]]]);
 
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 400,
-      retentionCutoffMs,
-    });
+    const removed = pruneScanCache(cache, retentionCutoffMs);
 
     expect(removed).toBe(1);
     expect(cache.size).toBe(0);
   });
 
-  it("drops in-window entries whose file has disappeared", () => {
+  it("keeps entries whose file has disappeared", () => {
     const cache = cacheWith([["/gone.jsonl", 5000, [record()]]]);
 
-    pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
+    pruneScanCache(cache, retentionCutoffMs);
 
-    expect(cache.size).toBe(0);
-  });
-
-  it("keeps entries outside the walked window that are still within retention", () => {
-    // Viewing 7 days must not evict the 30-day entries, which that walk never
-    // looked for and so cannot prove are gone.
-    const cache = cacheWith([["/older-but-valid.jsonl", 2000, [record()]]]);
-
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
-
-    expect(removed).toBe(0);
-    expect(cache.size).toBe(1);
-  });
-
-  it("keeps entries the walk saw", () => {
-    const cache = cacheWith([["/live.jsonl", 5000, [record()]]]);
-
-    pruneScanCache(cache, {
-      livePaths: new Set(["/live.jsonl"]),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
-
-    expect(cache.size).toBe(1);
-  });
-});
-
-describe("pruneScanCache with an unwalked root", () => {
-  it("keeps in-window entries for a provider whose directory was not walked", () => {
-    // A missing provider root or failed settings read leaves livePaths without
-    // that provider's files. Its warm entries must survive the pass.
-    const cache = cacheWith([["/codex/sessions/a.jsonl", 5000, [record()]]]);
-
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/claude/projects"],
-      windowStartMs: 4000,
-      retentionCutoffMs: 1000,
-    });
-
-    expect(removed).toBe(0);
     expect(cache.size).toBe(1);
   });
 });

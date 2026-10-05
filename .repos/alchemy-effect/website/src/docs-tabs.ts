@@ -43,6 +43,24 @@ export const DOCS_TABS: DocsTab[] = [
     slot: "primary",
   },
   {
+    label: "Hetzner",
+    href: "/hetzner",
+    prefixes: ["/hetzner", "/providers/hetzner"],
+    slot: "primary",
+  },
+  {
+    label: "Fly",
+    href: "/fly",
+    prefixes: ["/fly", "/providers/fly"],
+    slot: "primary",
+  },
+  {
+    label: "Railway",
+    href: "/railway",
+    prefixes: ["/railway", "/providers/railway"],
+    slot: "primary",
+  },
+  {
     label: "PlanetScale",
     href: "/planetscale",
     prefixes: ["/planetscale", "/providers/planetscale"],
@@ -53,6 +71,20 @@ export const DOCS_TABS: DocsTab[] = [
     href: "/neon",
     prefixes: ["/neon", "/providers/neon"],
     slot: "primary",
+  },
+  {
+    label: "Prisma",
+    href: "/prisma",
+    prefixes: ["/prisma", "/providers/prisma"],
+    slot: "primary",
+  },
+  {
+    label: "Better Auth",
+    href: "/better-auth",
+    prefixes: ["/better-auth", "/providers/betterauth"],
+    slot: "more",
+    category: "Auth",
+    hint: "sessions · plugins · database layers",
   },
   {
     label: "Axiom",
@@ -69,6 +101,22 @@ export const DOCS_TABS: DocsTab[] = [
     slot: "more",
     category: "Source & CI",
     hint: "repos · secrets · events",
+  },
+  {
+    label: "Git",
+    href: "/git",
+    prefixes: ["/git", "/providers/git"],
+    slot: "more",
+    category: "Source & CI",
+    hint: "self-hosted git · clone · push · pull requests",
+  },
+  {
+    label: "Stripe",
+    href: "/stripe",
+    prefixes: ["/stripe", "/providers/stripe"],
+    slot: "more",
+    category: "Payments",
+    hint: "products · prices · webhooks",
   },
   {
     label: "Docker",

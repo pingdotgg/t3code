@@ -14,9 +14,8 @@ export interface ListSubscriptionsRequest
  * a callable that lists the topic filters a connected client is subscribed
  * to. Provide the implementation with
  * `Effect.provide(AWS.IoT.ListSubscriptionsHttp)`.
- * @binding
- * @section MQTT Connections
- * @example Inspect a Device's Subscriptions
+ * ### MQTT Connections
+ * **Example:** Inspect a Device's Subscriptions
  * ```typescript
  * const listSubscriptions = yield* AWS.IoT.ListSubscriptions("sensor-*");
  *
@@ -24,6 +23,8 @@ export interface ListSubscriptionsRequest
  *   clientId: "sensor-1",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListSubscriptions extends Binding.Service<
   ListSubscriptions,

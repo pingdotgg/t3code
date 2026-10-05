@@ -1,7 +1,7 @@
 import * as Encoding from "effect/Encoding";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
 
-export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
+const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
   return CheckpointRef.make(
@@ -9,7 +9,7 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
-export function resolveThreadWorkspaceCwd(input: {
+function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;
     readonly worktreePath: string | null;

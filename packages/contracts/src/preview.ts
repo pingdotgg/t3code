@@ -10,6 +10,7 @@
  */
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
@@ -169,6 +170,12 @@ export const PreviewSessionSnapshot = Schema.Struct({
   canGoForward: Schema.Boolean,
   /** Missing snapshots from older servers are treated as fill-panel mode. */
   viewport: Schema.optional(PreviewViewportSetting),
+  /**
+   * Browser profile the tab's Chromium partition is derived from. Fixed at
+   * open: Electron only honours a `<webview>`'s partition before attach, so
+   * switching would require tearing the guest down and losing page state.
+   */
+  profileId: Schema.optional(BrowserProfileId),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -184,6 +191,8 @@ export const PreviewOpenInput = Schema.Struct({
    * later (which the user would see as a visible reflow).
    */
   viewport: Schema.optional(PreviewViewportSetting),
+  /** Omit to open under the client's configured default profile. */
+  profileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
@@ -314,7 +323,7 @@ export const DiscoveredLocalServerList = Schema.Struct({
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
 
-export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSessionLookupError>()(
+export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",
   {
     threadId: Schema.String,
@@ -326,7 +335,7 @@ export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSe
   }
 }
 
-export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInvalidUrlError>()(
+export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrlError>()(
   "PreviewInvalidUrlError",
   {
     inputLength: Schema.Number,

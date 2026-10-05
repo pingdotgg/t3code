@@ -28,7 +28,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
 import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
 
@@ -61,9 +61,11 @@ export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
 /**
  * Builds both stream views over one shared store. Setup failures are logged
  * and downgraded to the no-op service so diagnostics never block startup.
+ *
+ * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.gen(function* () {
-  const { providerEventLogPath } = yield* ServerConfig;
+  const { providerEventLogPath } = yield* ServerConfig.ServerConfig;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const store = yield* EventNdjsonLogger.makeEventNdjsonLogStore(providerEventLogPath, {
     attribution,
