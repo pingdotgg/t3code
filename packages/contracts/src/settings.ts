@@ -1222,6 +1222,13 @@ export const ServerSettings = Schema.Struct({
    * or `~/worktrees`. Empty uses `<T3 home>/worktrees`.
    */
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Custom locations used before the current one. Server-maintained so
+   * worktrees left there stay eligible for cleanup and review diffs.
+   */
+  previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),

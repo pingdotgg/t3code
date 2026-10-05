@@ -179,11 +179,16 @@ export const make = Effect.gen(function* () {
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
     for (const directory of managedWorktreesDirectories(
-      serverSettings.worktreesDirectory,
+      serverSettings,
       config.worktreesDir,
       path,
     )) {
-      if (yield* fs.exists(directory)) roots.push(yield* fs.realPath(directory));
+      // An unmounted drive only skips its own worktrees.
+      const root = yield* fs.exists(directory).pipe(
+        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (root !== null) roots.push(root);
     }
     if (roots.length === 0) return;
     const hasDeleteRule = anyWorktreePolicy(serverSettings, (rules) => rules.worktreeOnDelete);
@@ -230,9 +235,13 @@ export const make = Effect.gen(function* () {
       )
         continue;
       yield* Effect.gen(function* () {
-        if (!roots.some((root) => inside(root, worktreePath)) || !(yield* fs.exists(worktreePath)))
-          return;
-        if ((yield* fs.realPath(worktreePath)) !== worktreePath) return;
+        if (!(yield* fs.exists(worktreePath))) return;
+        // Roots are canonical, so compare canonical paths. A symlinked parent
+        // (a linked drive) is fine; a symlinked worktree directory is not.
+        const realPath = yield* fs.realPath(worktreePath);
+        const realParent = yield* fs.realPath(path.dirname(worktreePath));
+        if (realPath !== path.join(realParent, path.basename(worktreePath))) return;
+        if (!roots.some((root) => inside(root, realPath))) return;
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;

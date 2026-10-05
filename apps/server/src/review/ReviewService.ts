@@ -70,15 +70,14 @@ export const make = Effect.gen(function* () {
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
   ) {
-    const worktreesDirectory = yield* settings.getSettings.pipe(
-      Effect.map((current) => current.worktreesDirectory),
-      Effect.orElseSucceed(() => ""),
+    const worktreesDirectories = yield* settings.getSettings.pipe(
+      Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),
     );
     const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
       Effect.forEach(
-        managedWorktreesDirectories(worktreesDirectory, config.worktreesDir, path),
+        managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path),
         canonicalizePath,
       ),
     ]);

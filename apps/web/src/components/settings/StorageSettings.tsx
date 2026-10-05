@@ -21,6 +21,7 @@ import {
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { searchableSetting } from "./settingsSearch";
 import {
   useClearScopedSettings,
   useScopedSettings,
@@ -45,7 +46,7 @@ function WorktreesDirectoryRow() {
 
   return (
     <SettingsRow
-      title="Worktree location"
+      {...searchableSetting("storage-worktrees-location")}
       description={
         "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
       }

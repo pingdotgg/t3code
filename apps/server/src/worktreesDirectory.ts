@@ -6,7 +6,8 @@ import { expandHomePathWith } from "./pathExpansion.ts";
  * Directory new worktrees are created under: the `worktreesDirectory`
  * setting, or `defaultDir` (`<T3 home>/worktrees`) when it is empty. Null when
  * the setting is not an absolute path on this machine, such as `D:\worktrees`
- * configured for a Windows server and synced to a Linux one.
+ * configured for a Windows server and synced to a Linux one, or when it is a
+ * filesystem root, which would make every path on that drive look managed.
  */
 export function resolveWorktreesDirectory(
   setting: string,
@@ -15,15 +16,24 @@ export function resolveWorktreesDirectory(
 ): string | null {
   if (setting === "") return defaultDir;
   const expanded = expandHomePathWith(setting, path);
-  return path.isAbsolute(expanded) ? path.resolve(expanded) : null;
+  if (!path.isAbsolute(expanded)) return null;
+  const resolved = path.resolve(expanded);
+  return path.dirname(resolved) === resolved ? null : resolved;
 }
 
 /** Every directory that holds T3-managed worktrees on this machine. */
 export function managedWorktreesDirectories(
-  setting: string,
+  settings: {
+    readonly worktreesDirectory: string;
+    readonly previousWorktreesDirectories: ReadonlyArray<string>;
+  },
   defaultDir: string,
   path: Path.Path,
 ): ReadonlyArray<string> {
-  const custom = resolveWorktreesDirectory(setting, defaultDir, path);
-  return custom === null || custom === defaultDir ? [defaultDir] : [defaultDir, custom];
+  const directories = new Set([defaultDir]);
+  for (const setting of [settings.worktreesDirectory, ...settings.previousWorktreesDirectories]) {
+    const directory = resolveWorktreesDirectory(setting, defaultDir, path);
+    if (directory !== null) directories.add(directory);
+  }
+  return [...directories];
 }

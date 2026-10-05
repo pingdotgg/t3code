@@ -3008,7 +3008,15 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             { worktreesDirectory: "relative/worktrees" },
           )
           .pipe(Effect.flip);
-        assert.match(error.detail, /not an absolute path on this machine/);
+        assert.match(error.detail, /must be an absolute folder on this machine/);
+
+        const rootError = yield* driver
+          .createWorktree(
+            { cwd, path: null, refName: initialBranch, newRefName: "feature/root-dir" },
+            { worktreesDirectory: "/" },
+          )
+          .pipe(Effect.flip);
+        assert.match(rootError.detail, /not a drive root/);
       }),
     );
 
