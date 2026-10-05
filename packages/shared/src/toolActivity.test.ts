@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  claudeAgentMessage,
+  claudeAgentMessageTitle,
   claudeSkillInvocation,
   classifyToolActivity,
   collectToolFilePaths,
@@ -8,6 +10,7 @@ import {
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
+  isClaudeAgentMessageItem,
   mergeToolActivityData,
 } from "./toolActivity.ts";
 
@@ -131,5 +134,70 @@ describe("toolActivity", () => {
     });
     expect(dynamicToolTitle("Skill", { skill: " " })).toBeUndefined();
     expect(dynamicToolTitle("Read", { skill: "full-send" })).toBeUndefined();
+  });
+
+  it("reads Claude agent messages as recorded by Claude Code", () => {
+    // Shaped like a real call: the CLI echoes a truncated `content` and the
+    // recipient beside the fields the agent wrote.
+    const input = {
+      to: "aa0c54c7feb61e9a3",
+      summary: "Draft the 0.9 release notes",
+      message: "## Release notes for 0.9\n\nPlease draft them.",
+      type: "message",
+      recipient: "aa0c54c7feb61e9a3",
+      content: "## Release notes for 0.9\n\nPlease…",
+    };
+    expect(claudeAgentMessage("SendMessage", input)).toEqual({
+      to: "aa0c54c7feb61e9a3",
+      summary: "Draft the 0.9 release notes",
+      message: "## Release notes for 0.9\n\nPlease draft them.",
+      preview: "Draft the 0.9 release notes",
+      notifyWhenIdle: false,
+    });
+    expect(claudeAgentMessageTitle("SendMessage", input)).toBe("Message to agent aa0c54c");
+    expect(claudeAgentMessageTitle("SendMessage", input, "Release notes writer")).toBe(
+      "Message to Release notes writer",
+    );
+    // Without a summary the collapsed row previews the body's first line.
+    expect(
+      claudeAgentMessage("SendMessage", { to: "main", message: "## Status\nAll green." })?.preview,
+    ).toBe("Status");
+    // The body keeps its Markdown indentation; the preview skips to the first text.
+    const indented = claudeAgentMessage("SendMessage", { to: "main", message: "\n    npm test\n" });
+    expect(indented?.message).toBe("\n    npm test\n");
+    expect(indented?.preview).toBe("npm test");
+    expect(
+      claudeAgentMessage("SendMessage", { to: "main", message: "  " })?.message,
+    ).toBeUndefined();
+    expect(claudeAgentMessage("Read", input)).toBeUndefined();
+    // Structured protocol messages keep the generic tool view.
+    expect(
+      claudeAgentMessage("SendMessage", { to: "x", message: { type: "shutdown_request" } }),
+    ).toBeUndefined();
+  });
+
+  it("names agent message recipients the way the agent addressed them", () => {
+    const titleFor = (input: Record<string, unknown>) =>
+      claudeAgentMessageTitle("SendMessage", { message: "hi", ...input });
+    expect(titleFor({ to: "main" })).toBe("Message to main agent");
+    expect(titleFor({ to: "release-bot [c9ede1]" })).toBe("Message to release-bot");
+    expect(titleFor({ to: "uds:/tmp/cc-socks/54926.sock" })).toBe("Message to another session");
+    expect(titleFor({ type: "broadcast" })).toBe("Message to everyone");
+    expect(titleFor({})).toBe("Message");
+    expect(
+      claudeAgentMessageTitle("SendMessage", { to: "docs-writer", notify_when_idle: true }),
+    ).toBe("Notify when docs-writer is idle");
+  });
+
+  it("counts text and transport-summarized messages, not protocol payloads", () => {
+    expect(isClaudeAgentMessageItem("SendMessage", { to: "main", message: "Done." })).toBe(true);
+    expect(isClaudeAgentMessageItem("SendMessage", '{ "to": "ghost-agent", …')).toBe(true);
+    expect(
+      isClaudeAgentMessageItem("SendMessage", {
+        to: "researcher",
+        message: { type: "shutdown_request" },
+      }),
+    ).toBe(false);
+    expect(isClaudeAgentMessageItem("send_message", { message: "hi" })).toBe(false);
   });
 });

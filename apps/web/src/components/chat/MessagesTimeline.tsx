@@ -67,7 +67,7 @@ import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
-import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
+import { claudeAgentMessage, claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   createContext,
@@ -4080,6 +4080,8 @@ function toolGroupSummaryIconName(
       return "globe";
     case "code-search":
       return "search";
+    case "message":
+      return "message-circle";
     case "other":
       return "wrench";
     case "dynamic-tool":
@@ -5514,14 +5516,22 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     payload?.type === "dynamic_tool"
       ? claudeSkillInvocation(payload.toolName, payload.input)
       : undefined;
+  const agentMessage =
+    payload?.type === "dynamic_tool"
+      ? claudeAgentMessage(payload.toolName, payload.input)
+      : undefined;
   // Reads and skills expand to plain text instead of the item inspector. A
   // skill's heading already names it, so only its arguments are left to show.
+  // An agent message expands to its body.
   const plainOutput =
     toolGroupAction(workEntry) === "read"
       ? workEntryReadOutput(workEntry, workspaceRoot)
       : skill
         ? (skill.args ?? null)
-        : undefined;
+        : agentMessage
+          ? null
+          : undefined;
+  const trailingPreview = answerPreview ?? agentMessage?.preview ?? null;
   const viewedImage =
     viewedImagePath && threadRef
       ? resolveViewedImageAsset(viewedImagePath, {
@@ -5555,11 +5565,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   // Reads and skills still fetch the output the timeline withheld.
   const plainOutputFetches =
     plainOutput !== undefined &&
+    !agentMessage &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
     plainOutput !== undefined
-      ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
+      ? Boolean(
+          plainOutput ||
+          agentMessage?.message ||
+          viewedImage ||
+          workEntry.questionAnswer ||
+          plainOutputFetches,
+        )
       : workEntry.projectedItem === undefined
         ? canExpand
         : isReasoning
@@ -5590,7 +5607,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? "text-secondary-label"
         : "text-foreground/80";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
-  const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
+  const accessiblePreview = [threadLabel?.text ?? previewText, trailingPreview]
     .filter(Boolean)
     .join(": ");
   const accessibleDisplayText = showFailedIndicator
@@ -5635,7 +5652,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
             <span
-              className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
+              className={cn(
+                trailingPreview ? "min-w-0" : "min-w-0 flex-1",
+                "truncate",
+                headingClass,
+              )}
             >
               {isReasoning && !expanded ? (
                 <ReactMarkdown
@@ -5659,7 +5680,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 previewText
               )}
             </span>
-            {answerPreview ? (
+            {trailingPreview && !answerPreview ? (
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                ·
+              </span>
+            ) : null}
+            {trailingPreview ? (
               <span
                 className={cn(
                   "min-w-0 truncate",
@@ -5670,7 +5696,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                     : "text-muted-foreground",
                 )}
               >
-                {answerPreview}
+                {trailingPreview}
               </span>
             ) : null}
           </p>
@@ -5744,6 +5770,24 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
+      {expanded && agentMessage?.message ? (
+        // The message bubble the recipient sees, so it doesn't read as the agent's own reply.
+        <WorkLogDetails kind="media">
+          <div className="max-h-96 overflow-auto rounded-2xl bg-message p-3 text-message-foreground select-text">
+            <ChatMarkdown
+              className="text-message-foreground"
+              text={agentMessage.message}
+              cwd={ctx.markdownCwd}
+              threadRef={threadRef ?? undefined}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onImageExpand={onImageExpand}
+              lineBreaks
+            />
+          </div>
+        </WorkLogDetails>
+      ) : null}
       {expanded &&
       !isReasoning &&
       !workEntry.questionAnswer &&

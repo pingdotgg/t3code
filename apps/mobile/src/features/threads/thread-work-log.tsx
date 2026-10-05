@@ -53,6 +53,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
+import { claudeAgentMessage } from "@t3tools/shared/toolActivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
@@ -940,16 +941,22 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const isRead = toolGroupAction(row.workEntry) === "read";
   // Tool calls show the call in the foreground and the result muted below it.
   const shownItem = fetchedItem ?? row.projectedItem.item;
+  const item = row.projectedItem.item;
+  const agentMessage =
+    item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+  const agentMessageBody = agentMessage?.message;
   const call =
-    expanded && !isRead && shownItem.type === "command_execution"
-      ? toolCallLines({ command: shownItem.input })
-      : expanded && !isRead && shownItem.type === "dynamic_tool"
-        ? toolCallLines({ args: shownItem.input })
-        : expanded && shownItem.type === "file_search"
-          ? toolCallLines({ args: { pattern: shownItem.pattern } })
-          : expanded && shownItem.type === "web_search"
-            ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
-            : null;
+    expanded && agentMessageBody
+      ? null
+      : expanded && !isRead && shownItem.type === "command_execution"
+        ? toolCallLines({ command: shownItem.input })
+        : expanded && !isRead && shownItem.type === "dynamic_tool"
+          ? toolCallLines({ args: shownItem.input })
+          : expanded && shownItem.type === "file_search"
+            ? toolCallLines({ args: { pattern: shownItem.pattern } })
+            : expanded && shownItem.type === "web_search"
+              ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
+              : null;
   const failedExitCode =
     call && shownItem.type === "command_execution" && shownItem.exitCode
       ? shownItem.exitCode
@@ -979,7 +986,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const previewText = workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
-    : null;
+    : (agentMessage?.preview ?? null);
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const displayText = workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
@@ -1081,7 +1088,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                       ? "text-foreground"
                       : "text-foreground-subtle"
                   }
-                >{`  ${answerPreview}`}</Text>
+                >
+                  {row.workEntry.questionAnswer ? `  ${answerPreview}` : ` · ${answerPreview}`}
+                </Text>
               ) : null}
             </WorkLogLabel>
           </>
@@ -1132,7 +1141,14 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
+          className={
+            reasoning
+              ? "ml-7 py-1"
+              : agentMessage?.message
+                ? // The message bubble the recipient sees, so it doesn't read as the agent's own reply.
+                  "ml-7 mt-1 rounded-[20px] bg-user-bubble px-3.5 py-2.5"
+                : "pb-1 pt-0.5"
+          }
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -1164,6 +1180,8 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           >
             {reasoning ? (
               props.renderReasoning(reasoning.text)
+            ) : agentMessage?.message ? (
+              props.renderReasoning(agentMessage.message)
             ) : call ? (
               [
                 call.command,
@@ -1573,6 +1591,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "globe", android: "public" };
     case "code-search":
       return "magnifyingglass";
+    case "message":
+      return { ios: "bubble.left", android: "chat_bubble" };
     case "other":
       return { ios: "wrench", android: "build" };
     case "reasoning":
