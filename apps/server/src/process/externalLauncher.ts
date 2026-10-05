@@ -673,10 +673,58 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
     };
   }
 
-  // Linux file managers have no portable "select this file" flag, so open
-  // the containing directory instead.
+  // Folder fallback when the Linux file manager cannot select items over D-Bus.
   const path = yield* Path.Path;
   return { editor: "file-manager", target, command, args: [path.dirname(target)] };
+});
+
+const tryRevealLinuxFile = Effect.fn("externalLauncher.tryRevealLinuxFile")(
+  function* (target: string) {
+    const env = yield* readCommandLookupEnv;
+    if (!(yield* isCommandAvailable("gdbus", { env }))) return false;
+
+    const path = yield* Path.Path;
+    const uri = yield* path.toFileUrl(target);
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const exitCode = yield* spawner.exitCode(
+      ChildProcess.make(
+        "gdbus",
+        [
+          "call",
+          "--session",
+          "--dest",
+          "org.freedesktop.FileManager1",
+          "--object-path",
+          "/org/freedesktop/FileManager1",
+          "--method",
+          "org.freedesktop.FileManager1.ShowItems",
+          // File URLs already escape quotes and backslashes for this GVariant string.
+          `["${uri.href}"]`,
+          "",
+        ],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore", forceKillAfter: "1 second" },
+      ),
+    );
+    return exitCode === 0;
+  },
+  // A missing service or stalled desktop session must still open the folder.
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => false),
+);
+
+const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
+  input: LaunchEditorInput,
+) {
+  const launch = yield* resolveEditorLaunch(input);
+  if (
+    input.editor === "file-manager" &&
+    input.reveal === true &&
+    launch.command === "xdg-open" &&
+    (yield* tryRevealLinuxFile(input.cwd))
+  ) {
+    return;
+  }
+  yield* launchEditorProcess(launch);
 });
 
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
@@ -826,9 +874,9 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
     launchEditor: (input) =>
-      provideCommandResolutionServices(
-        Effect.flatMap(resolveEditorLaunch(input), launchEditorProcess),
-      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      provideCommandResolutionServices(launchEditor(input)).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
   });
 });
 
