@@ -70,6 +70,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -1009,12 +1010,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, []);
   const reportContentOverflow = useCallback(() => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
+    if (contentOverflowFrameRef.current !== null) return;
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
       contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
+      onContentOverflowChange?.(measureContentOverflow());
+      reportTimelineEnd();
     });
   }, [measureContentOverflow, onContentOverflowChange]);
+  const reportTimelineEnd = useEffectEvent(() => {
+    if (restoringThreadPosition || citationPositioning) return;
+    const state = listRef.current?.getState();
+    if (state?.data !== rows) return;
+    const isAtEnd = resolveTimelineIsAtEnd(state);
+    if (isAtEnd !== undefined) onIsAtEndChange(isAtEnd);
+  });
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
