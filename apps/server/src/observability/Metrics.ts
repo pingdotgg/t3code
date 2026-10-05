@@ -94,6 +94,16 @@ export const webhookRunsTotal = Metric.counter("t3_webhook_runs_total", {
   description: "Runs started from webhook deliveries, by outcome.",
 });
 
+/** Secrets agents asked users for, by how each ended: saved, declined, cancelled, timed_out. */
+export const secretRequestsTotal = Metric.counter("t3_secret_requests_total", {
+  description: "Secrets agents asked users for, by how each request ended.",
+});
+
+/** One-use secret refs a tool tried to use, by result: used, rejected. */
+export const secretRefsConsumedTotal = Metric.counter("t3_secret_refs_consumed_total", {
+  description: "Secret refs tools tried to use, by result.",
+});
+
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));

@@ -43,6 +43,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -393,6 +394,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     // Webhook deliveries for one task dispatch in arrival order rather than
@@ -1042,10 +1044,28 @@ export const layer = Layer.effect(
                 const token = existing?.token ?? (yield* newWebhookToken);
                 const signature =
                   input.schedule.type === "webhook" ? input.schedule.signature : null;
-                const secret =
-                  signature == null ? null : (signature.secret ?? existing?.secret ?? null);
+                // A secretRef is a value the user entered for an agent; this
+                // save consumes it, so it cannot be used again. A replay of a
+                // save that already used it keeps the secret that save stored.
+                const replay = input.commandId !== undefined && existing?.secret != null;
+                const fromRef =
+                  signature?.secretRef === undefined
+                    ? undefined
+                    : yield* secretRequests
+                        .consume({ ref: signature.secretRef, projectId: input.projectId })
+                        .pipe(
+                          Effect.catch((error) =>
+                            replay
+                              ? Effect.succeed(undefined)
+                              : Effect.fail(taskError(error.message, { taskId: id })),
+                          ),
+                        );
+                // A ref, when given, is the only source: a plain secret sent
+                // alongside it must not replace what a replayed save stored.
+                const provided = signature?.secretRef === undefined ? signature?.secret : fromRef;
+                const secret = signature == null ? null : (provided ?? existing?.secret ?? null);
                 const secretChanged =
-                  signature == null || signature.secret !== undefined || existing === null;
+                  signature == null || provided !== undefined || existing === null;
                 if (signature != null && secret === null) {
                   return yield* taskError("A webhook signature check needs a signing secret.", {
                     taskId: id,
@@ -1608,11 +1628,12 @@ export const layer = Layer.effect(
                     )
                   : runOutcome("started"),
               ),
-              Effect.catchTag("WebhookDeliverySkipped", (skipped) =>
-                runOutcome("skipped").pipe(
-                  Effect.andThen(markDeliveryFailed(deliveryId, skipped.reason)),
-                ),
-              ),
+              Effect.catchTags({
+                WebhookDeliverySkipped: (skipped) =>
+                  runOutcome("skipped").pipe(
+                    Effect.andThen(markDeliveryFailed(deliveryId, skipped.reason)),
+                  ),
+              }),
               // The log is readable over RPC, so it gets a fixed reason; the
               // cause, which can carry request data, stays in the server log.
               Effect.catchCause((cause) =>

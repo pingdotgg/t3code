@@ -396,6 +396,10 @@ Webhooks have their own families:
   deliveries start, which happen after the sender has its answer.
 - `t3_webhook_held_delay` for how long requests the relay held waited before arriving.
 
+- `t3_secret_requests_total` by `status` (`saved`, `declined`, `cancelled`, `timed_out`) for secrets
+  agents asked users for, and `t3_secret_refs_consumed_total` by `result` (`used`, `rejected`) for
+  tools redeeming them. Neither ever carries a value.
+
 `ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
 started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
 the relay forwarded, the span also goes to the T3 Connect trace export as a child of the relay's

@@ -205,7 +205,7 @@ describe("orchestration V2 contracts", () => {
     });
     const known = item("item-known", "system_notice", { message: "Hello" });
     // A type no build of this client knows, standing in for a newer server's item.
-    const future = item("item-future", "secret_request", { secretRef: "ref-1" });
+    const future = item("item-future", "hologram", { beam: "ref-1" });
     const projected = (position: number, turnItem: { readonly id: string }) => ({
       position,
       visibility: "local",

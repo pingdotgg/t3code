@@ -6,6 +6,7 @@ import {
   IsoDateTime,
   ProjectId,
   ScheduledTaskId,
+  SecretRef,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -105,6 +106,10 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
         ...ScheduledTaskWebhookSignatureFields,
         secret: Schema.optional(TrimmedNonEmptyString).annotate({
           description: "Shared signing secret. Omit to keep the stored secret.",
+        }),
+        secretRef: Schema.optional(SecretRef).annotate({
+          description:
+            "A secret the user entered through request_secret, used instead of secret. It is consumed by this save.",
         }),
       }),
     ),

@@ -44,12 +44,14 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -73,6 +75,8 @@ import {
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -444,7 +448,19 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     prompt: input.prompt,
     enabled: input.enabled,
     schedule:
-      input.schedule.type === "webhook" ? { type: "webhook", signature: null } : input.schedule,
+      input.schedule.type === "webhook"
+        ? {
+            type: "webhook",
+            signature:
+              input.schedule.signature == null
+                ? null
+                : {
+                    header: input.schedule.signature.header,
+                    encoding: input.schedule.signature.encoding,
+                    prefix: input.schedule.signature.prefix,
+                  },
+          }
+        : input.schedule,
     projectId: input.projectId,
     threadId: input.threadId ?? null,
     workspaceStrategy: input.workspaceStrategy,
@@ -462,6 +478,25 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     runCount: 0,
   };
 }
+
+/** In-memory server secret store for tests that exercise secret requests. */
+const memorySecretStoreLayer = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
+  const stored = new Map<string, Uint8Array>();
+  return ServerSecretStore.ServerSecretStore.of({
+    get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+    set: (name, value) => Effect.sync(() => void stored.set(name, value)),
+    create: (name, value) => Effect.sync(() => void stored.set(name, value)),
+    getOrCreateRandom: (name, bytes) =>
+      Effect.sync(() => {
+        const existing = stored.get(name);
+        if (existing) return existing;
+        const value = new Uint8Array(bytes).fill(7);
+        stored.set(name, value);
+        return value;
+      }),
+    remove: (name) => Effect.sync(() => void stored.delete(name)),
+  });
+});
 
 const unusedScheduledTaskStubLayer = Layer.succeed(
   ScheduledTaskService.ScheduledTaskService,
@@ -657,6 +692,12 @@ describe("orchestrator MCP toolkit", () => {
                       : Option.none(),
                   ),
               }),
+            ),
+            Layer.provideMerge(
+              SecretRequests.layer.pipe(
+                Layer.provide(memorySecretStoreLayer),
+                Layer.provide(orchestrationLayer),
+              ),
             ),
             Layer.provide(NodeServices.layer),
           );
@@ -1471,6 +1512,114 @@ describe("orchestrator MCP toolkit", () => {
               scheduledTaskId: serializedScheduledTaskId,
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            // The agent asks for a secret; the tool waits for the user and
+            // returns a one-use ref, never the value, which a signed webhook
+            // task then consumes.
+            const secretRequests = yield* SecretRequests.SecretRequests;
+            const secretFiber = yield* invoke("request_secret", {
+              label: "GitHub webhook secret",
+              reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
+              placeholder: "Paste the webhook secret",
+              clientRequestId: "release-webhook-secret",
+            }).pipe(Effect.forkChild);
+            // Polled without the helper's short budget: under load the tool's
+            // own reads come first.
+            const asked = yield* Effect.gen(function* () {
+              while (true) {
+                const projection = yield* orchestrator.getThreadProjection(parentThreadId);
+                if (
+                  projection.turnItems.some(
+                    (item) => item.type === "secret_request" && item.secretStatus === "pending",
+                  )
+                ) {
+                  return projection;
+                }
+                yield* Effect.sleep("5 millis");
+              }
+            });
+            const card = asked.turnItems.find((item) => item.type === "secret_request");
+            if (card?.type !== "secret_request") {
+              return yield* Effect.die(new Error("Secret request card missing."));
+            }
+            expect(card).toMatchObject({
+              label: "GitHub webhook secret",
+              placeholder: "Paste the webhook secret",
+            });
+            // Asking again with the same id leaves the open card exactly as it was.
+            yield* orchestrator.dispatch({
+              type: "secret_request.record",
+              commandId: CommandId.make("command:test:secret-request-replay"),
+              threadId: parentThreadId,
+              runId: card.runId!,
+              nodeId: card.nodeId!,
+              turnItemId: card.id,
+              label: "Something else",
+              reason: "A different reason.",
+              secretStatus: "pending",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.find(
+                (item) => item.id === card.id,
+              ),
+            ).toMatchObject({ label: "GitHub webhook secret", runId: card.runId });
+            // The agent is blocked on the user, so the thread asks for input
+            // like a question does, in both shell paths.
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+            ).toMatchObject({ kind: "user_input" });
+            expect(threadShellFromProjection(asked).pendingRuntimeRequest).toMatchObject({
+              kind: "user_input",
+            });
+            // What the card's Save sends (secrets.answerRequest).
+            yield* secretRequests.answer({
+              threadId: parentThreadId,
+              turnItemId: card.id,
+              answer: { type: "save", secret: "github-webhook-secret" },
+            });
+            const secretCall = yield* Fiber.join(secretFiber);
+            expect(secretCall.isError).toBe(false);
+            const secretResult = secretCall.structuredContent as {
+              status: string;
+              secretRef?: string;
+            };
+            expect(secretResult.status).toBe("saved");
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest ?? null,
+            ).toBeNull();
+            expect(secretResult.secretRef).toMatch(/^secret-ref:[0-9a-f]{32}$/);
+            // The value appears nowhere in what the agent received.
+            const received = [
+              ...secretCall.content.map((part) => ("text" in part ? part.text : "")),
+              ...Object.values(secretResult),
+            ];
+            expect(received.some((value) => value.includes("github-webhook-secret"))).toBe(false);
+
+            // A retry that lost the first result gets the same answer, with no
+            // second card for the user.
+            const retried = yield* invoke("request_secret", {
+              label: "GitHub webhook secret",
+              reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
+              clientRequestId: "release-webhook-secret",
+            });
+            expect(retried.structuredContent).toEqual(secretResult);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.filter(
+                (item) => item.type === "secret_request",
+              ),
+            ).toHaveLength(1);
+
+            // The ref is the secret for exactly one consumer.
+            expect(
+              yield* secretRequests.consume({
+                ref: secretResult.secretRef as never,
+                projectId,
+              }),
+            ).toBe("github-webhook-secret");
+            const reused = yield* secretRequests
+              .consume({ ref: secretResult.secretRef as never, projectId })
+              .pipe(Effect.flip);
+            expect(reused.message).toContain("already used");
 
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
@@ -3570,6 +3719,12 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provideMerge(
+            SecretRequests.layer.pipe(
+              Layer.provide(memorySecretStoreLayer),
+              Layer.provide(orchestrationLayer),
+            ),
+          ),
           Layer.provide(NodeServices.layer),
         );
 

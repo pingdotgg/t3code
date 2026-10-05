@@ -12,6 +12,7 @@ import {
   ProjectId,
   RunId,
   ScheduledTaskId,
+  SecretRef,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -541,8 +542,14 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
-  /** For webhook tasks: the public T3 Connect URL, or the environment-relative path when the environment is not linked. */
-  webhookUrl: Schema.optional(Schema.String),
+  /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
+  webhookUrl: Schema.optional(Schema.String).annotate({
+    description:
+      "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",
+  }),
+  webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
+    description: "Whether requests must carry a valid signature.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -576,6 +583,44 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
+
+export const OrchestratorMcpRequestSecretInput = Schema.Struct({
+  label: TrimmedNonEmptyString.annotate({
+    description: "What you need, shown as the card's title, e.g. 'GitHub webhook secret'.",
+  }),
+  reason: TrimmedNonEmptyString.annotate({
+    description:
+      "One or two sentences on what it is for and where the user gets or also enters it.",
+  }),
+  placeholder: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Hint inside the input, e.g. 'Paste your GitHub token'.",
+  }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
+  ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Reuse when retrying a call that lost its result, so the user sees one card and its answer is returned again. Use a new id to ask again after timed_out or cancelled.",
+  }),
+});
+export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
+
+export const OrchestratorMcpRequestSecretResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("saved").annotate({ description: "secretRef holds the value." }),
+    secretRef: SecretRef.annotate({
+      description:
+        "Pass it to a tool that accepts a secretRef; it works once, and you never see the value.",
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["declined", "cancelled", "timed_out"]).annotate({
+      description:
+        "declined: the user chose not to. cancelled: the request ended with the run. timed_out: the user did not answer in time; the card is closed, so ask again with a new clientRequestId if still needed.",
+    }),
+  }),
+]);
+export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
