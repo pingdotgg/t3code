@@ -38,11 +38,11 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function mockSpawnerLayer(statusJson = "{}") {
+function mockSpawnerLayer(statusJson: string | (() => string) = "{}") {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
-      Effect.succeed(
+      Effect.sync(() =>
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
@@ -50,7 +50,9 @@ function mockSpawnerLayer(statusJson = "{}") {
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.make(encoder.encode(statusJson)),
+          stdout: Stream.make(
+            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
+          ),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -347,6 +349,57 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  it.effect("re-reads the MagicDNS name when Tailscale connects after a cached status read", () => {
+    // `read` hands back this object, so mutating it simulates an interface change.
+    const networkInterfaces: Record<
+      string,
+      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+    > = { ...lanNetworkInterfaces };
+    let tailscaleConnected = false;
+    let statusReads = 0;
+    const spawnerLayer = mockSpawnerLayer(() => {
+      statusReads += 1;
+      return tailscaleConnected ? `{"Self":{"DNSName":"desktop.tail.ts.net."}}` : "{}";
+    });
+
+    return withHarness(
+      networkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const beforeConnect = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          beforeConnect.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+        );
+        assert.equal(statusReads, 1);
+
+        Object.assign(networkInterfaces, tailnetNetworkInterfaces);
+        tailscaleConnected = true;
+
+        const afterConnect = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          afterConnect.map((endpoint) => endpoint.httpBaseUrl),
+          [
+            "http://127.0.0.1:4173/",
+            "http://192.168.1.20:4173/",
+            "http://100.90.1.2:4173/",
+            "https://desktop.tail.ts.net/",
+          ],
+        );
+        assert.equal(statusReads, 2);
+
+        // Unchanged interfaces keep serving the cached status.
+        yield* serverExposure.getAdvertisedEndpoints;
+        assert.equal(statusReads, 2);
+      }),
+      {},
+      spawnerLayer,
+    );
+  });
 
   it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
     withHarness(

@@ -406,6 +406,19 @@ function resolveRuntimeState(input: {
   };
 }
 
+const tailscaleIpv4AddressKey = (
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): string =>
+  Object.values(networkInterfaces)
+    .flatMap((addresses) => addresses ?? [])
+    .filter(
+      (address) =>
+        !address.internal && address.family === "IPv4" && isTailscaleIpv4Address(address.address),
+    )
+    .map((address) => address.address)
+    .toSorted()
+    .join(",");
+
 const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
@@ -423,7 +436,7 @@ export const make = Effect.gen(function* () {
   // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
   // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
   // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
+  const [cachedReadMagicDnsName, invalidateMagicDnsName] = yield* Effect.cachedInvalidateWithTTL(
     readTailscaleStatus.pipe(
       Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
@@ -431,6 +444,10 @@ export const make = Effect.gen(function* () {
     ),
     TAILSCALE_STATUS_CACHE_TTL,
   );
+
+  // Tailscale connecting or disconnecting changes its interface addresses, which
+  // makes a status read cached before the change stale.
+  const lastTailscaleAddressesRef = yield* Ref.make<string | null>(null);
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -543,6 +560,15 @@ export const make = Effect.gen(function* () {
     // TCC prompt on Mac App Store Tailscale builds.
     if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
       return coreEndpoints;
+    }
+
+    const tailscaleAddresses = tailscaleIpv4AddressKey(currentNetworkInterfaces);
+    const previousTailscaleAddresses = yield* Ref.getAndSet(
+      lastTailscaleAddressesRef,
+      tailscaleAddresses,
+    );
+    if (previousTailscaleAddresses !== tailscaleAddresses) {
+      yield* invalidateMagicDnsName;
     }
 
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({

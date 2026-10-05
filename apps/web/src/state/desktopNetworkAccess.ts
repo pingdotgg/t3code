@@ -79,12 +79,14 @@ export function createDesktopNetworkAccessStateAtom(
     } satisfies DesktopNetworkAccessSnapshot;
   });
 
+  // Keep the loaded snapshot alive, but let the SWR wrapper unmount so reopening
+  // Connections after the stale period revalidates while showing the old snapshot.
   return Atom.make(loadDesktopNetworkAccess()).pipe(
+    Atom.keepAlive,
     Atom.swr({
       staleTime: DESKTOP_NETWORK_ACCESS_STALE_TIME_MS,
       revalidateOnMount: true,
     }),
-    Atom.keepAlive,
     Atom.withLabel("desktop:network-access"),
   );
 }
