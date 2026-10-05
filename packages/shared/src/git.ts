@@ -163,8 +163,16 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
     : `${organization}.visualstudio.com/${project}/_git/${repository}`;
 }
 
+// `[user@]host:path`, git's SCP-like spelling of an SSH remote.
+const SCP_REMOTE_PATTERN = /^(?:([a-z0-9._-]+)@)?([^:/\s@]+):\/?([^/\s]+(?:\/[^/\s]+)*)$/i;
+
 /**
  * Normalize a git remote URL into a stable comparison key.
+ *
+ * An SCP-like remote keys like its URL spelling: the user is optional, as git
+ * allows (`host:owner/repo`), and an absolute path (`host:/srv/repo`) keys like
+ * `ssh://host/srv/repo`. A one-letter host without a user is a Windows drive
+ * (`c:/repos/app`), which git reads as a path.
  */
 export function normalizeGitRemoteUrl(value: string): string {
   const normalized = value
@@ -173,11 +181,11 @@ export function normalizeGitRemoteUrl(value: string): string {
     .replace(/\.git$/i, "")
     .toLowerCase();
 
-  if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
+  if (/^(?:ssh|git\+ssh|ssh\+git|https?|git):\/\//i.test(normalized)) {
     try {
       const url = new URL(normalized);
       const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
-      if (url.hostname && repositorySegments.length > 1) {
+      if (url.hostname && repositorySegments.length > 0) {
         return (
           azureDevOpsRepositoryKey(url.hostname, repositorySegments) ??
           `${url.hostname}/${repositorySegments.join("/")}`
@@ -188,12 +196,8 @@ export function normalizeGitRemoteUrl(value: string): string {
     }
   }
 
-  const scpStyleHostAndPath = /^[a-zA-Z0-9._-]+@([^:/\s]+):([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
-    normalized,
-  );
-  const scpHost = scpStyleHostAndPath?.[1];
-  const scpPath = scpStyleHostAndPath?.[2];
-  if (scpHost && scpPath) {
+  const [, scpUser, scpHost, scpPath] = SCP_REMOTE_PATTERN.exec(normalized) ?? [];
+  if (scpHost && scpPath && (scpUser || scpHost.length > 1)) {
     return azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${scpHost}/${scpPath}`;
   }
 

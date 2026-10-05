@@ -38,6 +38,80 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
     }),
   ).pipe(Layer.provide(ProcessRunner.layer));
 
+const processOutput = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+/**
+ * What `ssh -G` prints for a config with these hosts, including `Match` rules on
+ * the login and port. Any other host prints as itself.
+ */
+function sshConfigOutput(args: ReadonlyArray<string>): string {
+  const option = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+  // ssh matches host names case-insensitively.
+  const host = (args.at(-1) ?? "").toLowerCase();
+  const user = option("-l");
+  const port = option("-p") ?? "22";
+  const hosts: Record<string, { readonly hostname: string; readonly user?: string }> = {
+    gh: { hostname: "github.com" },
+    g: { hostname: "github.com" },
+    gh443: { hostname: "ssh.github.com" },
+    // No `User`, so ssh logs in as the local account.
+    nouser: { hostname: "github.com", user: "localuser" },
+    // A login git cannot spell in a remote.
+    spaced: { hostname: "github.com", user: "John Smith" },
+    "alice-box": { hostname: "192.0.2.10", user: "alice" },
+    "bob-box": { hostname: "192.0.2.10", user: "bob" },
+    // `Match originalhost review user git` picks GitHub; otherwise GitLab.
+    review: { hostname: user === "git" ? "github.com" : "gitlab.com", user: "me" },
+    // `Match exec "test %p = 2222"` picks a second server for the same name.
+    forge: { hostname: port === "2222" ? "forge-b.test" : "forge-a.test" },
+    "gh-fqdn": { hostname: "github.com." },
+    // Two tunnels to different servers through local ports.
+    "tunnel-a": { hostname: "localhost" },
+    "tunnel-b": { hostname: "127.0.0.1" },
+  };
+  const entry = hosts[host];
+  return `user ${user ?? entry?.user ?? "git"}\nhostname ${entry?.hostname ?? host}\nport ${port}\n`;
+}
+
+/** Resolves a repository whose primary remote is `remoteUrl`, against the config above. */
+const resolveRemote = (remoteUrl: string, options: { readonly sshFails?: boolean } = {}) => {
+  const sshCalls: Array<ReadonlyArray<string>> = [];
+  const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+    run: (input) =>
+      Effect.sync(() => {
+        if (input.command !== "ssh") {
+          return processOutput(
+            input.args.includes("rev-parse") ? "/repo\n" : `origin\t${remoteUrl} (fetch)\n`,
+          );
+        }
+        sshCalls.push(input.args);
+        return options.sshFails
+          ? processOutput("", 255)
+          : processOutput(sshConfigOutput(input.args));
+      }),
+  });
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    return { identity: yield* resolver.resolve("/repo"), sshCalls };
+  }).pipe(
+    Effect.provide(
+      Layer.effect(
+        RepositoryIdentityResolver.RepositoryIdentityResolver,
+        RepositoryIdentityResolver.make(),
+      ).pipe(Layer.provide(processRunner)),
+    ),
+  );
+};
+
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
@@ -173,6 +247,79 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       ]);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
+
+  it.effect("keys an aliased remote by its host while git keeps the alias", () =>
+    Effect.gen(function* () {
+      const { identity } = yield* resolveRemote("gh:T3Tools/t3code");
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.provider).toBe("github");
+      expect(identity?.locator.remoteUrl).toBe("gh:T3Tools/t3code");
+    }),
+  );
+
+  it.effect.each([
+    // Each SSH spelling of an aliased repository.
+    { remote: "me@gh:T3Tools/t3code.git", key: "github.com/t3tools/t3code" },
+    { remote: "ssh://gh/T3Tools/t3code.git", key: "github.com/t3tools/t3code" },
+    { remote: "git+ssh://git@gh:2222/T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "git@g:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "gh443:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "nouser:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "spaced:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "GH:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "git@ssh.github.com:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    // `Match` rules see the remote's login and port.
+    { remote: "git@review:team/app", key: "github.com/team/app" },
+    { remote: "review:team/app", key: "gitlab.com/team/app" },
+    { remote: "git@forge:team/app", key: "forge-a.test/team/app" },
+    { remote: "ssh://git@forge:2222/team/app", key: "forge-b.test/team/app" },
+    // An absolute path names one repository, through an alias or by address.
+    { remote: "alice-box:/srv/git/app.git", key: "192.0.2.10/srv/git/app" },
+    { remote: "ssh://deploy@192.0.2.10/srv/git/app.git", key: "192.0.2.10/srv/git/app" },
+    // A relative path on a server is in the login's home.
+    { remote: "alice-box:app.git", key: "192.0.2.10/~alice/app" },
+    { remote: "bob-box:app.git", key: "192.0.2.10/~bob/app" },
+    { remote: "alice@192.0.2.10:~/app.git", key: "192.0.2.10/~alice/app" },
+    { remote: "ssh://alice@192.0.2.10/~/app.git", key: "192.0.2.10/~alice/app" },
+    { remote: "bob-box:~alice/app.git", key: "192.0.2.10/~alice/app" },
+    // A forge reads the path as the repository's name, whatever the login.
+    { remote: "me@gitlab.example.com:team/app.git", key: "gitlab.example.com/team/app" },
+    { remote: "git@git.corp.example:team/app.git", key: "git.corp.example/team/app" },
+    // A trailing dot is the same name; a tunnel keeps its alias and the login's home.
+    { remote: "gh-fqdn:T3Tools/t3code", key: "github.com/t3tools/t3code" },
+    { remote: "git@tunnel-a:team/app", key: "tunnel-a/team/app" },
+    { remote: "git@tunnel-b:team/app", key: "tunnel-b/team/app" },
+    { remote: "alice@tunnel-a:app.git", key: "tunnel-a/~alice/app" },
+  ])("keys $remote as $key", ({ remote, key }) =>
+    Effect.gen(function* () {
+      expect((yield* resolveRemote(remote)).identity?.canonicalKey).toBe(key);
+    }),
+  );
+
+  it.effect.each([
+    "https://github.com/T3Tools/t3code",
+    // Public forges key as themselves.
+    "git@github.com:T3Tools/t3code",
+    "git@ssh.github.com:T3Tools/t3code",
+    // Would read as an option.
+    "-oProxyCommand=calc:T3Tools/t3code",
+    // Shell syntax that a `Match exec` `%r` would expand.
+    "x;id@gh:T3Tools/t3code",
+    "ssh://x%3Bid@gh/T3Tools/t3code",
+  ])("never runs ssh for %s", (remote) =>
+    Effect.gen(function* () {
+      expect((yield* resolveRemote(remote)).sshCalls).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps the alias when ssh fails but still keys a spelled login's home", () =>
+    Effect.gen(function* () {
+      const aliased = yield* resolveRemote("gh:T3Tools/t3code", { sshFails: true });
+      expect(aliased.identity?.canonicalKey).toBe("gh/t3tools/t3code");
+      const spelled = yield* resolveRemote("alice@192.0.2.10:app.git", { sshFails: true });
+      expect(spelled.identity?.canonicalKey).toBe("192.0.2.10/~alice/app");
+    }),
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
