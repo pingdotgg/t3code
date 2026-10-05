@@ -541,8 +541,15 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
-  /** For webhook tasks: the public T3 Connect URL, or the environment-relative path when the environment is not linked. */
-  webhookUrl: Schema.optional(Schema.String),
+  /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
+  webhookUrl: Schema.optional(Schema.String).annotate({
+    description:
+      "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",
+  }),
+  webhookSignature: Schema.optional(Schema.Literals(["none", "secret_pending", "set"])).annotate({
+    description:
+      "Signature check state: none, secret_pending (call request_secret; requests are rejected until it is set), or set.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -576,6 +583,32 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
+
+export const OrchestratorMcpRequestSecretInput = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId.annotate({
+    description:
+      "Webhook task (with a signature check) whose signing secret the user should provide.",
+  }),
+  label: TrimmedNonEmptyString.annotate({
+    description: "Short name shown on the card, e.g. 'GitHub webhook signing secret'.",
+  }),
+  reason: Schema.optional(Schema.String).annotate({
+    description: "One sentence on what the secret is for and where the user will also enter it.",
+  }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
+  ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
+});
+export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
+
+export const OrchestratorMcpRequestSecretResult = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  status: Schema.Literals(["saved", "declined", "cancelled", "pending"]).annotate({
+    description:
+      "saved: the secret is stored and the task verifies requests with it. declined: the user chose not to. cancelled: the request ended with the run. pending: the wait timed out and the card is still open.",
+  }),
+});
+export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,

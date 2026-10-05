@@ -183,6 +183,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "delegated_task.completion-delivery.dispose":
     case "thread.created.record":
       return [command.parentThreadId];
+    case "secret_request.record":
+      return [command.threadId];
     case "thread.fork":
     case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];

@@ -708,6 +708,165 @@ it.effect("deleting a task removes its delivery log", () =>
   ),
 );
 
+const githubSignature = (secret: string) =>
+  `sha256=${NodeCrypto.createHmac("sha256", secret).update(pullRequestBody).digest("hex")}`;
+
+it.effect("a signature waiting for its secret rejects every request until one is set", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              allowPendingSecret: true,
+            },
+          },
+        }),
+      );
+      assert.isFalse(task.webhook!.hasSecret);
+
+      // Without a secret nothing verifies, however the request is signed.
+      const early = yield* service.triggerWebhook(
+        requestFor(task, {
+          headers: {
+            "content-type": "application/json",
+            "x-hub-signature-256": githubSignature(""),
+          },
+        }),
+      );
+      assert.equal(early._tag, "rejected_signature");
+
+      const { task: withSecret } = yield* service.setWebhookSecret({
+        id: task.id,
+        secret: "github-secret",
+      });
+      assert.isTrue(withSecret.webhook!.hasSecret);
+      const signed = yield* service.triggerWebhook(
+        requestFor(task, {
+          headers: {
+            "content-type": "application/json",
+            "x-hub-signature-256": githubSignature("github-secret"),
+          },
+        }),
+      );
+      assert.equal(signed._tag, "accepted");
+      yield* Queue.take(launches);
+    }),
+  ),
+);
+
+it.effect("a signature without a secret is still refused unless it may wait for one", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const failure = yield* service
+        .upsert(
+          yield* webhookTaskInput({
+            schedule: {
+              type: "webhook",
+              signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
+            },
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.include(failure.message, "needs a signing secret");
+    }),
+  ),
+);
+
+it.effect("answering a secret request stores it on the task, and the card only says so", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<unknown> = [];
+    const threadId = "thread-orchestrator";
+    const turnItemId = "turn-item:secret-request:1";
+    const pendingItem = (scheduledTaskId: string, secretStatus: string) => ({
+      id: turnItemId,
+      threadId,
+      runId: "run-1",
+      nodeId: "node-root",
+      type: "secret_request",
+      label: "GitHub webhook signing secret",
+      reason: "Enter the same secret in GitHub's webhook settings.",
+      target: { kind: "scheduled_task_webhook_signature", scheduledTaskId },
+      secretStatus,
+    });
+    let status = "pending";
+    let taskId = "";
+    const dependencies = Layer.mergeAll(
+      NodePlatformCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed({ turnItems: [pendingItem(taskId, status)] } as never),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            if (command.type === "secret_request.record") status = command.secretStatus;
+            return {} as never;
+          }),
+      }),
+      Layer.succeed(
+        ScheduledTaskService.ScheduledTaskWebhookOrigin,
+        Effect.succeed({ relayHookBaseUrl: null }),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              allowPendingSecret: true,
+            },
+          },
+        }),
+      );
+      taskId = task.id;
+
+      yield* service.answerSecretRequest({
+        threadId: threadId as never,
+        turnItemId: turnItemId as never,
+        answer: { type: "save", secret: "github-secret" },
+      });
+      const accepted = yield* service.triggerWebhook(
+        requestFor(task, {
+          headers: {
+            "content-type": "application/json",
+            "x-hub-signature-256": githubSignature("github-secret"),
+          },
+        }),
+      );
+      assert.equal(accepted._tag, "accepted");
+      // The thread learns only the status; the value is nowhere in what it records.
+      assert.equal(dispatched.length, 1);
+      assert.include(dispatched[0] as object, {
+        type: "secret_request.record",
+        secretStatus: "saved",
+      });
+      assert.notInclude(Object.values(dispatched[0] as object).map(String), "github-secret");
+
+      // Answered once: a second answer, or a late decline, changes nothing.
+      const again = yield* service
+        .answerSecretRequest({
+          threadId: threadId as never,
+          turnItemId: turnItemId as never,
+          answer: { type: "decline" },
+        })
+        .pipe(Effect.flip);
+      assert.include(again.message, "already answered");
+      assert.equal(dispatched.length, 1);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 const signatureFor = (secret: string) =>
   `sha256=${NodeCrypto.createHmac("sha256", secret).update(pullRequestBody).digest("hex")}`;
 

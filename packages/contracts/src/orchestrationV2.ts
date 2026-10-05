@@ -1346,6 +1346,35 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
+/**
+ * What a secret an agent asked for is used for. The server stores the value
+ * for that purpose and never puts it in the transcript, projections, or
+ * model context; the turn item only ever carries this target and a status.
+ */
+export const OrchestrationV2SecretRequestTarget = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("scheduled_task_webhook_signature"),
+    scheduledTaskId: ScheduledTaskId,
+  }),
+]);
+export type OrchestrationV2SecretRequestTarget = typeof OrchestrationV2SecretRequestTarget.Type;
+
+export const OrchestrationV2SecretRequestStatus = Schema.Literals([
+  "pending",
+  "saved",
+  "declined",
+  "cancelled",
+]);
+export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
+
+const OrchestrationV2SecretRequestFields = {
+  type: Schema.Literal("secret_request"),
+  label: TrimmedNonEmptyString,
+  reason: Schema.String,
+  target: OrchestrationV2SecretRequestTarget,
+  secretStatus: OrchestrationV2SecretRequestStatus,
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1524,6 +1553,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     targetRunId: Schema.NullOr(RunId),
     targetProviderInstanceId: ProviderInstanceId,
     targetModel: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2SecretRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2298,6 +2331,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2SecretRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("subagent"),
     subagentId: NodeId,
     origin: Schema.Literals(["provider_native", "app_owned"]),
@@ -3012,6 +3049,21 @@ export const OrchestrationV2Command = Schema.Union([
     parentNodeId: NodeId,
     targetThreadId: ThreadId,
     targetRunId: Schema.NullOr(RunId),
+  }),
+  // Server-only: written by the T3 MCP secret request tool and the secret
+  // RPC, never by a client dispatch (which would let a client mark a request
+  // saved without storing anything).
+  Schema.Struct({
+    type: Schema.Literal("secret_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    label: TrimmedNonEmptyString,
+    reason: Schema.String,
+    target: OrchestrationV2SecretRequestTarget,
+    secretStatus: OrchestrationV2SecretRequestStatus,
   }),
   Schema.Struct({
     type: Schema.Literal("provider.switch"),

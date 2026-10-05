@@ -14,6 +14,8 @@ import {
   type ScheduledTaskListWebhookDeliveriesInput,
   type ScheduledTaskListWebhookDeliveriesResult,
   type ScheduledTaskRotateWebhookTokenInput,
+  type ScheduledTaskSetWebhookSecretInput,
+  type ScheduledTaskAnswerSecretRequestInput,
   type ScheduledTaskWebhookDeliveryOutcome,
   type ScheduledTaskListResult,
   type ScheduledTaskMutationResult,
@@ -238,6 +240,18 @@ export class ScheduledTaskService extends Context.Service<
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /** Sets a signed webhook task's secret without touching anything else. */
+    readonly setWebhookSecret: (
+      input: ScheduledTaskSetWebhookSecretInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /**
+     * Answers an agent's request for a webhook signing secret: stores the
+     * secret on its task, then marks the thread's card saved (or declined).
+     * Only the status reaches the thread.
+     */
+    readonly answerSecretRequest: (
+      input: ScheduledTaskAnswerSecretRequestInput,
+    ) => Effect.Effect<void, ScheduledTaskError>;
     readonly listWebhookDeliveries: (
       input: ScheduledTaskListWebhookDeliveriesInput,
     ) => Effect.Effect<ScheduledTaskListWebhookDeliveriesResult, ScheduledTaskError>;
@@ -1046,7 +1060,7 @@ export const layer = Layer.effect(
                   signature == null ? null : (signature.secret ?? existing?.secret ?? null);
                 const secretChanged =
                   signature == null || signature.secret !== undefined || existing === null;
-                if (signature != null && secret === null) {
+                if (signature != null && secret === null && signature.allowPendingSecret !== true) {
                   return yield* taskError("A webhook signature check needs a signing secret.", {
                     taskId: id,
                   });
@@ -1178,6 +1192,75 @@ export const layer = Layer.effect(
         }
         yield* notifyChanged;
         return { task: yield* loadTask(input.id) };
+      });
+
+    const setWebhookSecret: ScheduledTaskService["Service"]["setWebhookSecret"] = (input) =>
+      Effect.gen(function* () {
+        const task = yield* loadTask(input.id);
+        if (task.schedule.type !== "webhook" || task.schedule.signature === null) {
+          return yield* taskError("Only a webhook task with a signature check takes a secret.", {
+            taskId: input.id,
+          });
+        }
+        const now = yield* localNow;
+        const updated = yield* sql<{ task_id: string }>`
+          UPDATE scheduled_tasks
+          SET webhook_secret = ${input.secret}, updated_at = ${iso(now)}
+          WHERE task_id = ${input.id} AND created_at = ${task.createdAt}
+          RETURNING task_id
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not save the signing secret.", { taskId: input.id, cause }),
+          ),
+        );
+        if (updated.length === 0) {
+          return yield* taskError("Schedule task was deleted or replaced.", { taskId: input.id });
+        }
+        yield* notifyChanged;
+        return { task: yield* loadTask(input.id) };
+      });
+
+    const answerSecretRequest: ScheduledTaskService["Service"]["answerSecretRequest"] = (input) =>
+      Effect.gen(function* () {
+        const records = yield* threadManagement
+          .getThreadRecords(input.threadId, ["turnItems"], {
+            turnItemTypes: ["secret_request"],
+            messageRoles: [],
+          })
+          .pipe(
+            Effect.mapError((cause) => taskError("Could not load the secret request.", { cause })),
+          );
+        const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
+        if (item?.type !== "secret_request" || item.runId === null || item.nodeId === null) {
+          return yield* taskError("This secret request no longer exists.");
+        }
+        if (item.secretStatus !== "pending") {
+          return yield* taskError("This secret request was already answered.");
+        }
+        const taskId = item.target.scheduledTaskId;
+        // Store first: the card only says saved once the task has the secret.
+        if (input.answer.type === "save") {
+          yield* setWebhookSecret({ id: taskId, secret: input.answer.secret });
+        }
+        const secretStatus = input.answer.type === "save" ? "saved" : "declined";
+        yield* threadManagement
+          .dispatch({
+            type: "secret_request.record",
+            commandId: CommandId.make(`secret-request:${input.turnItemId}:${secretStatus}`),
+            threadId: input.threadId,
+            runId: item.runId,
+            nodeId: item.nodeId,
+            turnItemId: item.id,
+            label: item.label,
+            reason: item.reason,
+            target: item.target,
+            secretStatus,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              taskError("Saved the secret, but could not update the request.", { taskId, cause }),
+            ),
+          );
       });
 
     const deliveryHeaders = (row: WebhookDeliveryRow): Readonly<Record<string, string>> =>
@@ -1646,6 +1729,8 @@ export const layer = Layer.effect(
       delete: deleteTask,
       runNow,
       rotateWebhookToken,
+      setWebhookSecret,
+      answerSecretRequest,
       listWebhookDeliveries,
       getWebhookDelivery,
       triggerWebhook,

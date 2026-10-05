@@ -1809,34 +1809,44 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-            startup
-              .enqueueCommand(
-                // A retry also restarts the preparation work the launch owns.
-                (command.type === "prepared-run.retry"
-                  ? threadLaunch.retryPreparation(command)
-                  : ThreadMessageIntake.dispatchCommand(
-                      ThreadManagementService.withCreationProvenance(command, {
-                        createdBy: "user",
-                        creationSource:
-                          "creationSource" in command ? command.creationSource : "web",
-                      }),
-                    )
-                ).pipe(Effect.provide(intakeContext)),
-              )
-              .pipe(
-                Effect.tap(() => recordClientCommandAnalytics(command)),
-                Effect.map((result) => ({ sequence: result.sequence })),
-                Effect.mapError((cause) => {
-                  const detail = userFacingDispatchErrorMessage(cause);
-                  return new OrchestrationV2DispatchCommandError({
+            // Secret request status is only written next to storing the
+            // secret (scheduledTasks.provideSecret) or by the requesting tool.
+            command.type === "secret_request.record"
+              ? Effect.fail(
+                  new OrchestrationV2DispatchCommandError({
                     commandId: command.commandId,
                     commandType: command.type,
-                    message: detail ?? "Failed to dispatch orchestration V2 command",
-                    ...(detail === undefined ? {} : { detail }),
-                    cause,
-                  });
-                }),
-              ),
+                    message: "Secret requests are answered through their own request.",
+                  }),
+                )
+              : startup
+                  .enqueueCommand(
+                    // A retry also restarts the preparation work the launch owns.
+                    (command.type === "prepared-run.retry"
+                      ? threadLaunch.retryPreparation(command)
+                      : ThreadMessageIntake.dispatchCommand(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                        )
+                    ).pipe(Effect.provide(intakeContext)),
+                  )
+                  .pipe(
+                    Effect.tap(() => recordClientCommandAnalytics(command)),
+                    Effect.map((result) => ({ sequence: result.sequence })),
+                    Effect.mapError((cause) => {
+                      const detail = userFacingDispatchErrorMessage(cause);
+                      return new OrchestrationV2DispatchCommandError({
+                        commandId: command.commandId,
+                        commandType: command.type,
+                        message: detail ?? "Failed to dispatch orchestration V2 command",
+                        ...(detail === undefined ? {} : { detail }),
+                        cause,
+                      });
+                    }),
+                  ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.command_id": command.commandId,
@@ -2101,6 +2111,12 @@ const makeWsRpcLayer = (
             WS_METHODS.scheduledTasksRotateWebhookToken,
             scheduledTasks.rotateWebhookToken(input),
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
+          ),
+        [WS_METHODS.scheduledTasksAnswerSecretRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksAnswerSecretRequest,
+            scheduledTasks.answerSecretRequest(input),
+            { "rpc.aggregate": "scheduledTasks", "orchestration_v2.thread_id": input.threadId },
           ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           observeRpcEffect(
