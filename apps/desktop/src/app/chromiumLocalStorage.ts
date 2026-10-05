@@ -208,7 +208,8 @@ function readLogRecords(bytes: Uint8Array): Uint8Array[] {
 
 interface LiveFiles {
   readonly tables: ReadonlyArray<number>;
-  readonly minimumLogNumber: number;
+  readonly logNumber: number;
+  readonly previousLogNumber: number;
 }
 
 /** Replays MANIFEST version edits to find the live table files and log. */
@@ -216,10 +217,13 @@ function readManifest(bytes: Uint8Array): LiveFiles {
   const tables = new Set<number>();
   let logNumber = 0;
   let previousLogNumber = 0;
+  // LevelDB refuses to open a MANIFEST missing any of these, and so do we.
+  const required = new Set([2, 3, 4]);
   for (const record of readLogRecords(bytes)) {
     const reader = new Reader(record);
     while (!reader.done) {
       const tag = reader.varint();
+      required.delete(tag);
       switch (tag) {
         case 1: // comparator
           reader.lengthPrefixed();
@@ -255,9 +259,8 @@ function readManifest(bytes: Uint8Array): LiveFiles {
       }
     }
   }
-  const minimumLogNumber =
-    previousLogNumber > 0 ? Math.min(logNumber, previousLogNumber) : logNumber;
-  return { tables: [...tables], minimumLogNumber };
+  if (required.size > 0) fail("incomplete manifest");
+  return { tables: [...tables], logNumber, previousLogNumber };
 }
 
 interface VersionedEntry {
@@ -406,7 +409,11 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
   const live = yield* decode(() => readManifest(manifest)).pipe(wrap);
   const logs = (yield* fs.readDirectory(directory).pipe(wrap))
     .map((name) => /^(\d+)\.log$/.exec(name))
-    .filter((match) => match !== null && Number(match[1]) >= live.minimumLogNumber)
+    // The logs LevelDB's own recovery replays.
+    .filter((match) => {
+      const number = Number(match?.[1]);
+      return number >= live.logNumber || number === live.previousLogNumber;
+    })
     .map((match) => match![0]);
 
   const entries: EntryMap = new Map();
