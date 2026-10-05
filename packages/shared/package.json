@@ -95,6 +95,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./KeyedLock": {
+      "types": "./src/KeyedLock.ts",
+      "import": "./src/KeyedLock.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
@@ -194,6 +198,10 @@
     "./connectAuth": {
       "types": "./src/connectAuth.ts",
       "import": "./src/connectAuth.ts"
+    },
+    "./symlink": {
+      "types": "./src/symlink.ts",
+      "import": "./src/symlink.ts"
     },
     "./path": {
       "types": "./src/path.ts",

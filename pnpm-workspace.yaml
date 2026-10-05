@@ -125,6 +125,7 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/stripe@1.0.0-rc.12"
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
+  - uniwind@1.12.1
   - "@expo/dom-webview@58.0.2"
   - "expo-auth-session@58.0.7"
   - "expo-camera@58.0.7"
@@ -263,7 +264,6 @@ patchedDependencies:
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
-  uniwind@1.11.0: patches/uniwind@1.11.0.patch
 
 peerDependencyRules:
   allowAny:

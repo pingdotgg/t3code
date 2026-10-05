@@ -101,6 +101,7 @@
     "expo-paste-input": "^0.1.15",
     "expo-quick-actions": "^6.0.2",
     "expo-secure-store": "~58.0.2",
+    "expo-sensors": "~58.0.1",
     "expo-sharing": "58.0.13",
     "expo-splash-screen": "~58.0.4",
     "expo-sqlite": "~58.0.8",
@@ -126,7 +127,7 @@
     "react-native-worklets": "0.13.0",
     "shiki": "4.2.0",
     "tailwind-merge": "^3.5.0",
-    "uniwind": "1.11.0"
+    "uniwind": "1.12.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

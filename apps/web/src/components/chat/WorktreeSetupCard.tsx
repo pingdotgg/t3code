@@ -6,8 +6,6 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CircleAlertIcon,
   CircleIcon,
   LaptopIcon,
@@ -15,9 +13,11 @@ import {
   TerminalIcon,
   XIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -409,7 +409,7 @@ export function WorktreeSetupCard({
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
+          <MorphIcon aria-hidden icon={detailsOpen ? ChevronDown : ChevronRight} />
           Details
         </Button>
         {showTerminal ? (

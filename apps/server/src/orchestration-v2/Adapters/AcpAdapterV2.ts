@@ -19,6 +19,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
+  type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ProviderInstanceId,
@@ -62,6 +63,7 @@ import {
   makeAcpMcpOverAcpBridge,
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
@@ -846,11 +848,14 @@ function textFromUnknown(value: unknown): string | undefined {
     return undefined;
   }
   // Prefer prompt-facing Grok fields before nested envelopes.
+  // Antigravity reports shell output as combinedOutput.
   for (const key of [
     "output_for_prompt",
     "stdout",
     "stderr",
     "output",
+    "combinedOutput",
+    "combined_output",
     "content",
     "text",
     "message",
@@ -987,6 +992,46 @@ function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Grok runs X and web searches server-side as `search` tools whose rawInput is
+ * only `{ variant: "XSearch" | "WebSearch", backend: true }`. The query arrives
+ * with completion: web searches report `action: { query, sources }`, X searches
+ * the backend call `{ name, input }` with JSON-encoded arguments.
+ */
+function acpBackendWebSearch(
+  rawInput: Record<string, unknown> | undefined,
+  rawOutput: Record<string, unknown> | undefined,
+):
+  | { readonly query: string | undefined; readonly results: OrchestrationV2WebSearchResult[] }
+  | undefined {
+  const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
+  const action = unknownRecord(rawOutput?.action);
+  if (variant !== "xsearch" && variant !== "websearch" && action?.type !== "search") {
+    return undefined;
+  }
+  let args: Record<string, unknown> | undefined;
+  if (typeof rawOutput?.input === "string") {
+    try {
+      args = unknownRecord(JSON.parse(rawOutput.input));
+    } catch {
+      args = undefined;
+    }
+  }
+  const argsText = Object.entries(args ?? {})
+    .filter(([, value]) => typeof value === "string" || typeof value === "number")
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ");
+  const query = [action?.query, args?.query, argsText]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim();
+  const urls = new Set<string>();
+  for (const source of Array.isArray(action?.sources) ? action.sources : []) {
+    const url = unknownRecord(source)?.url;
+    if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
+  }
+  return { query, results: [...urls].map((url) => ({ url })) };
 }
 
 function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
@@ -1588,6 +1633,21 @@ export function makeAcpAdapterV2(
             embeddedTerminalsByToolCallId.delete(oldest);
           }
         };
+        // Command lines of the terminals embedded in a tool call, so MCP calls
+        // made through the acp-mcp-call terminal fallback keep their identity.
+        const embeddedTerminalCommands = (
+          sessionId: string,
+          toolCallId: string,
+        ): ReadonlyArray<string> =>
+          (
+            embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
+              ?.terminalIds ?? []
+          ).flatMap((terminalId) => {
+            const command =
+              clientTerminals?.readCommandLine(terminalId) ??
+              agentTerminalsById.get(sessionScopedId(sessionId, terminalId))?.command;
+            return command === undefined ? [] : [command];
+          });
         // Client terminals (Devin) run with the T3 server's privileges, so they
         // are policy-checked against the active turn policy; a command the user
         // already approved satisfies an "ask" disposition.
@@ -3223,17 +3283,10 @@ export function makeAcpAdapterV2(
           // agent-specific shape and project the same branded dynamic_tool
           // item native providers produce (e.g. the T3 orchestration tools).
           const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
-            embeddedTerminalCommands: (
-              embeddedTerminalsByToolCallId.get(
-                sessionScopedId(context.nativeThreadId, toolCall.toolCallId),
-              )?.terminalIds ?? []
-            ).flatMap((terminalId) => {
-              const command =
-                clientTerminals?.readCommandLine(terminalId) ??
-                agentTerminalsById.get(sessionScopedId(context.nativeThreadId, terminalId))
-                  ?.command;
-              return command === undefined ? [] : [command];
-            }),
+            embeddedTerminalCommands: embeddedTerminalCommands(
+              context.nativeThreadId,
+              toolCall.toolCallId,
+            ),
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
@@ -3258,9 +3311,14 @@ export function makeAcpAdapterV2(
           } else if (mcpIdentity !== undefined) {
             turnItem = {
               ...base,
-              // Identity lives in toolName, like native Codex MCP items; the
-              // agent's own title (e.g. "Ran command") would shadow it.
               title: null,
+              ...mcpToolPresentation({
+                serverName: mcpIdentity.server,
+                toolName: mcpIdentity.tool,
+                source: unknownRecord(
+                  (unknownRecord(rawOutputRecord?.result) ?? rawOutputRecord)?._meta,
+                )?.source,
+              }),
               type: "dynamic_tool",
               toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input:
@@ -3297,7 +3355,30 @@ export function makeAcpAdapterV2(
                   ...(rawOutput === undefined ? {} : { output: rawOutput }),
                 };
                 break;
-              case "search":
+              case "search": {
+                const backendSearch = acpBackendWebSearch(rawInputRecord, rawOutputRecord);
+                if (backendSearch !== undefined) {
+                  // Grok titles these "X search:" / "Web search:" awaiting the query.
+                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
+                    /:\s*$/u,
+                    "",
+                  );
+                  turnItem = {
+                    ...base,
+                    title:
+                      backendSearch.query === undefined
+                        ? label
+                        : `${label}: ${backendSearch.query}`,
+                    type: "web_search",
+                    ...(backendSearch.query === undefined
+                      ? {}
+                      : { patterns: [backendSearch.query] }),
+                    ...(backendSearch.results.length === 0
+                      ? {}
+                      : { results: backendSearch.results }),
+                  };
+                  break;
+                }
                 turnItem = {
                   ...base,
                   title:
@@ -3322,6 +3403,7 @@ export function makeAcpAdapterV2(
                       }),
                 };
                 break;
+              }
               case "execute": {
                 const exitCode = acpProjectedCommandExitCode(status, rawOutput);
                 turnItem = {
@@ -3345,7 +3427,11 @@ export function makeAcpAdapterV2(
                   ...(diffText === undefined ? {} : { diffStr: diffText }),
                 };
                 break;
-              case "fetch":
+              case "fetch": {
+                // Grok nests the page under rawOutput.Content, which textFromUnknown
+                // cannot read; the (bounded) content blocks carry the same text.
+                const snippet =
+                  textFromUnknown(toolCall.data.content) ?? textFromUnknown(rawOutput);
                 turnItem = {
                   ...base,
                   type: "web_search",
@@ -3356,14 +3442,13 @@ export function makeAcpAdapterV2(
                         results: [
                           {
                             url: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { snippet: textFromUnknown(rawOutput) }),
+                            ...(snippet === undefined ? {} : { snippet }),
                           },
                         ],
                       }),
                 };
                 break;
+              }
               default:
                 if (projectAsCommandExecution) {
                   const exitCode = acpProjectedCommandExitCode(status, rawOutput);
@@ -4257,7 +4342,8 @@ export function makeAcpAdapterV2(
             return;
           }
           if (context.finalized) return;
-          if (notification.sessionId !== (yield* Ref.get(activeSessionId))) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (notification.sessionId !== rootSessionId) {
             // Finalize may have completed during the activeSessionId yield.
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
@@ -4285,6 +4371,17 @@ export function makeAcpAdapterV2(
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
                 const merged = mergeToolCallState(context.tools.get(key), toolCall);
                 context.tools.set(key, merged);
+                // Terminals are remembered under the raw session id: the child's
+                // own session, or the root one when the flavor routes child
+                // updates out of it (Devin).
+                const mcpIdentity = extractMcpToolCallIdentity(merged, {
+                  embeddedTerminalCommands: [
+                    ...embeddedTerminalCommands(notification.sessionId, toolCall.toolCallId),
+                    ...(rootSessionId === null
+                      ? []
+                      : embeddedTerminalCommands(rootSessionId, toolCall.toolCallId)),
+                  ],
+                });
                 const now = yield* DateTime.now;
                 const status = toolStatus(merged.status);
                 const startedAt = context.toolStartedAt.get(key) ?? now;
@@ -4309,7 +4406,22 @@ export function makeAcpAdapterV2(
                     completedAt: completedAtForStatus(status, now),
                     updatedAt: now,
                     type: "dynamic_tool",
-                    toolName: merged.title ?? merged.kind ?? "Tool",
+                    ...(mcpIdentity === undefined
+                      ? {}
+                      : mcpToolPresentation({
+                          serverName: mcpIdentity.server,
+                          toolName: mcpIdentity.tool,
+                          source: unknownRecord(
+                            (
+                              unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
+                              unknownRecord(merged.data.rawOutput)
+                            )?._meta,
+                          )?.source,
+                        })),
+                    toolName:
+                      mcpIdentity === undefined
+                        ? (merged.title ?? merged.kind ?? "Tool")
+                        : `${mcpIdentity.server}.${mcpIdentity.tool}`,
                     input: merged.data.rawInput ?? null,
                     output: merged.data.rawOutput ?? merged.data.content ?? null,
                   },
