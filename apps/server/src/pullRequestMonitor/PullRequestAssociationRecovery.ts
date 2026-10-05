@@ -388,7 +388,10 @@ export const layer = Layer.effectDiscard(
           event.payload.role === "assistant" &&
           !event.payload.streaming
             ? recovery.recoverSafely(event.payload.threadId)
-            : Effect.void,
+            : event.type === "thread.activity-appended" &&
+                threadCreatedPullRequestUrls({ activities: [event.payload.activity] }).length > 0
+              ? recovery.recoverSafely(event.payload.threadId)
+              : Effect.void,
         ),
       ),
     );

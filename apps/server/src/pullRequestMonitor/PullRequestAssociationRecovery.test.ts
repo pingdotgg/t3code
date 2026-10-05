@@ -16,7 +16,7 @@ import {
   type OrchestrationThreadActivity,
   type PendingPullRequestAssociation,
 } from "@t3tools/contracts";
-import { Effect, Schema, Stream } from "effect";
+import { Deferred, Effect, Layer, PubSub, Schema, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { GitManager } from "../git/Services/GitManager.ts";
@@ -24,10 +24,12 @@ import { decideOrchestrationCommand } from "../orchestration/decider.ts";
 import { createEmptyReadModel, projectEvent } from "../orchestration/projector.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import {
+  layer as recoveryLayer,
   makePullRequestAssociationRecovery,
   reportedPullRequestUrl,
 } from "./PullRequestAssociationRecovery.ts";
 import { createdPullRequestLinks } from "./CreatedPullRequestReviewReactor.ts";
+import { PullRequestCreationAutomation } from "./PullRequestCreationAutomation.ts";
 
 const now = "2026-09-08T00:00:00.000Z";
 const decodeEvent = Schema.decodeUnknownSync(OrchestrationEvent);
@@ -118,6 +120,8 @@ const pendingIntent = (nextAttemptAt = now): PendingPullRequestAssociation => ({
 });
 
 async function harness() {
+  const events = await Effect.runPromise(PubSub.unbounded<OrchestrationEvent>());
+  const associated = await Effect.runPromise(Deferred.make<void>());
   const commandId = CommandId.make("create");
   let model = await Effect.runPromise(
     projectEvent(createEmptyReadModel(now), {
@@ -183,76 +187,81 @@ async function harness() {
   let onResolve = () => {};
   let currentTime = Date.parse(now);
   const unexpected = () => Effect.die("Unexpected service call");
+  const services = Layer.mergeAll(
+    Layer.succeed(OrchestrationEngineService, {
+      getReadModel: () => Effect.succeed(model),
+      dispatch: (command) =>
+        Effect.gen(function* () {
+          commands.push(command);
+          const planned = yield* decideOrchestrationCommand({ readModel: model, command });
+          for (const event of "type" in planned ? [planned] : planned) {
+            const persisted = decodeEvent({
+              ...event,
+              sequence: model.snapshotSequence + 1,
+              eventId: EventId.make(crypto.randomUUID()),
+            });
+            model = yield* projectEvent(model, persisted);
+            yield* PubSub.publish(events, persisted);
+          }
+          if (model.threads[0]?.pullRequest?.url === url) {
+            yield* Deferred.succeed(associated, undefined);
+          }
+          return { sequence: model.snapshotSequence };
+        }),
+      withWorktreeLock: (effect) => effect,
+      readEvents: () => Stream.empty,
+      streamDomainEvents: Stream.fromPubSub(events),
+      acquireDomainEventSubscription: PubSub.subscribe(events),
+    }),
+    Layer.succeed(GitManager, {
+      status: ({ cwd }) =>
+        Effect.gen(function* () {
+          expect(cwd).toBe("/isolated/worktree");
+          expect(invalidations).toBeGreaterThan(lookups);
+          lookups++;
+          onLookup();
+          if (failLookup) {
+            return yield* new GitManagerError({
+              operation: "status",
+              detail: "Temporary failure",
+            });
+          }
+          return gitStatus;
+        }),
+      invalidateStatus: () =>
+        Effect.sync(() => {
+          invalidations++;
+        }),
+      localStatus: ({ cwd }) =>
+        Effect.sync(() => {
+          expect(cwd).toBe("/isolated/worktree");
+          return gitLocalStatus;
+        }),
+      remoteStatus: unexpected,
+      invalidateLocalStatus: () =>
+        Effect.sync(() => {
+          localInvalidations++;
+        }),
+      invalidateRemoteStatus: unexpected,
+      resolvePullRequest: ({ cwd, reference }) =>
+        Effect.gen(function* () {
+          expect(cwd).toBe("/isolated/worktree");
+          expect(reference).toBe(url);
+          resolveLookups++;
+          onResolve();
+          if (failResolve) return yield* failResolve;
+          return { pullRequest: resolvedPullRequest };
+        }),
+      preparePullRequestThread: unexpected,
+      runStackedAction: unexpected,
+    }),
+  );
   const makeRecovery = () =>
-    makePullRequestAssociationRecovery(() => currentTime).pipe(
-      Effect.provideService(OrchestrationEngineService, {
-        getReadModel: () => Effect.succeed(model),
-        dispatch: (command) =>
-          Effect.gen(function* () {
-            commands.push(command);
-            const planned = yield* decideOrchestrationCommand({ readModel: model, command });
-            for (const event of "type" in planned ? [planned] : planned) {
-              model = yield* projectEvent(
-                model,
-                decodeEvent({
-                  ...event,
-                  sequence: model.snapshotSequence + 1,
-                  eventId: EventId.make(crypto.randomUUID()),
-                }),
-              );
-            }
-            return { sequence: model.snapshotSequence };
-          }),
-        withWorktreeLock: (effect) => effect,
-        readEvents: () => Stream.empty,
-        streamDomainEvents: Stream.empty,
-        acquireDomainEventSubscription: Effect.die("Unexpected subscription"),
-      }),
-      Effect.provideService(GitManager, {
-        status: ({ cwd }) =>
-          Effect.gen(function* () {
-            expect(cwd).toBe("/isolated/worktree");
-            expect(invalidations).toBeGreaterThan(lookups);
-            lookups++;
-            onLookup();
-            if (failLookup) {
-              return yield* new GitManagerError({
-                operation: "status",
-                detail: "Temporary failure",
-              });
-            }
-            return gitStatus;
-          }),
-        invalidateStatus: () =>
-          Effect.sync(() => {
-            invalidations++;
-          }),
-        localStatus: ({ cwd }) =>
-          Effect.sync(() => {
-            expect(cwd).toBe("/isolated/worktree");
-            return gitLocalStatus;
-          }),
-        remoteStatus: unexpected,
-        invalidateLocalStatus: () =>
-          Effect.sync(() => {
-            localInvalidations++;
-          }),
-        invalidateRemoteStatus: unexpected,
-        resolvePullRequest: ({ cwd, reference }) =>
-          Effect.gen(function* () {
-            expect(cwd).toBe("/isolated/worktree");
-            expect(reference).toBe(url);
-            resolveLookups++;
-            onResolve();
-            if (failResolve) return yield* failResolve;
-            return { pullRequest: resolvedPullRequest };
-          }),
-        preparePullRequestThread: unexpected,
-        runStackedAction: unexpected,
-      }),
-    );
+    makePullRequestAssociationRecovery(() => currentTime).pipe(Effect.provide(services));
   let recovery = await Effect.runPromise(makeRecovery());
   return {
+    services,
+    associated: Deferred.await(associated),
     get recovery() {
       return recovery;
     },
@@ -357,6 +366,68 @@ describe("reportedPullRequestUrl", () => {
 });
 
 describe("pull request association recovery", () => {
+  it.each([
+    "gh pr create --fill",
+    "gh api repos/acme/app/pulls --method POST -f title=Feature -f head=feature -f base=main",
+    "curl --request POST https://api.github.com/repos/acme/app/pulls --json @pr.json",
+  ])("links immediately after persisted creation output from %s", async (command) => {
+    const h = await harness();
+    h.updateThread({ messages: [message("Working.")] });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const startupSweep = yield* Deferred.make<void>();
+          yield* Layer.build(
+            recoveryLayer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  h.services,
+                  Layer.succeed(PullRequestCreationAutomation, {
+                    recordIntent: () => Effect.die("Unexpected creation intent"),
+                    handleCreatedResult: () => Effect.die("Unexpected creation result"),
+                    recoverPending: () =>
+                      Deferred.succeed(startupSweep, undefined).pipe(Effect.asVoid),
+                  }),
+                ),
+              ),
+            ),
+          );
+          yield* Deferred.await(startupSweep);
+          const engine = yield* OrchestrationEngineService;
+          for (const activity of [
+            copilotCommand("gh pr view 42", url),
+            copilotCommand(command, url, "failed"),
+          ]) {
+            yield* engine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(crypto.randomUUID()),
+              threadId,
+              activity,
+              createdAt: now,
+            });
+          }
+          expect(h.lookups()).toBe(0);
+          yield* engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make(crypto.randomUUID()),
+            threadId,
+            activity: copilotCommand(command, JSON.stringify({ html_url: url })),
+            createdAt: now,
+          });
+          yield* h.associated.pipe(Effect.timeout("2 seconds"));
+          expect(h.thread()?.pullRequest?.url).toBe(url);
+          const thread = h.thread();
+          if (!thread) throw new Error("Expected the PR creator thread.");
+          expect(createdPullRequestLinks(thread)).toMatchObject([
+            { source: "agent", pullRequest: { url } },
+          ]);
+          expect(h.lookups()).toBe(1);
+        }).pipe(Effect.provide(h.services)),
+      ),
+    );
+  });
+
   it("recovers persisted assistant output without a separate agent tool call", async () => {
     const h = await harness();
     await Effect.runPromise(h.recovery.sweep);
