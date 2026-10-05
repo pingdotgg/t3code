@@ -246,6 +246,7 @@ export function deriveThreadRuntime(
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
+      pullRequests: projection.thread.pullRequests,
     }),
   );
   return {

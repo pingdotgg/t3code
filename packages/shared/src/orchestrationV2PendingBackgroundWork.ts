@@ -4,8 +4,11 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
   ThreadId,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+
+import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -200,6 +203,10 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
  * Sources:
  * - Provider-thread roster (Claude SDK background tasks)
  * - Active command_execution / dynamic_tool / subagent turn items
+ * - Pull request watches, as monitors: a watch wakes the agent, so the thread
+ *   stays working between wakes instead of returning to the inbox. Callers
+ *   that pick a run to interrupt leave `pullRequests` out; Stop ends watches
+ *   on its own.
  *
  * Gated on latest root run settlement. Dedupes by native task ID. Excludes
  * the roster while any interruptible foreground run remains active. Excludes
@@ -220,6 +227,11 @@ export function derivePendingBackgroundWork(input: {
    * pass projection runs so policy cannot drift.
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
+  readonly pullRequests?:
+    | ReadonlyArray<
+        Pick<ThreadPullRequestLink, "host" | "repository" | "number" | "url" | "source" | "watch">
+      >
+    | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -262,6 +274,16 @@ export function derivePendingBackgroundWork(input: {
     }
 
     byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
+  }
+
+  for (const link of input.pullRequests ?? []) {
+    if (link.watch === undefined || link.source === "stack-dismissed") continue;
+    const taskId = `pull-request-watch:${threadPullRequestKeyOf(link)}`;
+    byTaskId.set(taskId, {
+      taskId,
+      description: `Watching pull request #${link.number}`,
+      kind: "monitor",
+    });
   }
 
   return Array.from(byTaskId.values());

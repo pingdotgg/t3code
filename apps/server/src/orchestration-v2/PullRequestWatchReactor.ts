@@ -193,10 +193,13 @@ export const make = Effect.gen(function* () {
   const check = Effect.fn("PullRequestWatchReactor.check")(function* (target: WatchTarget) {
     const { thread, link, watch } = target;
     const pullRequest = identityOf(link);
-    // A merged pull request cannot reopen, so its watch ends without a host read, even on a
-    // settled thread. A closed one can, so the host decides below.
+    // A merged pull request cannot reopen, so its watch ends without a host read. A closed one
+    // can, so the host decides below. Settling ends watches; one left from before that rule
+    // ends here, so the thread does not show as working while settled.
     if (link.snapshot?.state === "merged") return yield* record(target, null);
-    if (thread.settledOverride === "settled" || thread.settledAt !== null) return;
+    if (thread.settledOverride === "settled" || thread.settledAt !== null) {
+      return yield* record(target, null);
+    }
 
     const reference = { projectId: thread.projectId, ...pullRequest };
     const read = yield* Effect.exit(
