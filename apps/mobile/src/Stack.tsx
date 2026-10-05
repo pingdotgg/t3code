@@ -101,6 +101,7 @@ import {
   SettingsOpenSourceLicensesRouteScreen,
 } from "./features/settings/SettingsOpenSourceLicensesRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
@@ -273,6 +274,13 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "appearance",
       options: {
         title: "Appearance",
+      },
+    }),
+    SettingsLanguage: createNativeStackScreen({
+      screen: SettingsLanguageRouteScreen,
+      linking: "language",
+      options: {
+        title: "Language",
       },
     }),
     SettingsProjectGrouping: createNativeStackScreen({

@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { ProviderInstanceId, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import { isLanguagePreference, type LanguagePreference } from "@t3tools/client-runtime/i18n";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
@@ -36,6 +37,8 @@ export interface Preferences {
    * message sent during a running turn queues behind it or steers it.
    */
   readonly followUpBehavior?: FollowUpBehavior;
+  /** Device-local interface language; mirrors the web `languagePreference`. */
+  readonly languagePreference?: LanguagePreference;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -107,6 +110,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    languagePreference?: LanguagePreference;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
@@ -171,6 +175,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
+  }
+  if (isLanguagePreference(parsed.languagePreference)) {
+    preferences.languagePreference = parsed.languagePreference;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
