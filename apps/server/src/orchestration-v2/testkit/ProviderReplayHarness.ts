@@ -1,7 +1,11 @@
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ProviderReplayTranscript,
+  ResponseStreamingMode,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -236,7 +240,10 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
-  Orchestrator.OrchestratorV2 | EffectWorker.OrchestrationEffectWorkerV2 | EventSink.EventSinkV2,
+  | Orchestrator.OrchestratorV2
+  | EffectWorker.OrchestrationEffectWorkerV2
+  | EventSink.EventSinkV2
+  | ProviderSessionManager.ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -250,6 +257,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {
+    readonly responseStreamingMode?: ResponseStreamingMode;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -264,7 +272,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
   } = {},
 ): Layer.Layer<
-  Orchestrator.OrchestratorV2 | EffectWorker.OrchestrationEffectWorkerV2 | EventSink.EventSinkV2,
+  | Orchestrator.OrchestratorV2
+  | EffectWorker.OrchestrationEffectWorkerV2
+  | EventSink.EventSinkV2
+  | ProviderSessionManager.ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const serverConfigLayer = Layer.effect(
@@ -284,7 +295,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
   const serverSettingsLayer = ServerSettings.layerTest({
-    responseStreamingMode: "turn",
+    responseStreamingMode: options.responseStreamingMode ?? "turn",
     ...(options.continueThreadsAfterServerUpdate === undefined
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
@@ -468,6 +479,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     orchestratorProvided,
     effectWorkerProvided,
     eventSinkProvided,
+    providerSessionManagerProvided,
     continuationWorkerProvided,
   ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 

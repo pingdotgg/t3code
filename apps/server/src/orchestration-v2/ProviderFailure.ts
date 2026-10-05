@@ -21,6 +21,24 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
+export function isContextWindowFailure(
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "code" | "message">,
+): boolean {
+  return (
+    (failure.class === "provider_error" || failure.class === "validation_error") &&
+    ([
+      "contextWindowExceeded",
+      "context_window_exceeded",
+      "context_length_exceeded",
+      "ContextOverflowError",
+      "prompt_too_long",
+    ].includes(failure.code ?? "") ||
+      /\b(?:prompt is too long|context (?:window|length) (?:has been |is )?exceeded|exceeds? (?:(?:the|this) )?(?:model's )?(?:maximum )?context (?:window|length)|maximum context length is \d+|input token count.{0,80}exceeds.{0,80}maximum)\b/iu.test(
+        failure.message,
+      ))
+  );
+}
+
 /** Translate known categories without exposing arbitrary provider defect text. */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
@@ -32,7 +50,20 @@ function causeMessage(cause: unknown): string | undefined {
         cause = Cause.squash(cause);
         continue;
       }
+      if (
+        typeof cause === "string" &&
+        isContextWindowFailure({ class: "provider_error", code: null, message: cause })
+      )
+        return "The request exceeds the model's context window.";
       if (typeof cause !== "object") break;
+      if (
+        isContextWindowFailure({
+          class: "provider_error",
+          code: stringField(cause, "code") ?? stringField(cause, "name") ?? null,
+          message: stringField(cause, "message") ?? stringField(cause, "errorMessage") ?? "",
+        })
+      )
+        return "The request exceeds the model's context window.";
       switch ((cause as Record<string, unknown>)._tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
@@ -65,7 +96,10 @@ function causeMessage(cause: unknown): string | undefined {
   return message;
 }
 
-function stringField(value: unknown, key: "message" | "code"): string | undefined {
+function stringField(
+  value: unknown,
+  key: "message" | "code" | "name" | "errorMessage",
+): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];

@@ -10,6 +10,7 @@ import {
   NodeId,
   type ProjectId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -90,6 +91,11 @@ export interface EventSinkV2Shape {
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    readonly rejectUnpairedInterrupt?: {
+      readonly requestId: TurnItemId;
+      readonly resultId: TurnItemId;
+    };
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -416,7 +422,22 @@ const baseLayer: Layer.Layer<
             LIMIT 1
           `;
             const current = rows[0];
+            const interrupted =
+              input.rejectUnpairedInterrupt === undefined
+                ? false
+                : (yield* sql`
+                  SELECT 1 FROM orchestration_v2_projection_turn_items AS request
+                  WHERE request.thread_id = ${input.threadId}
+                    AND request.turn_item_id = ${input.rejectUnpairedInterrupt.requestId}
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_turn_items AS result
+                      WHERE result.thread_id = ${input.threadId}
+                        AND result.turn_item_id = ${input.rejectUnpairedInterrupt.resultId}
+                    )
+                  LIMIT 1
+                `).length > 0;
             if (
+              interrupted ||
               current === undefined ||
               current.status !== input.expectedStatus ||
               current.active_attempt_id !== input.activeAttemptId
@@ -437,9 +458,15 @@ const baseLayer: Layer.Layer<
               events: normalized,
             });
             yield* applyStoredEvents(storedEvents);
+            yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents };
           }),
-          (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
+          (result) =>
+            Effect.gen(function* () {
+              if (!result.committed) return;
+              if (input.effects?.length) yield* effectOutbox.notifyAvailable(input.effects.length);
+              yield* publishStoredEvents(result.storedEvents);
+            }),
         );
       },
     );

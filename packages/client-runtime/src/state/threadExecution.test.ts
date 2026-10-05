@@ -7,6 +7,7 @@ import {
   ProviderSessionId,
   ProviderDriverKind,
   RunId,
+  RunAttemptId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
@@ -26,6 +27,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  deriveThreadIsCompacting,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 import { threadRuntimeCanArchive, type ThreadRuntimeSummary } from "./models.ts";
@@ -53,6 +55,54 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it.each(["pending", "running", "completed", "failed", "interrupted"] as const)(
+    "shows native compaction only while its active attempt is %s",
+    (status) => {
+      const attemptId = RunAttemptId.make("compact-attempt");
+      const activeRun = { ...run("compacting", 1, "running"), activeAttemptId: attemptId };
+      const attempt = {
+        id: attemptId,
+        runId: activeRun.id,
+        attemptOrdinal: 1,
+        contextCompaction: true,
+        rootNodeId: NodeId.make("compact-root"),
+        providerInstanceId: activeRun.providerInstanceId,
+        providerThreadId: ProviderThreadId.make("compact-thread"),
+        providerTurnId: null,
+        reason: "provider_recovery" as const,
+        status,
+        startedAt: now,
+        completedAt: null,
+      };
+      const projection = {
+        ...v2Projection,
+        runs: [activeRun, run("queued", 2, "queued")],
+        attempts: [attempt],
+      };
+      expect(deriveThreadIsCompacting(projection)).toBe(
+        status === "pending" || status === "running",
+      );
+      expect(
+        deriveThreadIsCompacting({
+          ...projection,
+          attempts: [{ ...attempt, contextCompaction: false }],
+        }),
+      ).toBe(false);
+      expect(
+        deriveThreadIsCompacting({
+          ...projection,
+          runs: [{ ...activeRun, status: "interrupted" }],
+        }),
+      ).toBe(false);
+      expect(
+        deriveThreadIsCompacting({
+          ...projection,
+          runs: [{ ...activeRun, activeAttemptId: RunAttemptId.make("retry") }],
+        }),
+      ).toBe(false);
+    },
+  );
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {

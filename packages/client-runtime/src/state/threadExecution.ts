@@ -106,6 +106,21 @@ export function deriveThreadActivityRun(
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
+export function deriveThreadIsCompacting(projection: OrchestrationV2ThreadProjection): boolean {
+  const run = latestMatchingRun(projection, (candidate) =>
+    INTERRUPTIBLE_RUN_STATUSES.has(candidate.status),
+  );
+  return (
+    run !== null &&
+    projection.attempts.some(
+      (attempt) =>
+        attempt.id === run.activeAttemptId &&
+        attempt.contextCompaction === true &&
+        (attempt.status === "pending" || attempt.status === "running"),
+    )
+  );
+}
+
 /**
  * Provider-native subagent threads never get app runs: their work is a runless
  * root turn whose status follows the subagent. Returns when that work started

@@ -94,6 +94,7 @@ import {
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadIsCompacting,
   deriveLatestThreadRun,
   deriveThreadRuntime,
   presentPendingBackgroundWork,
@@ -3516,9 +3517,10 @@ export default function ChatView(props: ChatViewProps) {
       item.status === "completed",
   );
   const isCompacting =
-    (isSendBusy || phase === "connecting" || phase === "running") &&
-    compactRequestIsActive &&
-    !compactionSettled;
+    (serverProjection !== null && deriveThreadIsCompacting(serverProjection)) ||
+    ((isSendBusy || phase === "connecting" || phase === "running") &&
+      compactRequestIsActive &&
+      !compactionSettled);
   // A rewind is not agent work: the composer shows "Rewinding conversation"
   // instead of the timeline growing a Thinking row.
   const isWorking =

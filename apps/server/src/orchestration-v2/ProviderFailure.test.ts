@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 
 import {
   makeProviderFailure,
+  isContextWindowFailure,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
@@ -20,6 +21,45 @@ import {
 import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+
+it.each([
+  ["contextWindowExceeded", "Input rejected", true],
+  ["context_length_exceeded", "Input rejected", true],
+  ["ContextOverflowError", "Input rejected", true],
+  ["prompt_too_long", "Input rejected", true],
+  [null, "Prompt is too long", true],
+  [null, "Model context window exceeded", true],
+  [null, "This model's maximum context length is 32000 tokens", true],
+  [null, "Input token count 40000 exceeds the maximum of 32000", true],
+  [null, "The request exceeds the model's context window.", true],
+  ["rateLimitExceeded", "Too many requests", false],
+  [null, "Failed to load context", false],
+  [null, "Attachment is too large", false],
+] as const)("classifies context rejection %s / %s", (code, message, expected) => {
+  const failure = makeProviderFailure({ code, message, class: "provider_error" });
+  assert.equal(isContextWindowFailure(failure), expected);
+  assert.isFalse(isContextWindowFailure({ ...failure, class: "permission_error" }));
+  assert.isFalse(isContextWindowFailure({ ...failure, class: "usage_limit" }));
+});
+
+it("recognizes nested native context rejections without exposing their cause text", () => {
+  for (const cause of [
+    "Prompt is too long api_key=secret",
+    { errorMessage: "Prompt is too long api_key=secret" },
+    new Error("Prompt is too long api_key=secret"),
+    new ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("codex"),
+      threadId: ThreadId.make("context-rejection"),
+      providerThreadId: ProviderThreadId.make("context-rejection"),
+      runId: RunId.make("context-rejection"),
+      cause: { code: "contextWindowExceeded" },
+    }),
+  ]) {
+    const failure = makeProviderFailure({ cause, class: "provider_error" });
+    assert.isTrue(isContextWindowFailure(failure));
+    assert.notInclude(failure.message, "secret");
+  }
+});
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({

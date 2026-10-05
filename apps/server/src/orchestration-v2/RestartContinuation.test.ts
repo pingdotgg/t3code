@@ -35,7 +35,7 @@ const attemptId = RunAttemptId.make("attempt:restart");
 // "No project" threads belong to the environment's Scratch project.
 const scratchProjectId = ProjectId.make("project:scratch");
 
-function makeProjection() {
+function makeProjection(contextCompaction = false) {
   return {
     thread: {
       id: threadId,
@@ -79,7 +79,7 @@ function makeProjection() {
       },
     ],
     runtimeRequests: [],
-    attempts: [],
+    attempts: contextCompaction ? [{ id: attemptId, contextCompaction: true }] : [],
     nodes: [],
     subagents: [],
     messages: [],
@@ -90,6 +90,14 @@ function makeProjection() {
 it("requires matching saved native state for an unfinished root run", () => {
   const projection = makeProjection();
   assert.equal(restartContinuationRun(projection)?.id, runId);
+  assert.equal(
+    restartContinuationRun({
+      ...projection,
+      attempts: [{ id: attemptId, contextCompaction: true }],
+      providerTurns: [],
+    } as unknown as OrchestrationV2ThreadProjection)?.id,
+    runId,
+  );
   for (const invalid of [
     { ...projection, thread: { ...projection.thread, archivedAt: {} } },
     { ...projection, thread: { ...projection.thread, deletedAt: {} } },
@@ -123,6 +131,10 @@ it("requires matching saved native state for an unfinished root run", () => {
     ].map((status) => ({ ...projection, runs: [{ ...projection.runs[0]!, status }] })),
   ])
     assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection));
+});
+
+it("continues an unfinished root run during automatic context compaction", () => {
+  assert.equal(restartContinuationRun(makeProjection(true))?.id, runId);
 });
 
 it("continues a live turn whose session the adapter never marked running", () => {
@@ -253,13 +265,15 @@ it.effect("does not continue a failed run that lost background work", () =>
 );
 
 it.effect.each([
-  [false, undefined],
-  [true, undefined],
-  [false, true],
-  [true, false],
+  [false, undefined, false],
+  [true, undefined, false],
+  [false, true, false],
+  [true, false, false],
+  [false, undefined, true],
+  [true, undefined, true],
 ] as const)(
-  "atomically records restart intent with cancellation when opt-in is %s and project override is %s",
-  ([enabled, projectOverride]) =>
+  "atomically records restart intent with cancellation when opt-in is %s, project override is %s and compaction is %s",
+  ([enabled, projectOverride, contextCompaction]) =>
     Effect.gen(function* () {
       let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
@@ -278,7 +292,7 @@ it.effect.each([
             }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getRecoveryThreadIds: () => Effect.succeed([threadId]),
-              getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection()),
+              getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection(contextCompaction)),
             }),
             Layer.mock(EventSink.EventSinkV2)({
               commitCommand: (input) => {
@@ -642,6 +656,126 @@ const queuedFollowUp = {
   status: "queued",
   queueHeld: true,
 };
+
+it.effect.each([
+  "resume",
+  "prepared-resume",
+  "request-after-compaction",
+  "started-continuation",
+  "stopped",
+  "disabled",
+  "missing-request",
+] as const)("handles a restart during automatic compaction when %s", (scenario) =>
+  Effect.gen(function* () {
+    const message = {
+      id: MessageId.make("message:user"),
+      text: "Use the attached diagram and keep the API unchanged.",
+      attachments: [
+        {
+          type: "image",
+          id: "diagram",
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ],
+      context: { version: 1 as const, records: [] },
+    };
+    const projection = {
+      ...cutMidTurn(),
+      ...(scenario === "request-after-compaction"
+        ? {
+            runs: cutMidTurn().runs,
+            attempts: [
+              {
+                id: RunAttemptId.make("attempt:compaction-source"),
+                runId,
+                contextCompaction: true,
+              },
+              { id: attemptId, runId, contextCompaction: false },
+            ],
+            providerTurns: [],
+          }
+        : ["prepared-resume", "started-continuation"].includes(scenario)
+          ? {
+              runs: [
+                {
+                  ...cutMidTurn().runs[0]!,
+                  id: RunId.make("run:compaction-source"),
+                  ordinal: 0,
+                  activeAttemptId: RunAttemptId.make("attempt:compaction-source"),
+                },
+                {
+                  ...cutMidTurn().runs[0]!,
+                  restartContinuationOfRunId: RunId.make("run:compaction-source"),
+                },
+              ],
+              attempts: [
+                { id: RunAttemptId.make("attempt:compaction-source"), contextCompaction: true },
+              ],
+              providerTurns: scenario === "prepared-resume" ? [] : cutMidTurn().providerTurns,
+            }
+          : { attempts: [{ id: attemptId, contextCompaction: true }] }),
+      messages: scenario === "missing-request" ? [] : [message],
+      turnItems:
+        scenario === "stopped"
+          ? [{ id: "turn-item:interrupt", runId, type: "run_interrupt_request" }]
+          : [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    if (scenario === "request-after-compaction")
+      assert.equal(
+        restartContinuationRun({
+          ...projection,
+          runs: [{ ...projection.runs[0]!, status: "starting" }],
+        })?.id,
+        runId,
+      );
+    const commands: Parameters<
+      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+    >[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: scenario !== "disabled" }),
+        ),
+      ),
+    );
+    const resumed = [
+      "resume",
+      "prepared-resume",
+      "request-after-compaction",
+      "started-continuation",
+    ].includes(scenario);
+    assert.lengthOf(commands, resumed ? 1 : 0);
+    if (resumed) {
+      const command = commands[0]!;
+      assert.equal(command.type, "message.dispatch");
+      if (command.type === "message.dispatch") {
+        assert.equal(
+          command.text,
+          scenario === "started-continuation" ? "Continue where you left off." : message.text,
+        );
+        assert.deepEqual(
+          command.attachments,
+          scenario === "started-continuation" ? [] : message.attachments,
+        );
+        assert.deepEqual(
+          command.context,
+          scenario === "started-continuation" ? undefined : message.context,
+        );
+        assert.equal(command.restartContinuationOfRunId, runId);
+      }
+    }
+  }),
+);
 
 it.effect("continues a cut run past queued follow-ups, which stay held", () =>
   Effect.gen(function* () {

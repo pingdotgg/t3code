@@ -5,6 +5,7 @@ import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadIsCompacting,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -366,6 +367,8 @@ export function useThreadComposerState() {
   );
 
   const isCompacting = useMemo(() => {
+    if (selectedThreadProjection && deriveThreadIsCompacting(selectedThreadProjection.projection))
+      return true;
     const queuedCompact = selectedThreadQueuedMessages.some(
       (message) =>
         message.messageId === dispatchingQueuedMessageId &&
@@ -393,6 +396,7 @@ export function useThreadComposerState() {
     dispatchingQueuedMessageId,
     selectedThreadQueuedMessages,
     selectedThreadRuntime,
+    selectedThreadProjection,
     selectedThreadVisibleTurnItems,
   ]);
 

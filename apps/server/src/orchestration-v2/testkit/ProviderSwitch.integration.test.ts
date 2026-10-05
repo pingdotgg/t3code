@@ -53,10 +53,13 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2HistoricalContext,
   ProviderAdapterProtocolError,
+  ProviderAdapterEnsureThreadError,
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -104,11 +107,27 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  readonly failEnsureOnce?: Ref.Ref<boolean>;
+  readonly compaction?:
+    | "success"
+    | "failure"
+    | "interrupted"
+    | "no-shrink"
+    | "unsupported"
+    | "no-usage";
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
+  readonly rejectContextOnce?: Ref.Ref<boolean>;
+  readonly repeatContextRejection?: boolean;
+  readonly contextRejectionCode?: string;
+  readonly workBeforeRejection?: boolean;
+  readonly rejectContextBeforeStart?: boolean;
+  readonly failCompactionResume?: boolean;
+  readonly failPostCompactionResume?: boolean;
+  readonly responseBeforeRejection?: "completed" | "streaming" | "streaming-message";
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
   readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
@@ -119,6 +138,7 @@ function makeTestAdapter(input: {
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly runningWhileHeld?: boolean;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -156,6 +176,15 @@ function makeTestAdapter(input: {
             : { canReuseContextUsage: input.canReuseContextUsage }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (
+                input.failEnsureOnce !== undefined &&
+                (yield* Ref.getAndSet(input.failEnsureOnce, false))
+              )
+                return yield* new ProviderAdapterEnsureThreadError({
+                  driver: input.driver,
+                  threadId: threadInput.threadId,
+                  cause: "session creation failed",
+                });
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -218,7 +247,12 @@ function makeTestAdapter(input: {
                     ),
                   ),
               }),
-          compactThread: (turnInput) => runtime.startTurn(turnInput),
+          ...(input.compaction === "unsupported"
+            ? {}
+            : {
+                compactThread: (turnInput: Parameters<typeof runtime.startTurn>[0]) =>
+                  runtime.startTurn(turnInput),
+              }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               if (
@@ -233,7 +267,12 @@ function makeTestAdapter(input: {
                   driver: input.driver,
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
-                  text: turnInput.message.text,
+                  text:
+                    input.driver === CODEX_DRIVER &&
+                    turnInput.restartContinuationOfRunId !== undefined &&
+                    turnInput.message.text !== "/compact"
+                      ? ""
+                      : turnInput.message.text,
                   attachments: turnInput.message.attachments,
                   nativeThreadId: turnInput.providerThread.nativeThreadRef?.nativeId ?? null,
                   providerTurnOrdinal: turnInput.providerTurnOrdinal,
@@ -242,23 +281,101 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const eventTime = yield* DateTime.now;
+              const providerTurnId = ProviderTurnId.make(
+                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}`,
+              );
+              const providerTurn = {
+                id: providerTurnId,
+                providerThreadId: turnInput.providerThread.id,
+                nodeId: turnInput.rootNodeId,
+                runAttemptId: turnInput.attemptId,
+                nativeTurnRef: {
+                  driver: input.driver,
+                  nativeId: `native-turn:${turnInput.threadId}:${turnInput.attemptId}`,
+                  strength: "strong" as const,
+                },
+                ordinal: turnInput.providerTurnOrdinal,
+                startedAt: eventTime,
+              };
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
               ) {
+                if (input.runningWhileHeld === true)
+                  yield* PubSub.publish(events, {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: { ...providerTurn, status: "running", completedAt: null },
+                  });
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
                 if (input.releaseFirstTurn === undefined) return;
                 yield* Deferred.await(input.releaseFirstTurn);
               }
-              const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
+              const compacting =
+                input.compaction !== undefined && turnInput.message.text === "/compact";
+              const contextRejected =
+                !compacting &&
+                input.rejectContextOnce !== undefined &&
+                (input.repeatContextRejection
+                  ? yield* Ref.get(input.rejectContextOnce)
+                  : yield* Ref.getAndSet(input.rejectContextOnce, false));
+              if (contextRejected && input.rejectContextBeforeStart)
+                return yield* new ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: { errorMessage: "Prompt is too long" },
+                });
+              if (
+                contextRejected &&
+                input.failCompactionResume &&
+                input.failResumeOnce !== undefined
+              )
+                yield* Ref.set(input.failResumeOnce, true);
+              if (
+                compacting &&
+                input.failPostCompactionResume &&
+                input.failResumeOnce !== undefined
+              )
+                yield* Ref.set(input.failResumeOnce, true);
+              if (contextRejected && input.workBeforeRejection)
+                yield* PubSub.publish(events, {
+                  type: "turn_item.updated",
+                  driver: input.driver,
+                  turnItem: {
+                    id: TurnItemId.make(`${turnInput.attemptId}:tool`),
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    nodeId: turnInput.rootNodeId,
+                    providerThreadId: turnInput.providerThread.id,
+                    providerTurnId,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: turnInput.runOrdinal * 100,
+                    status: "completed",
+                    startedAt: eventTime,
+                    completedAt: eventTime,
+                    updatedAt: eventTime,
+                    type: "command_execution",
+                    input: "echo done",
+                    output: "done",
+                    exitCode: 0,
+                    title: null,
+                  },
+                });
+              const terminalStatus = contextRejected
                 ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : "completed";
+                : compacting && input.compaction === "failure"
+                  ? "failed"
+                  : compacting && input.compaction === "interrupted"
+                    ? "interrupted"
+                    : input.failedRunOrdinals?.has(turnInput.runOrdinal)
+                      ? "failed"
+                      : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                        ? "interrupted"
+                        : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -267,28 +384,14 @@ function makeTestAdapter(input: {
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
-                    },
-                    ordinal: turnInput.runOrdinal,
-                    status: terminalStatus,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                  },
+                  providerTurn: { ...providerTurn, status: terminalStatus, completedAt: eventTime },
                 },
                 {
                   type: "turn_item.updated",
                   driver: input.driver,
                   turnItem: {
                     id: TurnItemId.make(
-                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}:assistant`,
                     ),
                     threadId: turnInput.threadId,
                     runId: turnInput.runId,
@@ -305,10 +408,12 @@ function makeTestAdapter(input: {
                     updatedAt: eventTime,
                     type: "assistant_message",
                     messageId: MessageId.make(
-                      `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `message:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}:assistant`,
                     ),
                     text: response,
-                    streaming: false,
+                    streaming:
+                      contextRejected &&
+                      input.responseBeforeRejection?.startsWith("streaming") === true,
                   },
                 },
                 {
@@ -322,8 +427,12 @@ function makeTestAdapter(input: {
                         status: terminalStatus,
                         failureItemOrdinal: turnInput.runOrdinal * 100 + 2,
                         failure: makeProviderFailure({
-                          message: "Simulated provider failure.",
-                          code: "simulated_failure",
+                          message: contextRejected
+                            ? "Prompt is too long"
+                            : "Simulated provider failure.",
+                          code: contextRejected
+                            ? (input.contextRejectionCode ?? null)
+                            : "simulated_failure",
                           class: "provider_error",
                         }),
                       }
@@ -331,7 +440,15 @@ function makeTestAdapter(input: {
                   threadDisposition: "reusable",
                 },
               ];
-              const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
+              const reportedUsage =
+                compacting && input.compaction === "no-usage"
+                  ? undefined
+                  : compacting
+                    ? {
+                        usedTokens: input.compaction === "no-shrink" ? 207_362 : 1_000,
+                        maxTokens: 32_000,
+                      }
+                    : input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
               const turnEvent = providerEvents[0];
               if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
                 yield* PubSub.publish(events, {
@@ -345,6 +462,38 @@ function makeTestAdapter(input: {
                 });
               }
               for (const event of providerEvents) {
+                if (
+                  contextRejected &&
+                  !input.responseBeforeRejection &&
+                  event.type === "turn_item.updated"
+                )
+                  continue;
+                if (
+                  contextRejected &&
+                  input.responseBeforeRejection === "streaming-message" &&
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "assistant_message"
+                ) {
+                  yield* PubSub.publish(events, {
+                    type: "message.updated",
+                    driver: input.driver,
+                    message: {
+                      id: event.turnItem.messageId,
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      createdBy: "agent",
+                      creationSource: "provider",
+                      role: "assistant",
+                      text: response,
+                      attachments: [],
+                      streaming: true,
+                      createdAt: eventTime,
+                      updatedAt: eventTime,
+                    },
+                  });
+                  continue;
+                }
                 yield* PubSub.publish(events, event);
               }
             }),
@@ -384,9 +533,46 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 describe("orchestration v2 provider switching", () => {
   it.live.each([
     "compact-native",
+    "first-bind-retry-native",
     "compact-fallback",
     "compact-legacy",
     "large-current-input",
+    "exhausted-native",
+    "exhausted-rejected-codex-native",
+    "exhausted-rejected-claude-native",
+    "exhausted-rejected-cursor-native",
+    "exhausted-rejected-grok-native",
+    "exhausted-rejected-antigravity-native",
+    "exhausted-rejected-opencode-native",
+    "exhausted-rejected-opencode2-native",
+    "exhausted-rejected-pi-native",
+    "exhausted-rejected-repeat-native",
+    "exhausted-rejected-start-error-native",
+    "exhausted-rejected-resume-failure-native",
+    "exhausted-rejected-resume-failure-after-compaction-native",
+    "exhausted-rejected-unsupported-native",
+    "exhausted-rejected-work-native",
+    "exhausted-rejected-response-native",
+    "exhausted-rejected-response-streaming-native",
+    "exhausted-rejected-response-streaming-paragraph-native",
+    "exhausted-rejected-response-streaming-message-native",
+    "exhausted-rejected-response-streaming-message-paragraph-native",
+    "exhausted-effort-change-native",
+    "exhausted-manual-uppercase-native",
+    "exhausted-missed-input-native",
+    "exhausted-fallback",
+    "exhausted-downgrade-native",
+    "exhausted-visible-downgrade-native",
+    "exhausted-oversized-native",
+    "exhausted-compaction-failure-native",
+    "exhausted-compaction-interrupted-native",
+    "exhausted-no-shrink-native",
+    "exhausted-no-usage-native",
+    "exhausted-stop-native",
+    "exhausted-stop-running-native",
+    "exhausted-steer-native",
+    "exhausted-unsupported-native",
+    "exhausted-unknown-capacity-native",
     "screenshot-native",
     "screenshot-fallback",
     "screenshot-pair-native",
@@ -428,22 +614,51 @@ describe("orchestration v2 provider switching", () => {
           scenario.includes("model") || scenario.includes("option-change") || reasoningScenario;
         const failStartOnce = yield* Ref.make(false);
         const failResumeOnce = yield* Ref.make(false);
+        const failEnsureOnce = yield* Ref.make(false);
         const generation = yield* Ref.make(0);
+        const compactionStarted = yield* Deferred.make<void>();
+        const finishCompaction = yield* Deferred.make<void>();
         const priorImages = scenario.includes("prior-images");
+        const exhausted = scenario.startsWith("exhausted");
+        const rejected = scenario.includes("rejected");
+        const rejectContextOnce = yield* Ref.make(false);
+        const rejectionDriver = scenario.includes("rejected-codex")
+          ? CODEX_DRIVER
+          : scenario.includes("rejected-cursor")
+            ? CURSOR_DRIVER
+            : scenario.includes("rejected-grok")
+              ? ProviderDriverKind.make("grok")
+              : scenario.includes("rejected-antigravity")
+                ? ProviderDriverKind.make("antigravity")
+                : scenario.includes("rejected-opencode")
+                  ? ProviderDriverKind.make("opencode")
+                  : scenario.includes("rejected-pi")
+                    ? ProviderDriverKind.make("pi")
+                    : CLAUDE_DRIVER;
         const replaceNative = scenario.includes("replacement");
         const capacityScenario = modelScenario || scenario.includes("reported-capacity");
         const returning =
-          scenario === "large-current-input" || scenario.includes("-change-") || priorImages;
-        const targetSelection: ModelSelection = !modelScenario
-          ? CLAUDE_MODEL_SELECTION
-          : {
-              ...CLAUDE_MODEL_SELECTION,
-              ...(reasoningScenario
-                ? { options: [{ id: "reasoningEffort", value: "low" }] }
-                : scenario.includes("option-change")
-                  ? { options: [{ id: "contextWindow", value: "1m" }] }
-                  : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
-            };
+          scenario === "large-current-input" ||
+          scenario.includes("-change-") ||
+          priorImages ||
+          exhausted;
+        const targetSelection: ModelSelection =
+          rejected ||
+          scenario.includes("downgrade") ||
+          scenario === "exhausted-unknown-capacity-native"
+            ? { ...CLAUDE_MODEL_SELECTION, model: "small-model" }
+            : scenario === "exhausted-effort-change-native"
+              ? { ...CLAUDE_MODEL_SELECTION, options: [{ id: "reasoningEffort", value: "low" }] }
+              : !modelScenario
+                ? CLAUDE_MODEL_SELECTION
+                : {
+                    ...CLAUDE_MODEL_SELECTION,
+                    ...(reasoningScenario
+                      ? { options: [{ id: "reasoningEffort", value: "low" }] }
+                      : scenario.includes("option-change")
+                        ? { options: [{ id: "contextWindow", value: "1m" }] }
+                        : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
+                  };
         const registry = ProviderAdapterRegistry.makeLayer([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -455,13 +670,87 @@ describe("orchestration v2 provider switching", () => {
           }),
           makeTestAdapter({
             instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-            driver: CLAUDE_DRIVER,
-            capabilities: ClaudeProviderCapabilitiesV2,
+            driver: rejectionDriver,
+            capabilities: scenario.includes("rejected-codex")
+              ? CodexProviderCapabilitiesV2
+              : scenario.includes("rejected-cursor")
+                ? CursorProviderCapabilitiesV2
+                : scenario.includes("rejected-grok") || scenario.includes("rejected-antigravity")
+                  ? AcpProviderCapabilitiesV2
+                  : ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: {},
             capturedTurns,
-            ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
-            ...(replaceNative ? { failResumeOnce, nativeThreadGeneration: generation } : {}),
+            failEnsureOnce,
+            ...(rejected
+              ? {
+                  rejectContextOnce,
+                  repeatContextRejection: scenario.includes("rejected-repeat"),
+                  workBeforeRejection: scenario.includes("rejected-work"),
+                  rejectContextBeforeStart: scenario.includes("rejected-start-error"),
+                  failCompactionResume:
+                    scenario.includes("rejected-resume-failure") &&
+                    !scenario.includes("after-compaction"),
+                  failPostCompactionResume: scenario.includes("after-compaction"),
+                  ...(scenario.includes("rejected-response")
+                    ? {
+                        responseBeforeRejection: scenario.includes("response-streaming-message")
+                          ? "streaming-message"
+                          : scenario.includes("response-streaming")
+                            ? "streaming"
+                            : "completed",
+                      }
+                    : {}),
+                  contextRejectionCode: scenario.includes("rejected-codex")
+                    ? "contextWindowExceeded"
+                    : scenario.includes("rejected-opencode")
+                      ? "ContextOverflowError"
+                      : "prompt_too_long",
+                }
+              : {}),
+            ...(scenario === "exhausted-stop-native" ||
+            scenario === "exhausted-stop-running-native" ||
+            scenario === "exhausted-steer-native"
+              ? {
+                  holdRunOrdinal: 4,
+                  holdFirstTurn: compactionStarted,
+                  releaseFirstTurn: finishCompaction,
+                  runningWhileHeld: scenario === "exhausted-stop-running-native",
+                }
+              : {}),
+            ...(scenario.includes("retry") ||
+            scenario.includes("unsent") ||
+            scenario === "exhausted-missed-input-native"
+              ? { failStartOnce }
+              : {}),
+            ...(replaceNative || exhausted
+              ? { failResumeOnce, nativeThreadGeneration: generation }
+              : {}),
+            ...(exhausted
+              ? {
+                  ...(rejected ||
+                  scenario === "exhausted-unknown-capacity-native" ||
+                  scenario === "exhausted-no-usage-native"
+                    ? {}
+                    : {
+                        getModelContextWindow: (selection: ModelSelection) =>
+                          selection.model === "small-model" ? 32_000 : 258_400,
+                      }),
+                  tokenUsageByRunOrdinal: { 2: { usedTokens: 207_362, maxTokens: 258_400 } },
+                  compaction:
+                    scenario === "exhausted-compaction-failure-native"
+                      ? ("failure" as const)
+                      : scenario === "exhausted-compaction-interrupted-native"
+                        ? ("interrupted" as const)
+                        : scenario === "exhausted-no-shrink-native"
+                          ? ("no-shrink" as const)
+                          : scenario.includes("unsupported")
+                            ? ("unsupported" as const)
+                            : scenario === "exhausted-no-usage-native"
+                              ? ("no-usage" as const)
+                              : ("success" as const),
+                }
+              : {}),
             ...(scenario.includes("reported-capacity")
               ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
               : {}),
@@ -530,18 +819,22 @@ describe("orchestration v2 provider switching", () => {
               creationSource: "web",
               text,
               attachments:
-                turnUsageScenario && ordinal === 2
-                  ? Array.from({ length: 8 }, (_, index) => ({
-                      ...screenshot,
-                      id: `prior-${index}`,
-                    }))
-                  : turnUsageScenario && ordinal >= targetOrdinal
-                    ? [screenshot, { ...screenshot, id: "current-2" }]
-                    : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
-                      ? screenshots
-                      : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
-                        ? [screenshot]
-                        : [],
+                scenario === "exhausted-manual-uppercase-native" && ordinal === targetOrdinal
+                  ? []
+                  : exhausted && ordinal === targetOrdinal
+                    ? [screenshot]
+                    : turnUsageScenario && ordinal === 2
+                      ? Array.from({ length: 8 }, (_, index) => ({
+                          ...screenshot,
+                          id: `prior-${index}`,
+                        }))
+                      : turnUsageScenario && ordinal >= targetOrdinal
+                        ? [screenshot, { ...screenshot, id: "current-2" }]
+                        : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
+                          ? screenshots
+                          : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
+                            ? [screenshot]
+                            : [],
               modelSelection: selection,
               dispatchMode: { type: "start_immediately" },
             });
@@ -551,7 +844,9 @@ describe("orchestration v2 provider switching", () => {
                 ({ event }) =>
                   event.type === "run.updated" &&
                   event.payload.ordinal === ordinal &&
-                  (event.payload.status === "completed" || event.payload.status === "failed"),
+                  (event.payload.status === "completed" ||
+                    event.payload.status === "failed" ||
+                    event.payload.status === "interrupted"),
               ),
               Stream.runHead,
               Effect.andThen(worker.drain()),
@@ -591,20 +886,33 @@ describe("orchestration v2 provider switching", () => {
                 )
               : undefined;
           yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
-          const current = scenario.startsWith("compact")
-            ? "/compact"
-            : capacityScenario && !turnUsageScenario
-              ? "x".repeat(70_000)
-              : scenario === "large-current-input"
-                ? "x".repeat(9_000)
-                : "Continue work";
+          const current =
+            scenario === "exhausted-manual-uppercase-native"
+              ? "/COMPACT"
+              : scenario === "exhausted-oversized-native"
+                ? "x".repeat(260_000)
+                : scenario === "exhausted-no-usage-native"
+                  ? "x".repeat(110_000)
+                  : scenario.startsWith("compact")
+                    ? "/compact"
+                    : capacityScenario && !turnUsageScenario
+                      ? "x".repeat(70_000)
+                      : scenario === "large-current-input"
+                        ? "x".repeat(9_000)
+                        : "Continue work";
           // First establish the returning native thread: the current request must
           // not be charged as existing context on the subsequent handoff.
           if (returning) {
             if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
             yield* dispatch(
               2,
-              turnUsageScenario ? "x".repeat(27_460) : "Establish target",
+              exhausted
+                ? scenario === "exhausted-downgrade-native"
+                  ? "Establish target"
+                  : "x".repeat(70_000)
+                : turnUsageScenario
+                  ? "x".repeat(27_460)
+                  : "Establish target",
               CLAUDE_MODEL_SELECTION,
             );
             yield* wait(2);
@@ -665,12 +973,19 @@ describe("orchestration v2 provider switching", () => {
                 ],
               });
             }
+            if (scenario === "exhausted-missed-input-native") yield* Ref.set(failStartOnce, true);
             yield* dispatch(
               3,
               priorImages && !replaceNative
                 ? "New source constraint " + "q".repeat(9_000)
                 : "New source constraint",
-              CODEX_MODEL_SELECTION,
+              rejected ||
+                scenario.includes("downgrade") ||
+                scenario === "exhausted-effort-change-native" ||
+                scenario === "exhausted-unknown-capacity-native" ||
+                scenario === "exhausted-missed-input-native"
+                ? CLAUDE_MODEL_SELECTION
+                : CODEX_MODEL_SELECTION,
             );
             yield* wait(3);
           }
@@ -688,7 +1003,82 @@ describe("orchestration v2 provider switching", () => {
             yield* Ref.set(failResumeOnce, true);
           }
           if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
+          if (scenario === "first-bind-retry-native") yield* Ref.set(failEnsureOnce, true);
+          const savedBeforeSwitch = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).turnItems.filter(
+            (item) => item.type === "user_message" || item.type === "assistant_message",
+          );
+          if (scenario.includes("rejected-resume-failure")) {
+            const target = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
+              (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+            )!;
+            const runtime = yield* (yield* ProviderSessionManager.ProviderSessionManagerV2).get(
+              target.providerSessionId!,
+            );
+            assert.equal(runtime._tag, "Some");
+            if (runtime._tag === "Some") {
+              const resume = runtime.value.resumeThread;
+              const resumeSpy = vi
+                .spyOn(runtime.value, "resumeThread")
+                .mockImplementation((input) =>
+                  Ref.get(failResumeOnce).pipe(
+                    Effect.flatMap((failed) =>
+                      failed
+                        ? unimplemented(CLAUDE_DRIVER, "simulated native resume failure")
+                        : resume(input),
+                    ),
+                  ),
+                );
+              yield* Effect.addFinalizer(() => Effect.sync(() => resumeSpy.mockRestore()));
+            }
+          }
+          if (rejected) yield* Ref.set(rejectContextOnce, true);
           yield* dispatch(targetOrdinal, current, targetSelection);
+          if (
+            scenario === "exhausted-stop-native" ||
+            scenario === "exhausted-stop-running-native" ||
+            scenario === "exhausted-steer-native"
+          ) {
+            yield* Deferred.await(compactionStarted);
+            const active = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            // Stop while the provider is compacting, not before its turn starts.
+            if (scenario === "exhausted-stop-running-native")
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "provider-turn.updated" &&
+                    event.payload.runAttemptId === active.activeAttemptId &&
+                    event.payload.status === "running",
+                ),
+                Stream.runHead,
+              );
+            if (scenario !== "exhausted-steer-native") {
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("stop-compaction"),
+                threadId,
+                runId: active.id,
+              });
+            } else {
+              const steered = yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "message.dispatch",
+                  commandId: CommandId.make("steer-compaction"),
+                  threadId,
+                  messageId: MessageId.make("steer-compaction"),
+                  createdBy: "user",
+                  creationSource: "web",
+                  text: "Change the plan",
+                  attachments: [],
+                  modelSelection: targetSelection,
+                  dispatchMode: { type: "steer_active", targetRunId: active.id },
+                }),
+              );
+              assert.equal(steered._tag, "Failure");
+            }
+            yield* Deferred.succeed(finishCompaction, undefined);
+          }
           yield* wait(targetOrdinal);
           if (scenario.includes("retry")) {
             const failed = yield* orchestrator.getThreadProjection(threadId);
@@ -696,7 +1086,9 @@ describe("orchestration v2 provider switching", () => {
             const failedUsage = failed.providerThreads.find(
               (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
             )!.contextUsage;
-            if (reasoningScenario || scenario.includes("turn-usage")) {
+            if (scenario === "first-bind-retry-native") {
+              assert.isNull(failedUsage);
+            } else if (reasoningScenario || scenario.includes("turn-usage")) {
               assert.deepEqual(failedUsage, { usedTokens: 37_321, maxTokens: 258_400 });
             } else {
               assert.deepEqual(failedUsage, { usedTokens: 30_000, maxTokens: 1_000_000 });
@@ -773,6 +1165,110 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(targetOrdinal + 3);
           }
           const projection = yield* orchestrator.getThreadProjection(threadId);
+          for (const saved of savedBeforeSwitch)
+            assert.deepEqual(
+              projection.turnItems.find((item) => item.id === saved.id),
+              saved,
+            );
+          if (scenario === "exhausted-manual-uppercase-native") {
+            assert.equal(projection.runs.at(-1)?.status, "completed");
+            assert.equal(
+              (yield* Ref.get(capturedTurns)).filter((turn) => turn.text === "/compact").length,
+              0,
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "/COMPACT");
+            return;
+          }
+          if (exhausted) {
+            const failed =
+              scenario === "exhausted-oversized-native" ||
+              scenario === "exhausted-compaction-failure-native" ||
+              scenario === "exhausted-no-shrink-native" ||
+              scenario.includes("unsupported") ||
+              scenario.includes("rejected-repeat") ||
+              scenario.includes("rejected-resume-failure") ||
+              scenario.includes("rejected-response") ||
+              scenario.includes("rejected-work");
+            const interrupted =
+              scenario === "exhausted-compaction-interrupted-native" ||
+              scenario === "exhausted-stop-native" ||
+              scenario === "exhausted-stop-running-native";
+            assert.equal(
+              projection.runs.at(-1)?.status,
+              interrupted ? "interrupted" : failed ? "failed" : "completed",
+            );
+            assert.equal(yield* Ref.get(generation), 1);
+            const compactTurns = (yield* Ref.get(capturedTurns)).filter(
+              (turn) => turn.text === "/compact",
+            );
+            assert.equal(
+              compactTurns.length,
+              scenario === "exhausted-oversized-native" ||
+                scenario === "exhausted-effort-change-native" ||
+                scenario === "exhausted-unknown-capacity-native" ||
+                scenario.includes("unsupported") ||
+                (scenario.includes("rejected-resume-failure") &&
+                  !scenario.includes("after-compaction")) ||
+                scenario.includes("rejected-response") ||
+                scenario.includes("rejected-work")
+                ? 0
+                : 1,
+            );
+            assert.isTrue(compactTurns.every((turn) => turn.attachments.length === 0));
+            if (rejected) {
+              const errors = projection.visibleTurnItems.filter(
+                ({ item }) => item.runId === projection.runs.at(-1)!.id && item.type === "error",
+              );
+              assert.equal(errors.length, failed ? 1 : 0);
+            }
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) =>
+                  item.type === "user_message" &&
+                  item.text ===
+                    (scenario === "exhausted-downgrade-native"
+                      ? "Establish target"
+                      : "x".repeat(70_000)),
+              ),
+            );
+            if (failed || interrupted) {
+              assert.equal(
+                (yield* Ref.get(capturedTurns)).filter((turn) => turn.text.endsWith(current))
+                  .length,
+                rejected ? (scenario.includes("rejected-repeat") ? 2 : 1) : 0,
+              );
+              return;
+            }
+            if (
+              scenario === "exhausted-unknown-capacity-native" ||
+              scenario === "exhausted-effort-change-native"
+            )
+              return;
+            const latestAttempt = projection.attempts.find(
+              (attempt) => attempt.id === projection.runs.at(-1)!.activeAttemptId,
+            )!;
+            assert.include(latestAttempt.nativeThreadId!, ":0");
+            assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, [screenshot]);
+            assert.equal(
+              (yield* Ref.get(capturedTurns)).filter((turn) => turn.text.endsWith(current)).length,
+              rejected ? 2 : 1,
+            );
+            const history = scenario.endsWith("-native")
+              ? yield* encodeJson(yield* Ref.get(injectedHistory))
+              : (yield* Ref.get(capturedTurns)).at(-1)!.text;
+            if (!scenario.includes("downgrade") && !rejected)
+              assert.include(history, "New source constraint");
+            yield* dispatch(5, "Further source work", CODEX_MODEL_SELECTION);
+            yield* wait(5);
+            yield* dispatch(6, "Return to the recovered session", targetSelection);
+            yield* wait(6);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+              "completed",
+            );
+            assert.equal(yield* Ref.get(generation), 1);
+            return;
+          }
           assert.equal(projection.runs.at(-1)?.status, "completed");
           if (priorImages) {
             const handoff = projection.contextHandoffs.at(-1)!;
@@ -890,12 +1386,222 @@ describe("orchestration v2 provider switching", () => {
                 },
               },
               registry,
+              { responseStreamingMode: scenario.includes("paragraph") ? "paragraph" : "turn" },
             ),
           ),
         );
       }),
     ),
   );
+  it.live.each([
+    [CODEX_MODEL_SELECTION, false, true],
+    [CLAUDE_MODEL_SELECTION, false, true],
+    [CODEX_MODEL_SELECTION, true, true],
+    [CLAUDE_MODEL_SELECTION, true, true],
+    [CODEX_MODEL_SELECTION, false, false],
+  ] as const)(
+    "keeps the waiting request after a compaction restart with %j",
+    ([selection, failResume, runningWhileHeld]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`compaction-restart-${selection.instanceId}`);
+          const databaseLayer = Layer.succeed(SqlClient.SqlClient, yield* SqlClient.SqlClient);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const generation = yield* Ref.make(0);
+          const started = yield* Deferred.make<void>();
+          const restarted = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const request = "Use the diagram and keep the API unchanged.";
+          const attachments: ReadonlyArray<ChatAttachment> = [
+            {
+              type: "image",
+              id: "diagram",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 10,
+            },
+          ];
+          const driver =
+            selection.instanceId === CODEX_MODEL_SELECTION.instanceId
+              ? CODEX_DRIVER
+              : CLAUDE_DRIVER;
+          const adapter = {
+            instanceId: selection.instanceId,
+            driver,
+            capabilities:
+              driver === CODEX_DRIVER ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2,
+            modelSelection: selection,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            nativeThreadGeneration: generation,
+            compaction: "success" as const,
+            getModelContextWindow: (model: ModelSelection) =>
+              model.model === "small-model" ? 32_000 : 258_400,
+            runningWhileHeld,
+          };
+          const scenario = { name: `compaction-restart-${driver}`, runtimePolicyOverride: { cwd } };
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+              const daemon = yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make("restart:create"),
+                threadId,
+                projectId,
+                createdBy: "user",
+                creationSource: "web",
+                title: "Compaction restart",
+                modelSelection: selection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+              });
+              const priorCompleted = yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" && event.payload.status === "completed",
+                ),
+                Stream.runHead,
+                Effect.forkScoped,
+              );
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make("restart:prior"),
+                messageId: MessageId.make("restart:prior"),
+                threadId,
+                createdBy: "user",
+                creationSource: "web",
+                text: "Prior constraints",
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* Fiber.join(priorCompleted);
+              yield* worker.drain();
+              const running = yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "provider-turn.updated" &&
+                    event.payload.ordinal === 2 &&
+                    event.payload.status === "running",
+                ),
+                Stream.runHead,
+                Effect.forkScoped,
+              );
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make("restart:request"),
+                messageId: MessageId.make("restart:request"),
+                threadId,
+                createdBy: "user",
+                creationSource: "web",
+                text: request,
+                attachments,
+                modelSelection: { ...selection, model: "small-model" },
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* Deferred.await(started);
+              if (runningWhileHeld) yield* Fiber.join(running);
+              const before = yield* orchestrator.getThreadProjection(threadId);
+              yield* Fiber.interrupt(daemon);
+              const source = before.runs.at(-1)!;
+              assert.isTrue(
+                before.attempts.find((attempt) => attempt.id === source.activeAttemptId)
+                  ?.contextCompaction,
+              );
+              const saved = before.turnItems.filter(
+                (item) => item.type === "user_message" || item.type === "assistant_message",
+              );
+              const after = yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const orchestrator = yield* Orchestrator.OrchestratorV2;
+                  const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+                  if (failResume) {
+                    yield* worker.drain();
+                    return yield* orchestrator.getThreadProjection(threadId);
+                  }
+                  yield* Deferred.await(restarted);
+                  const completed = yield* orchestrator.streamStoredEvents.pipe(
+                    Stream.filter(
+                      ({ event }) =>
+                        event.type === "run.updated" &&
+                        event.payload.restartContinuationOfRunId === source.id &&
+                        event.payload.status === "completed",
+                    ),
+                    Stream.runHead,
+                    Effect.forkScoped,
+                  );
+                  yield* Deferred.succeed(release, undefined);
+                  yield* Fiber.join(completed);
+                  yield* worker.drain();
+                  return yield* orchestrator.getThreadProjection(threadId);
+                }).pipe(
+                  Effect.provide(
+                    Layer.fresh(
+                      makeOrchestratorV2ReplayLayerWithRegistry(
+                        scenario,
+                        ProviderAdapterRegistry.makeLayer([
+                          makeTestAdapter({
+                            ...adapter,
+                            failResume,
+                            holdRunOrdinal: 3,
+                            holdFirstTurn: restarted,
+                            releaseFirstTurn: release,
+                          }),
+                        ]),
+                        {
+                          databaseLayer,
+                          recoverOnStartup: true,
+                          continueThreadsAfterServerUpdate: true,
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              assert.equal(after.runs.find((run) => run.id === source.id)?.status, "cancelled");
+              assert.equal(after.runs.at(-1)?.restartContinuationOfRunId, source.id);
+              assert.equal(after.runs.at(-1)?.status, failResume ? "failed" : "completed");
+              assert.equal(yield* Ref.get(generation), 1);
+              const delivered = (yield* Ref.get(capturedTurns)).filter(
+                (turn) => turn.text === request,
+              );
+              assert.lengthOf(delivered, failResume ? 0 : 1);
+              if (!failResume) {
+                assert.deepEqual(delivered[0]!.attachments, attachments);
+                assert.equal(delivered[0]!.providerThreadId, source.providerThreadId);
+              }
+              for (const item of saved)
+                assert.deepEqual(
+                  after.turnItems.find((candidate) => candidate.id === item.id),
+                  item,
+                );
+            }).pipe(
+              Effect.provide(
+                Layer.fresh(
+                  makeOrchestratorV2ReplayLayerWithRegistry(
+                    scenario,
+                    ProviderAdapterRegistry.makeLayer([
+                      makeTestAdapter({
+                        ...adapter,
+                        tokenUsageByRunOrdinal: { 1: { usedTokens: 207_362, maxTokens: 258_400 } },
+                        holdRunOrdinal: 2,
+                        holdFirstTurn: started,
+                      }),
+                    ]),
+                    { databaseLayer, runEffectWorker: false },
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).pipe(Effect.provide(SqlitePersistenceMemory)),
+      ),
+  );
+
   it.live.each(["turn-start", "injection", "large-missed-request"] as const)(
     "recovers %s failure without duplicating history in the same native thread",
     (failure) =>
