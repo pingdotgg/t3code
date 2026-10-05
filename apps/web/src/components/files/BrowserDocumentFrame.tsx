@@ -1,7 +1,8 @@
 import {
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
-  readHtmlRenderLinkMessage,
+  htmlRenderResult,
+  readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useRef, useState } from "react";
 
@@ -85,9 +86,9 @@ export function HtmlRenderDocument(props: {
   useEffect(() => {
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;
-      const url = readHtmlRenderLinkMessage(event.data);
+      const request = readHtmlRenderLinkRequest(event.data);
       if (
-        url === undefined ||
+        request === undefined ||
         frame === null ||
         event.source !== frame.contentWindow ||
         document.activeElement !== frame ||
@@ -95,7 +96,8 @@ export function HtmlRenderDocument(props: {
       ) {
         return;
       }
-      window.open(url, "_blank", "noopener,noreferrer");
+      window.open(request.url, "_blank", "noopener,noreferrer");
+      frame.contentWindow?.postMessage(htmlRenderResult(request.id), "*");
     };
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
