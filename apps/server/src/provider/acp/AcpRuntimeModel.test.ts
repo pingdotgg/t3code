@@ -13,6 +13,7 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  sessionModelStateFromInitialize,
   sessionUpdateCountsAsLoadReplayActivity,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
@@ -214,6 +215,57 @@ describe("AcpRuntimeModel", () => {
 
     expect(response.modes?.currentModeId).toBe("code");
     expect(response.modes?.availableModes).toHaveLength(2);
+  });
+
+  it("keeps initialize mode state whose modes have null descriptions", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modeState: {
+          currentModeId: "code",
+          availableModes: [
+            { id: "ask", name: "Ask", description: null },
+            { id: "code", name: "Code", description: "Edit files", _meta: null },
+          ],
+          _meta: null,
+        },
+      },
+    } satisfies EffectAcpSchema.InitializeResponse);
+
+    expect(parseSessionModeState(response)).toEqual({
+      currentModeId: "code",
+      availableModes: [
+        { id: "ask", name: "Ask" },
+        { id: "code", name: "Code", description: "Edit files" },
+      ],
+    });
+  });
+
+  it("reads initialize model state and ignores malformed model state", () => {
+    const modelState = {
+      currentModelId: "grok-4.7",
+      availableModels: [
+        {
+          modelId: "grok-4.7",
+          name: "Grok 4.7",
+          description: null,
+          _meta: { reasoningEfforts: [{ id: "high", default: true }] },
+        },
+        { modelId: "grok-4.6", name: "Grok 4.6" },
+      ],
+    };
+
+    expect(sessionModelStateFromInitialize({ protocolVersion: 1, _meta: { modelState } })).toEqual(
+      modelState,
+    );
+    expect(
+      sessionModelStateFromInitialize({
+        protocolVersion: 1,
+        _meta: {
+          modelState: { currentModelId: "grok-4.7", availableModels: [{ modelId: "grok-4.7" }] },
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("projects typed ACP tool call updates into runtime events", () => {
