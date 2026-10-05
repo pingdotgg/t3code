@@ -69,7 +69,11 @@ export function useConnectionController() {
   );
 
   const connectPairingUrl = useCallback(
-    (pairingUrl: string) => connectPairingUrlMutation(pairingUrl),
+    (pairingUrl: string, expectedEnvironmentId?: EnvironmentId) =>
+      connectPairingUrlMutation({
+        pairingUrl,
+        ...(expectedEnvironmentId === undefined ? {} : { expectedEnvironmentId }),
+      }),
     [connectPairingUrlMutation],
   );
   const connectRelayEnvironment = useCallback(

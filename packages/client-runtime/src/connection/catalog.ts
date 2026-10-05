@@ -36,9 +36,21 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
 export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConnectionProfile]);
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
+/** One way to reach an environment: T3 Connect, a direct URL, or SSH. */
+export interface ConnectionRoute {
+  readonly target: ConnectionTarget;
+  readonly profile: Option.Option<ConnectionProfile>;
+}
+
+/**
+ * A saved environment. `target` and `profile` are its preferred route;
+ * `alternateRoutes` holds the others in preference order. Read them together
+ * with `connectionRoutes`.
+ */
 export interface ConnectionCatalogEntry {
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
+  readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;
   /** False when the user switched the environment off: saved, but never connects. */
   readonly enabled: boolean;
   /** Discovery rejection stays visible while the saved connection is switched off. */

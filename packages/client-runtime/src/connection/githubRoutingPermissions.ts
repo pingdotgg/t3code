@@ -19,9 +19,25 @@ export const StoredGitHubRoutingPermission = Schema.Struct({
 });
 export type StoredGitHubRoutingPermission = typeof StoredGitHubRoutingPermission.Type;
 
-/** Trust belongs to the saved endpoint, never to an environment id advertised by a server alone. */
+/**
+ * Trust belongs to the saved endpoints, never to an environment id advertised
+ * by a server alone. With several routes the key covers all of them, sorted so
+ * reordering keeps trust but adding or changing an address revokes it.
+ */
 export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): string | null {
-  const target = entry.target;
+  const alternates = entry.alternateRoutes ?? [];
+  if (alternates.length === 0) return routeConnectionKey(entry.target, entry.profile);
+  const keys = [{ target: entry.target, profile: entry.profile }, ...alternates].map((route) =>
+    routeConnectionKey(route.target, route.profile),
+  );
+  return keys.every((key) => key !== null) ? JSON.stringify([...keys].sort()) : null;
+}
+
+function routeConnectionKey(
+  target: ConnectionCatalogEntry["target"],
+  routeProfile: ConnectionCatalogEntry["profile"],
+): string | null {
+  const entry = { profile: routeProfile };
   if (target._tag === "RelayConnectionTarget")
     return JSON.stringify([target._tag, target.environmentId]);
   const profile = Option.getOrNull(entry.profile);
