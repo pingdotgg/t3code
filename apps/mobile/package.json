@@ -75,6 +75,7 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "expo": "58.0.2",
+    "expo-application": "~58.0.3",
     "expo-asset": "~58.0.10",
     "expo-audio": "58.0.4",
     "expo-auth-session": "~58.0.7",
