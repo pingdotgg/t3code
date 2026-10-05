@@ -16,6 +16,10 @@ import {
   IsoDateTime,
   MessageId,
   NodeId,
+  ForwardCompatibleUnion,
+  ForwardCompatibleUnionArray,
+  hasUnknownUnionTag,
+  isUnknownUnionMember,
   NonNegativeInt,
   PlanId,
   PositiveInt,
@@ -1495,63 +1499,34 @@ export const OrchestrationV2TurnItem = Schema.Union([
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
 
-const knownTurnItemTypes: ReadonlySet<unknown> = new Set(
-  OrchestrationV2TurnItem.members.map((member) => member.fields.type.literal),
-);
-
-const isUnknownTurnItem = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  "type" in value &&
-  !knownTurnItemTypes.has(value.type);
-
-/** Matches only a turn item whose type this build does not know. */
-const UnknownTurnItem = Schema.Struct({
-  type: Schema.String.check(
-    Schema.makeFilter(
-      (type: string) =>
-        !knownTurnItemTypes.has(type) || "A known turn item type must decode in full.",
-    ),
-  ),
-});
-
 /**
- * A turn item array that skips items whose `type` this build does not know.
- * Newer servers add turn item types; older clients drop those rows instead of
- * failing the whole snapshot. A known type that does not decode still fails.
- * Unlike ForwardCompatibleArray, elements keep their own codec, so this holds
- * under the JSON wire codec too. Encoding is the plain array encoding.
+ * Turn item types grow over time, so clients decode them forward-compatibly:
+ * an item whose type this build does not know is dropped from snapshots and
+ * history instead of failing the thread. A known type that does not decode
+ * still fails. Arrays of projected rows filter on the row's nested item.
  */
-const TurnItemArray = <Element extends Schema.Top, Unknown extends Schema.Top>(
-  element: Element,
-  unknownElement: Unknown,
-  isUnknown: (value: unknown) => boolean,
+const isUnknownTurnItem = hasUnknownUnionTag(OrchestrationV2TurnItem.members, "type");
+
+const turnItemArray = <Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>>(
+  union: Schema.Union<Members>,
+) => ForwardCompatibleUnionArray(union.members, "type");
+
+/** Projected rows whose nested item may be of a type this build does not know. */
+const projectedTurnItemArray = <Row extends Schema.Top, Item extends Schema.Top>(
+  row: Row,
+  rowWithUnknownItem: Item,
 ) =>
-  Schema.Array(Schema.Union([element, unknownElement])).pipe(
+  Schema.Array(rowWithUnknownItem).pipe(
     Schema.decodeTo(
-      Schema.Array(Schema.toType(element)),
-      SchemaTransformation.transform<
-        ReadonlyArray<Element["Type"]>,
-        ReadonlyArray<Element["Type"] | Unknown["Type"]>
-      >({
-        decode: (values) =>
-          values.filter((value) => !isUnknown(value)) as ReadonlyArray<Element["Type"]>,
-        encode: (values) => values,
+      Schema.Array(Schema.toType(row)),
+      SchemaTransformation.transform<ReadonlyArray<Row["Type"]>, ReadonlyArray<Item["Type"]>>({
+        decode: (rows) =>
+          rows.filter(
+            (projected) => !isUnknownUnionMember((projected as { readonly item: unknown }).item),
+          ) as ReadonlyArray<Row["Type"]>,
+        encode: (rows) => rows,
       }),
     ),
-  );
-
-const turnItemArray = <Element extends Schema.Top>(element: Element) =>
-  TurnItemArray(element, UnknownTurnItem, isUnknownTurnItem);
-
-const UnknownProjectedTurnItem = Schema.Struct({ item: UnknownTurnItem });
-
-const projectedTurnItemArray = <Element extends Schema.Top>(element: Element) =>
-  TurnItemArray(
-    element,
-    UnknownProjectedTurnItem,
-    (row) =>
-      typeof row === "object" && row !== null && "item" in row && isUnknownTurnItem(row.item),
   );
 
 export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
@@ -1746,7 +1721,13 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
   contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
   contextTransfers: Schema.Array(OrchestrationV2ContextTransfer),
-  visibleTurnItems: projectedTurnItemArray(OrchestrationV2ProjectedTurnItem),
+  visibleTurnItems: projectedTurnItemArray(
+    OrchestrationV2ProjectedTurnItem,
+    OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
+      ...fields,
+      item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
+    })),
+  ),
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -2314,7 +2295,13 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
     contextHandoffs: Schema.Array(OrchestrationV2ContextHandoffJson),
     contextTransfers: Schema.Array(OrchestrationV2ContextTransferJson),
-    visibleTurnItems: projectedTurnItemArray(OrchestrationV2ProjectedTurnItemJson),
+    visibleTurnItems: projectedTurnItemArray(
+      OrchestrationV2ProjectedTurnItemJson,
+      OrchestrationV2ProjectedTurnItemJson.mapFields((fields) => ({
+        ...fields,
+        item: ForwardCompatibleUnion(OrchestrationV2TurnItemJson.members, "type"),
+      })),
+    ),
     updatedAt: Schema.DateTimeUtcFromString,
   }),
 );
@@ -3189,7 +3176,13 @@ export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadB
 /** Older timeline page for progressive history. Rows are chronological. */
 export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
-  items: projectedTurnItemArray(OrchestrationV2ProjectedTurnItem),
+  items: projectedTurnItemArray(
+    OrchestrationV2ProjectedTurnItem,
+    OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
+      ...fields,
+      item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
+    })),
+  ),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
 });
