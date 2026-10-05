@@ -1,3 +1,9 @@
+import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
@@ -36,6 +42,7 @@ const grant = (allowed: boolean): AuthSessionState => ({
     sessionCookieName: "test",
   },
   scopes: allowed ? [AuthOrchestrationOperateScope] : [],
+  permissions: allowed ? [AuthOrchestrationOperateScope] : [],
 });
 const runtime = Atom.runtime(
   Layer.succeed(EnvironmentRegistry, {
@@ -161,12 +168,16 @@ it.effect(
         const registry = yield* setup;
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         const git = createCommandPermissions(runtime, WS_METHODS.vcsInit);
-        expect((yield* git.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+        expect((yield* git.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
           AuthSourceControlWriteScope,
         );
         registry.set(
           sessions(env),
-          AsyncResult.success({ ...grant(false), scopes: [AuthSourceControlWriteScope] }),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSourceControlWriteScope],
+            permissions: [AuthSourceControlWriteScope],
+          }),
         );
         yield* git.authorize(registry, env);
         const prepare = createCommandPermissions(runtime, WS_METHODS.gitPreparePullRequestThread);
@@ -186,10 +197,66 @@ it.effect(
           AsyncResult.success({
             ...grant(true),
             scopes: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
+            permissions: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
           }),
         );
         expect(registry.get(prepare.permissionAtom(env, input))).toBe(true);
         yield* prepare.authorize(registry, env, input);
       }),
     ),
+);
+
+it.effect("honors exact empty permissions and preserves legacy parent grants", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const git = createCommandPermissions(runtime, WS_METHODS.vcsInit);
+      registry.set(sessions(env), AsyncResult.success({ ...grant(true), permissions: [] }));
+      expect(registry.get(git.permissionAtom(env))).toBe(false);
+      const denied = yield* git.authorize(registry, env).pipe(Effect.flip);
+      expect(denied).toMatchObject({
+        requiredPermission: AuthSourceControlWriteScope,
+        requiredScope: AuthOrchestrationOperateScope,
+      });
+      const { permissions: _exact, ...legacy } = grant(true);
+      registry.set(sessions(env), AsyncResult.success(legacy));
+      expect(registry.get(git.permissionAtom(env))).toBe(true);
+      yield* git.authorize(registry, env);
+    }),
+  ),
+);
+
+it.effect("rejects protected unary and streamed RPCs outside a guarded command", () =>
+  Effect.gen(function* () {
+    let writes = 0;
+    const session = {
+      client: {
+        [WS_METHODS.scheduledTasksDelete]: () =>
+          Effect.sync(() => {
+            writes++;
+            return { id: ScheduledTaskId.make("task") };
+          }),
+        [WS_METHODS.gitRunStackedAction]: () =>
+          Stream.fromEffect(
+            Effect.sync(() => {
+              writes++;
+            }),
+          ),
+      },
+    } as unknown as RpcSession;
+    const supervisor = {
+      target: { environmentId: env, label: "target" },
+      session: yield* SubscriptionRef.make(Option.some(session)),
+    } as unknown as EnvironmentSupervisor["Service"];
+    const unary = yield* requestGuarded(WS_METHODS.scheduledTasksDelete, {
+      id: ScheduledTaskId.make("task"),
+    }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
+    expect(unary._tag).toBe("EnvironmentAuthorizationError");
+    const streamed = yield* runStreamGuarded(WS_METHODS.gitRunStackedAction, {
+      cwd: "/repo",
+      action: "commit",
+    }).pipe(Stream.runDrain, Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
+    expect(streamed._tag).toBe("EnvironmentAuthorizationError");
+    expect(writes).toBe(0);
+  }),
 );
