@@ -52,6 +52,9 @@ function AccountAvatar({ account }: { readonly account: LimitAccount }) {
       displayName={account.displayName ?? account.email ?? accountName(account)}
       accentColor={account.accentColor}
       showBadge={Boolean(account.displayName ?? account.email)}
+      // The badge sits on hatched segments and list rows, with no single
+      // background for its ring to match.
+      surfaceColor="transparent"
     />
   );
 }
