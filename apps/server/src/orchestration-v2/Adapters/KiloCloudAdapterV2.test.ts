@@ -57,6 +57,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeIntent = Schema.encodeEffect(
   Schema.fromJsonString(Schema.toCodecJson(Journal.CloudIntent)),
 );
+type Parked = "preflight" | "prepare" | "list" | "send";
 const fixture = Effect.acquireRelease(
   Effect.promise(async () => {
     let submissions = 0;
@@ -88,17 +89,15 @@ const fixture = Effect.acquireRelease(
       signalInterrupt = resolve;
     });
     const control = {
+      // Parked requests stay open until a test answers them.
+      park: new Set<Parked>(),
+      parked: {} as Partial<Record<Parked, NodeHttp.ServerResponse>>,
+      seen: {} as Partial<Record<Parked, () => void>>,
       prepareStatus: 200,
       rejectAcceptedPrepare: false,
-      parkPrepare: false,
-      parkedPrepare: undefined as NodeHttp.ServerResponse | undefined,
-      prepareSeen: undefined as (() => void) | undefined,
       preparePosts: 0,
       listReads: 0,
       listStatus: 200,
-      parkList: false,
-      parkedList: undefined as NodeHttp.ServerResponse | undefined,
-      listSeen: undefined as (() => void) | undefined,
       listClosed: undefined as (() => void) | undefined,
       sandboxActive: undefined as boolean | undefined,
       resultReads: 0,
@@ -107,9 +106,6 @@ const fixture = Effect.acquireRelease(
       sessionBranch: "main",
       malformedSession: false,
       sendPosts: 0,
-      parkSend: false,
-      parkedSend: undefined as NodeHttp.ServerResponse | undefined,
-      sendSeen: undefined as (() => void) | undefined,
       profileStatus: 200,
       personalAccount: true,
       profileAccount: "fixture-account",
@@ -117,9 +113,6 @@ const fixture = Effect.acquireRelease(
       preflightStatus: 200,
       malformedPreflight: false,
       afterBindings: undefined as (() => void) | undefined,
-      parkedPreflight: undefined as NodeHttp.ServerResponse | undefined,
-      parkPreflight: false,
-      preflightSeen: undefined as (() => void) | undefined,
       status: "completed",
       requireLocalOverlap: false,
       dropNextPrepare: false,
@@ -155,6 +148,17 @@ const fixture = Effect.acquireRelease(
       });
       request.on("end", () => {
         const url = new URL(request.url!, "http://localhost");
+        const parked = (name: Parked) => {
+          if (!control.park.has(name)) return false;
+          control.parked[name] = response;
+          response.once("close", () => {
+            if (control.parked[name] === response) delete control.parked[name];
+            if (name === "list") control.listClosed?.();
+          });
+          response.on("error", () => {});
+          control.seen[name]?.();
+          return true;
+        };
         if (url.pathname.endsWith("/chat/completions")) {
           localRequests++;
           localResponse = response;
@@ -191,14 +195,7 @@ const fixture = Effect.acquireRelease(
           return;
         }
         if (operation.startsWith("agentProfiles.")) {
-          if (control.parkPreflight) {
-            control.parkedPreflight = response;
-            response.once("close", () => {
-              if (control.parkedPreflight === response) control.parkedPreflight = undefined;
-            });
-            control.preflightSeen?.();
-            return;
-          }
+          if (parked("preflight")) return;
           if (control.preflightStatus !== 200) {
             response.writeHead(control.preflightStatus);
             response.end();
@@ -209,15 +206,7 @@ const fixture = Effect.acquireRelease(
         }
         if (operation === "cloudAgentNext.prepareSession") {
           control.preparePosts++;
-          if (control.parkPrepare) {
-            control.parkedPrepare = response;
-            response.once("close", () => {
-              if (control.parkedPrepare === response) control.parkedPrepare = undefined;
-            });
-            response.on("error", () => {});
-            control.prepareSeen?.();
-            return;
-          }
+          if (parked("prepare")) return;
           if (control.prepareStatus !== 200) {
             response.writeHead(control.prepareStatus);
             response.end();
@@ -247,16 +236,7 @@ const fixture = Effect.acquireRelease(
           return reply({ cloudAgentSessionId: state.cloud, kiloSessionId: state.native });
         }
         if (operation === "cliSessionsV2.list") control.listReads++;
-        if (operation === "cliSessionsV2.list" && control.parkList) {
-          control.parkedList = response;
-          response.once("close", () => {
-            if (control.parkedList === response) control.parkedList = undefined;
-            control.listClosed?.();
-          });
-          response.on("error", () => {});
-          control.listSeen?.();
-          return;
-        }
+        if (operation === "cliSessionsV2.list" && parked("list")) return;
         if (operation === "cliSessionsV2.list" && control.listStatus !== 200) {
           response.writeHead(control.listStatus);
           response.end();
@@ -317,15 +297,7 @@ const fixture = Effect.acquireRelease(
           });
         if (operation === "cloudAgentNext.sendMessage") {
           control.sendPosts++;
-          if (control.parkSend) {
-            control.parkedSend = response;
-            response.once("close", () => {
-              if (control.parkedSend === response) control.parkedSend = undefined;
-            });
-            response.on("error", () => {});
-            control.sendSeen?.();
-            return;
-          }
+          if (parked("send")) return;
           const payload = input.payload as unknown as { prompt: string };
           state.messages.push({ id: input.messageId!, prompt: payload.prompt });
           return reply({
@@ -546,6 +518,40 @@ const fixture = Effect.acquireRelease(
   }),
   (fixture) => Effect.promise(fixture.close),
 );
+
+const validAuth = '{"kilo":{"type":"api","key":"synthetic"}}';
+/** A scoped data directory holding a valid Kilo credential. */
+const authorizedDirectory = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* fs.makeTempDirectoryScoped();
+  yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
+  yield* fs.writeFileString(`${directory}/data/kilo/auth.json`, validAuth);
+  return directory;
+});
+/** The journal's SQLite file, opened beside the adapter to inject storage faults. */
+const journalDatabase = (directory: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
+    (db) => Effect.sync(() => db.close()),
+  );
+const failRejectionWrites = (trigger: string) =>
+  `CREATE TRIGGER ${trigger} BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END`;
+/** The first matching event, read by a consumer forked in the current scope. */
+const firstEvent = Effect.fnUntraced(function* (
+  runtime: Adapter.ProviderAdapterV2SessionRuntime,
+  matches: (event: Adapter.ProviderAdapterV2Event) => boolean,
+) {
+  const found = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) => (matches(event) ? Deferred.succeed(found, event) : Effect.void)),
+    Effect.forkScoped,
+  );
+  return found;
+});
+const isTerminal = (event: Adapter.ProviderAdapterV2Event) => event.type === "turn.terminal";
+const awaitingResult = (event: Adapter.ProviderAdapterV2Event) =>
+  event.type === "provider_thread.updated" &&
+  event.providerThread.nativeMetadata?.cloudExecution?.result === "awaiting_result";
 
 it.live(
   "completes two isolated cloud threads through SQLite orchestration without touching local workspaces",
@@ -777,14 +783,17 @@ it.live(
       assert.equal(new Set(entries.map((entry) => entry.binding?.worktreeId)).size, 2);
       assert.isTrue(entries.every((entry) => entry.state === "completed"));
       if (!restore) return yield* Effect.die(new Error("Missing restore input"));
+      const { threadId, runtimePolicy } = restore;
+      const openAs = (name: string, cloud = adapter) =>
+        cloud.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(name),
+          modelSelection,
+          runtimePolicy,
+        });
       // Simulate loss of the terminal T3 event after the durable journal commit.
       // Reattaching a fresh runtime must replay terminality without another paid POST.
-      const restored = yield* adapter.openSession({
-        threadId: restore.threadId,
-        providerSessionId: ProviderSessionId.make("cloud-restored"),
-        modelSelection,
-        runtimePolicy: restore.runtimePolicy,
-      });
+      const restored = yield* openAs("cloud-restored");
       const restoredThread = yield* restored.ensureThread({
         threadId: restore.threadId,
         existingProviderThread: restore.providerThread,
@@ -947,12 +956,7 @@ it.live(
       // Reopening with paid admission disabled still restores control and native
       // history; incomplete records from an interrupted turn must stay terminal.
       const controlOnly = yield* CloudAdapter.make({ ...adapterOptions, allowAdmission: false });
-      const reopened = yield* controlOnly.openSession({
-        threadId: restore.threadId,
-        providerSessionId: ProviderSessionId.make("cloud-control-only"),
-        modelSelection,
-        runtimePolicy: restore.runtimePolicy,
-      });
+      const reopened = yield* openAs("cloud-control-only", controlOnly);
       const reopenedThread = yield* reopened.resumeThread({ providerThread: restoredThread });
       const snapshot = yield* reopened.readThreadSnapshot({ providerThread: reopenedThread });
       assert.isTrue(
@@ -994,24 +998,12 @@ it.live(
       remote.control.omittedItemCount = 0;
       remote.control.incompleteHistory = false;
       const retrievalScope = yield* Scope.fork(yield* Effect.scope);
-      const retrieving = yield* adapter
-        .openSession({
-          threadId: restore.threadId,
-          providerSessionId: ProviderSessionId.make("retrieval"),
-          modelSelection,
-          runtimePolicy: restore.runtimePolicy,
-        })
-        .pipe(Effect.provideService(Scope.Scope, retrievalScope));
+      const retrieving = yield* openAs("retrieval").pipe(
+        Effect.provideService(Scope.Scope, retrievalScope),
+      );
       const retrievalThread = yield* retrieving.resumeThread({ providerThread: restoredThread });
-      const awaiting = yield* Deferred.make<void>();
-      yield* retrieving.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "provider_thread.updated" &&
-          event.providerThread.nativeMetadata?.cloudExecution?.result === "awaiting_result"
-            ? Deferred.succeed(awaiting, undefined)
-            : Effect.void,
-        ),
-        Effect.forkIn(retrievalScope),
+      const awaiting = yield* firstEvent(retrieving, awaitingResult).pipe(
+        Effect.provideService(Scope.Scope, retrievalScope),
       );
       const retrievalInput = {
         ...restore,
@@ -1040,12 +1032,7 @@ it.live(
         ...waiting,
         resultRecovery: { ...waiting.resultRecovery!, deadlineMs: 0, nextAttemptMs: 0 },
       });
-      const afterRestart = yield* adapter.openSession({
-        threadId: restore.threadId,
-        providerSessionId: ProviderSessionId.make("retrieval-restart"),
-        modelSelection,
-        runtimePolicy: restore.runtimePolicy,
-      });
+      const afterRestart = yield* openAs("retrieval-restart");
       const afterThread = yield* afterRestart.resumeThread({ providerThread: retrievalThread });
       const retrievalEvents: Adapter.ProviderAdapterV2Event[] = [];
       const retrievalFailed = yield* Deferred.make<void>();
@@ -1101,23 +1088,9 @@ it.live(
       assert.equal(remote.submissions(), 2);
       // Stop during retrieval is local cancellation, never a remote interrupt.
       remote.control.missingHistory = true;
-      const cancelling = yield* adapter.openSession({
-        threadId: restore.threadId,
-        providerSessionId: ProviderSessionId.make("retrieval-cancel"),
-        modelSelection,
-        runtimePolicy: restore.runtimePolicy,
-      });
+      const cancelling = yield* openAs("retrieval-cancel");
       const cancelThread = yield* cancelling.resumeThread({ providerThread: afterThread });
-      const cancelAwaiting = yield* Deferred.make<void>();
-      yield* cancelling.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "provider_thread.updated" &&
-          event.providerThread.nativeMetadata?.cloudExecution?.result === "awaiting_result"
-            ? Deferred.succeed(cancelAwaiting, undefined)
-            : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const cancelAwaiting = yield* firstEvent(cancelling, awaitingResult);
       yield* cancelling.startTurn({
         ...retrievalInput,
         providerThread: cancelThread,
@@ -1154,14 +1127,9 @@ it.live(
         remote.control.historyMode = mode;
         remote.control.historyReads = 0;
         const testScope = yield* Scope.fork(yield* Effect.scope);
-        const runtime = yield* adapter
-          .openSession({
-            threadId: restore.threadId,
-            providerSessionId: ProviderSessionId.make(`result-${mode}`),
-            modelSelection,
-            runtimePolicy: restore.runtimePolicy,
-          })
-          .pipe(Effect.provideService(Scope.Scope, testScope));
+        const runtime = yield* openAs(`result-${mode}`).pipe(
+          Effect.provideService(Scope.Scope, testScope),
+        );
         const selected = yield* runtime.resumeThread({ providerThread: cancelThread });
         const done = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
         const waitingResult = yield* Deferred.make<void>();
@@ -1364,7 +1332,29 @@ const admissionHarness = Effect.fn("admissionHarness")(function* (
     modelSelection,
     runtimePolicy,
   });
-  return { open, turn, journal, client };
+  /** Starts a first turn in a runtime that then closes, as an app restart would. */
+  const startThenClose = Effect.fnUntraced(function* (
+    until?: (event: Adapter.ProviderAdapterV2Event) => boolean,
+  ) {
+    const scope = yield* Scope.fork(yield* Effect.scope);
+    yield* Effect.gen(function* () {
+      const first = yield* open;
+      const seen = until ? yield* firstEvent(first.runtime, until) : undefined;
+      yield* first.runtime.startTurn(turn(first.thread));
+      if (seen) yield* Deferred.await(seen);
+    }).pipe(Effect.provideService(Scope.Scope, scope));
+    yield* Scope.close(scope, Exit.void);
+  });
+  return { open, turn, journal, client, startThenClose };
+});
+
+const uncertainAdmission = Effect.gen(function* () {
+  const remote = yield* fixture;
+  remote.control.dropNextPrepare = true;
+  remote.control.hideAdmissions = true;
+  const directory = yield* authorizedDirectory;
+  yield* (yield* admissionHarness(remote, directory)).startThenClose();
+  return { remote, directory };
 });
 
 it.live.each([
@@ -1383,11 +1373,9 @@ it.live.each([
     Effect.gen(function* () {
       const remote = yield* fixture;
       const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
+      const directory = yield* authorizedDirectory;
       const auth = `${directory}/data/kilo/auth.json`;
-      const validAuth = '{"kilo":{"type":"api","key":"synthetic-test-token"}}';
-      yield* fs.writeFileString(auth, mode === "credential" ? "{}" : validAuth);
+      if (mode === "credential") yield* fs.writeFileString(auth, "{}");
       if (mode === "404" || mode === "503") remote.control.preflightStatus = Number(mode);
       if (mode === "malformed") remote.control.malformedPreflight = true;
       if (mode === "profile-503") remote.control.profileStatus = 503;
@@ -1422,13 +1410,7 @@ it.live.each([
       const restarted = yield* admissionHarness(remote, directory);
       const next = yield* restarted.open;
       remote.control.status = "failed";
-      const done = yield* Deferred.make<void>();
-      yield* next.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(done, undefined) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const done = yield* firstEvent(next.runtime, isTerminal);
       yield* next.runtime.startTurn(restarted.turn(next.thread, 2));
       yield* Deferred.await(done);
       assert.equal(remote.submissions(), 1);
@@ -1442,21 +1424,8 @@ it.live.each([false, true])(
   "keeps a lost POST uncertain across restart and Stop, legacy=%s",
   (legacy) =>
     Effect.gen(function* () {
-      const remote = yield* fixture;
-      remote.control.dropNextPrepare = true;
-      remote.control.hideAdmissions = true;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const { remote, directory } = yield* uncertainAdmission;
       const harness = yield* admissionHarness(remote, directory);
-      const scope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, scope));
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Scope.close(scope, Exit.void);
       let uncertain = (yield* harness.journal.read)[0]!;
       assert.equal(uncertain.state, "admission_unknown");
       assert.equal(uncertain.submissionPhase, "post_attempted");
@@ -1492,16 +1461,10 @@ it.live(
   () =>
     Effect.gen(function* () {
       const remote = yield* fixture;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const arrived = yield* Deferred.make<void>();
-      remote.control.parkPreflight = true;
-      remote.control.preflightSeen = () => Deferred.doneUnsafe(arrived, Effect.void);
+      remote.control.park.add("preflight");
+      remote.control.seen.preflight = () => Deferred.doneUnsafe(arrived, Effect.void);
       const firstHarness = yield* admissionHarness(remote, directory);
       const first = yield* firstHarness.open;
       const pending = yield* first.runtime
@@ -1517,9 +1480,9 @@ it.live(
         providerThread: reopened.thread,
         providerTurnId: recovered.providerTurn.id,
       });
-      remote.control.parkPreflight = false;
-      remote.control.parkedPreflight!.writeHead(200, { "content-type": "application/json" });
-      remote.control.parkedPreflight!.end('{"result":{"data":[]}}');
+      remote.control.park.delete("preflight");
+      remote.control.parked.preflight!.writeHead(200, { "content-type": "application/json" });
+      remote.control.parked.preflight!.end('{"result":{"data":[]}}');
       const originalExit = yield* Fiber.await(pending);
       assert.isTrue(Exit.isFailure(originalExit)); // stale CAS cannot revive the reservation
       assert.equal(remote.submissions(), 0);
@@ -1534,29 +1497,9 @@ it.live(
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.missingHistory = true;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
-      const firstScope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, firstScope));
-      const waiting = yield* Deferred.make<void>();
-      yield* first.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "provider_thread.updated" &&
-          event.providerThread.nativeMetadata?.cloudExecution?.result === "awaiting_result"
-            ? Deferred.succeed(waiting, undefined)
-            : Effect.void,
-        ),
-        Effect.forkIn(firstScope),
-      );
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Deferred.await(waiting);
-      yield* Scope.close(firstScope, Exit.void);
+      yield* harness.startThenClose(awaitingResult);
       const saved = (yield* harness.journal.read)[0]!;
       assert.equal(saved.state, "awaiting_result");
       assert.equal(saved.resultRecovery?.attempts, 1);
@@ -1594,13 +1537,7 @@ it.live(
 
       // Reattach the original turn at expiry. Its terminal event must be replayable,
       // with remote completion retained and no replacement paid submission.
-      const terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-      yield* next.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(terminal, event) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const terminal = yield* firstEvent(next.runtime, isTerminal);
       yield* next.runtime
         .startTurn({ ...restarted.turn(next.thread), reattach: true })
         .pipe(Effect.provideService(Clock.Clock, clockAt(baseClock, deadline + 1)));
@@ -1612,13 +1549,7 @@ it.live(
       assert.equal(ended.resultStatus, "unavailable");
       assert.equal(remote.submissions(), 1);
       const replay = yield* restarted.open;
-      const replayed = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-      yield* replay.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(replayed, event) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const replayed = yield* firstEvent(replay.runtime, isTerminal);
       yield* replay.runtime.startTurn({ ...restarted.turn(replay.thread), reattach: true });
       const event = yield* Deferred.await(replayed);
       assert.isTrue(event.type === "turn.terminal" && event.status === "failed");
@@ -1642,18 +1573,7 @@ it.live.each(["404", "503", "malformed", "credential"] as const)(
       const validAuth = '{"kilo":{"type":"api","key":"synthetic"}}';
       yield* fs.writeFileString(auth, validAuth);
       const harness = yield* admissionHarness(remote, directory);
-      const firstScope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, firstScope));
-      const done = yield* Deferred.make<void>();
-      yield* first.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(done, undefined) : Effect.void,
-        ),
-        Effect.forkIn(firstScope),
-      );
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Deferred.await(done);
-      yield* Scope.close(firstScope, Exit.void);
+      yield* harness.startThenClose(isTerminal);
       const binding = (yield* harness.journal.read)[0]!.binding;
       assert.isNotNull(binding);
       if (mode === "404" || mode === "503") remote.control.sessionStatus = Number(mode);
@@ -1678,13 +1598,7 @@ it.live.each(["404", "503", "malformed", "credential"] as const)(
       yield* fs.writeFileString(auth, validAuth);
       const restarted = yield* admissionHarness(remote, directory);
       const third = yield* restarted.open;
-      const completed = yield* Deferred.make<void>();
-      yield* third.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(completed, undefined) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const completed = yield* firstEvent(third.runtime, isTerminal);
       yield* third.runtime.startTurn(restarted.turn(third.thread, 3));
       yield* Deferred.await(completed);
       assert.equal(remote.submissions(), 1);
@@ -1701,18 +1615,8 @@ it.live(
       const remote = yield* fixture;
       remote.control.dropNextPrepare = true;
       remote.control.listStatus = 503;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
-      const harness = yield* admissionHarness(remote, directory);
-      const scope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, scope));
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Scope.close(scope, Exit.void);
+      const directory = yield* authorizedDirectory;
+      yield* (yield* admissionHarness(remote, directory)).startThenClose();
       const restarted = yield* admissionHarness(remote, directory);
       const next = yield* restarted.open;
       const baseClock = yield* Clock.Clock;
@@ -1737,13 +1641,7 @@ it.live(
       remote.control.resultReads = 0;
       remote.control.status = "running"; // Inference can complete while sandbox and billing remain active.
       remote.control.completeAfterResultReads = 2;
-      const done = yield* Deferred.make<void>();
-      yield* recovered.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(done, undefined) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const done = yield* firstEvent(recovered.runtime, isTerminal);
       yield* recovered.runtime.readThreadSnapshot({ providerThread: recovered.thread });
       yield* Deferred.await(done); // watcher must finish without a second snapshot request
       const complete = (yield* again.journal.read)[0]!;
@@ -1768,28 +1666,14 @@ it.effect(
   "bounds stalled admission-list reads across durable failures without releasing a paid intent",
   () =>
     Effect.gen(function* () {
-      const remote = yield* fixture;
-      remote.control.dropNextPrepare = true;
-      remote.control.hideAdmissions = true;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
-      const harness = yield* admissionHarness(remote, directory);
-      const firstScope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, firstScope));
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Scope.close(firstScope, Exit.void);
+      const { remote, directory } = yield* uncertainAdmission;
       const restarted = yield* admissionHarness(remote, directory);
       const next = yield* restarted.open;
-      remote.control.parkList = true;
+      remote.control.park.add("list");
       for (let attempt = 1; attempt <= 3; attempt++) {
         const requestSeen = yield* Deferred.make<void>();
         const requestClosed = yield* Deferred.make<void>();
-        remote.control.listSeen = () => Deferred.doneUnsafe(requestSeen, Effect.void);
+        remote.control.seen.list = () => Deferred.doneUnsafe(requestSeen, Effect.void);
         remote.control.listClosed = () => Deferred.doneUnsafe(requestClosed, Effect.void);
         const reading = yield* next.runtime
           .readThreadSnapshot({ providerThread: next.thread })
@@ -1809,25 +1693,6 @@ it.effect(
   20_000,
 );
 
-const uncertainAdmission = Effect.gen(function* () {
-  const remote = yield* fixture;
-  remote.control.dropNextPrepare = true;
-  remote.control.hideAdmissions = true;
-  const fs = yield* FileSystem.FileSystem;
-  const directory = yield* fs.makeTempDirectoryScoped();
-  yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-  yield* fs.writeFileString(
-    `${directory}/data/kilo/auth.json`,
-    '{"kilo":{"type":"api","key":"synthetic"}}',
-  );
-  const harness = yield* admissionHarness(remote, directory);
-  const firstScope = yield* Scope.fork(yield* Effect.scope);
-  const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, firstScope));
-  yield* first.runtime.startTurn(harness.turn(first.thread));
-  yield* Scope.close(firstScope, Exit.void);
-  return { remote, directory };
-});
-
 it.live(
   "bounds recovery when real SQLite UPDATEs fail and retains the paid reservation",
   () =>
@@ -1836,10 +1701,7 @@ it.live(
       remote.control.listStatus = 503;
       const harness = yield* admissionHarness(remote, directory);
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       db.exec(
         "CREATE TRIGGER fail_recovery_save BEFORE UPDATE ON intents BEGIN SELECT RAISE(FAIL, 'fixture write failure'); END",
       );
@@ -1959,22 +1821,10 @@ it.live(
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.prepareStatus = 400;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
       const opened = yield* harness.open;
-      const terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-      yield* opened.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(terminal, event) : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      const terminal = yield* firstEvent(opened.runtime, isTerminal);
       yield* opened.runtime.startTurn(harness.turn(opened.thread));
       const event = yield* Deferred.await(terminal);
       assert.equal(event.type, "turn.terminal");
@@ -2028,10 +1878,7 @@ it.live(
       const saved = (yield* harness.journal.read)[0]!;
       // A concurrent preflight owner may finish Stop before this reader refreshes.
       // SQL restores that durable boundary without loosening production phase guards.
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       db.prepare("UPDATE intents SET state = ?, body = ? WHERE operation_key = ?").run(
         "interrupted",
         yield* encodeIntent({
@@ -2064,17 +1911,14 @@ it.live.each(["pause", "terminal"] as const)(
         admissionRecoveryFailures: outcome === "terminal" ? 2 : 0,
       });
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       if (outcome === "terminal")
         db.exec(
           "CREATE TRIGGER reject_pause BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.admissionRecoveryPaused') = 1 BEGIN SELECT RAISE(FAIL, 'fixture pause write failure'); END",
         );
-      remote.control.parkList = true;
+      remote.control.park.add("list");
       const seen = yield* Deferred.make<void>();
-      remote.control.listSeen = () => Deferred.doneUnsafe(seen, Effect.void);
+      remote.control.seen.list = () => Deferred.doneUnsafe(seen, Effect.void);
       const reading = yield* opened.runtime
         .readThreadSnapshot({ providerThread: opened.thread })
         .pipe(Effect.forkScoped);
@@ -2094,9 +1938,9 @@ it.live.each(["pause", "terminal"] as const)(
               },
             },
       );
-      remote.control.parkList = false;
-      remote.control.parkedList!.writeHead(503);
-      remote.control.parkedList!.end();
+      remote.control.park.delete("list");
+      remote.control.parked.list!.writeHead(503);
+      remote.control.parked.list!.end();
       yield* Fiber.join(reading);
       const final = (yield* harness.journal.read)[0]!;
       if (outcome === "pause") {
@@ -2119,26 +1963,14 @@ it.live.each(["storage", "revision"] as const)(
   (failure) =>
     Effect.gen(function* () {
       const remote = yield* fixture;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
-      if (failure === "storage")
-        db.exec(
-          "CREATE TRIGGER reject_outcome BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END",
-        );
-      remote.control.parkPrepare = true;
+      const db = yield* journalDatabase(directory);
+      if (failure === "storage") db.exec(failRejectionWrites("reject_outcome"));
+      remote.control.park.add("prepare");
       const seen = yield* Deferred.make<void>();
-      remote.control.prepareSeen = () => Deferred.doneUnsafe(seen, Effect.void);
+      remote.control.seen.prepare = () => Deferred.doneUnsafe(seen, Effect.void);
       const starting = yield* opened.runtime
         .startTurn(harness.turn(opened.thread))
         .pipe(Effect.forkScoped);
@@ -2147,8 +1979,8 @@ it.live.each(["storage", "revision"] as const)(
         const other = yield* Journal.make(`${directory}/journal`);
         yield* other.save({ ...(yield* other.read)[0]!, admissionRecoveryFailures: 1 });
       }
-      remote.control.parkedPrepare!.writeHead(400);
-      remote.control.parkedPrepare!.end();
+      remote.control.parked.prepare!.writeHead(400);
+      remote.control.parked.prepare!.end();
       yield* Fiber.join(starting);
       assert.equal(remote.control.preparePosts, 1);
       assert.equal(remote.control.listReads, 0);
@@ -2172,7 +2004,7 @@ it.live.each(["storage", "revision"] as const)(
       assert.equal(saved.state, "failed");
       assert.isTrue(saved.submissionRejected);
       assert.equal(remote.control.listReads, 0);
-      remote.control.parkPrepare = false;
+      remote.control.park.delete("prepare");
       yield* opened.runtime.startTurn(harness.turn(opened.thread, 2));
       assert.equal(remote.control.preparePosts, 2);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
@@ -2206,51 +2038,24 @@ it.live.each(["accepted", "storage", "storage-accepted", "storage-interrupted"] 
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.status = "failed";
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
-      const firstScope = yield* Scope.fork(yield* Effect.scope);
-      const first = yield* harness.open.pipe(Effect.provideService(Scope.Scope, firstScope));
-      const done = yield* Deferred.make<void>();
-      yield* first.runtime.events.pipe(
-        Stream.runForEach((event) =>
-          event.type === "turn.terminal" ? Deferred.succeed(done, undefined) : Effect.void,
-        ),
-        Effect.forkIn(firstScope),
-      );
-      yield* first.runtime.startTurn(harness.turn(first.thread));
-      yield* Deferred.await(done);
-      yield* Scope.close(firstScope, Exit.void);
+      yield* harness.startThenClose(isTerminal);
       const originalBinding = (yield* harness.journal.read)[0]!.binding;
       remote.control.status = "running";
-      remote.control.parkSend = true;
+      remote.control.park.add("send");
       const second = yield* harness.open;
-      const monitored = yield* Deferred.make<void>();
-      yield* second.runtime.events.pipe(
-        Stream.runForEach((event) =>
+      const monitored = yield* firstEvent(
+        second.runtime,
+        (event) =>
           event.type === "provider_thread.updated" &&
           event.providerThread.nativeMetadata?.cloudExecution?.sandbox === "active" &&
-          event.providerThread.nativeMetadata.cloudExecution.billing === "active"
-            ? Deferred.succeed(monitored, undefined)
-            : Effect.void,
-        ),
-        Effect.forkScoped,
+          event.providerThread.nativeMetadata.cloudExecution.billing === "active",
       );
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
-      if (mode !== "accepted")
-        db.exec(
-          "CREATE TRIGGER reject_followup BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END",
-        );
+      const db = yield* journalDatabase(directory);
+      if (mode !== "accepted") db.exec(failRejectionWrites("reject_followup"));
       const seen = yield* Deferred.make<void>();
-      remote.control.sendSeen = () => Deferred.doneUnsafe(seen, Effect.void);
+      remote.control.seen.send = () => Deferred.doneUnsafe(seen, Effect.void);
       const starting = yield* second.runtime
         .startTurn(harness.turn(second.thread, 2))
         .pipe(Effect.forkScoped);
@@ -2258,8 +2063,8 @@ it.live.each(["accepted", "storage", "storage-accepted", "storage-interrupted"] 
       const other = yield* Journal.make(`${directory}/journal`);
       if (mode === "accepted")
         yield* other.save({ ...(yield* other.read)[1]!, remoteState: "running" });
-      remote.control.parkedSend!.writeHead(400);
-      remote.control.parkedSend!.end();
+      remote.control.parked.send!.writeHead(400);
+      remote.control.parked.send!.end();
       yield* Fiber.join(starting);
       const saved = (yield* other.read)[1]!;
       assert.equal(saved.state, "admission_unknown");
@@ -2307,13 +2112,7 @@ it.effect.each(["start", "stop"] as const)(
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.prepareStatus = 400;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const committed = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       let park = mode === "start";
@@ -2333,14 +2132,9 @@ it.effect.each(["start", "stop"] as const)(
             ),
       }));
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       if (mode === "stop") {
-        db.exec(
-          "CREATE TRIGGER reject_outcome BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END",
-        );
+        db.exec(failRejectionWrites("reject_outcome"));
         yield* opened.runtime.startTurn(harness.turn(opened.thread));
         db.exec("DROP TRIGGER reject_outcome");
         park = true;
@@ -2393,23 +2187,12 @@ it.live.each(["start", "stop"] as const)(
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.prepareStatus = 400;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       if (mode === "stop") {
-        db.exec(
-          "CREATE TRIGGER reject_outcome BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END",
-        );
+        db.exec(failRejectionWrites("reject_outcome"));
         yield* opened.runtime.startTurn(harness.turn(opened.thread));
         db.exec("DROP TRIGGER reject_outcome");
       }
@@ -2440,10 +2223,7 @@ it.live.each(["resume", "read-failure"] as const)(
       remote.control.listStatus = 503;
       const other = yield* Journal.make(`${directory}/journal`);
       yield* other.save({ ...(yield* other.read)[0]!, admissionRecoveryFailures: 2 });
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
+      const db = yield* journalDatabase(directory);
       let hidden = false;
       let raced = false;
       const harness = yield* admissionHarness(remote, directory, (journal) => ({
@@ -2512,22 +2292,11 @@ it.effect.each(["terminal-binding", "prepared", "prepared-write-failure"] as con
     Effect.gen(function* () {
       const remote = yield* fixture;
       remote.control.rejectAcceptedPrepare = true;
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(`${directory}/data/kilo`, { recursive: true });
-      yield* fs.writeFileString(
-        `${directory}/data/kilo/auth.json`,
-        '{"kilo":{"type":"api","key":"synthetic"}}',
-      );
+      const directory = yield* authorizedDirectory;
       const harness = yield* admissionHarness(remote, directory);
       const opened = yield* harness.open;
-      const db = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(`${directory}/journal/intents.sqlite`)),
-        (db) => Effect.sync(() => db.close()),
-      );
-      db.exec(
-        "CREATE TRIGGER reject_outcome BEFORE UPDATE ON intents WHEN json_extract(NEW.body, '$.submissionRejected') = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejection write failure'); END",
-      );
+      const db = yield* journalDatabase(directory);
+      db.exec(failRejectionWrites("reject_outcome"));
       yield* opened.runtime.startTurn(harness.turn(opened.thread));
       const saved = (yield* harness.journal.read)[0]!;
       const found = yield* harness.client.findAdmission("fixture/repo", saved.messageId);
