@@ -41,6 +41,12 @@ Unknown counts stay absent. Partial usage contains valid observed counts but
 cannot establish a whole-turn total. Keep these distinctions when changing token
 normalization or building reports.
 
+`feature.used` counts WebSocket requests that start a feature, observed in the
+RPC authorization middleware after the request succeeds.
+[Feature mapping](../../apps/server/src/telemetry/FeatureUsage.ts) allowlists
+the methods and commands, and takes variants only from closed contract enums,
+so paths, ids, and text never reach analytics.
+
 ## Delivery
 
 A send can fail after PostHog has stored the batch, so every retry is a copy.

@@ -155,4 +155,25 @@ describe("RPC scope middleware", () => {
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("reports only authorized requests that succeed", () =>
+    Effect.gen(function* () {
+      const observed: Array<string> = [];
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
+            group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () => Effect.never),
+            rpcScopeAuthorizationLayer([AuthOrchestrationReadScope], (method) =>
+              Effect.sync(() => void observed.push(method)),
+            ),
+          ),
+        ),
+      );
+
+      yield* client[WS_METHODS.serverProbe]({});
+      yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip);
+      expect(observed).toEqual([WS_METHODS.serverProbe]);
+    }).pipe(Effect.scoped),
+  );
 });

@@ -224,12 +224,21 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
   });
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
-export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
+/**
+ * `onAuthorized` runs once after an authorized request succeeds; for a stream
+ * RPC, that is when the stream completes. Every RPC passes through here, so it
+ * is the one place to observe requests without wrapping each handler.
+ */
+export const rpcScopeAuthorizationLayer = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+) =>
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScope = requiredScopeForRpcMethod(rpc._tag);
-    return scopes.includes(requiredScope)
+    if (!scopes.includes(requiredScope)) return Effect.fail(rpcAuthorizationError(requiredScope));
+    return onAuthorized === undefined
       ? effect
-      : Effect.fail(rpcAuthorizationError(requiredScope));
+      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */
