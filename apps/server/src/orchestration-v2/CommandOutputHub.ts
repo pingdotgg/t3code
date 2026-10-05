@@ -18,6 +18,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -91,11 +92,26 @@ function isSettled(item: OrchestrationV2TurnItem): boolean {
 }
 
 /** The output a row shows from a persisted item, bounded before normalization. */
-function persistedCommandOutput(output: string | undefined): {
+/** Claude Bash rows stored before #15505 hold the raw `{ stdout, stderr, interrupted, ... }` result. */
+const decodeLegacyClaudeBashResult = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ stdout: Schema.String, stderr: Schema.String })),
+);
+
+function legacyClaudeBashOutput(output: string): string {
+  if (!output.trimStart().startsWith('{"stdout"')) return output;
+  const parsed = decodeLegacyClaudeBashResult(output);
+  if (Option.isNone(parsed)) return output;
+  const out = parsed.value.stdout.trim().length > 0 ? parsed.value.stdout : "";
+  const err = parsed.value.stderr.trim().length > 0 ? parsed.value.stderr : "";
+  return out.length > 0 && err.length > 0 && !out.endsWith("\n") ? `${out}\n${err}` : out + err;
+}
+
+function persistedCommandOutput(rawOutput: string | undefined): {
   readonly text: string;
   readonly truncated: boolean;
 } {
-  if (output === undefined) return { text: "", truncated: false };
+  if (rawOutput === undefined) return { text: "", truncated: false };
+  const output = legacyClaudeBashOutput(rawOutput);
   let source = output;
   if (output.length > MAX_FINAL_SOURCE_CHARS) {
     // Start on a fresh line, so the cut can't land inside an escape sequence.

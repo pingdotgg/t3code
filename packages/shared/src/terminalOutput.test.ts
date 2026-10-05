@@ -96,6 +96,10 @@ describe("appendTerminalOutput", () => {
     expect(state.text.endsWith(".")).toBe(true);
   });
 
+  it("hides an SOS string sequence and its payload", () => {
+    expect(normalizeTerminalOutput("a\u001bXhidden \u001b\\b").text).toBe("ab");
+  });
+
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
   });

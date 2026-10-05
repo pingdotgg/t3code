@@ -349,6 +349,22 @@ layer("CommandOutputHub", (it) => {
     ),
   );
 
+  it.effect("an old Claude row's raw Bash result shows as its stdout and stderr", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = yield* seedThread;
+        yield* writeCommandItem(threadId, {
+          status: "completed",
+          exitCode: 0,
+          output: '{"stdout":"built","stderr":"1 warning","interrupted":false}',
+        });
+        const frames = yield* subscribeFrames(threadId);
+        const final = yield* takeFrame(frames);
+        assert.equal(final.text, "built\n1 warning");
+      }),
+    ),
+  );
+
   it.effect("providers that only report output in item snapshots still stream", () =>
     Effect.scoped(
       Effect.gen(function* () {

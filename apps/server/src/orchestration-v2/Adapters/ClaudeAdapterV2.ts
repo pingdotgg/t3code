@@ -5891,7 +5891,8 @@ export function makeClaudeAdapterV2(
               if (
                 taskOutputRoot !== undefined &&
                 message.task_type === "local_bash" &&
-                message.is_backgrounded === false &&
+                // Older Claude Code builds omit the flag on foreground calls.
+                message.is_backgrounded !== true &&
                 tailedCall?.classification.itemType === "command_execution" &&
                 !taskOutputTails.has(tailedCall.nativeItemId)
               ) {

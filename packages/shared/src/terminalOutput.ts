@@ -295,8 +295,8 @@ function escapeLength(input: string, index: number): number {
     }
     return -1;
   }
-  if (next === "]" || next === "P" || next === "_" || next === "^") {
-    // OSC/DCS/APC/PM end at BEL or ST (ESC \).
+  if (next === "]" || next === "P" || next === "X" || next === "_" || next === "^") {
+    // OSC/DCS/SOS/APC/PM end at BEL or ST (ESC \).
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
       if (input[cursor] === ESC) {
