@@ -113,6 +113,12 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
+agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
+co-authors stay credited. The setting is off by default and projects can override it. It also
+applies to auto-merge, but not merge queues or native stack merges. Original commits keep their
+messages, so merge and rebase can still retain agent credits in those commits.
+
 On web and desktop, hold **Shift** in the GitHub pull request list for quick actions.
 To close several, press **Close**, drag across the rows in the same group, and release.
 Press **Escape** before releasing to cancel. Failed closes stay in the list so you can retry them.
