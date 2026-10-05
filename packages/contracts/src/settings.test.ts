@@ -387,6 +387,36 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings language", () => {
+  it("follows the host until the user picks a language", () => {
+    expect(decodeClientSettings({}).languagePreference).toBe("system");
+  });
+
+  it("accepts every selectable language", () => {
+    for (const languagePreference of ["system", "en", "zh"] as const) {
+      expect(decodeClientSettings({ languagePreference }).languagePreference).toBe(
+        languagePreference,
+      );
+      expect(decodeClientSettingsPatch({ languagePreference })).toEqual({ languagePreference });
+    }
+  });
+
+  it("rejects a language the client cannot render", () => {
+    expect(() => decodeClientSettings({ languagePreference: "ja" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ languagePreference: "ja" })).toThrow();
+  });
+
+  it("reads settings written before the field existed", () => {
+    // An older client persisted no language at all; decoding such a document
+    // must still succeed so an upgrade does not drop stored preferences.
+    const legacy = { timestampFormat: "24-hour" } as const;
+    expect(decodeClientSettings(legacy)).toMatchObject({
+      timestampFormat: "24-hour",
+      languagePreference: "system",
+    });
+  });
+});
+
 describe("ClientSettings window capture", () => {
   it("defaults capture off while keeping its feedback enabled", () => {
     const settings = decodeClientSettings({});

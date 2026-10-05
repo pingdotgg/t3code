@@ -45,6 +45,17 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+/**
+ * Interface language for a client.
+ *
+ * `system` follows the host locale. The concrete tags must stay in sync with
+ * `SUPPORTED_LANGUAGES` in `@t3tools/client-runtime/i18n`; a language added
+ * there without a value here cannot be selected.
+ */
+export const LanguagePreference = Schema.Literals(["system", "en", "zh"]);
+export type LanguagePreference = typeof LanguagePreference.Type;
+const DEFAULT_LANGUAGE_PREFERENCE: LanguagePreference = "system";
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -484,6 +495,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  /**
+   * Interface language. Lives with the client, not the server: two clients
+   * viewing one environment may want different languages, and the server never
+   * renders UI.
+   */
+  languagePreference: LanguagePreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_LANGUAGE_PREFERENCE)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
@@ -1795,6 +1814,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  languagePreference: Schema.optionalKey(LanguagePreference),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),
