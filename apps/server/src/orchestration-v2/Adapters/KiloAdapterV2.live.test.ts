@@ -41,6 +41,26 @@ import * as KiloAdapter from "./KiloAdapterV2.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const binary = process.env.KILO_BIN;
 const layer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
+type RequestEvent = Extract<Adapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>;
+const chunk = (choice: Record<string, unknown>, extra?: Record<string, unknown>) =>
+  `data: ${JSON.stringify({ id: "chatcmpl-local", object: "chat.completion.chunk", created: 0, model: "test", choices: [{ index: 0, ...choice }], ...extra })}\n\n`;
+/** A streamed completion that only calls one tool. */
+const toolCall = (name: string, args: unknown) =>
+  chunk({
+    delta: {
+      tool_calls: [
+        {
+          index: 0,
+          id: `call_${name}`,
+          type: "function",
+          function: { name, arguments: JSON.stringify(args) },
+        },
+      ],
+    },
+    finish_reason: null,
+  }) +
+  chunk({ delta: {}, finish_reason: "tool_calls" }) +
+  "data: [DONE]\n\n";
 const inference = Effect.acquireRelease(
   Effect.promise(async () => {
     const requests: Array<Record<string, unknown>> = [];
@@ -98,45 +118,12 @@ const inference = Effect.acquireRelease(
           messages.at(-1)?.role !== "tool" &&
           !JSON.stringify(messages.at(-1) ?? null).includes("Child fixture reply")
         ) {
-          res.write(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-task",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "test",
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "call_task",
-                        type: "function",
-                        function: {
-                          name: "task",
-                          arguments: JSON.stringify({
-                            description: "Local child",
-                            prompt: "Child fixture reply",
-                            subagent_type: "general",
-                          }),
-                        },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            })}\n\n`,
-          );
           res.end(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-task",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "test",
-              choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-            })}\n\ndata: [DONE]\n\n`,
+            toolCall("task", {
+              description: "Local child",
+              prompt: "Child fixture reply",
+              subagent_type: "general",
+            }),
           );
           return;
         }
@@ -147,87 +134,41 @@ const inference = Effect.acquireRelease(
               JSON.stringify(messages.at(-1)).includes("Child fixture reply"))) &&
           messages.at(-1)?.role !== "tool"
         ) {
-          const name = control.mode === "question" ? "question" : "bash";
-          const args =
-            control.mode !== "question"
-              ? {
-                  command: "printf kilo-approved > approval.txt",
-                  description: "Write the local approval fixture",
-                }
-              : {
+          res.end(
+            control.mode === "question"
+              ? toolCall("question", {
                   questions: [
                     {
                       question: "Choose a color",
                       header: "Color",
                       multiple: true,
-
                       options: [
                         { label: "Blue", description: "Blue option" },
                         { label: "Red", description: "Red option" },
                       ],
                     },
                   ],
-                };
-          res.write(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-tool",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "test",
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "call_fixture",
-                        type: "function",
-                        function: { name, arguments: JSON.stringify(args) },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            })}\n\n`,
-          );
-          res.end(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-tool",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "test",
-              choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-            })}\n\ndata: [DONE]\n\n`,
+                })
+              : toolCall("bash", {
+                  command: "printf kilo-approved > approval.txt",
+                  description: "Write the local approval fixture",
+                }),
           );
           return;
         }
         if (control.mode === "text")
           res.write(
-            `data: ${JSON.stringify({ id: "chatcmpl-local", object: "chat.completion.chunk", created: 0, model: "test", choices: [{ index: 0, delta: { reasoning_content: "Fixture reasoning." }, finish_reason: null }] })}\n\n`,
+            chunk({ delta: { reasoning_content: "Fixture reasoning." }, finish_reason: null }),
           );
         for (const text of control.mode === "json"
           ? [control.json]
           : ["Hello ", "from ", "local Kilo."])
-          res.write(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-local",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "test",
-              choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
-            })}\n\n`,
-          );
+          res.write(chunk({ delta: { content: text }, finish_reason: null }));
         res.end(
-          `data: ${JSON.stringify({
-            id: "chatcmpl-local",
-            object: "chat.completion.chunk",
-            created: 0,
-            model: "test",
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-          })}\n\ndata: [DONE]\n\n`,
+          chunk(
+            { delta: {}, finish_reason: "stop" },
+            { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+          ) + "data: [DONE]\n\n",
         );
       });
     });
@@ -355,12 +296,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           runtime: disconnectedRuntime,
           attachmentsDir: path.join(root, "attachments"),
         });
-        const session = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("kilo-session"),
-          modelSelection,
-          runtimePolicy,
-        });
+        const openAs = (name: string, kilo = adapter, thread = threadId) =>
+          kilo.openSession({
+            threadId: thread,
+            providerSessionId: ProviderSessionId.make(name),
+            modelSelection,
+            runtimePolicy,
+          });
+        const session = yield* openAs("kilo-session");
         const providerThread = yield* session.ensureThread({
           threadId,
           modelSelection,
@@ -369,10 +312,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         const seen: Adapter.ProviderAdapterV2Event[] = [];
         const questionShown = yield* Deferred.make<void>();
         let terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-        let interaction =
-          yield* Deferred.make<
-            Extract<Adapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-          >();
+        let interaction = yield* Deferred.make<RequestEvent>();
         yield* session.events.pipe(
           Stream.runForEach((event) => {
             seen.push(event);
@@ -453,12 +393,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         );
         assert.equal(restored.providerTurns.length, 1);
         assert.equal(restored.messages[0]!.id, firstInput.message.messageId);
-        const restoredSession = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("restored-session"),
-          modelSelection,
-          runtimePolicy,
-        });
+        const restoredSession = yield* openAs("restored-session");
         const restoredThread = yield* restoredSession.resumeThread({
           providerThread: restored.providerThread,
         });
@@ -502,12 +437,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           providerTurnId: restored.providerTurns[0]!.id,
           targetThreadId: ThreadId.make("fork-thread"),
         });
-        const forkSession = yield* adapter.openSession({
-          threadId: ThreadId.make("fork-thread"),
-          providerSessionId: ProviderSessionId.make("fork-session"),
-          modelSelection,
-          runtimePolicy,
-        });
+        const forkSession = yield* openAs("fork-session", adapter, ThreadId.make("fork-thread"));
         const forkThread = yield* forkSession.resumeThread({ providerThread: fork });
         const forkHistory = yield* forkSession.readThreadSnapshot({ providerThread: forkThread });
         assert.deepEqual(
@@ -527,12 +457,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         assert.equal(rewound.messages.length, 2);
         assert.equal(rewound.messages[0]!.id, firstInput.message.messageId);
         assert.equal(rewound.messages[1]!.runId, firstInput.runId);
-        const rewindSession = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("rewind-resume"),
-          modelSelection,
-          runtimePolicy,
-        });
+        const rewindSession = yield* openAs("rewind-resume");
         const rewindThread = yield* rewindSession.resumeThread({
           providerThread: rewound.providerThread,
         });
@@ -559,10 +484,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         assert.equal(empty.messages.length, 0);
         for (const decision of ["decline", "accept"] as const) {
           terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-          interaction =
-            yield* Deferred.make<
-              Extract<Adapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-            >();
+          interaction = yield* Deferred.make<RequestEvent>();
           model.control.mode = "approval";
           yield* session.startTurn({
             ...firstInput,
@@ -580,10 +502,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           assert.equal(yield* fs.exists(path.join(root, "approval.txt")), decision === "accept");
         }
         terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-        interaction =
-          yield* Deferred.make<
-            Extract<Adapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-          >();
+        interaction = yield* Deferred.make<RequestEvent>();
         dropInteraction = true;
         model.control.mode = "question";
         yield* session.startTurn({
@@ -830,10 +749,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           dropInteraction = action === "accept";
           model.control.mode = "subagent-approval";
           terminal = yield* Deferred.make<Adapter.ProviderAdapterV2Event>();
-          interaction =
-            yield* Deferred.make<
-              Extract<Adapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-            >();
+          interaction = yield* Deferred.make<RequestEvent>();
           const startIndex = seen.length;
           yield* session.startTurn({
             ...firstInput,
@@ -905,12 +821,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
               );
             if (saved?.type !== "provider_thread.updated")
               throw new Error("Missing durable interruption metadata");
-            const fresh = yield* adapter.openSession({
-              threadId,
-              providerSessionId: ProviderSessionId.make("after-stop"),
-              modelSelection,
-              runtimePolicy,
-            });
+            const fresh = yield* openAs("after-stop");
             const resumed = yield* fresh.resumeThread({ providerThread: saved.providerThread });
             const history = yield* fresh.readThreadSnapshot({ providerThread: resumed });
             assert.equal(
@@ -952,12 +863,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           cwd: root,
           runtime,
         });
-        const otherSession = yield* otherAccount.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("other"),
-          modelSelection,
-          runtimePolicy,
-        });
+        const otherSession = yield* openAs("other", otherAccount);
         yield* otherSession.resumeThread({ providerThread }).pipe(Effect.flip);
         yield* otherSession
           .ensureThread({
