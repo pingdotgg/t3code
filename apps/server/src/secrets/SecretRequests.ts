@@ -21,8 +21,10 @@ import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -35,6 +37,7 @@ const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PRE
 const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 /** A value nobody used within this long is dropped; the agent can ask again. */
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
+const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 
 /**
  * Each request has exactly one ref, derived from where it was asked. Its
@@ -85,6 +88,7 @@ export class SecretRequests extends Context.Service<
 
 const make = Effect.gen(function* () {
   const store = yield* ServerSecretStore.ServerSecretStore;
+  const fileSystem = yield* FileSystem.FileSystem;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
   const salt = Buffer.from(
@@ -192,6 +196,40 @@ const make = Effect.gen(function* () {
       yield* store.remove(storeName(input.ref)).pipe(Effect.ignore);
       return decoded.value.value;
     });
+
+  /**
+   * Drops values nobody used before they expired, so an agent that never
+   * consumed its ref does not leave the user's secret on disk.
+   */
+  const sweepExpired = Effect.gen(function* () {
+    if (store.directory === undefined) return;
+    const now = yield* Clock.currentTimeMillis;
+    const names = (yield* fileSystem.readDirectory(store.directory)).flatMap((file) => {
+      const match = STORE_NAME_PATTERN.exec(file);
+      return match?.[1] === undefined ? [] : [match[1]];
+    });
+    let removed = 0;
+    for (const name of names) {
+      const stored = yield* store.get(name).pipe(Effect.orElseSucceed(Option.none));
+      const decoded = Option.flatMap(stored, (bytes) =>
+        decodeStored(new TextDecoder().decode(bytes)),
+      );
+      if (Option.isSome(decoded) && now - decoded.value.savedAt <= SECRET_REF_TTL_MS) continue;
+      yield* store.remove(name).pipe(Effect.ignore);
+      removed += 1;
+    }
+    yield* Effect.annotateCurrentSpan({ "secret_request.expired_removed": removed });
+  }).pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Could not sweep expired secret refs", cause)),
+    Effect.withSpan("SecretRequests.sweepExpired"),
+  );
+  // Once at startup, then hourly; a value lingers at most an hour past expiry.
+  yield* sweepExpired;
+  yield* sweepExpired.pipe(
+    Effect.delay("1 hour"),
+    Effect.repeat(Schedule.spaced("1 hour")),
+    Effect.forkScoped,
+  );
 
   return SecretRequests.of({ answer, savedRef, consume });
 });

@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -6,14 +7,17 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "./SecretRequests.ts";
 
@@ -37,6 +41,7 @@ const withService = <A, E>(
     const requestThreadId = options.threadId ?? threadId;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      NodeServices.layer,
       Layer.succeed(
         ServerSecretStore.ServerSecretStore,
         ServerSecretStore.ServerSecretStore.of({
@@ -244,5 +249,48 @@ it.effect("refuses an answer once the agent that asked has stopped", () =>
         assert.equal(dispatched.length, 0);
       }),
     { runStatus: "completed" },
+  ),
+);
+
+it.effect("drops values nobody used once they expire, and keeps the rest", () =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const encode = (savedAt: number) =>
+      new TextEncoder().encode(
+        `{"projectId":"project-1","value":"ghp_secret","savedAt":${savedAt}}`,
+      );
+    yield* TestClock.adjust("2 days");
+    const now = yield* Clock.currentTimeMillis;
+    const stale = `secret-request-${"a".repeat(32)}`;
+    const fresh = `secret-request-${"b".repeat(32)}`;
+    yield* store.set(stale, encode(now - 25 * 60 * 60 * 1000));
+    yield* store.set(fresh, encode(now));
+    yield* store.set("unrelated", new Uint8Array([1]));
+
+    // Building the service runs the first sweep.
+    yield* Effect.gen(function* () {
+      yield* SecretRequests.SecretRequests;
+    }).pipe(
+      Effect.provide(
+        SecretRequests.layer.pipe(
+          Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+    assert.isTrue(Option.isNone(yield* store.get(stale)));
+    assert.isTrue(Option.isSome(yield* store.get(fresh)));
+    assert.isTrue(Option.isSome(yield* store.get("unrelated")));
+    assert.isTrue(Option.isSome(yield* store.get("secret-request-salt")));
+  }).pipe(
+    Effect.provide(
+      ServerSecretStore.layer.pipe(
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-secret-requests-" }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
   ),
 );
