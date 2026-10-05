@@ -10581,165 +10581,164 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent =
-    activeThreadRef && !isCloudThread ? (
-      renderedRightPanelSurface?.kind === "preview" ? (
-        <Suspense fallback={null}>
-          <PreviewPanel
-            mode="embedded"
-            threadRef={activeThreadRef}
-            tabId={renderedRightPanelSurface.resourceId}
-            configuredUrls={configuredPreviewUrls}
-            visible={rightPanelOpen}
-            onSendAnnotation={(annotation, image) => {
-              void onSend(undefined, "auto", "foreground", { annotation, image });
-            }}
-          />
-        </Suspense>
-      ) : renderedRightPanelSurface?.kind === "terminal" ? (
-        <PersistentThreadTerminalPanel
+  const rightPanelContent = activeThreadRef ? (
+    renderedRightPanelSurface?.kind === "preview" ? (
+      <Suspense fallback={null}>
+        <PreviewPanel
+          mode="embedded"
+          threadRef={activeThreadRef}
+          tabId={renderedRightPanelSurface.resourceId}
+          configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
-          threadRef={activeThreadRef}
-          surface={renderedRightPanelSurface}
-          launchContext={activeTerminalLaunchContext ?? null}
-          focusRequestId={terminalFocusRequestId}
-          keybindings={keybindings}
-          onAddTerminalContext={addTerminalContextToDraft}
-          onSplitTerminal={splitPanelTerminal}
-          onSplitTerminalVertical={splitPanelTerminalVertical}
-          onNewTerminal={addTerminalSurface}
-          onActiveTerminalChange={activatePanelTerminal}
-          onCloseTerminal={closePanelTerminal}
-          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-          splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-        />
-      ) : renderedRightPanelSurface?.kind === "diff" ? (
-        <Suspense fallback={null}>
-          <DiffPanel
-            key={activeThreadKey}
-            mode="embedded"
-            composerDraftTarget={composerDraftTarget}
-            workspaceMutationId={workspaceMutationId}
-          />
-        </Suspense>
-      ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
-        <PullRequestDetailGhost />
-      ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
-        <PullRequestsUnavailableState
-          title="Pull requests unavailable"
-          error="Update this environment's T3 Code server to browse pull requests."
-        />
-      ) : renderedRightPanelSurface?.kind === "pull-request" ? (
-        // No onClose: the surface tab's own X owns closing here, and a second X in the header
-        // would be the same action twice. The thread context also drops the checkout button, so it
-        // is only right for the thread's own pull request, whose branch is already under the
-        // reader's feet. A link the agent wrote can open any other one here, and that one has to be
-        // checkable out like it is anywhere else.
-        <PullRequestDetailPanel
-          getShortcutContext={getShortcutContext}
-          shortcutsEnabled={
-            rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
-          }
-          key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
-          environmentId={activeThread.environmentId}
-          onSelectPullRequest={(reference) => {
-            if (activeThreadRef)
-              useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-                projectId: reference.projectId,
-                repository: reference.repository,
-                number: reference.number,
-                ...(reference.host ? { host: reference.host } : {}),
-              });
+          onSendAnnotation={(annotation, image) => {
+            void onSend(undefined, "auto", "foreground", { annotation, image });
           }}
-          threadRef={activeThreadRef}
-          reference={{
-            projectId: renderedRightPanelSurface.projectId as ProjectId,
-            ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-            repository: renderedRightPanelSurface.repository,
-            number: renderedRightPanelSurface.number,
-          }}
-          context={pullRequestPanelContext(
-            {
-              projectId: activeThread.projectId,
-              pullRequests: visiblePullRequests,
-              linkedPullRequest: linkedThreadPullRequest,
-              branchPullRequest:
-                activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-            },
-            renderedRightPanelSurface,
-          )}
+        />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "terminal" ? (
+      <PersistentThreadTerminalPanel
+        visible={rightPanelOpen}
+        threadRef={activeThreadRef}
+        surface={renderedRightPanelSurface}
+        launchContext={activeTerminalLaunchContext ?? null}
+        focusRequestId={terminalFocusRequestId}
+        keybindings={keybindings}
+        onAddTerminalContext={addTerminalContextToDraft}
+        onSplitTerminal={splitPanelTerminal}
+        onSplitTerminalVertical={splitPanelTerminalVertical}
+        onNewTerminal={addTerminalSurface}
+        onActiveTerminalChange={activatePanelTerminal}
+        onCloseTerminal={closePanelTerminal}
+        splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+        splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+        newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+      />
+    ) : renderedRightPanelSurface?.kind === "diff" ? (
+      <Suspense fallback={null}>
+        <DiffPanel
+          key={activeThreadKey}
+          mode="embedded"
           composerDraftTarget={composerDraftTarget}
-          onBack={
-            activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-              ? addPullRequestsSurface
-              : undefined
-          }
+          workspaceMutationId={workspaceMutationId}
         />
-      ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-        <ThreadPullRequestsPanel threadRef={activeThreadRef} />
-      ) : renderedRightPanelSurface?.kind === "device" ? (
-        <Suspense fallback={null}>
-          <DevicePanel
-            mode="embedded"
-            threadRef={activeThreadRef}
-            key={renderedRightPanelSurface.id}
-            surface={renderedRightPanelSurface}
-            visible={rightPanelOpen}
-            onDismissSetup={() => {
-              closeRightPanelSurface(renderedRightPanelSurface);
-              useRightPanelStore.getState().show(activeThreadRef);
-            }}
-          />
-        </Suspense>
-      ) : (renderedRightPanelSurface?.kind === "files" ||
-          renderedRightPanelSurface?.kind === "file") &&
-        ((activeProject && activeWorkspaceRoot) ||
-          (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
-        <Suspense fallback={null}>
-          <FilePreviewPanel
-            key={`${activeThread.environmentId}:${
-              renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-                ? `attachment:${renderedRightPanelSurface.attachment.id}`
-                : activeWorkspaceRoot
-            }`}
-            environmentId={activeThread.environmentId}
-            cwd={activeWorkspaceRoot ?? ""}
-            projectName={activeProject?.title ?? ""}
-            threadRef={activeThreadRef}
-            composerDraftTarget={composerDraftTarget}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            relativePath={
-              renderedRightPanelSurface.kind === "file"
-                ? renderedRightPanelSurface.relativePath
-                : null
-            }
-            {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? { attachment: renderedRightPanelSurface.attachment }
-              : {})}
-            revealLine={
-              renderedRightPanelSurface.kind === "file"
-                ? (renderedRightPanelSurface.revealLine ?? null)
-                : null
-            }
-            revealRequestId={
-              renderedRightPanelSurface.kind === "file"
-                ? renderedRightPanelSurface.revealRequestId
-                : 0
-            }
-            onOpenFile={openFileSurface}
-            onPendingChange={handleFilePendingChange}
-            selectedFilePending={
-              renderedRightPanelSurface.kind === "file" &&
-              pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
-            }
-            workspaceMutationId={workspaceMutationId}
-          />
-        </Suspense>
-      ) : null
-    ) : null;
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+      <PullRequestDetailGhost />
+    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
+      <PullRequestsUnavailableState
+        title="Pull requests unavailable"
+        error="Update this environment's T3 Code server to browse pull requests."
+      />
+    ) : renderedRightPanelSurface?.kind === "pull-request" ? (
+      // No onClose: the surface tab's own X owns closing here, and a second X in the header
+      // would be the same action twice. The thread context also drops the checkout button, so it
+      // is only right for the thread's own pull request, whose branch is already under the
+      // reader's feet. A link the agent wrote can open any other one here, and that one has to be
+      // checkable out like it is anywhere else.
+      <PullRequestDetailPanel
+        getShortcutContext={getShortcutContext}
+        shortcutsEnabled={
+          rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
+        }
+        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
+        environmentId={activeThread.environmentId}
+        onSelectPullRequest={(reference) => {
+          if (activeThreadRef)
+            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              ...(reference.host ? { host: reference.host } : {}),
+            });
+        }}
+        threadRef={activeThreadRef}
+        reference={{
+          projectId: renderedRightPanelSurface.projectId as ProjectId,
+          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
+          repository: renderedRightPanelSurface.repository,
+          number: renderedRightPanelSurface.number,
+        }}
+        context={pullRequestPanelContext(
+          {
+            projectId: activeThread.projectId,
+            pullRequests: visiblePullRequests,
+            linkedPullRequest: linkedThreadPullRequest,
+            branchPullRequest:
+              activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+          },
+          renderedRightPanelSurface,
+        )}
+        composerDraftTarget={composerDraftTarget}
+        onBack={
+          activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
+            ? addPullRequestsSurface
+            : undefined
+        }
+      />
+    ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
+      <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "device" ? (
+      <Suspense fallback={null}>
+        <DevicePanel
+          mode="embedded"
+          threadRef={activeThreadRef}
+          key={renderedRightPanelSurface.id}
+          surface={renderedRightPanelSurface}
+          visible={rightPanelOpen}
+          onDismissSetup={() => {
+            closeRightPanelSurface(renderedRightPanelSurface);
+            useRightPanelStore.getState().show(activeThreadRef);
+          }}
+        />
+      </Suspense>
+    ) : (renderedRightPanelSurface?.kind === "files" ||
+        renderedRightPanelSurface?.kind === "file") &&
+      ((activeProject && activeWorkspaceRoot) ||
+        (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
+      <Suspense fallback={null}>
+        <FilePreviewPanel
+          key={`${activeThread.environmentId}:${
+            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+              ? `attachment:${renderedRightPanelSurface.attachment.id}`
+              : activeWorkspaceRoot
+          }`}
+          environmentId={activeThread.environmentId}
+          cwd={activeWorkspaceRoot ?? ""}
+          projectName={activeProject?.title ?? ""}
+          threadRef={activeThreadRef}
+          composerDraftTarget={composerDraftTarget}
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          relativePath={
+            renderedRightPanelSurface.kind === "file"
+              ? renderedRightPanelSurface.relativePath
+              : null
+          }
+          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+            ? { attachment: renderedRightPanelSurface.attachment }
+            : {})}
+          revealLine={
+            renderedRightPanelSurface.kind === "file"
+              ? (renderedRightPanelSurface.revealLine ?? null)
+              : null
+          }
+          revealRequestId={
+            renderedRightPanelSurface.kind === "file"
+              ? renderedRightPanelSurface.revealRequestId
+              : 0
+          }
+          onOpenFile={openFileSurface}
+          onPendingChange={handleFilePendingChange}
+          selectedFilePending={
+            renderedRightPanelSurface.kind === "file" &&
+            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
+          }
+          workspaceMutationId={workspaceMutationId}
+        />
+      </Suspense>
+    ) : null
+  ) : null;
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
     handle: threadPanelPopoverHandle,
@@ -11604,7 +11603,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={!isCloudThread && pullRequestsSurfaceAvailable}
           deviceAvailable={!isCloudThread && activeThreadRef !== null}
         >
-          {rightPanelContent}
+          {isCloudThread ? null : rightPanelContent}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
@@ -11659,7 +11658,7 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestsAvailable={!isCloudThread && pullRequestsSurfaceAvailable}
             deviceAvailable={!isCloudThread && activeThreadRef !== null}
           >
-            {rightPanelContent}
+            {isCloudThread ? null : rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
