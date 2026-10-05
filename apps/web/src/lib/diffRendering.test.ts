@@ -6,6 +6,7 @@ import {
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
+  getCollapsedFileDiffStub,
   getDiffLineStat,
   getRenderablePatch,
   resolveFileDiffPath,
@@ -424,5 +425,83 @@ describe("a file whose name a patch header cannot carry plainly", () => {
 
     expect(resolveFileDiffPath(file)).toBe("new\tname.ts");
     expect(resolveFileDiffPreviousPath(file)).toBe("old\tname.ts");
+  });
+});
+
+describe("getCollapsedFileDiffStub", () => {
+  const renamedPatch = [
+    "diff --git a/old-name.ts b/new-name.ts",
+    "similarity index 50%",
+    "rename from old-name.ts",
+    "rename to new-name.ts",
+    "--- a/old-name.ts",
+    "+++ b/new-name.ts",
+    "@@ -1,2 +1,2 @@",
+    " const shared = 1;",
+    "-const before = 2;",
+    "+const after = 3;",
+    "diff --git a/other.ts b/other.ts",
+    "--- a/other.ts",
+    "+++ b/other.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+
+  const parseFiles = () => {
+    const parsed = getRenderablePatch(renamedPatch, "collapsed-stub");
+    if (parsed?.kind !== "files") throw new Error("expected parsed files");
+    const [renamed, other] = parsed.files;
+    if (!renamed || !other) throw new Error("expected two files");
+    return { renamed, other };
+  };
+
+  it("drops the content and keeps the header fields", () => {
+    const { renamed } = parseFiles();
+    expect(renamed.hunks.length).toBeGreaterThan(0);
+
+    const stub = getCollapsedFileDiffStub(renamed);
+
+    expect(stub.hunks).toEqual([]);
+    expect(stub.additionLines).toEqual([]);
+    expect(stub.deletionLines).toEqual([]);
+    expect(stub.splitLineCount).toBe(0);
+    expect(stub.unifiedLineCount).toBe(0);
+    expect(stub.name).toBe(renamed.name);
+    expect(stub.prevName).toBe(renamed.prevName);
+    expect(stub.prevName).toBe("old-name.ts");
+    expect(stub.type).toBe(renamed.type);
+    expect(stub.lang).toBe(renamed.lang);
+    expect(stub.newObjectId).toBe(renamed.newObjectId);
+    expect(stub.prevObjectId).toBe(renamed.prevObjectId);
+  });
+
+  it("marks the stub collapsed rather than pending", () => {
+    const { renamed } = parseFiles();
+
+    const stub = getCollapsedFileDiffStub(renamed);
+
+    expect(stub.cacheKey).toBe(`${renamed.cacheKey}:collapsed`);
+    expect(stub.cacheKey?.endsWith(":pending")).toBe(false);
+  });
+
+  it("returns the same stub for the same input and a different one for another", () => {
+    const { renamed, other } = parseFiles();
+
+    const first = getCollapsedFileDiffStub(renamed);
+    const second = getCollapsedFileDiffStub(renamed);
+    const otherStub = getCollapsedFileDiffStub(other);
+
+    expect(second).toBe(first);
+    expect(otherStub).not.toBe(first);
+    expect(otherStub.name).toBe("other.ts");
+  });
+
+  it("keeps the file's identity key", () => {
+    const { renamed } = parseFiles();
+
+    const stub = getCollapsedFileDiffStub(renamed);
+
+    expect(buildFileDiffIdentityKey(stub)).toBe(buildFileDiffIdentityKey(renamed));
   });
 });

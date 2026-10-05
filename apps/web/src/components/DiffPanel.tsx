@@ -35,6 +35,7 @@ import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
+  getCollapsedFileDiffStub,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
@@ -478,15 +479,16 @@ export default function DiffPanel({
       renderableFileEntries
         .filter(({ fileDiff }) => !lazySource || readyFilePaths.has(resolveFileDiffPath(fileDiff)))
         .map(({ fileDiff, fileKey, fileVersion }) => {
+          const pending = fileDiff.cacheKey?.endsWith(":pending") === true;
+          // Header-only placeholders use the viewer's collapsed geometry until their patch arrives.
+          const collapsed = collapsedDiffFileKeys.has(fileKey) || pending;
           return {
-            fileDiff,
+            fileDiff:
+              lazySource && collapsed && !pending ? getCollapsedFileDiffStub(fileDiff) : fileDiff,
             filePath: resolveFileDiffPath(fileDiff),
             fileKey,
             fileVersion,
-            // Header-only placeholders use the viewer's collapsed geometry until their patch arrives.
-            collapsed:
-              collapsedDiffFileKeys.has(fileKey) ||
-              fileDiff.cacheKey?.endsWith(":pending") === true,
+            collapsed,
           };
         }),
     [collapsedDiffFileKeys, renderableFileEntries, lazySource, readyFilePaths],
