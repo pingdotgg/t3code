@@ -1,13 +1,53 @@
 import * as NodeSqlite from "node:sqlite";
+import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
+
+const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class RecordedWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(...args);
+      startedWorkers.push(this);
+    }
+  }
+  return { ...actual, Worker: RecordedWorker };
+});
+
+const withReaderClient = <A, E>(
+  use: (sql: SqlClient.SqlClient) => Effect.Effect<A, E, SqlClient.SqlClient>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-reader-" });
+    const filename = path.join(directory, "state.sqlite");
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO entries VALUES ('first')`;
+      return yield* use(sql);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+const countEntries = (sql: SqlClient.SqlClient) =>
+  Effect.map(
+    sql<{ count: number }>`SELECT COUNT(*) AS count FROM entries`,
+    (rows) => rows[0]?.count,
+  );
 
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
@@ -181,4 +221,145 @@ it.effect(
         assert.deepEqual(yield* select, [{ value: "retained" }]);
       }).pipe(Effect.provide(SqliteClient.layer({ filename })));
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lets the writer commit while a read-only transaction is open", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const snapshotTaken = yield* Deferred.make<void>();
+      const writer = yield* Effect.forkChild(
+        Deferred.await(snapshotTaken).pipe(
+          Effect.andThen(sql`INSERT INTO entries VALUES ('second')`),
+        ),
+      );
+      const counts = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const before = yield* countEntries(sql);
+            yield* Deferred.succeed(snapshotTaken, undefined);
+            // Holding the writer lock here would deadlock this join.
+            yield* Fiber.join(writer);
+            const after = yield* countEntries(sql);
+            return { before, after };
+          }),
+        )
+        .pipe(SqliteClient.readOnly);
+
+      // The reader keeps the snapshot it began with, and later reads see the commit.
+      assert.deepEqual(counts, { before: 1, after: 1 });
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 2);
+    }),
+  ),
+);
+
+it.effect("rejects a write in a read-only transaction", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const error = yield* sql
+        .withTransaction(sql`INSERT INTO entries VALUES ('blocked')`)
+        .pipe(SqliteClient.readOnly, Effect.flip);
+
+      assert.equal(error._tag, "SqlError");
+      assert.include(String(error.reason.cause), "readonly database");
+      assert.equal(yield* countEntries(sql), 1);
+    }),
+  ),
+);
+
+it.effect("keeps the reader read-only even if a statement turns query_only off", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const error = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`PRAGMA query_only = OFF`;
+            yield* sql`INSERT INTO entries VALUES ('blocked')`;
+          }),
+        )
+        .pipe(SqliteClient.readOnly, Effect.flip);
+
+      assert.equal(error._tag, "SqlError");
+      assert.include(String(error.reason.cause), "readonly database");
+      assert.equal(yield* countEntries(sql), 1);
+    }),
+  ),
+);
+
+it.effect("keeps read-only work inside a write transaction on the writer", () =>
+  withReaderClient((sql) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO entries VALUES ('uncommitted')`;
+        // Only the writer can see its own uncommitted row.
+        const count = yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
+        assert.equal(count, 2);
+      }),
+    ),
+  ),
+);
+
+it.effect("fails a read-only transaction whose reader stops, then starts a new reader", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const startedBefore = startedWorkers.length;
+      const error = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Effect.promise(() => startedWorkers.at(-1)!.terminate());
+            return yield* countEntries(sql);
+          }),
+        )
+        .pipe(SqliteClient.readOnly, Effect.flip);
+
+      assert.equal(error._tag, "SqlError");
+      assert.include(String(error.reason.cause), "Database reader exited");
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      assert.equal(startedWorkers.length, startedBefore + 2);
+    }),
+  ),
+);
+
+it.effect("uses the writer for read-only work on an in-memory database", () =>
+  Effect.gen(function* () {
+    const startedBefore = startedWorkers.length;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE memory_entries(name TEXT NOT NULL)`;
+    yield* sql`INSERT INTO memory_entries VALUES ('kept')`;
+
+    const rows = yield* sql
+      .withTransaction(sql<{ name: string }>`SELECT name FROM memory_entries`)
+      .pipe(SqliteClient.readOnly);
+
+    assert.deepEqual(rows, [{ name: "kept" }]);
+    assert.equal(startedWorkers.length, startedBefore);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:", readerWorker: true }))),
+);
+
+it.effect("keeps a nested transaction inside a read-only transaction on the reader", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const snapshotTaken = yield* Deferred.make<void>();
+      const writer = yield* Effect.forkChild(
+        Deferred.await(snapshotTaken).pipe(
+          Effect.andThen(sql`INSERT INTO entries VALUES ('second')`),
+        ),
+      );
+      // Callers wrap a store read that opens its own transaction, as the
+      // shell snapshot routes do around getShellSnapshot.
+      const counts = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const outer = yield* countEntries(sql);
+            yield* Deferred.succeed(snapshotTaken, undefined);
+            yield* Fiber.join(writer);
+            const nested = yield* sql.withTransaction(countEntries(sql));
+            return { outer, nested };
+          }),
+        )
+        .pipe(SqliteClient.readOnly);
+
+      assert.deepEqual(counts, { outer: 1, nested: 1 });
+    }),
+  ),
 );

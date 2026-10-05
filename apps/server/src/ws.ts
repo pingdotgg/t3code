@@ -101,6 +101,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -962,16 +963,18 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projects.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
-        }),
-      );
+      const base = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+            return buildActiveShellSnapshot({
+              projects: yield* projects.listShells(),
+              threads,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+            });
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly);
       const enriched = yield* enrichProjectShells(base.projects);
       return {
         snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
@@ -1748,6 +1751,7 @@ const layerWsRpc = (
           }),
         )
         .pipe(
+          NodeSqliteClient.readOnly,
           Effect.flatMap((snapshot) =>
             enrichProjectShells(snapshot.projects).pipe(
               Effect.map(({ projects }) => ({ ...snapshot, projects })),
