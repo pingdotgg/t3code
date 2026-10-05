@@ -15,6 +15,7 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
@@ -117,6 +118,9 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { webhookHttpApiLayer } from "./scheduledTasks/webhookRoute.ts";
+import { ScheduledTaskWebhookOrigin } from "./scheduledTasks/ScheduledTaskService.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
@@ -444,7 +448,32 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+// Webhook URLs go through the relay only when the managed tunnel it forwards
+// to is configured; otherwise clients show the environment-relative path.
+const ScheduledTaskWebhookOriginLive = Layer.effect(
+  ScheduledTaskWebhookOrigin,
+  Effect.map(
+    Effect.all([ServerEnvironment.ServerEnvironment, ServerSecretStore.ServerSecretStore]),
+    ([environment, secrets]) =>
+      // The reference holds an effect so each read sees the current link state.
+      Effect.gen(function* () {
+        const [relayUrl, tunnelConfig] = yield* Effect.all([
+          secrets.get(RELAY_URL_SECRET),
+          secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+        ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
+        return {
+          environmentId: yield* environment.getEnvironmentId,
+          relayUrl:
+            Option.isSome(relayUrl) && Option.isSome(tunnelConfig)
+              ? new TextDecoder().decode(relayUrl.value) || null
+              : null,
+        };
+      }),
+  ),
+);
+
 const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
+  Layer.provide(ScheduledTaskWebhookOriginLive),
   Layer.provide(ProviderEventIngestor.analyticsLive),
   Layer.provide(CheckpointStoreLayerLive),
   Layer.provide(GitWorkflowLayerLive),
@@ -643,6 +672,7 @@ const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(webhookHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,

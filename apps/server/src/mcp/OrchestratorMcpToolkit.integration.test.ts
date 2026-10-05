@@ -443,7 +443,8 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     title: input.title,
     prompt: input.prompt,
     enabled: input.enabled,
-    schedule: input.schedule,
+    schedule:
+      input.schedule.type === "webhook" ? { type: "webhook", signature: null } : input.schedule,
     projectId: input.projectId,
     threadId: input.threadId ?? null,
     workspaceStrategy: input.workspaceStrategy,
@@ -471,6 +472,10 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+    rotateWebhookToken: () => Effect.die("unused in this test"),
+    listWebhookDeliveries: () => Effect.die("unused in this test"),
+    getWebhookDelivery: () => Effect.die("unused in this test"),
+    triggerWebhook: () => Effect.die("unused in this test"),
   }),
 );
 
@@ -628,6 +633,10 @@ describe("orchestrator MCP toolkit", () => {
                   all.filter((candidate) => candidate.id !== input.id),
                 ).pipe(Effect.as({ id: input.id })),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+              rotateWebhookToken: () => Effect.die("unused in this test"),
+              listWebhookDeliveries: () => Effect.die("unused in this test"),
+              getWebhookDelivery: () => Effect.die("unused in this test"),
+              triggerWebhook: () => Effect.die("unused in this test"),
             }),
           );
           const testLayer = Layer.merge(

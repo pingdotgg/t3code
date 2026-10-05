@@ -64,7 +64,7 @@ const OrchestratorMcpSchedule = Schema.Union([
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
-    "Recurring schedule object: {type:'interval', everyMs} or {type:'fixed_time', timeOfDay, weekdays?}. Never stringify it unless the provider requires the compatibility form.",
+    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
 });
 
 /**
@@ -541,6 +541,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  /** For webhook tasks: the public T3 Connect URL, or the environment-relative path when the environment is not linked. */
+  webhookUrl: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 

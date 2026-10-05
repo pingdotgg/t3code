@@ -87,6 +87,7 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
+  if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
@@ -1024,6 +1025,8 @@ function EnvironmentTasks({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Edit ${task.title}`}
+              // Webhook tasks are not editable here yet; saving would drop their URL.
+              disabled={task.schedule.type === "webhook"}
               onPress={() => {
                 onEdit(task);
               }}
@@ -1048,7 +1051,7 @@ function EnvironmentTasks({
             </Pressable>
             <ControlPillMenu
               actions={[
-                { id: "edit", title: "Edit" },
+                ...(task.schedule.type === "webhook" ? [] : [{ id: "edit", title: "Edit" }]),
                 { id: "toggle", title: task.enabled ? "Pause" : "Resume" },
                 { id: "run", title: "Run now" },
                 { id: "delete", title: "Delete", attributes: { destructive: true } },

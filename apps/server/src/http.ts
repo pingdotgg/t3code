@@ -46,6 +46,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -381,9 +382,9 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 // ignored, as in routing.
 const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
-  return UNTRACED_REQUEST_PATHS.has(
-    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
-  );
+  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  // Webhook URLs carry their secret token in the path, so they never reach a trace.
+  return UNTRACED_REQUEST_PATHS.has(path) || path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`);
 });
 
 export const withUntracedRequests = Layer.provide(untracedRequestsLayer);

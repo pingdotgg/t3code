@@ -194,7 +194,12 @@ export function ThreadAutomationsPanel(props: {
                     variant="ghost"
                     part="icon"
                     aria-label={`Run ${task.title} now`}
-                    disabled={busyTaskId !== null || task.lastRunStatus === "running"}
+                    // A webhook task runs from its URL; there is no request to run it with.
+                    disabled={
+                      busyTaskId !== null ||
+                      task.lastRunStatus === "running" ||
+                      task.schedule.type === "webhook"
+                    }
                     onClick={() => void runNow(task)}
                   >
                     <PlayIcon className="size-3.5" />

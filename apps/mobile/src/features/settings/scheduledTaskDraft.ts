@@ -51,6 +51,8 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
+  // Webhook tasks cannot be edited here yet; show them as the default schedule.
+  if (task.schedule.type === "webhook") return DEFAULT_SCHEDULE;
   return task.schedule.type === "fixed_time"
     ? {
         ...DEFAULT_SCHEDULE,
