@@ -3762,6 +3762,21 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         (yield* projectionStore.getThreadProjection(sourceThreadId)).messages,
       );
       const targetAfterRollback = yield* projectionStore.getThreadProjection(targetThreadId);
+      // Both shell reads drop the rolled-back run from the source count, while
+      // the fork keeps the prefix it inherited.
+      const shellSnapshot = yield* projectionStore.getShellSnapshot();
+      for (const shell of [
+        yield* projectionStore.getThreadShell(sourceThreadId),
+        shellSnapshot.threads.find((thread) => thread.id === sourceThreadId),
+      ]) {
+        assert.equal(shell?.itemCount, 2);
+      }
+      for (const shell of [
+        yield* projectionStore.getThreadShell(targetThreadId),
+        shellSnapshot.threads.find((thread) => thread.id === targetThreadId),
+      ]) {
+        assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
+      }
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
         view: "activity",
         limit: 2,

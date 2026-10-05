@@ -132,6 +132,7 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  skipUnchangedThreadShells,
   toShellApplicationEvent,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
@@ -1030,6 +1031,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         Stream.groupedWithin(512, Duration.millis(50)),
         Stream.mapEffect((events) => projectShellItems(Array.from(events))),
         Stream.flatMap(Stream.fromIterable),
+        skipUnchangedThreadShells,
       );
 
     const liveFrom = (afterSequence: number) =>
