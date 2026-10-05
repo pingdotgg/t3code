@@ -41,6 +41,16 @@ Unknown counts stay absent. Partial usage contains valid observed counts but
 cannot establish a whole-turn total. Keep these distinctions when changing token
 normalization or building reports.
 
+Agent tool events report driver kinds, never instance ids: users name
+instances, so an instance id can identify an account or employer.
+[Provider dimensions](../../apps/server/src/telemetry/ProviderDimensions.ts)
+report a model only when it is a non-custom entry in a vendor catalog. OpenCode,
+Pi, and ACP agents list models from user configuration, such as local Ollama
+tags, so their models stay out. Handoff settings come from closed enums and
+booleans in tool arguments; prompts, titles, and ids are never read. Thread ids
+are used only to look up the threads on each side and never leave the server,
+which is also why tool events carry no per-thread sequence.
+
 ## Delivery
 
 A send can fail after PostHog has stored the batch, so every retry is a copy.
