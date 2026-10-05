@@ -9,7 +9,7 @@
 #                            (default: stable; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
 #   T3CODE_HOME              T3 home directory (default: ~/.t3)
-#   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
+#   T3CODE_INSTALL_BIN_DIR   where the `t3` command goes (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
@@ -218,7 +218,17 @@ fi
 
 step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
-ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
+# A script that runs the executable by absolute path, not a symlink. Through a
+# PATH symlink the executable's argv[1] is the bare name `t3`, and code that
+# trusts argv[1] (the Cursor SDK's helper lookup) then searches the current
+# folder. `t3 update` rewrites this script in the same format. The rename
+# replaces an older symlink instead of writing through it.
+executable="$(CDPATH= cd -- "$target_dir" && pwd)/t3"
+quoted_executable="$(printf '%s' "$executable" | sed "s/'/'\\\\''/g")"
+launcher_tmp="$(mktemp "${bin_dir}/.t3.XXXXXX")"
+printf "#!/bin/sh\nexec '%s' \"\$@\"\n" "$quoted_executable" > "$launcher_tmp"
+chmod 755 "$launcher_tmp"
+mv -f "$launcher_tmp" "${bin_dir}/t3"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
 case ":${PATH}:" in
