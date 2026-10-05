@@ -410,6 +410,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queue.resume":
+    case "queue.hold":
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
@@ -9628,6 +9629,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         if (queued.length === 0) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: projection.thread,
+          });
+        }
+        break;
+      }
+      case "queue.hold": {
+        // Under the thread lock that also starts queued runs, so once this
+        // commits no queued run can start until the queue is resumed.
+        const projection = yield* loadProjectionForCommand(command, ["runs"]);
+        const now = yield* DateTime.now;
+        const unheld = projection.runs.filter((run) => run.status === "queued" && !run.queueHeld);
+        for (const run of unheld) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, queueHeld: true },
+          });
+        }
+        if (unheld.length === 0) {
           yield* emit(
             events,
             command,

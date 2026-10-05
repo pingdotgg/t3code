@@ -1,4 +1,10 @@
 import {
+  FleetRequestReadResult,
+  FleetRequestRespondInput,
+  FleetRequestTarget,
+  FleetRequestsListInput,
+  FleetRequestsListResult,
+  FleetThreadOrganizeInput,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -9,9 +15,6 @@ import {
   ModelSelection,
   RuntimeMode,
   ProviderInteractionMode,
-  RuntimeRequestId,
-  ProviderUserInputAnswers,
-  IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
@@ -26,26 +29,13 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { homeRoutingDependencies } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
-  parameters: Schema.Struct({
-    threadId: Schema.optional(ThreadId),
-    action: Schema.Literals([
-      "pin",
-      "unpin",
-      "snooze",
-      "unsnooze",
-      "settle",
-      "unsettle",
-      "archive",
-      "unarchive",
-      "mark_unread",
-    ]),
-    snoozedUntil: Schema.optional(IsoDateTime),
-  }),
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action. Home can organize any thread in any environment.",
+  parameters: FleetThreadOrganizeInput,
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
@@ -53,6 +43,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
+    ...homeRoutingDependencies,
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
@@ -124,49 +115,33 @@ const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
-const requestTarget = { threadId: Schema.optional(ThreadId), requestId: RuntimeRequestId };
-const question = Schema.Struct({
-  id: Schema.String,
-  header: Schema.String,
-  question: Schema.String,
-  options: Schema.Array(
-    Schema.Struct({
-      label: Schema.String,
-      description: Schema.String,
-      value: Schema.optional(Schema.String),
-    }),
-  ),
-  multiSelect: Schema.optional(Schema.Boolean),
-  allowCustomAnswer: Schema.optional(Schema.Boolean),
-  required: Schema.optional(Schema.Boolean),
-});
-const pendingRequest = Schema.Struct({
-  requestId: RuntimeRequestId,
-  questions: Schema.Array(question),
-});
-const PendingRequestListTool = Tool.make("t3_pending_request_list", {
+const requestTool = {
   ...commandTool,
+  dependencies: [...commandTool.dependencies, ...homeRoutingDependencies],
+};
+const PendingRequestListTool = Tool.make("t3_pending_request_list", {
+  ...requestTool,
   description:
-    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
-  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
-  success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
+    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included, except for Home, which also gets approvalRequestIds, in any thread in any environment.",
+  parameters: FleetRequestsListInput,
+  success: FleetRequestsListResult,
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
-  ...commandTool,
+  ...requestTool,
   description:
-    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
-  parameters: Schema.Struct(requestTarget),
-  success: pendingRequest,
+    "Read a pending user question, or (Home only) an approval request with what it asks to do. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+  parameters: FleetRequestTarget,
+  success: FleetRequestReadResult,
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
-  ...commandTool,
+  ...requestTool,
   description:
-    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
-  parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
+    "Answer a pending user-input request with answers using the existing runtime response command. Only Home can approve: it passes decision for an approval request.",
+  parameters: FleetRequestRespondInput,
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
@@ -239,13 +214,17 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread, or Home, that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
   }),
   success: OrchestrationSearchThreadsResult,
-  dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
+  dependencies: [
+    ...commandTool.dependencies,
+    ThreadSearch.ThreadSearch,
+    ...homeRoutingDependencies,
+  ],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);

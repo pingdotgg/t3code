@@ -80,6 +80,7 @@ describe("orchestrator MCP tool guidance", () => {
 
     assert.equal(schema.type, "object");
     assert.hasAllKeys(schema.properties ?? {}, [
+      "environmentId",
       "threadId",
       "action",
       "title",

@@ -29,9 +29,13 @@ import {
   settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
 
-/** Pages whose every row is saved on this client; they have no scope to pick. */
+/**
+ * Pages whose every row is saved on this client or this desktop's own server;
+ * they have no scope to pick.
+ */
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
+  "/settings/home",
   "/settings/snap-shot",
   "/settings/connections",
 ]);

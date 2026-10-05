@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  defaultNewThreadProjectRef,
   resolveThreadActionProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
@@ -113,6 +114,45 @@ describe("chatThreadActions", () => {
     );
 
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
+  });
+
+  it("never picks Home's folder as the default project", () => {
+    const home = { environmentId: ENVIRONMENT_ID, id: PROJECT_ID, workspaceRoot: "/data/home" };
+    const app = {
+      environmentId: ENVIRONMENT_ID,
+      id: FALLBACK_PROJECT_ID,
+      workspaceRoot: "/code/app",
+    };
+    const options = { primaryEnvironmentId: ENVIRONMENT_ID, homeWorkspaceRoot: "/data/home" };
+    expect(defaultNewThreadProjectRef([home, app], options)).toEqual(
+      scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
+    );
+    expect(defaultNewThreadProjectRef([home], options)).toBeNull();
+  });
+
+  it("never starts a new thread in Home's folder from Home's draft before its shell loads", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeDraftThread: {
+          threadId: "home:current",
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+        },
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
+  });
+
+  it("never starts a new thread in Home's folder from Home", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: { id: "home:current", environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
+        activeDraftThread: { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
   });
 
   it("falls back to the active draft thread project when there is no active thread", () => {

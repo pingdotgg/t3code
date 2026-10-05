@@ -662,6 +662,11 @@ export const ServerConfig = Schema.Struct({
    */
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * Folder behind Home, the fleet-wide agent thread. Present only on servers a
+   * desktop app hosts, which are the only ones that can run Home.
+   */
+  homeWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Folder that holds projects started from just a name. Present only on
    * servers that answer projects.createNew.
    */

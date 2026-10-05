@@ -7123,12 +7123,19 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
   const onOpenRelatedThread = useCallback(
     (threadId: ThreadId) => {
+      // Related threads live here, except a message Home sent from another environment.
+      const owner = serverThreadRefs.some(
+        (ref) => ref.environmentId === environmentId && ref.threadId === threadId,
+      )
+        ? environmentId
+        : (serverThreadRefs.find((ref) => ref.threadId === threadId)?.environmentId ??
+          environmentId);
       void navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+        params: buildThreadRouteParams(scopeThreadRef(owner, threadId)),
       });
     },
-    [environmentId, navigate],
+    [environmentId, navigate, serverThreadRefs],
   );
 
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {

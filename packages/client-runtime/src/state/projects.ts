@@ -145,6 +145,14 @@ export function isScratchProject(
   );
 }
 
+/** Whether a project is the folder behind Home (`ServerConfig.homeWorkspaceRoot`). */
+export function isHomeProject(
+  project: { readonly workspaceRoot: string },
+  homeWorkspaceRoot: string | null | undefined,
+): boolean {
+  return isScratchProject(project, homeWorkspaceRoot);
+}
+
 export function inferProjectTitleFromPath(value: string): string {
   const normalized = normalizeProjectPathForDispatch(value);
   const absolutePath = splitAbsolutePath(normalized);

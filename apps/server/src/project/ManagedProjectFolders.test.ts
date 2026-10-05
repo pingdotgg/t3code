@@ -128,6 +128,21 @@ it.effect("offers a Scratch folder under the data dir when it is outside a check
   ),
 );
 
+it.effect("knows which paths are Home's folder or inside it", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const path = yield* Path.Path;
+      const home = path.resolve(baseDir, "home");
+      assert.isTrue(yield* folders.isInHomeFolder(home));
+      assert.isTrue(yield* folders.isInHomeFolder(path.join(home, "notes")));
+      assert.isTrue(yield* folders.isInHomeFolder(path.join(home, "..notes")));
+      assert.isFalse(yield* folders.isInHomeFolder(`${home}work`));
+      assert.isFalse(yield* folders.isInHomeFolder(baseDir));
+    }),
+  ),
+);
+
 it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -570,3 +585,16 @@ it.effect("removes the folder when the repository cannot be made", () =>
     },
   ),
 );
+
+it("keeps the user's Home instructions while refreshing T3's section", () => {
+  const fresh = ManagedProjectFolders.refreshHomeAgents(null);
+  assert.isNotNull(fresh);
+  const edited = fresh!
+    .replace("You are Home", "You were Home")
+    .concat("\nAlways answer in French.\n");
+  const refreshed = ManagedProjectFolders.refreshHomeAgents(edited);
+  assert.include(refreshed!, "You are Home");
+  assert.include(refreshed!, "Always answer in French.");
+  assert.isNull(ManagedProjectFolders.refreshHomeAgents(refreshed));
+  assert.isNull(ManagedProjectFolders.refreshHomeAgents("# My own file\n"));
+});

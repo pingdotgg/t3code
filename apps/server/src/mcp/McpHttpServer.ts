@@ -25,6 +25,8 @@ import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { HomeToolkit } from "./toolkits/home/tools.ts";
+import { HomeHandlersLive } from "./toolkits/home/handlers.ts";
 import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
@@ -687,6 +689,8 @@ const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
   Layer.provide(ProjectHandlersLive),
 );
 
+const HomeRegistrationLive = McpServer.toolkit(HomeToolkit).pipe(Layer.provide(HomeHandlersLive));
+
 const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
   Layer.provide(AttachmentHandlersLive),
 );
@@ -721,6 +725,7 @@ export const layer = Layer.mergeAll(
   ThreadToolkitRegistrationLive,
   AttachmentRegistrationLive,
   ProjectRegistrationLive,
+  HomeRegistrationLive,
   EnvironmentRegistrationLive,
   PreviewControlsRegistrationLive,
   WorktreeToolkitRegistrationLive,

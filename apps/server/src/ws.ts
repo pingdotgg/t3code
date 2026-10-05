@@ -97,6 +97,7 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  HomeUnavailableError,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -177,6 +178,9 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as FleetBroker from "./home/FleetBroker.ts";
+import * as FleetService from "./home/FleetService.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1198,6 +1202,9 @@ const makeWsRpcLayer = (
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const home = yield* HomeService.HomeService;
+      const fleet = yield* FleetService.FleetService;
+      const fleetBroker = yield* FleetBroker.FleetBroker;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -1715,6 +1722,7 @@ const makeWsRpcLayer = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...(home.available ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
           };
         });
 
@@ -2562,10 +2570,12 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch: clientPatch, providerInstanceMutation }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
             Effect.gen(function* () {
+              // Home's state changes only through the Home RPCs and Home's tools.
+              const { home: _home, ...patch } = clientPatch;
               const deviceHosts = patch.deviceHosts
                 ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                     Effect.provide(deviceHostContext),
@@ -3511,6 +3521,38 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
+        [WS_METHODS.homeEnable]: (input) =>
+          observeRpcEffect(WS_METHODS.homeEnable, home.enable(input), { "rpc.aggregate": "home" }),
+        [WS_METHODS.homeDisable]: (_input) =>
+          observeRpcEffect(WS_METHODS.homeDisable, home.disable, { "rpc.aggregate": "home" }),
+        [WS_METHODS.homeStartFresh]: (_input) =>
+          observeRpcEffect(WS_METHODS.homeStartFresh, home.startFresh, {
+            "rpc.aggregate": "home",
+          }),
+        [WS_METHODS.fleetInvoke]: (input) =>
+          observeRpcEffect(WS_METHODS.fleetInvoke, fleet.execute(input), {
+            "rpc.aggregate": "fleet",
+          }),
+        [WS_METHODS.fleetConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.fleetConnect,
+            home.available
+              ? fleetBroker.connect(input)
+              : Effect.fail(
+                  new HomeUnavailableError({
+                    message: "Home runs only on a server the T3 Code desktop app hosts.",
+                  }),
+                ),
+            { "rpc.aggregate": "fleet" },
+          ),
+        [WS_METHODS.fleetRespond]: (input) =>
+          observeRpcEffect(WS_METHODS.fleetRespond, fleetBroker.respond(input), {
+            "rpc.aggregate": "fleet",
+          }),
+        [WS_METHODS.fleetReportWatchEvents]: (input) =>
+          observeRpcEffect(WS_METHODS.fleetReportWatchEvents, home.report(input), {
+            "rpc.aggregate": "home",
+          }),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
@@ -3784,6 +3826,11 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const homeLayer = Layer.mergeAll(
+      Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
+      Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
+      Layer.succeed(FleetBroker.FleetBroker, yield* FleetBroker.FleetBroker),
+    );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
@@ -3840,6 +3887,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(homeLayer),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
