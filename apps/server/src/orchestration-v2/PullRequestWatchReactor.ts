@@ -64,8 +64,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
 /**
  * Wakes a thread's agent when a pull request it watches (`watch_pull_request`) needs a look:
  * checks finished on the head commit, someone else commented, or the branch started to
- * conflict. One pass a minute reads each watched pull request; settled threads wait until
- * they are active again, and a merged or closed pull request ends its watch.
+ * conflict. One pass a minute reads each watched pull request; settling a thread ends its
+ * watches, and a merged or closed pull request ends its watch.
  */
 export class PullRequestWatchReactor extends Context.Service<
   PullRequestWatchReactor,

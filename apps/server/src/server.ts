@@ -574,7 +574,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(PtyAdapterLive),
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.
-  Layer.provideMerge(AcpRegistryCatalogLive),
+  Layer.provideMerge(AcpRegistryCatalogLive.pipe(Layer.provide(ServerSettingsLayerLive))),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // V2 drivers and the orchestration runtime. Provide resource attribution so
   // the rewritten telemetry pipeline can account for logical NDJSON writes.

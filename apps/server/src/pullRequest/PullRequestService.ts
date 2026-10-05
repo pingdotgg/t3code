@@ -5,6 +5,7 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -2887,7 +2888,12 @@ export const make = Effect.gen(function* () {
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
-    return Cache.get(listCache, key);
+    // A replacement reader can join a lookup still finishing its previous reader's cancellation.
+    return Cache.get(listCache, key).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Cache.get(listCache, key) : Effect.failCause(cause),
+      ),
+    );
   };
 
   const checksCache = yield* Cache.makeWith(
@@ -3134,7 +3140,11 @@ export const make = Effect.gen(function* () {
     }
     if (missing.size === 0) return { stats: held };
     const key = statsBatchKey(missing.values());
-    const { result, at } = yield* Cache.get(listStatsCache, key);
+    const { result, at } = yield* Cache.get(listStatsCache, key).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Cache.get(listStatsCache, key) : Effect.failCause(cause),
+      ),
+    );
     for (const [key, ref] of missing) {
       const stat = result.stats.find(
         (stat) =>

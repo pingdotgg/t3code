@@ -5,12 +5,6 @@ import {
 } from "./agentActivityAggregate.ts";
 import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
 
-export function androidActivityHero(aggregate: RelayAgentActivityAggregateState) {
-  return [...aggregate.activities].sort(
-    (a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase),
-  )[0];
-}
-
 /** Android focuses the priority thread while retaining rows for older clients. */
 export function androidActivityData(aggregate: RelayAgentActivityAggregateState | null) {
   const rows = [...(aggregate?.activities ?? [])].sort(

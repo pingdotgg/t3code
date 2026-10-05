@@ -183,14 +183,17 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
 
 export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const runtimeCoordinator = options.runtimeCoordinator;
-  const isDevin = options.settings.agentId === "devin";
+  const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
+  const startupKey =
+    options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
+  const isDevin = registryAgentId === "devin";
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
-    promptFailure: (cause) => acpRegistryPromptFailure(options.settings.agentId, cause),
+    promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     // Per-agent exceptions (Mistral Vibe, Devin): see the note above
     // registerMistralVibeAcpExtensions before adding any more.
-    ...(options.settings.agentId === "mistral-vibe"
+    ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
     ...(isDevin
@@ -230,7 +233,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
             });
           },
           withRuntimeStartup: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-            runtimeCoordinator.withForegroundStartup(options.settings.agentId, effect),
+            runtimeCoordinator.withForegroundStartup(startupKey, effect),
         }),
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };

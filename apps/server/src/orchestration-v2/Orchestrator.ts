@@ -2369,6 +2369,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
+      command.type === "thread.pull-request.watch" &&
+      command.watching &&
+      (thread.settledOverride === "settled" || thread.settledAt !== null)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is settled and cannot watch pull requests.`,
+      });
+    }
+    if (
       command.type === "thread.metadata.update" &&
       command.expectedWorktreePath !== undefined &&
       command.expectedWorktreePath !== thread.worktreePath
@@ -2685,6 +2696,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
