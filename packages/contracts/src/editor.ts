@@ -115,11 +115,16 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
  * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
  * local editor over SSH. Returns undefined for editors without remote
  * deep-link support.
+ *
+ * VS Code-family editors open a `vscode-remote` link as a folder workspace
+ * unless the path ends in `:<line>`, so pass `line` when `absolutePath` is a
+ * file. Zed opens files from its plain ssh link and ignores `line`.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly line?: number;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -139,7 +144,8 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  const lineSuffix = input.line === undefined ? "" : `:${input.line}`;
+  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}${lineSuffix}`;
 };
 
 /**

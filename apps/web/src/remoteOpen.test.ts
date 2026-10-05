@@ -160,6 +160,26 @@ describe("buildRemoteOpenUrl", () => {
     );
   });
 
+  it("adds a line suffix so VS Code opens a file instead of a folder", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "kamon.local",
+        absolutePath: "/home/zazz/my repo/a.ts",
+        line: 1,
+      }),
+    ).toBe("vscode://vscode-remote/ssh-remote+kamon.local/home/zazz/my%20repo/a.ts:1");
+    expect(
+      buildRemoteOpenUrl({ editor: "cursor", host: "sol", absolutePath: "/tmp/x.ts", line: 12 }),
+    ).toBe("cursor://vscode-remote/ssh-remote+sol/tmp/x.ts:12");
+  });
+
+  it("leaves Zed links without a line suffix", () => {
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/tmp/x.ts", line: 1 }),
+    ).toBe("zed://ssh/sol/tmp/x.ts");
+  });
+
   it("returns undefined for editors without remote support", () => {
     expect(buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
