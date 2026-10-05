@@ -20,6 +20,7 @@ import {
   getNewProjectPathPreview,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  resolveCloneParentDirectory,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
@@ -35,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  findProjectByPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -60,6 +62,7 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { serverEnvironment } from "../../state/server";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
@@ -1228,6 +1231,9 @@ export function AddProjectDestinationScreen(props: {
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
@@ -1245,8 +1251,35 @@ export function AddProjectDestinationScreen(props: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [isSavingCloneFolder, setIsSavingCloneFolder] = useState(false);
+  const cloneParentDirectory = environment
+    ? resolveCloneParentDirectory({ rawPath: pathInput, platform: environment.platform })
+    : null;
+  const isDefaultCloneFolder =
+    cloneParentDirectory !== null &&
+    findProjectByPath(
+      [{ workspaceRoot: environment?.baseDirectory || "~/" }],
+      cloneParentDirectory,
+    ) !== undefined;
+
+  const saveCloneParentDirectory = async () => {
+    if (!environment || cloneParentDirectory === null || isSavingCloneFolder || isSubmitting)
+      return;
+    setError(null);
+    setIsSavingCloneFolder(true);
+    const result = await updateEnvironmentSettings({
+      environmentId: environment.environmentId,
+      input: { patch: { addProjectBaseDirectory: cloneParentDirectory } },
+    });
+    setIsSavingCloneFolder(false);
+    if (AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+    }
+  };
+
   const submitPath = useCallback(async () => {
-    if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting) return;
+    if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
+      return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -1322,6 +1355,7 @@ export function AddProjectDestinationScreen(props: {
     createProject,
     environment,
     isBrowseNavigating,
+    isSavingCloneFolder,
     isSubmitting,
     navigation,
     pathInput,
@@ -1349,10 +1383,31 @@ export function AddProjectDestinationScreen(props: {
           />
           <PrimaryActionButton
             label="Clone project"
-            disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
+            disabled={isBrowseNavigating || isSubmitting || isSavingCloneFolder || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
+          {cloneParentDirectory !== null ? (
+            <View className="gap-2 rounded-[24px] bg-grouped-card px-4 py-3">
+              <Text className="text-xs text-foreground-muted">Parent folder</Text>
+              <Text className="text-sm" numberOfLines={2}>
+                {cloneParentDirectory}
+              </Text>
+              <MaterialButton
+                label={
+                  isSavingCloneFolder
+                    ? "Saving…"
+                    : isDefaultCloneFolder
+                      ? "Default folder"
+                      : "Use this folder by default"
+                }
+                tone="secondary"
+                disabled={isDefaultCloneFolder || isBrowseNavigating || isSubmitting}
+                loading={isSavingCloneFolder}
+                onPress={() => void saveCloneParentDirectory()}
+              />
+            </View>
+          ) : null}
           <FolderBrowser
             environment={environment}
             navigateToBrowsePath={navigateToBrowsePath}

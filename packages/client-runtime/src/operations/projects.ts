@@ -18,8 +18,10 @@ import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
+  getBrowseParentPath,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
@@ -335,6 +337,23 @@ export function resolveAddProjectPath(input: {
   }
   const path = resolveProjectPathForDispatch(rawPath, input.currentProjectCwd);
   return path.length === 0 ? { ok: false, error: "Enter a project path." } : { ok: true, path };
+}
+
+/** The parent of the final clone destination, including renamed or existing repository folders. */
+export function resolveCloneParentDirectory(input: {
+  readonly rawPath: string;
+  readonly currentProjectCwd?: string | null;
+  readonly platform: string;
+}): string | null {
+  const resolved = resolveAddProjectPath(input);
+  if (
+    !resolved.ok ||
+    isExplicitRelativeProjectPath(resolved.path) ||
+    !isFilesystemBrowseQuery(resolved.path, input.platform)
+  ) {
+    return null;
+  }
+  return getBrowseParentPath(resolved.path);
 }
 
 export function findExistingAddProject(input: {

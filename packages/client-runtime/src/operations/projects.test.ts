@@ -19,6 +19,7 @@ import {
   getDefaultCloneUrl,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  resolveCloneParentDirectory,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -157,6 +158,50 @@ describe("add project shared logic", () => {
         caseSensitive: false,
       }),
     ).toBe("C:\\Projects\\Repo\\");
+  });
+
+  it("remembers the parent of a clone destination instead of the repository folder", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "~/Code/repo", platform: "darwin" })).toBe(
+      "~/Code/",
+    );
+    expect(
+      resolveCloneParentDirectory({ rawPath: "  /work/My Projects/renamed/  ", platform: "linux" }),
+    ).toBe("/work/My Projects/");
+    expect(resolveCloneParentDirectory({ rawPath: "~/repo/", platform: "darwin" })).toBe("~/");
+    expect(resolveCloneParentDirectory({ rawPath: "/repo", platform: "linux" })).toBe("/");
+  });
+
+  it("remembers clone parents on Windows drives and network shares", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "C:\\Code\\repo\\", platform: "win32" })).toBe(
+      "C:\\Code\\",
+    );
+    expect(
+      resolveCloneParentDirectory({ rawPath: "\\\\host\\share\\repo", platform: "win32" }),
+    ).toBe("\\\\host\\share\\");
+  });
+
+  it("resolves a relative clone parent against its environment's active project", () => {
+    expect(
+      resolveCloneParentDirectory({
+        rawPath: "../next",
+        currentProjectCwd: "/work/current",
+        platform: "linux",
+      }),
+    ).toBe("/work/");
+  });
+
+  it("does not save ambiguous, unsupported or root destinations as clone parents", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "../repo", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "Code/repo", platform: "linux" })).toBeNull();
+    expect(
+      resolveCloneParentDirectory({ rawPath: "C:\\Code\\repo", platform: "darwin" }),
+    ).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "/", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "C:\\", platform: "win32" })).toBeNull();
+    expect(
+      resolveCloneParentDirectory({ rawPath: "\\\\host\\share\\", platform: "win32" }),
+    ).toBeNull();
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {

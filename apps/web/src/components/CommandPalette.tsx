@@ -14,6 +14,7 @@ import {
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
   normalizePastedCloneUrl,
+  resolveCloneParentDirectory,
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -727,6 +728,9 @@ function OpenCommandPaletteDialog(props: {
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
@@ -882,6 +886,7 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [isSavingCloneFolder, setIsSavingCloneFolder] = useState(false);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -2541,7 +2546,7 @@ function OpenCommandPaletteDialog(props: {
   }
 
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
-    if (!addProjectCloneFlow) {
+    if (!addProjectCloneFlow || isSavingCloneFolder) {
       return;
     }
     if (!canCreateProjectInEnvironment(browseEnvironment?.connection.phase)) {
@@ -2787,6 +2792,60 @@ function OpenCommandPaletteDialog(props: {
   const resolvedAddProjectPath = hasTrailingPathSeparator(query)
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
+
+  const cloneParentDirectory =
+    addProjectCloneFlow?.step === "confirm"
+      ? resolveCloneParentDirectory({
+          rawPath: resolvedAddProjectPath,
+          currentProjectCwd: currentProjectCwdForBrowse,
+          platform: browseEnvironmentPlatform,
+        })
+      : null;
+  const isDefaultCloneFolder =
+    cloneParentDirectory !== null &&
+    findProjectByPath(
+      [
+        {
+          workspaceRoot: browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory || "~/",
+        },
+      ],
+      cloneParentDirectory,
+    ) !== undefined;
+
+  async function saveCloneParentDirectory(): Promise<void> {
+    if (
+      addProjectCloneFlow?.step !== "confirm" ||
+      cloneParentDirectory === null ||
+      isSavingCloneFolder ||
+      isRemoteProjectCloning ||
+      !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+    ) {
+      return;
+    }
+    setIsSavingCloneFolder(true);
+    const result = await updateEnvironmentSettings({
+      environmentId: addProjectCloneFlow.environmentId,
+      input: { patch: { addProjectBaseDirectory: cloneParentDirectory } },
+    });
+    setIsSavingCloneFolder(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to save default folder",
+            description: errorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: "Default project folder saved",
+      description: cloneParentDirectory,
+    });
+  }
 
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
@@ -3346,7 +3405,7 @@ function OpenCommandPaletteDialog(props: {
               disabled={
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
                 relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
+                (isCloneDestinationStep && (isRemoteProjectPending || isSavingCloneFolder))
               }
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -3486,6 +3545,31 @@ function OpenCommandPaletteDialog(props: {
               </span>
             </span>
           </div>
+          {cloneParentDirectory !== null ? (
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-muted-foreground text-xs">Parent folder</span>
+                <span className="truncate text-sm">{cloneParentDirectory}</span>
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={
+                  isDefaultCloneFolder ||
+                  isSavingCloneFolder ||
+                  isRemoteProjectPending ||
+                  !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+                }
+                onClick={() => void saveCloneParentDirectory()}
+              >
+                {isSavingCloneFolder
+                  ? "Saving…"
+                  : isDefaultCloneFolder
+                    ? "Default folder"
+                    : "Use this folder by default"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults
