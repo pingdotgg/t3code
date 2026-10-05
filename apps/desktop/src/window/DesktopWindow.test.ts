@@ -72,6 +72,8 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
+let nextFakeWindowId = 1;
+
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
@@ -100,6 +102,7 @@ function makeFakeBrowserWindow() {
   };
 
   const window = {
+    id: nextFakeWindowId++,
     close: vi.fn(),
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
@@ -148,6 +151,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    setBackgroundColor: window.setBackgroundColor,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -221,6 +225,7 @@ function makeTestLayer(input: {
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly clientSettings?: Option.Option<ClientSettings>;
+  readonly clientSettingsRef?: Ref.Ref<Option.Option<ClientSettings>>;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
   readonly beforeMainWindowBoundsUpdate?: (
@@ -294,7 +299,9 @@ function makeTestLayer(input: {
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         Layer.mock(DesktopClientSettings.DesktopClientSettings)({
-          get: Effect.succeed(input.clientSettings ?? Option.none()),
+          get: input.clientSettingsRef
+            ? Ref.get(input.clientSettingsRef)
+            : Effect.succeed(input.clientSettings ?? Option.none()),
         }),
         desktopServerExposureLayer,
         DesktopState.layer,
@@ -644,6 +651,76 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.isNotTrue(createdWindowOptions[0]?.transparent);
         assert.equal(createdWindowOptions[0]?.backgroundColor, "#ffffff");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "keeps a transparent window transparent when the setting rises before a theme sync",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const clientSettingsRef = yield* Ref.make(
+          Option.some({ ...DEFAULT_CLIENT_SETTINGS, glassOpacity: 40 }),
+        );
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions,
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          },
+          clientSettingsRef,
+        });
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMainIfBackendReady;
+          assert.isTrue(createdWindowOptions[0]?.transparent);
+          yield* Ref.set(
+            clientSettingsRef,
+            Option.some({ ...DEFAULT_CLIENT_SETTINGS, glassOpacity: 100 }),
+          );
+          yield* desktopWindow.syncAppearance;
+          assert.equal(fakeWindow.setBackgroundColor.mock.calls.length, 0);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect("repaints an opaque window when the setting drops before a theme sync", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const clientSettingsRef = yield* Ref.make(
+        Option.some({ ...DEFAULT_CLIENT_SETTINGS, glassOpacity: 100 }),
+      );
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          localEnvironmentEnabled: false,
+        },
+        clientSettingsRef,
+      });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMainIfBackendReady;
+        assert.isNotTrue(createdWindowOptions[0]?.transparent);
+        yield* Ref.set(
+          clientSettingsRef,
+          Option.some({ ...DEFAULT_CLIENT_SETTINGS, glassOpacity: 40 }),
+        );
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls, [["#ffffff"]]);
       }).pipe(Effect.provide(layer));
     }),
   );

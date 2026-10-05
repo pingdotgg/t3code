@@ -680,19 +680,22 @@ html[data-desktop-translucent-window="true"] body {
   ) !important;
 }
 
-/* The sidebar and main column paint their own canvas over the page, so the
-   two canvas utilities join the same mix or the window keeps looking solid.
-   Deeper surfaces (cards, popovers, bubbles, muted rows) keep their colors,
-   which is what keeps text readable over the wallpaper. */
-html[data-desktop-translucent-window="true"] .bg-background {
+/* The app shell paints its own canvases over the page (sidebar surface,
+   main column, and their direct canvas children), so those join the same mix
+   or the window keeps looking solid. This stays scoped to the shell: nested
+   components using bg-background/bg-sidebar elsewhere (cards, inputs,
+   dialogs) keep their colors, which is what keeps text readable. */
+html[data-desktop-translucent-window="true"] [data-slot="sidebar"],
+html[data-desktop-translucent-window="true"] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent) !important;
+}
+html[data-desktop-translucent-window="true"] main[data-slot="sidebar-inset"],
+html[data-desktop-translucent-window="true"] main[data-slot="sidebar-inset"] > .bg-background {
   background-color: color-mix(
     in srgb,
     var(--background) var(--glass-opacity),
     transparent
   ) !important;
-}
-html[data-desktop-translucent-window="true"] .bg-sidebar {
-  background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent) !important;
 }
 
 @layer components {

@@ -350,6 +350,12 @@ export const make = Effect.gen(function* () {
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  // Main window ids created transparent. Transparency is fixed at creation, so
+  // later appearance syncs must follow this latch, not the live setting: a
+  // transparent window whose slider moved back up keeps its frame (repainting
+  // it opaque would strand it until restart), and an opaque window never
+  // skips its repaints.
+  const transparentMainWindowIds = new Set<number>();
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -364,7 +370,11 @@ export const make = Effect.gen(function* () {
         Option.getOrElse(persisted, () => DEFAULT_CLIENT_SETTINGS).glassOpacity,
       ),
     ),
-    Effect.orElseSucceed(() => false),
+    Effect.catch((error) =>
+      logWindowWarning("failed to read client settings; using opaque main window", {
+        cause: error,
+      }).pipe(Effect.as(false)),
+    ),
   );
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -455,6 +465,9 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    if (transparentMainWindow) {
+      transparentMainWindowIds.add(window.id);
+    }
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -872,6 +885,7 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      transparentMainWindowIds.delete(window.id);
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -1059,16 +1073,12 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      const transparentMainWindow = yield* readTransparentMainWindow;
-      const mainWindow = yield* currentMainWindow;
       yield* electronWindow.syncAllAppearance((window) =>
-        Effect.suspend(() => {
-          const isTransparentMain =
-            transparentMainWindow && Option.isSome(mainWindow) && window.id === mainWindow.value.id;
-          return syncWindowAppearance(window, shouldUseDarkColors, environment.platform, {
-            skipBackgroundColor: isTransparentMain,
-          });
-        }),
+        Effect.suspend(() =>
+          syncWindowAppearance(window, shouldUseDarkColors, environment.platform, {
+            skipBackgroundColor: transparentMainWindowIds.has(window.id),
+          }),
+        ),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
