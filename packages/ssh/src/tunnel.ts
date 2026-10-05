@@ -1926,8 +1926,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                 Effect.raceFirst(
                   Effect.gen(function* () {
                     const net = yield* NetService.NetService;
+                    // Both loopback families: the tab loads `localhost`, which may
+                    // resolve to a local ::1 server on the same port before ours.
                     const preferRemotePort =
-                      remotePort >= 1024 && (yield* net.canListenOnHost(remotePort, "127.0.0.1"));
+                      remotePort >= 1024 && (yield* net.isPortAvailableOnLoopback(remotePort));
                     const localPort = preferRemotePort
                       ? remotePort
                       : yield* reserveLocalTunnelPort();
@@ -1971,7 +1973,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                           if (
                             !preferRemotePort ||
                             error.exitCode === null ||
-                            (yield* net.canListenOnHost(localPort, "127.0.0.1"))
+                            (yield* net.isPortAvailableOnLoopback(localPort))
                           ) {
                             return yield* error;
                           }

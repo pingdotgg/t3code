@@ -39,10 +39,19 @@ const fixture = (
     readonly portInUseAfterProbe?: number;
     readonly collisionStderr?: Stream.Stream<Uint8Array>;
     readonly listening?: boolean;
+    /** A local server holds the preferred port on ::1 only. */
+    readonly ipv6Listener?: boolean;
   } = {},
 ) => {
   const commands: ReadonlyArray<string>[] = [];
   let killed = 0;
+  const ipv4Available = (port: number) =>
+    options.portInUseAfterProbe === port &&
+    commands.some(
+      (args) => args.includes("-N") && args.some((arg) => arg.startsWith(`127.0.0.1:${port}:`)),
+    )
+      ? false
+      : (options.preferredAvailable ?? false);
   let nextPort = 41773;
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -107,17 +116,9 @@ const fixture = (
     Layer.succeed(
       NetService.NetService,
       NetService.NetService.of({
-        canListenOnHost: (port) =>
-          Effect.succeed(
-            options.portInUseAfterProbe === port &&
-              commands.some(
-                (args) =>
-                  args.includes("-N") && args.some((arg) => arg.startsWith(`127.0.0.1:${port}:`)),
-              )
-              ? false
-              : (options.preferredAvailable ?? false),
-          ),
-        isPortAvailableOnLoopback: () => Effect.succeed(false),
+        canListenOnHost: (port) => Effect.succeed(ipv4Available(port)),
+        isPortAvailableOnLoopback: (port) =>
+          Effect.succeed(ipv4Available(port) && options.ipv6Listener !== true),
         hasListenerOnHost: () => Effect.succeed(options.listening ?? true),
         reserveLoopbackPort: () => Effect.sync(() => nextPort++),
         findAvailablePort: (port) => Effect.succeed(port),
@@ -185,6 +186,16 @@ describe("SSH preview port forwards", () => {
       }).pipe(Effect.provide(f.layer), Effect.scoped);
     },
   );
+
+  it.effect("falls back when a local server holds the preferred port on ::1 only", () => {
+    const f = fixture({ preferredAvailable: true, ipv6Listener: true });
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const lease = yield* manager.acquirePortForward(target, 5173);
+      assert.equal(lease.localPort, 41773);
+      assert.equal(f.spawns(), 1);
+    }).pipe(Effect.provide(f.layer), Effect.scoped);
+  });
 
   it.effect("falls back once if another listener takes the preferred port after the probe", () => {
     const f = fixture({ preferredAvailable: true, portInUseAfterProbe: 5173 });
