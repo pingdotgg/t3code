@@ -45,7 +45,7 @@ const isKiloSessionError = Schema.is(KiloSessionError);
 
 export const KILO_PROVIDER = ProviderDriverKind.make("kilo");
 
-const capabilities: OrchestrationV2ProviderCapabilities = {
+export const kiloCapabilities: OrchestrationV2ProviderCapabilities = {
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
@@ -314,6 +314,117 @@ export const kiloPermissionReply = (
       ? ("always" as const)
       : ("reject" as const);
 
+/** The execution node for the turn item of an assistant text, reasoning or tool part. */
+export const kiloPartNode = (
+  item: Pick<
+    OrchestrationV2ExecutionNode,
+    | "threadId"
+    | "runId"
+    | "status"
+    | "providerThreadId"
+    | "providerTurnId"
+    | "nativeItemRef"
+    | "startedAt"
+    | "completedAt"
+  > & { readonly nodeId: OrchestrationV2ExecutionNode["id"] },
+  rootNodeId: OrchestrationV2ExecutionNode["id"],
+  kind: "assistant_message" | "reasoning" | "tool_call",
+): OrchestrationV2ExecutionNode => ({
+  id: item.nodeId,
+  threadId: item.threadId,
+  runId: item.runId,
+  parentNodeId: rootNodeId,
+  rootNodeId,
+  kind,
+  status: item.status,
+  countsForRun: false,
+  providerThreadId: item.providerThreadId,
+  providerTurnId: item.providerTurnId,
+  nativeItemRef: item.nativeItemRef,
+  runtimeRequestId: null,
+  checkpointScopeId: null,
+  startedAt: item.startedAt,
+  completedAt: item.completedAt,
+});
+
+interface KiloRecords {
+  readonly driver: ProviderDriverKind;
+  readonly emit: (event: Adapter.ProviderAdapterV2Event) => Effect.Effect<void>;
+  readonly nodes: ReadonlyMap<string, OrchestrationV2ExecutionNode>;
+  readonly items: ReadonlyMap<string, OrchestrationV2TurnItem>;
+}
+
+/** Resolves or cancels a runtime request together with the node and item that present it. */
+export const kiloSettleRequest = Effect.fnUntraced(function* (
+  records: KiloRecords,
+  request: OrchestrationV2RuntimeRequest,
+  turnItemId: OrchestrationV2TurnItem["id"],
+  outcome: "resolved" | "cancelled",
+) {
+  const at = yield* DateTime.now;
+  const status = outcome === "resolved" ? "completed" : "interrupted";
+  const runtime = { ...request, status: outcome, resolvedAt: at };
+  yield* records.emit({
+    type: "runtime_request.updated",
+    driver: records.driver,
+    runtimeRequest: runtime,
+  });
+  const node = records.nodes.get(request.nodeId);
+  if (node)
+    yield* records.emit({
+      type: "node.updated",
+      driver: records.driver,
+      node: { ...node, status, completedAt: at },
+    });
+  const item = records.items.get(turnItemId);
+  if (item)
+    yield* records.emit({
+      type: "turn_item.updated",
+      driver: records.driver,
+      turnItem: { ...item, status, completedAt: at, updatedAt: at },
+    });
+  return runtime;
+});
+
+/** Ends the nodes, turn items and streaming messages a provider turn left open. */
+export const kiloEndOpenRecords = Effect.fnUntraced(function* (
+  records: KiloRecords,
+  messages: Map<string, OrchestrationV2ConversationMessage>,
+  providerTurnId: OrchestrationV2ProviderTurn["id"],
+  status: "completed" | "failed" | "interrupted",
+  at: DateTime.Utc,
+) {
+  const open = (record: OrchestrationV2ExecutionNode | OrchestrationV2TurnItem) =>
+    record.providerTurnId === providerTurnId &&
+    (record.status === "running" || record.status === "waiting");
+  for (const node of records.nodes.values())
+    if (open(node))
+      yield* records.emit({
+        type: "node.updated",
+        driver: records.driver,
+        node: { ...node, status, completedAt: at },
+      });
+  for (const item of records.items.values())
+    if (open(item))
+      yield* records.emit({
+        type: "turn_item.updated",
+        driver: records.driver,
+        turnItem: {
+          ...item,
+          status,
+          completedAt: at,
+          updatedAt: at,
+          ...("streaming" in item ? { streaming: false } : {}),
+        },
+      });
+  for (const [id, message] of messages) {
+    if (!message.streaming) continue;
+    const completed = { ...message, streaming: false, updatedAt: at };
+    messages.set(id, completed);
+    yield* records.emit({ type: "message.updated", driver: records.driver, message: completed });
+  }
+});
+
 export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly continuationKey: string;
@@ -328,7 +439,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
   return Adapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: KILO_PROVIDER,
-    getCapabilities: () => Effect.succeed(capabilities),
+    getCapabilities: () => Effect.succeed(kiloCapabilities),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("KiloAdapterV2.openSession")(function* (input) {
       const scope = yield* Effect.scope;
@@ -344,7 +455,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
         cwd: directory,
         model: input.modelSelection.model,
         status: "ready" as const,
-        capabilities,
+        capabilities: kiloCapabilities,
         createdAt: now,
         updatedAt: now,
         lastError: null,
@@ -358,6 +469,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
           if (event.type === "turn_item.updated") items.set(event.turnItem.id, event.turnItem);
           return Queue.offer(events, event).pipe(Effect.asVoid);
         });
+      const records = { driver: KILO_PROVIDER, emit, nodes, items };
       let ref: KiloSessionRef | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active:
@@ -471,42 +583,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
             runtimeRequest: pending.runtime,
           });
         }
-        for (const node of nodes.values()) {
-          if (
-            node.providerTurnId !== running.turn.id ||
-            !["running", "waiting"].includes(node.status)
-          )
-            continue;
-          yield* emit({
-            type: "node.updated",
-            driver: KILO_PROVIDER,
-            node: { ...node, status, completedAt },
-          });
-        }
-        for (const item of items.values()) {
-          if (
-            item.providerTurnId !== running.turn.id ||
-            !["running", "waiting"].includes(item.status)
-          )
-            continue;
-          yield* emit({
-            type: "turn_item.updated",
-            driver: KILO_PROVIDER,
-            turnItem: {
-              ...item,
-              status,
-              completedAt,
-              updatedAt: completedAt,
-              ...("streaming" in item ? { streaming: false } : {}),
-            },
-          });
-        }
-        for (const [id, message] of messages) {
-          if (!message.streaming) continue;
-          const completed = { ...message, streaming: false, updatedAt: completedAt };
-          messages.set(id, completed);
-          yield* emit({ type: "message.updated", driver: KILO_PROVIDER, message: completed });
-        }
+        yield* kiloEndOpenRecords(records, messages, running.turn.id, status, completedAt);
         for (const [id, child] of subagents) {
           if (child.runId !== running.input.runId || child.status !== "running") continue;
           const ended = { ...child, status, completedAt, updatedAt: completedAt };
@@ -650,23 +727,11 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
         yield* emit({
           type: "node.updated",
           driver: KILO_PROVIDER,
-          node: {
-            id: nodeId,
-            threadId: running.input.threadId,
-            runId: running.input.runId,
-            parentNodeId: running.input.rootNodeId,
-            rootNodeId: running.input.rootNodeId,
-            kind: part.type === "text" ? "assistant_message" : "reasoning",
-            status: base.status,
-            countsForRun: false,
-            providerThreadId: thread.id,
-            providerTurnId: running.turn.id,
-            nativeItemRef: nativeRef(part.id),
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: base.startedAt,
-            completedAt: base.completedAt,
-          },
+          node: kiloPartNode(
+            base,
+            running.input.rootNodeId,
+            part.type === "text" ? "assistant_message" : "reasoning",
+          ),
         });
         yield* emit({
           type: "turn_item.updated",
@@ -924,23 +989,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
         yield* emit({
           type: "node.updated",
           driver: KILO_PROVIDER,
-          node: {
-            id: nodeId,
-            threadId: running.input.threadId,
-            runId: running.input.runId,
-            parentNodeId: running.input.rootNodeId,
-            rootNodeId: running.input.rootNodeId,
-            kind: "tool_call",
-            status,
-            countsForRun: false,
-            providerThreadId: thread.id,
-            providerTurnId: running.turn.id,
-            nativeItemRef: nativeRef(part.id),
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: running.turn.startedAt,
-            completedAt: done ? at : null,
-          },
+          node: kiloPartNode(base, running.input.rootNodeId, "tool_call"),
         });
         yield* emit({
           type: "turn_item.updated",
@@ -1176,27 +1225,12 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
         for (const request of pending) yield* ask(request);
         for (const saved of requests.values()) {
           if (saved.runtime.status !== "pending" || present.has(saved.native.id)) continue;
-          const at = yield* DateTime.now;
-          saved.runtime = { ...saved.runtime, status: "cancelled", resolvedAt: at };
-          yield* emit({
-            type: "runtime_request.updated",
-            driver: KILO_PROVIDER,
-            runtimeRequest: saved.runtime,
-          });
-          const node = nodes.get(saved.runtime.nodeId);
-          if (node)
-            yield* emit({
-              type: "node.updated",
-              driver: KILO_PROVIDER,
-              node: { ...node, status: "interrupted", completedAt: at },
-            });
-          const item = items.get(ids.derive.approvalTurnItem({ requestId: saved.runtime.id }));
-          if (item)
-            yield* emit({
-              type: "turn_item.updated",
-              driver: KILO_PROVIDER,
-              turnItem: { ...item, status: "interrupted", completedAt: at, updatedAt: at },
-            });
+          saved.runtime = yield* kiloSettleRequest(
+            records,
+            saved.runtime,
+            ids.derive.approvalTurnItem({ requestId: saved.runtime.id }),
+            "cancelled",
+          );
         }
         if (!active?.admitted) return;
         const status = yield* wire(client.status(native));
@@ -1627,36 +1661,12 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
                   ),
                 );
               }
-              const resolved = {
-                ...pending.runtime,
-                status: "resolved" as const,
-                resolvedAt: yield* DateTime.now,
-              };
-              pending.runtime = resolved;
-              yield* emit({
-                type: "runtime_request.updated",
-                driver: KILO_PROVIDER,
-                runtimeRequest: resolved,
-              });
-              const node = nodes.get(pending.runtime.nodeId);
-              if (node)
-                yield* emit({
-                  type: "node.updated",
-                  driver: KILO_PROVIDER,
-                  node: { ...node, status: "completed", completedAt: resolved.resolvedAt },
-                });
-              const item = items.get(ids.derive.approvalTurnItem({ requestId: request.requestId }));
-              if (item)
-                yield* emit({
-                  type: "turn_item.updated",
-                  driver: KILO_PROVIDER,
-                  turnItem: {
-                    ...item,
-                    status: "completed",
-                    completedAt: resolved.resolvedAt,
-                    updatedAt: resolved.resolvedAt,
-                  },
-                });
+              pending.runtime = yield* kiloSettleRequest(
+                records,
+                pending.runtime,
+                ids.derive.approvalTurnItem({ requestId: request.requestId }),
+                "resolved",
+              );
             }),
           ),
         readThreadSnapshot: (request) =>

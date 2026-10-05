@@ -32,97 +32,53 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { openCodePermissionRules } from "./OpenCodeAdapterV2.ts";
 import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
-import { kiloInteraction, kiloPermissionReply, kiloQuestionAnswers } from "./KiloAdapterV2.ts";
+import {
+  kiloCapabilities,
+  kiloEndOpenRecords,
+  kiloInteraction,
+  kiloPartNode,
+  kiloPermissionReply,
+  kiloQuestionAnswers,
+  kiloSettleRequest,
+} from "./KiloAdapterV2.ts";
 
 export const KILO_CLOUD_PROVIDER = ProviderDriverKind.make("kilo-cloud");
+// The same native agent runs remotely. T3 cannot reach the sandbox's files, subagents or
+// native rewind, and only enforces policy where it answers remote interactions.
 const capabilities: OrchestrationV2ProviderCapabilities = {
-  sessions: {
-    supportsMultipleProviderThreadsPerSession: false,
-    supportsModelSwitchInSession: true,
-    supportsProviderSwitchingViaHandoff: false,
-    supportsRuntimeModeSwitchInSession: false,
-    pendingRequestsSurviveRestart: true,
-  },
+  ...kiloCapabilities,
+  sessions: { ...kiloCapabilities.sessions, pendingRequestsSurviveRestart: true },
   threads: {
-    canCreateEmptyThread: true,
-    canReadThreadSnapshot: true,
+    ...kiloCapabilities.threads,
     canRollbackThread: false,
     canForkThread: false,
     canForkFromTurn: false,
-    canForkFromSubagentThread: false,
-    exposesNativeThreadId: true,
-  },
-  turns: {
-    exposesNativeTurnId: false,
-    emitsTurnStarted: true,
-    emitsTurnCompleted: true,
-    supportsInterrupt: true,
-    supportsActiveSteering: false,
-    supportsSteeringByInterruptRestart: false,
-    supportsQueuedMessages: false,
-    terminalStatusQuality: "strong",
   },
   streaming: {
+    ...kiloCapabilities.streaming,
     streamsAssistantText: false,
     streamsReasoning: false,
-    streamsToolOutput: false,
-    streamsPlanText: false,
-    emitsMessageCompleted: true,
-  },
-  tools: {
-    exposesToolItemIds: true,
-    emitsToolStarted: true,
-    emitsToolCompleted: true,
-    emitsToolOutput: true,
-    supportsMcpTools: false,
-    supportsDynamicToolCallbacks: false,
   },
   approvals: {
+    ...kiloCapabilities.approvals,
     supportsCommandApproval: false,
     supportsFileReadApproval: false,
     supportsFileChangeApproval: false,
     supportsApplyPatchApproval: false,
-    approvalsHaveNativeRequestIds: true,
-    approvalCallbacksAreLiveOnly: true,
     approvalsCanOriginateFromSubagents: false,
   },
-  planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
-    emitsProposedPlan: false,
-    supportsStructuredQuestions: true,
-    planDeltasHaveItemIds: false,
-  },
   subagents: {
+    ...kiloCapabilities.subagents,
     supportsSubagents: false,
     exposesSubagentThreadIds: false,
     emitsSubagentLifecycle: false,
     canWaitForSubagents: false,
-    canCloseSubagents: false,
-    canForkSubagentThread: false,
-  },
-  context: {
-    acceptsSystemContext: false,
-    acceptsDeveloperContext: false,
-    acceptsSyntheticUserContext: false,
-    canGenerateSummaries: false,
-    canConsumeHandoffSummaries: false,
-    supportsDeltaHandoff: false,
-    supportsFullThreadHandoff: false,
-    maxRecommendedHandoffChars: null,
   },
   checkpointing: {
+    ...kiloCapabilities.checkpointing,
     appCanCheckpointFilesystem: false,
-    supportsNestedCheckpointScopes: false,
     providerCanRollbackConversation: false,
     providerRollbackReturnsSnapshot: false,
-    providerCanReadConversationSnapshot: true,
-  },
-  identity: {
-    nativeThreadIds: "strong",
-    nativeTurnIds: "weak",
-    nativeItemIds: "strong",
-    nativeRequestIds: "strong",
   },
   runtimePolicy: { enforcement: "client-boundary" },
 };
@@ -199,6 +155,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           if (event.type === "turn_item.updated") items.set(event.turnItem.id, event.turnItem);
           return Queue.offer(queue, event).pipe(Effect.asVoid);
         });
+      const records = { driver, emit, nodes, items };
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: Journal.CloudIntent | undefined;
       let needsHistoryRestore = false;
@@ -230,12 +187,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
       const signatures = new Map<string, string>();
       const requests = new Map<
         RuntimeRequestId,
-        {
-          runtime: OrchestrationV2RuntimeRequest;
-          native: Cloud.CloudInteraction;
-          node: OrchestrationV2ExecutionNode;
-          item: OrchestrationV2TurnItem;
-        }
+        { runtime: OrchestrationV2RuntimeRequest; native: Cloud.CloudInteraction }
       >();
       const ordinals = new Map<string, number>();
       const ordinal = (id: string) => {
@@ -276,18 +228,12 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
         entry: NonNullable<ReturnType<typeof requests.get>>,
         cancelled = false,
       ) {
-        const at = yield* DateTime.now;
-        entry.runtime = {
-          ...entry.runtime,
-          status: cancelled ? "cancelled" : "resolved",
-          resolvedAt: at,
-        };
-        const status = cancelled ? ("interrupted" as const) : ("completed" as const);
-        entry.node = { ...entry.node, status, completedAt: at };
-        entry.item = { ...entry.item, status, completedAt: at, updatedAt: at };
-        yield* emit({ type: "runtime_request.updated", driver, runtimeRequest: entry.runtime });
-        yield* emit({ type: "node.updated", driver, node: entry.node });
-        yield* emit({ type: "turn_item.updated", driver, turnItem: entry.item });
+        entry.runtime = yield* kiloSettleRequest(
+          records,
+          entry.runtime,
+          ids.derive.approvalTurnItem({ requestId: entry.runtime.id }),
+          cancelled ? "cancelled" : "resolved",
+        );
       });
       yield* Effect.addFinalizer(() =>
         active ? options.client.forgetAdmission(options.repository, active.messageId) : Effect.void,
@@ -338,36 +284,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           if (request.runtime.status !== "pending") continue;
           yield* resolveRequest(request, true);
         }
-        for (const node of nodes.values()) {
-          if (
-            node.providerTurnId === saved.providerTurn.id &&
-            ["running", "waiting"].includes(node.status)
-          )
-            yield* emit({
-              type: "node.updated",
-              driver,
-              node: { ...node, status: terminal, completedAt: at },
-            });
-        }
-        for (const item of items.values()) {
-          if (
-            item.providerTurnId !== saved.providerTurn.id ||
-            !["running", "waiting"].includes(item.status)
-          )
-            continue;
-          const done = { ...item, status: terminal, completedAt: at, updatedAt: at };
-          yield* emit({
-            type: "turn_item.updated",
-            driver,
-            turnItem: "streaming" in done ? { ...done, streaming: false } : done,
-          });
-        }
-        for (const [id, message] of messages) {
-          if (!message.streaming) continue;
-          const done = { ...message, streaming: false, updatedAt: at };
-          messages.set(id, done);
-          yield* emit({ type: "message.updated", driver, message: done });
-        }
+        yield* kiloEndOpenRecords(records, messages, saved.providerTurn.id, terminal, at);
         yield* emit(
           terminal === "failed"
             ? {
@@ -505,28 +422,15 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           yield* emit({
             type: "node.updated",
             driver,
-            node: {
-              id: nodeId,
-              threadId: thread.appThreadId,
-              runId: correlation.runId,
-              parentNodeId: correlation.nodeId,
-              rootNodeId: correlation.nodeId,
-              kind:
-                part.type === "tool"
-                  ? "tool_call"
-                  : part.type === "reasoning"
-                    ? "reasoning"
-                    : "assistant_message",
-              status: base.status,
-              countsForRun: false,
-              providerThreadId: thread.id,
-              providerTurnId: intent.providerTurn.id,
-              nativeItemRef: base.nativeItemRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: base.startedAt,
-              completedAt: base.completedAt,
-            },
+            node: kiloPartNode(
+              base,
+              correlation.nodeId,
+              part.type === "tool"
+                ? "tool_call"
+                : part.type === "reasoning"
+                  ? "reasoning"
+                  : "assistant_message",
+            ),
           });
           const item: OrchestrationV2TurnItem =
             part.type === "tool"
@@ -575,12 +479,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
           ordinal: ordinal(native.id),
           at: yield* DateTime.now,
         });
-        requests.set(requestId, {
-          runtime: interaction.runtime,
-          native,
-          node: interaction.node,
-          item: interaction.turnItem,
-        });
+        requests.set(requestId, { runtime: interaction.runtime, native });
         yield* emit({ type: "node.updated", driver, node: interaction.node });
         yield* emit({
           type: "runtime_request.updated",
