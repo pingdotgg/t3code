@@ -397,6 +397,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "copy-on-highlight",
+    title: "Copy on highlight",
+    to: "/settings/general",
+    searchTerms: ["clipboard copy selection select highlight conversation text"],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/general",

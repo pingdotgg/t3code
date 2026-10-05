@@ -250,6 +250,7 @@ import {
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
+import { useCopyOnHighlight } from "../../hooks/useCopyOnHighlight";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -928,6 +929,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useCopyOnHighlight(timelineViewportElement);
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
