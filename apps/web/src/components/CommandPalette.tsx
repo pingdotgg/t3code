@@ -2825,6 +2825,7 @@ function OpenCommandPaletteDialog(props: {
   async function saveCloneParentDirectory(): Promise<void> {
     if (
       addProjectCloneFlow?.step !== "confirm" ||
+      addProjectCloneFlow.environmentId !== browseEnvironmentId ||
       cloneParentDirectory === null ||
       isDefaultCloneFolder ||
       cloneHomeDirectoryQuery.isPending ||
@@ -3572,6 +3573,7 @@ function OpenCommandPaletteDialog(props: {
                 variant="outline"
                 size="xs"
                 disabled={
+                  addProjectCloneFlow?.environmentId !== browseEnvironmentId ||
                   isDefaultCloneFolder ||
                   cloneHomeDirectoryQuery.isPending ||
                   isSavingCloneFolder ||
