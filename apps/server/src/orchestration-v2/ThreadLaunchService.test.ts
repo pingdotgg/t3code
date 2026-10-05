@@ -17,6 +17,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
+  GitManagerError,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -101,6 +102,7 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
+  readonly isRepository?: GitWorkflow.GitWorkflowService["Service"]["isRepository"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -170,6 +172,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      isRepository: options.isRepository ?? (() => Effect.succeed(true)),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -1100,6 +1103,62 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
       });
       assert.lengthOf(claimed, 1);
       assert.isNull(other.projection.thread.worktreePath);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("runs a worktree request against a non-repository project as a root launch", () =>
+  Effect.gen(function* () {
+    // Only `projectId` stands in for the Scratch project here.
+    const harness = makeHarness({
+      isRepository: () => Effect.succeed(false),
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        folderForThread: (input) =>
+          Effect.sync(() =>
+            input.projectId === projectId ? Option.some(`/scratch/folder-worktree`) : Option.none(),
+          ),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:scratch-worktree",
+          thread: "thread:launch:scratch-worktree",
+          message: "Review this",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        }),
+      );
+      assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-worktree");
+      assert.isNull(launched.projection.thread.branch);
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-worktree");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("keeps a worktree request when repository detection fails", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      isRepository: () =>
+        Effect.fail(
+          new GitManagerError({ operation: "isRepository", cwd: "/repo", detail: "unreadable" }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:detect-failed",
+          thread: "thread:launch:detect-failed",
+          message: "Build the feature",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

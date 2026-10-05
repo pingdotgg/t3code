@@ -743,10 +743,20 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
+        // A worktree needs a repository. The Scratch project is a folder, not a
+        // checkout, so a worktree request there becomes a root launch, which the
+        // block below answers with a folder of its own. Resolved before the
+        // strategy is recorded on the run, so a retry replays what happened.
+        const requestedStrategy: ThreadLaunchWorkspaceStrategy =
+          input.workspaceStrategy.type === "worktree" &&
+          !(yield* git.isRepository(project.workspaceRoot).pipe(Effect.orElseSucceed(() => true)))
+            ? { type: "root" }
+            : input.workspaceStrategy;
+
         // A Scratch thread launched at the project root runs in a folder of its
         // own. Only the first attempt claims one; a retry replays its create.
         const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
+          requestedStrategy.type === "root" && Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -756,11 +766,11 @@ const make = Effect.gen(function* () {
                   })
                   .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))),
                 {
-                  onNone: () => input.workspaceStrategy,
+                  onNone: () => requestedStrategy,
                   onSome: (worktreePath) => ({ type: "existing_worktree", worktreePath }),
                 },
               )
-            : input.workspaceStrategy;
+            : requestedStrategy;
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
