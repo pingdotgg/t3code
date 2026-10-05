@@ -63,6 +63,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -1588,8 +1589,14 @@ const make = Effect.gen(function* () {
             );
         yield* record("pending");
         // Only this call can hand the agent its ref, so the card must not
-        // outlive it: a timeout or an aborted call closes it as cancelled.
-        const closeCard = record("cancelled").pipe(Effect.ignore);
+        // outlive it: a timeout, a failed wait or an aborted call closes it as
+        // cancelled. If even that fails, the server still refuses an answer
+        // once the run ends, and an unused value expires.
+        const closeCard = record("cancelled").pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not close a secret request card", { error: error.message }),
+          ),
+        );
 
         // The user answers the card (secrets.answerRequest), or it ends with
         // the run; poll it like a delegated task.
@@ -1628,7 +1635,7 @@ const make = Effect.gen(function* () {
               Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
             ),
           ),
-          Effect.onInterrupt(() => closeCard),
+          Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
         );
         if (Option.isNone(answered)) yield* closeCard;
         // An answer that raced the timeout still wins: the card is answered once.
