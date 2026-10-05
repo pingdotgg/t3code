@@ -8,7 +8,12 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { releaseTabForward } = vi.hoisted(() => ({ releaseTabForward: vi.fn() }));
-vi.mock("./browser/sshPreviewForwards", () => ({ releaseTabForward }));
+// The forward on local port 53001 carries remote port 5173.
+vi.mock("./browser/sshPreviewForwards", () => ({
+  releaseTabForward,
+  toRemotePreviewUrl: (_environmentId: string, url: string) =>
+    url.replace("localhost:53001", "localhost:5173"),
+}));
 
 import {
   __testing,
@@ -241,6 +246,16 @@ describe("previewStateStore (single-tab)", () => {
       [ref, "tab_a"],
       [ref, "tab_b"],
     ]);
+  });
+
+  it("remembers the remote URL of a forwarded SSH preview", () => {
+    applyPreviewServerSnapshot(
+      ref,
+      makeSnapshot({
+        navStatus: { _tag: "Success", url: "http://localhost:53001/app", title: "" },
+      }),
+    );
+    expect(readThreadPreviewState(ref).recentlySeenUrls).toEqual(["http://localhost:5173/app"]);
   });
 
   it("optimistically removes a session before the server close event arrives", () => {

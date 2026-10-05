@@ -39,7 +39,7 @@ const resolveEnvironmentPortTarget = (
   if (readSshEnvironmentTarget(environmentId) !== null) {
     return {
       requestedUrl: loopbackUrl,
-      resolvedUrl: loopbackUrl,
+      resolvedUrl: (sourceUrl ?? new URL(loopbackUrl)).toString(),
       resolutionKind: "ssh-forward",
       environmentId,
     };

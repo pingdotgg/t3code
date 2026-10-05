@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -41,8 +42,13 @@ const remoteLoopbackPort = (url: URL): number | null => {
   return Number(url.port || (url.protocol === "https:" ? 443 : 80));
 };
 
-/** Every lease this client still holds. */
-const heldLeases = new Map<string, { readonly localPort: number; readonly remotePort: number }>();
+/**
+ * Local port → remote port per environment. The desktop reuses the remote port
+ * when it is free locally, so most entries are identity. Entries outlive their
+ * leases: forwarded URLs come back through history, recents, and server
+ * snapshots after the tab that created them is gone.
+ */
+const forwardedPorts = new Map<EnvironmentId, Map<number, number>>();
 
 const isEnvironmentServer = (environmentId: EnvironmentId, url: URL): boolean => {
   const connection = readPreparedConnection(environmentId);
@@ -51,19 +57,39 @@ const isEnvironmentServer = (environmentId: EnvironmentId, url: URL): boolean =>
   return isLoopbackHost(server.hostname) && server.port === url.port;
 };
 
-/**
- * The remote port a loopback URL names. A URL on a port this client already
- * forwards (it returns through history, re-navigation, and server snapshots)
- * maps back to that forward's remote port.
- */
-const remotePortFor = (port: number): number => {
-  for (const lease of heldLeases.values()) {
-    if (lease.localPort === port) return lease.remotePort;
-  }
-  return port;
-};
+const remotePortFor = (environmentId: EnvironmentId, port: number): number =>
+  forwardedPorts.get(environmentId)?.get(port) ?? port;
 
-/** Acquires a forward when `url` is a loopback URL on an SSH environment. */
+/** Maps a URL loaded through a forward back to the remote URL it names. */
+export function toRemotePreviewUrl(environmentId: EnvironmentId, url: string): string {
+  const ports = forwardedPorts.get(environmentId);
+  if (ports === undefined) return url;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const loopbackPort = remoteLoopbackPort(parsed);
+  const remotePort = loopbackPort === null ? undefined : ports.get(loopbackPort);
+  if (remotePort === undefined || remotePort === loopbackPort) return url;
+  parsed.port = String(remotePort);
+  return parsed.toString();
+}
+
+export class SshPreviewForwardError extends Schema.TaggedError<SshPreviewForwardError>()(
+  "SshPreviewForwardError",
+  { remotePort: Schema.Number, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `Could not forward remote port ${this.remotePort}: ${this.detail}`;
+  }
+}
+
+/**
+ * Acquires a forward when `url` is a loopback URL on an SSH environment.
+ * Rejects with SshPreviewForwardError.
+ */
 export async function acquirePreviewForward(
   environmentId: EnvironmentId,
   url: string,
@@ -81,13 +107,24 @@ export async function acquirePreviewForward(
   if (loopbackPort === null || isEnvironmentServer(environmentId, parsed)) {
     return { url, leaseId: null };
   }
-  const remotePort = remotePortFor(loopbackPort);
+  const remotePort = remotePortFor(environmentId, loopbackPort);
   const bridge = window.desktopBridge;
   if (bridge === undefined) {
-    throw new Error("Previewing ports on an SSH environment requires the desktop app.");
+    throw new SshPreviewForwardError({
+      remotePort,
+      detail: "previewing ports on an SSH environment requires the desktop app.",
+    });
   }
-  const forward = await bridge.acquireSshPortForward(target, remotePort);
-  heldLeases.set(forward.leaseId, { localPort: forward.localPort, remotePort });
+  const forward = await bridge.acquireSshPortForward(target, remotePort).catch((cause: unknown) => {
+    throw new SshPreviewForwardError({
+      remotePort,
+      detail: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
+  });
+  const ports = forwardedPorts.get(environmentId) ?? new Map<number, number>();
+  ports.set(forward.localPort, remotePort);
+  forwardedPorts.set(environmentId, ports);
   // `localhost` keeps the page's origin host stable for cookies and OAuth
   // callbacks; the forward itself only binds 127.0.0.1.
   parsed.hostname = "localhost";
@@ -97,7 +134,6 @@ export async function acquirePreviewForward(
 
 const releaseLease = (leaseId: string | null): void => {
   if (leaseId === null) return;
-  heldLeases.delete(leaseId);
   void window.desktopBridge?.releaseSshPortForward(leaseId).catch(() => undefined);
 };
 
@@ -161,7 +197,8 @@ function commit(state: TabForward, token: number, leaseId: string | null): void 
 /**
  * Navigates an existing desktop tab, forwarding SSH loopback URLs first.
  * Returns the URL loaded, or null when a newer navigation of the same tab
- * started while the forward was being acquired.
+ * started while the forward was being acquired, or the tab closed. Navigate
+ * calls go out in token order, so a superseded navigation never loads last.
  */
 export async function navigateTabThroughForward(input: {
   readonly threadRef: ScopedThreadRef;
@@ -186,7 +223,7 @@ export async function navigateTabThroughForward(input: {
   }
   if (tabForwards.get(key) !== state) {
     releasePreviewForward(forward);
-    return forward.url;
+    return null;
   }
   commit(state, token, forward.leaseId);
   return forward.url;
@@ -203,5 +240,5 @@ export function releaseTabForward(threadRef: ScopedThreadRef, tabId: string): vo
 
 export function resetSshPreviewForwardsForTests(): void {
   tabForwards.clear();
-  heldLeases.clear();
+  forwardedPorts.clear();
 }

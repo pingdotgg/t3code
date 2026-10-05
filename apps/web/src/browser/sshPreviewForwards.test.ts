@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   acquirePreviewForward,
   navigateTabThroughForward,
+  releasePreviewForward,
   releaseTabForward,
   resetSshPreviewForwardsForTests,
   settleOpenedForward,
+  SshPreviewForwardError,
+  toRemotePreviewUrl,
 } from "./sshPreviewForwards";
 
 const SSH_ENV = EnvironmentId.make("environment-ssh");
+const OTHER_SSH_ENV = EnvironmentId.make("environment-ssh-2");
 const LAN_ENV = EnvironmentId.make("environment-lan");
 const THREAD = { environmentId: SSH_ENV, threadId: ThreadId.make("thread-1") };
 const SSH_TARGET = { alias: "devbox", hostname: "devbox", username: null, port: null };
@@ -18,6 +22,13 @@ const SSH_TARGET = { alias: "devbox", hostname: "devbox", username: null, port: 
 const catalogEntries = new Map<EnvironmentId, unknown>([
   [
     SSH_ENV,
+    {
+      target: { _tag: "SshConnectionTarget" },
+      profile: Option.some({ _tag: "SshConnectionProfile", target: SSH_TARGET }),
+    },
+  ],
+  [
+    OTHER_SSH_ENV,
     {
       target: { _tag: "SshConnectionTarget" },
       profile: Option.some({ _tag: "SshConnectionProfile", target: SSH_TARGET }),
@@ -90,12 +101,34 @@ describe("acquirePreviewForward", () => {
     expect(pending).toEqual([]);
   });
 
-  it("maps a URL on an already forwarded local port back to its remote port", async () => {
+  it("maps forwarded ports back per environment, after the lease is released", async () => {
     const first = acquirePreviewForward(SSH_ENV, "http://localhost:5173/");
     pending[0]!.resolve(53001);
-    await first;
+    releasePreviewForward(await first);
+    expect(toRemotePreviewUrl(SSH_ENV, "http://localhost:53001/x")).toBe("http://localhost:5173/x");
+    expect(toRemotePreviewUrl(OTHER_SSH_ENV, "http://localhost:53001/x")).toBe(
+      "http://localhost:53001/x",
+    );
     void acquirePreviewForward(SSH_ENV, "http://localhost:53001/next");
-    expect(pending[1]!.remotePort).toBe(5173);
+    void acquirePreviewForward(OTHER_SSH_ENV, "http://localhost:53001/next");
+    expect(pending.slice(1).map((entry) => entry.remotePort)).toEqual([5173, 53001]);
+  });
+
+  it("rejects with a typed error when the desktop cannot forward", async () => {
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        acquireSshPortForward: async () => {
+          throw new Error("Permission denied (publickey).");
+        },
+      },
+    });
+    const error = await acquirePreviewForward(SSH_ENV, "http://localhost:5173/").catch(
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(SshPreviewForwardError);
+    expect((error as SshPreviewForwardError).message).toBe(
+      "Could not forward remote port 5173: Permission denied (publickey).",
+    );
   });
 });
 
@@ -134,6 +167,22 @@ describe("navigateTabThroughForward", () => {
     expect(released).toEqual(["lease-1"]);
     releaseTabForward(THREAD, "tab-1");
     expect(released).toEqual(["lease-1", "lease-2"]);
+  });
+
+  it("reports a tab closed during its navigation as superseded", async () => {
+    const loaded: string[] = [];
+    const navigation = navigateTabThroughForward({
+      threadRef: THREAD,
+      tabId: "tab-1",
+      url: "http://localhost:3000/",
+      navigate: async (resolved) => {
+        loaded.push(resolved);
+        releaseTabForward(THREAD, "tab-1");
+      },
+    });
+    pending[0]!.resolve(53000);
+    expect(await navigation).toBeNull();
+    expect(released).toEqual(["lease-1"]);
   });
 
   it("drops the lease when the tab closes during acquisition", async () => {

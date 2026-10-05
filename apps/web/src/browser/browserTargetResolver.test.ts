@@ -4,9 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const readPreparedConnection = vi.fn();
 
 vi.mock("~/state/session", () => ({ readPreparedConnection }));
+const readSshEnvironmentTarget = vi.fn(() => null as unknown);
+vi.mock("./sshPreviewForwards", () => ({ readSshEnvironmentTarget }));
 
 describe("browser target resolver", () => {
-  beforeEach(() => readPreparedConnection.mockReset());
+  beforeEach(() => {
+    readPreparedConnection.mockReset();
+    readSshEnvironmentTarget.mockReset();
+    readSshEnvironmentTarget.mockReturnValue(null);
+  });
 
   it("maps environment ports onto a private network host", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
@@ -139,6 +145,25 @@ describe("browser target resolver", () => {
         url: "http://localhost:5173",
       }),
     ).toMatchObject({ resolvedUrl: "http://localhost:5173", resolutionKind: "direct" });
+  });
+
+  it("keeps SSH environment ports remote-loopback, normalized, for forwarding", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:41000" });
+    readSshEnvironmentTarget.mockReturnValue({ alias: "devbox" });
+    const { resolveBrowserNavigationTarget, resolveDiscoveredServerUrl } =
+      await import("./browserTargetResolver");
+    const environmentId = EnvironmentId.make("environment-ssh");
+    expect(resolveDiscoveredServerUrl(environmentId, "localhost:5173")).toBe(
+      "http://localhost:5173/",
+    );
+    expect(
+      resolveBrowserNavigationTarget(environmentId, { kind: "environment-port", port: 5173 }),
+    ).toEqual({
+      requestedUrl: "http://localhost:5173/",
+      resolvedUrl: "http://localhost:5173/",
+      resolutionKind: "ssh-forward",
+      environmentId,
+    });
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {

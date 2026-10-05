@@ -27,6 +27,7 @@ import {
   acquirePreviewForward,
   type PreviewForward,
   settleOpenedForward,
+  type SshPreviewForwardError,
 } from "./sshPreviewForwards";
 
 import {
@@ -61,7 +62,7 @@ export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
-}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError | SshPreviewForwardError>> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
@@ -72,7 +73,7 @@ export async function openUrlInPreview<E>(input: {
   try {
     forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
   } catch (error) {
-    return AsyncResult.failure(Cause.die(error));
+    return AsyncResult.failure(Cause.fail(error as SshPreviewForwardError));
   }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
@@ -112,7 +113,11 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
 }): Promise<
   AtomCommandResult<
     void,
-    AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
+    | AssetError
+    | PreviewError
+    | BrowserPreviewUnavailableError
+    | BrowserSettingsReadError
+    | SshPreviewForwardError
   >
 > {
   if (!isPreviewSupportedInRuntime()) {

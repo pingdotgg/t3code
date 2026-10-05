@@ -18,7 +18,7 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
-import { releaseTabForward } from "./browser/sshPreviewForwards";
+import { releaseTabForward, toRemotePreviewUrl } from "./browser/sshPreviewForwards";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
@@ -107,6 +107,21 @@ function syncActivePreviewThread(threadKey: string, state: ThreadPreviewState): 
   });
 }
 
+/**
+ * Snapshot URLs of SSH previews carry the local forward port. Recents keep the
+ * remote URL so reopening one later forwards the right port.
+ */
+function withRemoteRecentUrls(
+  ref: ScopedThreadRef,
+  current: ThreadPreviewState,
+  next: ThreadPreviewState,
+): ThreadPreviewState {
+  if (next.recentlySeenUrls === current.recentlySeenUrls) return next;
+  const mapped = next.recentlySeenUrls.map((url) => toRemotePreviewUrl(ref.environmentId, url));
+  if (mapped.every((url, index) => url === next.recentlySeenUrls[index])) return next;
+  return { ...next, recentlySeenUrls: [...new Set(mapped)] };
+}
+
 function updateThreadPreviewState(
   ref: ScopedThreadRef,
   update: (current: ThreadPreviewState) => ThreadPreviewState,
@@ -116,7 +131,7 @@ function updateThreadPreviewState(
   const previous = appAtomRegistry.get(atom);
   let nextState = previous;
   const changed = appAtomRegistry.modify(atom, (current) => {
-    nextState = update(current);
+    nextState = withRemoteRecentUrls(ref, current, update(current));
     return [nextState !== current, nextState];
   });
   if (!changed) return;

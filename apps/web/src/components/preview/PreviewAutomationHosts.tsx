@@ -568,12 +568,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
               const bridge = previewBridge;
-              await navigateTabThroughForward({
+              const loadedUrl = await navigateTabThroughForward({
                 threadRef,
                 tabId: activeTabId,
                 url: resolvedInputUrl,
                 navigate: (url) => bridge.navigate(activeRuntimeTabId, url),
               });
+              if (loadedUrl === null) {
+                throw new Error("A newer navigation of this preview tab replaced this one.");
+              }
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,

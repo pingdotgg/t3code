@@ -31,7 +31,11 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { navigateTabThroughForward } from "~/browser/sshPreviewForwards";
+import {
+  navigateTabThroughForward,
+  readSshEnvironmentTarget,
+  toRemotePreviewUrl,
+} from "~/browser/sshPreviewForwards";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -246,8 +250,17 @@ export function PreviewView({
   );
 
   const handleRefresh = useCallback(() => {
+    // An SSH tab's forward may have died with a disconnect; re-navigating
+    // through a fresh lease recovers it, and is a reload when it is alive.
+    const currentUrl = navStatus._tag === "Idle" ? null : navStatus.url;
+    if (currentUrl && readSshEnvironmentTarget(threadRef.environmentId) !== null) {
+      void navigateToResolvedUrl(toRemotePreviewUrl(threadRef.environmentId, currentUrl)).catch(
+        () => undefined,
+      );
+      return;
+    }
     if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
-  }, [runtimeTabId]);
+  }, [navStatus, navigateToResolvedUrl, runtimeTabId, threadRef]);
 
   const handleZoomIn = useCallback(() => {
     if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);

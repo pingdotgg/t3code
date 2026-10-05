@@ -19,6 +19,7 @@ import {
   acquirePreviewForward,
   type PreviewForward,
   settleOpenedForward,
+  type SshPreviewForwardError,
 } from "~/browser/sshPreviewForwards";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
@@ -37,7 +38,9 @@ interface OpenPreviewSessionInput<E> {
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
-): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
+): Promise<
+  AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError | SshPreviewForwardError>
+> {
   // Resolved once: a tab opened before client settings hydrate would otherwise
   // be born at the schema defaults and never corrected.
   const defaults = await resolveBrowserDefaults().catch(
@@ -51,7 +54,7 @@ export async function openPreviewSession<E>(
     try {
       forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
     } catch (error) {
-      return AsyncResult.failure(Cause.die(error));
+      return AsyncResult.failure(Cause.fail(error as SshPreviewForwardError));
     }
   }
   const result = await input.openPreview({
