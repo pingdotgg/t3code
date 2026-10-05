@@ -258,18 +258,23 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
+          let bytesRead = 0;
+          while (bytesRead < bytesToRead) {
+            const chunk = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, bytesRead, bytesToRead - bytesRead, bytesRead),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
+            });
+            if (chunk.bytesRead === 0) break;
+            bytesRead += chunk.bytesRead;
+          }
           const fileBytes = buffer.subarray(0, bytesRead);
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
@@ -283,7 +288,7 @@ export const make = Effect.gen(function* () {
             relativePath: target.relativePath,
             contents: new TextDecoder("utf-8").decode(fileBytes),
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated: bytesRead < stat.size,
           };
         }),
       (handle) =>
