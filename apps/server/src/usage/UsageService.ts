@@ -18,7 +18,9 @@ import {
   ClaudeSettings,
   CodexSettings,
   type ProviderInstanceConfig,
+  ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
@@ -44,11 +46,13 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import { secretFileName } from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import { secretName } from "../provider/ProviderCredentialStore.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
@@ -671,6 +675,36 @@ export const make = Effect.gen(function* () {
         files: !exists && !failed ? null : antigravity.files.filter((file) => file.root === dir),
         status: failed ? "partial" : "ok",
         ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
+      });
+    }
+    // Cursor sessions bill the instance's API key or T3 sign-in. Nothing ties
+    // that account to the CLI login read below, so name it instead of omitting it.
+    const cursorInstances: Array<
+      [string, Pick<ProviderInstanceConfig, "displayName" | "environment">]
+    > = Object.entries(settings.providerInstances).filter(
+      ([, instance]) => instance.driver === "cursor" && resolveProviderInstanceEnabled(instance),
+    );
+    if (
+      !Object.hasOwn(settings.providerInstances, "cursor") &&
+      resolveProviderInstanceEnabled({
+        driver: ProviderDriverKind.make("cursor"),
+        config: settings.providers.cursor,
+      })
+    ) {
+      cursorInstances.push(["cursor", {}]);
+    }
+    for (const [instanceId, instance] of cursorInstances) {
+      const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
+      const signedIn = yield* fileSystem
+        .exists(path.join(config.secretsDir, secretFileName(secretName("cursor", instanceId))))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (!signedIn && !environment.CURSOR_API_KEY?.trim()) continue;
+      scanned.push({
+        provider: "cursor",
+        dir: `cursor-instance:${instanceId}`,
+        volumeId: "",
+        files: null,
+        message: `Usage reads the Cursor CLI login only and does not include the account that the Cursor instance "${instance.displayName ?? instanceId}" uses.`,
       });
     }
     const cursorUserHome =

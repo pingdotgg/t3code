@@ -29,7 +29,9 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import { secretFileName } from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import { secretName } from "../provider/ProviderCredentialStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
@@ -306,6 +308,146 @@ describe("UsageService", () => {
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
       assert.strictEqual(cursor?.status, "missing");
       assert.strictEqual(cursor?.action, "enableCursorKeychain");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("names each Cursor instance whose account the CLI login scan cannot read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+      const payload = Buffer.from(encodeUnknownJsonString({ sub: "auth0|user_1" })).toString(
+        "base64url",
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
+        await NodeFSP.writeFile(
+          authPath,
+          encodeUnknownJsonString({ accessToken: `header.${payload}.signature` }),
+        );
+      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const original = globalThis.fetch;
+          globalThis.fetch = async () =>
+            Response.json({
+              totalUsageEventsCount: 1,
+              usageEventsDisplay: [
+                {
+                  timestamp: String(Date.parse("2026-08-01T10:00:00Z")),
+                  model: "example-model",
+                  tokenUsage: { inputTokens: 10, outputTokens: 5 },
+                },
+              ],
+            });
+          return original;
+        }),
+        (original) =>
+          Effect.sync(() => {
+            globalThis.fetch = original;
+          }),
+      );
+      const apiKey = [{ name: "CURSOR_API_KEY", value: "synthetic-key", sensitive: true }];
+      const summary = yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const secretPath = NodePath.join(
+          config.secretsDir,
+          secretFileName(secretName("cursor", "cursor-signed-in")),
+        );
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(config.secretsDir, { recursive: true });
+          await NodeFSP.writeFile(secretPath, "{}");
+        });
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-cursor-instances",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                [ProviderInstanceId.make("cursor-keyed")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  displayName: "Cursor keyed",
+                  enabled: true,
+                  environment: apiKey,
+                },
+                [ProviderInstanceId.make("cursor-signed-in")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  enabled: true,
+                },
+                [ProviderInstanceId.make("cursor-disabled")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  enabled: false,
+                  environment: apiKey,
+                },
+                [ProviderInstanceId.make("cursor-no-credential")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  enabled: true,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const cursor = summary.sources.filter((source) => source.fingerprint.provider === "cursor");
+      const account = cursor.filter((source) => source.status === "ok");
+      assert.strictEqual(account.length, 1);
+      assert.strictEqual(account[0]?.fingerprint.hostId, "cursor.com");
+      assert.isTrue(summary.buckets.some((bucket) => bucket.provider === "cursor"));
+      assert.deepStrictEqual(
+        cursor.filter((source) => source.status === "missing").map((source) => source.message),
+        [
+          'Usage reads the Cursor CLI login only and does not include the account that the Cursor instance "Cursor keyed" uses.',
+          'Usage reads the Cursor CLI login only and does not include the account that the Cursor instance "cursor-signed-in" uses.',
+        ],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("applies the default Cursor instance rule to instance notices", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const environment = { AGENT_CLI_CREDENTIAL_STORE: "file", CURSOR_API_KEY: "synthetic-key" };
+      const notices = (
+        name: string,
+        enabled: boolean,
+        providerInstances: NonNullable<
+          Parameters<typeof ServerSettings.layerTest>[0]
+        >["providerInstances"] = {},
+      ) =>
+        Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const summary = yield* service.readSummary(WINDOW);
+          return summary.sources.filter((source) =>
+            source.fingerprint.resolvedHomePath.startsWith("cursor-instance:"),
+          ).length;
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: `usage-service-cursor-default-${name}`,
+              home,
+              environment,
+              settings: {
+                ...settings,
+                providers: { ...settings.providers, cursor: { enabled } },
+                providerInstances,
+              },
+            }),
+          ),
+        );
+      assert.strictEqual(yield* notices("legacy-enabled", true), 1);
+      assert.strictEqual(yield* notices("legacy-disabled", false), 0);
+      assert.strictEqual(
+        yield* notices("explicit-disabled", true, {
+          [ProviderInstanceId.make("cursor")]: {
+            driver: ProviderDriverKind.make("cursor"),
+            enabled: false,
+          },
+        }),
+        0,
+      );
     }).pipe(Effect.scoped),
   );
 
