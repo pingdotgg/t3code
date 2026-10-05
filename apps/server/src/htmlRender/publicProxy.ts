@@ -89,17 +89,17 @@ const isLocal = (address: string, family: number): boolean => {
 };
 
 /**
- * The public address to connect to for `host`, or undefined when any address
- * it resolves to is local. The caller connects to the address checked here,
+ * The addresses to connect to for `host`, or undefined when any address it
+ * resolves to is local. The caller connects only to addresses checked here,
  * so a name that later resolves elsewhere (DNS rebinding) changes nothing.
  */
-const publicAddress = async (host: string) => {
+const publicAddresses = async (host: string) => {
   const addresses = NodeNet.isIP(host)
     ? [{ address: host, family: NodeNet.isIP(host) }]
     : await NodeDnsPromises.lookup(host, { all: true, verbatim: true }).catch(() => []);
   if (addresses.length === 0) return undefined;
   const local = addresses.some(({ address, family }) => isLocal(address, family));
-  return local ? undefined : addresses[0]!.address;
+  return local ? undefined : addresses;
 };
 
 // SOCKS5 (RFC 1928) replies: success, refused by rule, host unreachable, command unsupported.
@@ -187,12 +187,26 @@ export const publicProxy = Effect.acquireRelease(
           early.push(chunk);
         };
         client.on("data", holdEarly);
-        void publicAddress(request.host).then((address) => {
+        void publicAddresses(request.host).then((addresses) => {
           if (client.destroyed) return;
           client.off("data", holdEarly);
-          if (address === undefined) return refuse(client, 2);
+          if (addresses === undefined) return refuse(client, 2);
           client.pause();
-          const upstream = track(NodeNet.connect(request.port, address));
+          // Tries every checked address, IPv6 and IPv4 alike, so a host is
+          // still reached on a network whose IPv6 route is broken. A name goes
+          // through `lookup`, which hands back only the checked addresses; an
+          // address literal connects as itself.
+          const upstream = track(
+            NodeNet.connect({
+              host: request.host,
+              port: request.port,
+              autoSelectFamily: true,
+              lookup: (_host, options, callback) =>
+                options.all
+                  ? callback(null, addresses)
+                  : callback(null, addresses[0]!.address, addresses[0]!.family),
+            }),
+          );
           upstream.once("connect", () => {
             client.write(reply(0));
             for (const chunk of early) upstream.write(chunk);
