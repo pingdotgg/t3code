@@ -11,7 +11,17 @@ import {
 vi.mock("~/previewStateStore", () => ({
   applyPreviewServerSnapshot: vi.fn(),
   isPreviewSupportedInRuntime: () => true,
+  settleOpenedPreviewForward: vi.fn(),
 }));
+
+const forwardMocks = vi.hoisted(() => ({ acquire: vi.fn() }));
+const toastMocks = vi.hoisted(() => ({ add: vi.fn() }));
+
+vi.mock("~/browser/sshPreviewForwards", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/browser/sshPreviewForwards")>()),
+  acquirePreviewForward: forwardMocks.acquire,
+}));
+vi.mock("~/components/ui/toast", () => ({ toastManager: { add: toastMocks.add } }));
 
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
@@ -61,6 +71,12 @@ beforeEach(() => {
   browserDefaultsMocks.resolve.mockReset();
   browserDefaultsMocks.resolve.mockResolvedValue(hydratedDefaults);
   linkTargetMocks.preference.mockReturnValue("app");
+  forwardMocks.acquire.mockReset();
+  forwardMocks.acquire.mockImplementation(async (_environmentId: string, url: string) => ({
+    url,
+    leaseId: null,
+  }));
+  toastMocks.add.mockReset();
 });
 
 afterEach(() => {
@@ -95,6 +111,31 @@ describe("openTerminalLinkInPreview", () => {
       expect(openPreview).not.toHaveBeenCalled();
     },
   );
+
+  it("reports a failed SSH forward instead of opening the local port externally", async () => {
+    const { SshPreviewForwardError } = await import("~/browser/sshPreviewForwards");
+    forwardMocks.acquire.mockRejectedValueOnce(
+      new SshPreviewForwardError({ remotePort: 5173, detail: "Connection refused" }),
+    );
+    const fallbackToBrowser = vi.fn();
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    await openTerminalLinkInPreview({
+      url: "http://localhost:5173/",
+      threadRef,
+      openPreview,
+      fallbackToBrowser,
+      forceBrowser: false,
+    });
+
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(toastMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Could not forward remote port 5173: Connection refused",
+      }),
+    );
+  });
 
   it("opens in the system browser while that is the configured target", async () => {
     linkTargetMocks.preference.mockReturnValue("system");

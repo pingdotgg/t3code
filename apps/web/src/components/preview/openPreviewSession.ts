@@ -18,11 +18,14 @@ import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import {
   acquirePreviewForward,
   type PreviewForward,
-  settleOpenedForward,
   isSshPreviewForwardError,
   type SshPreviewForwardError,
 } from "~/browser/sshPreviewForwards";
-import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  rememberPreviewUrl,
+  settleOpenedPreviewForward,
+} from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
   openPreview: (input: {
@@ -69,12 +72,12 @@ export async function openPreviewSession<E>(
     },
   });
   if (result._tag === "Failure") {
-    settleOpenedForward(input.threadRef, forward, null);
+    settleOpenedPreviewForward(input.threadRef, forward, null);
     return result;
   }
   const snapshot = result.value;
   applyPreviewServerSnapshot(input.threadRef, snapshot);
-  settleOpenedForward(input.threadRef, forward, snapshot.tabId);
+  settleOpenedPreviewForward(input.threadRef, forward, snapshot.tabId);
   if (input.url !== undefined) {
     rememberPreviewUrl(
       input.threadRef,

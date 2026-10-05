@@ -7,10 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { releaseTabForward } = vi.hoisted(() => ({ releaseTabForward: vi.fn() }));
+const { releaseTabForward, settleOpenedForward } = vi.hoisted(() => ({
+  releaseTabForward: vi.fn(),
+  settleOpenedForward: vi.fn(),
+}));
 // The forward on local port 53001 carries remote port 5173.
 vi.mock("./browser/sshPreviewForwards", () => ({
   releaseTabForward,
+  settleOpenedForward,
   toRemotePreviewUrl: (_environmentId: string, url: string) =>
     url.replace("localhost:53001", "localhost:5173"),
 }));
@@ -27,6 +31,7 @@ import {
   reconcilePreviewServerSessions,
   rememberPreviewUrl,
   resetPreviewStateForTests,
+  settleOpenedPreviewForward,
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "./previewStateStore";
@@ -245,6 +250,18 @@ describe("previewStateStore (single-tab)", () => {
     expect(releaseTabForward.mock.calls).toEqual([
       [ref, "tab_a"],
       [ref, "tab_b"],
+    ]);
+  });
+
+  it("releases a forward whose tab closed while its open was in flight", () => {
+    settleOpenedForward.mockClear();
+    const forward = { url: "http://localhost:5173/", leaseId: "lease-1" };
+    applyPreviewServerSnapshot(ref, makeSnapshot({ tabId: "tab_open" }));
+    settleOpenedPreviewForward(ref, forward, "tab_open");
+    settleOpenedPreviewForward(ref, forward, "tab_closed");
+    expect(settleOpenedForward.mock.calls).toEqual([
+      [ref, forward, "tab_open"],
+      [ref, forward, null],
     ]);
   });
 

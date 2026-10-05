@@ -18,7 +18,12 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
-import { releaseTabForward, toRemotePreviewUrl } from "./browser/sshPreviewForwards";
+import {
+  type PreviewForward,
+  releaseTabForward,
+  settleOpenedForward,
+  toRemotePreviewUrl,
+} from "./browser/sshPreviewForwards";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
@@ -469,6 +474,19 @@ export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
       desktopOverlay: current.desktopByTabId[tabId] ?? null,
     };
   });
+}
+
+/**
+ * Gives an opened tab its forward. A tab closed while its open was in flight is
+ * already gone from the sessions, so the forward is released instead.
+ */
+export function settleOpenedPreviewForward(
+  ref: ScopedThreadRef,
+  forward: PreviewForward | null,
+  tabId: string | null,
+): void {
+  const open = tabId !== null && readThreadPreviewState(ref).sessions[tabId] !== undefined;
+  settleOpenedForward(ref, forward, open ? tabId : null);
 }
 
 export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {

@@ -15,7 +15,10 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
+import { toastManager } from "~/components/ui/toast";
+
 import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { isSshPreviewForwardError } from "./sshPreviewForwards";
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
@@ -57,6 +60,15 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         }
         const failure = squashAtomCommandFailure(result);
         if (failure instanceof BrowserSettingsReadError) throw failure;
+        // The system browser would load this machine's port, not the remote one.
+        if (isSshPreviewForwardError(failure)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not reach the remote port",
+            description: failure.message,
+          });
+          return;
+        }
         console.error(result.cause);
       }
       const api = readLocalApi();

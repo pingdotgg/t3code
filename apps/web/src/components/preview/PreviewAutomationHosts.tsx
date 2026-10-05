@@ -29,6 +29,7 @@ import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
+  settleOpenedPreviewForward,
   updatePreviewServerSnapshot,
   useActivePreviewSessions,
 } from "~/previewStateStore";
@@ -38,11 +39,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
-import {
-  acquirePreviewForward,
-  navigateTabThroughForward,
-  settleOpenedForward,
-} from "~/browser/sshPreviewForwards";
+import { acquirePreviewForward, navigateTabThroughForward } from "~/browser/sshPreviewForwards";
 import {
   readActiveBrowserRecordingTargets,
   startBrowserRecording,
@@ -473,12 +470,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 },
               });
               if (result._tag === "Failure") {
-                settleOpenedForward(threadRef, forward, null);
+                settleOpenedPreviewForward(threadRef, forward, null);
                 return raiseAtomCommandFailure(result);
               }
               const snapshot = result.value;
               applyPreviewServerSnapshot(threadRef, snapshot);
-              settleOpenedForward(threadRef, forward, snapshot.tabId);
+              settleOpenedPreviewForward(threadRef, forward, snapshot.tabId);
               activeTabId = snapshot.tabId;
               activeSnapshot = snapshot;
               tabId = activeTabId;

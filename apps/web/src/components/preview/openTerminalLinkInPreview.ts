@@ -11,11 +11,16 @@ import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserL
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import {
   acquirePreviewForward,
+  isSshPreviewForwardError,
   type PreviewForward,
-  settleOpenedForward,
 } from "~/browser/sshPreviewForwards";
+import { toastManager } from "~/components/ui/toast";
 import { recordVisitForThread } from "~/browserHistoryStore";
-import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  isPreviewSupportedInRuntime,
+  settleOpenedPreviewForward,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 const terminalLinkErrorContext = {
@@ -73,6 +78,15 @@ export async function openTerminalLinkInPreview<E>(
   try {
     forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
   } catch (cause) {
+    // The system browser would load this machine's port, not the remote one.
+    if (isSshPreviewForwardError(cause)) {
+      toastManager.add({
+        type: "error",
+        title: "Could not reach the remote port",
+        description: cause.message,
+      });
+      return;
+    }
     console.error(new TerminalLinkPreviewOpenError({ ...errorContext, cause }));
     input.fallbackToBrowser();
     return;
@@ -89,7 +103,7 @@ export async function openTerminalLinkInPreview<E>(
     },
   });
   if (result._tag === "Failure") {
-    settleOpenedForward(input.threadRef, forward, null);
+    settleOpenedPreviewForward(input.threadRef, forward, null);
     if (isAtomCommandInterrupted(result)) {
       return;
     }
@@ -104,6 +118,6 @@ export async function openTerminalLinkInPreview<E>(
   }
   recordVisitForThread(input.threadRef, input.url);
   applyPreviewServerSnapshot(input.threadRef, result.value);
-  settleOpenedForward(input.threadRef, forward, result.value.tabId);
+  settleOpenedPreviewForward(input.threadRef, forward, result.value.tabId);
   useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }

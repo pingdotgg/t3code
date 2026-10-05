@@ -20,13 +20,13 @@ import {
   applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime,
   rememberPreviewUrl,
+  settleOpenedPreviewForward,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
   acquirePreviewForward,
   type PreviewForward,
-  settleOpenedForward,
   isSshPreviewForwardError,
   type SshPreviewForwardError,
 } from "./sshPreviewForwards";
@@ -89,10 +89,10 @@ export async function openUrlInPreview<E>(input: {
       profileId: browserDefaultOpenProfileId(defaults),
     },
   });
-  if (result._tag === "Failure") settleOpenedForward(input.threadRef, forward, null);
+  if (result._tag === "Failure") settleOpenedPreviewForward(input.threadRef, forward, null);
   return mapAtomCommandResult(result, (snapshot) => {
     applyPreviewServerSnapshot(input.threadRef, snapshot);
-    settleOpenedForward(input.threadRef, forward, snapshot.tabId);
+    settleOpenedPreviewForward(input.threadRef, forward, snapshot.tabId);
     rememberPreviewUrl(input.threadRef, input.url);
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
