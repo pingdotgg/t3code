@@ -424,7 +424,10 @@ interface CapturedTurn {
 const unimplemented = (detail: string) =>
   Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
 
-const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =>
+const makeCodexAdapter = (
+  capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>,
+  cancelledRunOrdinals: ReadonlySet<number>,
+) =>
   ({
     instanceId,
     driver,
@@ -547,7 +550,9 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
                   providerThreadId: turnInput.providerThread.id,
                   providerTurnId,
                   runOrdinal: turnInput.runOrdinal,
-                  status: "completed",
+                  status: cancelledRunOrdinals.has(turnInput.runOrdinal)
+                    ? "cancelled"
+                    : "completed",
                   failure: null,
                   threadDisposition: "reusable",
                 },
@@ -584,6 +589,7 @@ const makeBootLayer = (input: {
   readonly dbPath: string;
   readonly workspace: string;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+  readonly cancelledRunOrdinals?: ReadonlySet<number>;
 }) => {
   const databaseLayer = makeSqlitePersistenceLive(input.dbPath).pipe(
     Layer.provide(NodeServices.layer),
@@ -609,7 +615,9 @@ const makeBootLayer = (input: {
         },
       },
     },
-    ProviderAdapterRegistry.makeSingleLayer(makeCodexAdapter(input.capturedTurns)),
+    ProviderAdapterRegistry.makeSingleLayer(
+      makeCodexAdapter(input.capturedTurns, input.cancelledRunOrdinals ?? new Set()),
+    ),
     { databaseLayer },
   );
   return Layer.mergeAll(
@@ -850,8 +858,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
               assert.include(turns[0]!.text, `User message:\n${CONTINUATION_PROMPT}`);
 
               // The next continuation reuses the provider thread without a new
-              // handoff: the imported context is only reissued until a v2 run
-              // completes.
+              // handoff: its native thread already received the imported context.
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
                 createdBy: "user",
@@ -1041,5 +1048,80 @@ describe("orchestration v2 legacy v1 cutover", () => {
           );
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
+  );
+
+  it.live("does not resend imported context after the first continuation is cancelled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* checkpointWorkspace("legacy-v1-cancelled-continuation");
+        const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cancelled-state-" });
+        const dbPath = path.join(stateDir, "userdata", "state.sqlite");
+        yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });
+        yield* seedV1Database(dbPath, workspace);
+
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const longThreadId = ThreadId.make(LONG_THREAD);
+        yield* Effect.gen(function* () {
+          const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* importer.reconcileShells;
+          assert.isTrue((yield* maintenance.rebuild).valid);
+          yield* importer.ensureTranscript(longThreadId);
+
+          // A Stop or a server restart cancels the first run after its turn
+          // already carried the imported context.
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:cancelled:continue"),
+            threadId: longThreadId,
+            messageId: MessageId.make("message:cancelled:long:continuation"),
+            text: CONTINUATION_PROMPT,
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const cancelled = yield* waitForIdle(longThreadId);
+          assert.deepStrictEqual(
+            cancelled.runs.map((run) => run.status),
+            ["cancelled"],
+          );
+          assert.equal(cancelled.contextHandoffs.length, 1);
+          assert.equal(cancelled.contextHandoffs[0]?.delivery?.status, "inline");
+
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:cancelled:resume"),
+            threadId: longThreadId,
+            messageId: MessageId.make("message:cancelled:long:resume"),
+            text: "resume",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const resumed = yield* waitForIdle(longThreadId);
+          assert.equal(resumed.runs.at(-1)?.status, "completed");
+          assert.equal(resumed.contextHandoffs.length, 1);
+          assert.deepStrictEqual(
+            (yield* Ref.get(capturedTurns)).map((turn) => turn.text.startsWith("Context handoff")),
+            [true, false],
+          );
+        }).pipe(
+          Effect.provide(
+            makeBootLayer({
+              name: "legacy-v1-cancelled-continuation",
+              dbPath,
+              workspace,
+              capturedTurns,
+              cancelledRunOrdinals: new Set([1]),
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 });
