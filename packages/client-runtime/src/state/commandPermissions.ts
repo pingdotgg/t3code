@@ -16,7 +16,7 @@ function grants(session: AuthSessionState, scope: AuthEnvironmentScope) {
 }
 
 /** UI availability and dispatch use the same target session and method policy. */
-export function createCommandPermissions<R, E>(
+function makeCommandPermissions<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   method: string,
 ) {
@@ -72,4 +72,26 @@ export function createCommandPermissions<R, E>(
       );
     });
   return { requiredScopes, permissionAtom, authorize };
+}
+
+const permissionsByRuntime = new WeakMap<
+  object,
+  Map<string, ReturnType<typeof makeCommandPermissions>>
+>();
+
+/** Reuse availability atoms and dispatch guards across commands on the same runtime. */
+export function createCommandPermissions<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  method: string,
+) {
+  let permissions = permissionsByRuntime.get(runtime);
+  if (permissions === undefined) {
+    permissions = new Map();
+    permissionsByRuntime.set(runtime, permissions);
+  }
+  const existing = permissions.get(method);
+  if (existing !== undefined) return existing;
+  const created = makeCommandPermissions(runtime, method);
+  permissions.set(method, created);
+  return created;
 }

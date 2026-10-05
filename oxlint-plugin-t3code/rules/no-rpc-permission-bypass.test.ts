@@ -21,3 +21,27 @@ const rpc = createOxlintRuleHarness("t3code/no-rpc-permission-bypass", {
   filename: "packages/client-runtime/src/rpc/client.ts",
 });
 rpc.valid("allows the transport boundary", "session.client[tag](input);");
+
+const app = createOxlintRuleHarness("t3code/no-rpc-permission-bypass", {
+  filename: "apps/web/src/example.ts",
+});
+app.invalid(
+  "blocks guard imports through the barrel",
+  'import { RpcPermissionGuard as Guard } from "@t3tools/client-runtime/rpc";',
+);
+app.invalid(
+  "blocks explicit index imports",
+  'import { RpcPermissionGuard } from "@t3tools/client-runtime/rpc/index.ts";',
+);
+app.invalid(
+  "blocks raw session access in subscription callbacks",
+  "subscribeDynamic(tag, session => session.client[method](input));",
+);
+app.invalid(
+  "blocks raw client destructuring",
+  "const { client: raw } = session; raw[method](input);",
+);
+app.valid(
+  "allows public typed RPC helpers",
+  'import { request, runStream } from "@t3tools/client-runtime/rpc";',
+);
