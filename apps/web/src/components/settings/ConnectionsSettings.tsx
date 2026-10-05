@@ -47,6 +47,7 @@ import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
   connectionRoutes,
+  hasSavedBearerRoute,
   connectionStatusText,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -1497,6 +1498,7 @@ function SavedBackendListRow({
   const [routesOpen, setRoutesOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
+  const blocked = unsupported && !hasSavedBearerRoute(environment.entry);
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
@@ -1678,14 +1680,14 @@ function SavedBackendListRow({
             <Switch
               size="sm"
               checked={enabled}
-              disabled={isRemoving || unsupported}
+              disabled={isRemoving || blocked}
               aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
               onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
             />
           }
         />
         <TooltipPopup side="top">
-          {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
+          {blocked ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
         </TooltipPopup>
       </Tooltip>
       <Menu>

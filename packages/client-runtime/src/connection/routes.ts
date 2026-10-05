@@ -197,6 +197,10 @@ export function connectionRouteAddress(route: ConnectionRoute): string | null {
   return routeHttpBaseUrl(route);
 }
 
+/** Whether the environment has a saved direct URL route. */
+export const hasSavedBearerRoute = (entry: ConnectionCatalogEntry) =>
+  connectionRoutes(entry).some((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+
 /** Whether the environment can be reached through T3 Connect. */
 export function hasRelayRoute(
   entry: Pick<ConnectionCatalogEntry, "target" | "alternateRoutes">,

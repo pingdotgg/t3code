@@ -167,6 +167,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const ownedDataClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
   const sessions = yield* Ref.make<ReadonlyArray<SessionControl>>([]);
   const releasedSessions = yield* Ref.make(0);
+  const prepareError = yield* Ref.make(options?.prepareError);
+  const prepareAttempts = yield* Ref.make(0);
   const storedProfiles = yield* Ref.make(
     new Map(initialProfiles.map((profile) => [profile.connectionId, profile])),
   );
@@ -384,7 +386,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         label: target.label,
         target,
       };
-      if (options?.prepareError) return yield* options.prepareError;
+      yield* Ref.update(prepareAttempts, (count) => count + 1);
+      const error = yield* Ref.get(prepareError);
+      if (error !== undefined) return yield* error;
       const routeError = options?.prepareRoute?.(target);
       if (routeError !== undefined) return yield* routeError;
       yield* Ref.update(connectedRoutes, (current) => [...current, connectionRouteId(target)]);
@@ -450,6 +454,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ownedDataClears,
     sessions,
     releasedSessions,
+    prepareError,
+    prepareAttempts,
     storedProfiles,
     profileReadCount,
     storedCredentials,
@@ -959,39 +965,49 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect("discovery keeps unsupported environments off until compatibility changes", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
-        initialDisabled: [RELAY_TARGET.environmentId],
-      });
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.start;
-        const error = new ConnectionBlockedError({
-          reason: "unsupported",
-          detail: "Use a compatible client.",
+  it.effect.each([false, true])(
+    "discovery keeps unsupported environments off (learned route: %s)",
+    (learned) =>
+      Effect.gen(function* () {
+        const environmentId = BEARER_TARGET.environmentId;
+        const relay = new RelayConnectionTarget({ ...RELAY_TARGET, environmentId });
+        const profile = new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          learned: true,
+          authorization: "t3-connect",
         });
-        yield* registry.setCompatibility(RELAY_TARGET.environmentId, error);
-        const entry = (yield* SubscriptionRef.get(registry.entries)).get(
-          RELAY_TARGET.environmentId,
+        const harness = yield* makeHarness(
+          learned ? [relay, BEARER_TARGET] : [relay],
+          learned ? [profile] : [],
+          [],
+          { initialDisabled: [environmentId] },
         );
-        expect(entry).toMatchObject({ enabled: false, unsupportedReason: error.message });
-        expect(
-          yield* Effect.flip(registry.setEnabled(RELAY_TARGET.environmentId, true)),
-        ).toMatchObject({ reason: "unsupported" });
-        expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
-        yield* registry.setCompatibility(RELAY_TARGET.environmentId, null);
-        expect(
-          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.enabled,
-        ).toBe(false);
-        yield* registry.setEnabled(RELAY_TARGET.environmentId, true);
-        yield* awaitConnectionState(
-          registry,
-          RELAY_TARGET.environmentId,
-          (state) => state.phase === "connected",
-        );
-      }).pipe(Effect.provide(harness.layer));
-    }),
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          const error = new ConnectionBlockedError({
+            reason: "unsupported",
+            detail: "Use a compatible client.",
+          });
+          yield* registry.setCompatibility(environmentId, error);
+          const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+          expect(entry).toMatchObject({ enabled: false, unsupportedReason: error.message });
+          expect(yield* Effect.flip(registry.setEnabled(environmentId, true))).toMatchObject({
+            reason: "unsupported",
+          });
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+          yield* registry.setCompatibility(environmentId, null);
+          expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.enabled).toBe(
+            false,
+          );
+          yield* registry.setEnabled(environmentId, true);
+          yield* awaitConnectionState(
+            registry,
+            environmentId,
+            (state) => state.phase === "connected",
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("a socket preflight rejection persists the connection as switched off", () =>
@@ -1017,6 +1033,74 @@ describe("EnvironmentRegistry", () => {
         expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
       }).pipe(Effect.provide(harness.layer));
     }),
+  );
+
+  it.effect.each(
+    [
+      { outcome: "connects after the server becomes compatible", compatible: true },
+      { outcome: "blocks again while the server is incompatible", compatible: false },
+    ].flatMap((outcome) => [false, true].map((relayFirst) => ({ ...outcome, relayFirst }))),
+  )(
+    "retrying an unsupported saved URL $outcome (relay first: $relayFirst)",
+    ({ compatible, relayFirst }) =>
+      Effect.gen(function* () {
+        const environmentId = BEARER_TARGET.environmentId;
+        const error = new ConnectionBlockedError({
+          reason: "unsupported",
+          detail: "Update the server to use this client.",
+          serverUpdateRequired: true,
+        });
+        const relay = new RelayConnectionTarget({
+          environmentId: environmentId,
+          label: "Relay route",
+        });
+        const harness = yield* makeHarness(
+          relayFirst ? [relay, BEARER_TARGET] : [BEARER_TARGET],
+          [BEARER_PROFILE],
+          [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+          { prepareError: error },
+        );
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          const awaitDisabled = SubscriptionRef.changes(registry.entries).pipe(
+            Stream.filter((entries) => entries.get(environmentId)?.enabled === false),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          yield* awaitDisabled;
+          expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(true);
+          const previousAttempts = yield* Ref.get(harness.prepareAttempts);
+          if (compatible) yield* Ref.set(harness.prepareError, undefined);
+
+          yield* registry.setEnabled(environmentId, true);
+          if (compatible) {
+            yield* awaitConnectionState(
+              registry,
+              environmentId,
+              (state) => state.phase === "connected",
+            );
+            const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+            expect(entry?.enabled).toBe(true);
+            expect(entry?.unsupportedReason).toBeUndefined();
+            expect(entry?.serverUpdateRequired).toBeUndefined();
+            expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(false);
+            expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+          } else {
+            yield* awaitDisabled;
+            expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)).toMatchObject(
+              {
+                enabled: false,
+                unsupportedReason: error.message,
+                serverUpdateRequired: true,
+              },
+            );
+            expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(true);
+            expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+          }
+          expect(yield* Ref.get(harness.prepareAttempts)).toBe(previousAttempts + 1);
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("switching an environment off disconnects it and persists the flag", () =>

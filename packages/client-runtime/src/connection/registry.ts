@@ -48,6 +48,7 @@ import {
   connectionRoutes,
   entryWithRoutes,
   findRouteToSameAddress,
+  hasSavedBearerRoute,
   isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
@@ -990,13 +991,14 @@ export const make = Effect.gen(function* () {
       environmentId,
       Effect.gen(function* () {
         const entry = yield* getEntry(environmentId);
-        if (enabled && entry.unsupportedReason !== undefined) {
+        const retryUnsupported = enabled && entry.unsupportedReason !== undefined;
+        if (retryUnsupported && !hasSavedBearerRoute(entry)) {
           return yield* new ConnectionBlockedError({
             reason: "unsupported",
             detail: entry.unsupportedReason,
           });
         }
-        if (entry.enabled === enabled) {
+        if (entry.enabled === enabled && !retryUnsupported) {
           return;
         }
         // Platform-managed environments are reconciled from the host and are
@@ -1004,7 +1006,9 @@ export const make = Effect.gen(function* () {
         if (!(yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           yield* registrations.setEnabled(environmentId, enabled);
         }
-        const next: ConnectionCatalogEntry = { ...entry, enabled };
+        // Turning a saved URL on retries the handshake against its current server.
+        const { unsupportedReason: _reason, serverUpdateRequired: _update, ...rest } = entry;
+        const next: ConnectionCatalogEntry = { ...(retryUnsupported ? rest : entry), enabled };
         // Update the lease in place so the supervisor keeps its generation and
         // durable streams; `installEntryLocked` would tear it down instead.
         const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
