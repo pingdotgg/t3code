@@ -684,13 +684,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // changes Reduce Motion while the thread is open.
   const reduceMotionRef = useRef(true);
   useEffect(() => {
+    // A change event or cleanup makes a still-pending initial query stale.
+    let superseded = false;
     void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      reduceMotionRef.current = enabled;
+      if (!superseded) reduceMotionRef.current = enabled;
     });
     const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
+      superseded = true;
       reduceMotionRef.current = enabled;
     });
-    return () => subscription.remove();
+    return () => {
+      superseded = true;
+      subscription.remove();
+    };
   }, []);
   const endFollowEnabledRef = useRef(true);
   endFollowEnabledRef.current = endFollowEnabled;
