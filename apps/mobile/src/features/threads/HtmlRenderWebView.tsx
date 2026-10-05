@@ -198,6 +198,9 @@ export function ThreadHtmlRender(props: {
   const [uri, setUri] = useState<string | null>(null);
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [failed, setFailed] = useState(false);
+  // A failed load retries once with a fresh URL, or remounts on the same one,
+  // since the failure may have been the connection rather than the URL.
+  const [attempt, setAttempt] = useState(0);
   const retried = useRef(false);
   const handleLoadError = () => {
     if (retried.current) {
@@ -206,8 +209,9 @@ export function ThreadHtmlRender(props: {
     }
     retried.current = true;
     void refresh().then((next) => {
-      if (next !== null && next !== uri) setUri(next);
-      else setFailed(true);
+      if (next === null) setFailed(true);
+      else if (next !== uri) setUri(next);
+      else setAttempt((value) => value + 1);
     });
   };
 
@@ -216,7 +220,7 @@ export function ThreadHtmlRender(props: {
       <View style={{ height }}>
         {uri !== null && !failed ? (
           <HtmlRenderWebView
-            key={uri}
+            key={`${uri}:${attempt}`}
             uri={uri}
             title={title}
             nested
