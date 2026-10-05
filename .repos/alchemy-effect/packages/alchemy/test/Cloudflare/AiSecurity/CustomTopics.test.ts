@@ -82,6 +82,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // Canonical `list()` test (zone-scoped singleton): there is no account-wide
@@ -92,21 +93,24 @@ test.provider(
 // result is an empty array — the assertion is that `list()` resolves to an
 // array (proving the typed skip path) rather than throwing. Presence of the
 // standing test zone is asserted only on an entitled account (env-gated).
-test.provider("list enumerates the custom topics across all zones", (stack) =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Cloudflare.AI.CustomTopics);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates the custom topics across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Cloudflare.AI.CustomTopics);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    if (entitledZoneId) {
-      expect(all.some((t) => t.zoneId === entitledZoneId)).toBe(true);
-    }
+      if (entitledZoneId) {
+        expect(all.some((t) => t.zoneId === entitledZoneId)).toBe(true);
+      }
 
-    // `stack` is unused (the singleton always exists on every entitled zone),
-    // but keep the destroy bookends so the harness state stays clean.
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      // `stack` is unused (the singleton always exists on every entitled zone),
+      // but keep the destroy bookends so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"] },
 );
 
 test.provider.skipIf(!entitledZoneId)(
@@ -167,5 +171,8 @@ test.provider.skipIf(!entitledZoneId)(
       const restored = yield* getTopics(zoneId);
       expect(restored.topics ?? []).toEqual([]);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"],
+    timeout: 120_000,
+  },
 );

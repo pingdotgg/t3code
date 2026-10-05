@@ -14,7 +14,7 @@ import type * as Duration from "effect/Duration"
 import type * as Effect from "effect/Effect"
 import { flow } from "effect/Function"
 import * as Layer from "effect/Layer"
-import * as Socket from "effect/unstable/socket/Socket"
+import * as Socket from "effect/socket/Socket"
 
 /**
  * @since 4.0.0

@@ -44,8 +44,8 @@ HttpApi ("MyApi")
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 // Definition
@@ -152,9 +152,9 @@ Once you've defined an API, you can generate a fully typed client from it using 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { FetchHttpClient } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { FetchHttpClient } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -329,8 +329,8 @@ Use `HttpApiEndpoint.get` to create a GET endpoint. Provide a name (used as the 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 // Define a schema representing a User entity
@@ -387,8 +387,8 @@ When a group has more than one endpoint, use `.handleAll` to register all the ha
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -460,8 +460,8 @@ Use `HttpApiEndpoint.delete` to create an endpoint that removes a resource.
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -539,8 +539,8 @@ Use `HttpApiEndpoint.patch` to create an endpoint that partially updates a resou
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -633,8 +633,8 @@ Path parameters let you capture dynamic values from the URL. For example, `/user
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -698,8 +698,8 @@ Set the path to `"*"` to match any URL that no other endpoint handles. This is u
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -803,8 +803,8 @@ Prefixes let you prepend a common path segment to endpoints, groups, or an entir
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -864,8 +864,8 @@ Query parameters are the `?key=value` pairs appended to a URL. Use the `query` o
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -925,8 +925,8 @@ A single query parameter can carry multiple values (e.g., `?a=1&a=2`). Wrap the 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -997,8 +997,8 @@ Use the `headers` option to declare a record of fields or a full schema for the 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -1058,15 +1058,8 @@ To accept file uploads, mark the payload as multipart with `HttpApiSchema.asMult
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter, Multipart } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiScalar,
-  HttpApiSchema
-} from "effect/unstable/httpapi"
+import { HttpRouter, Multipart } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -1125,15 +1118,8 @@ By default, request bodies are JSON. To accept a different format — like form-
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiScalar,
-  HttpApiSchema
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -1199,8 +1185,8 @@ Inside a handler, `ctx.request` gives you access to the raw incoming HTTP reques
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi").add(
@@ -1246,7 +1232,7 @@ There is no `cookies` option on endpoints. Instead, validated cookie access goes
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Context, Effect, Layer, Redacted, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
+import { HttpRouter } from "effect/http"
 import {
   HttpApi,
   HttpApiBuilder,
@@ -1255,7 +1241,7 @@ import {
   HttpApiMiddleware,
   HttpApiScalar,
   HttpApiSecurity
-} from "effect/unstable/httpapi"
+} from "effect/http-api"
 import { createServer } from "node:http"
 
 // Define the service providing the current user
@@ -1340,8 +1326,8 @@ For quick, unvalidated access you can read cookies directly from `ctx.request.co
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("api").add(
@@ -1385,8 +1371,8 @@ The payload schema still describes the endpoint in the generated documentation, 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema, Stream } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("myApi").add(
@@ -1445,15 +1431,8 @@ Success responses default to `200 OK`. To use a different status code, annotate 
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiScalar,
-  HttpApiSchema
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -1503,15 +1482,8 @@ Responses default to JSON. To return a different format — like CSV or plain te
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiScalar,
-  HttpApiSchema
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -1582,8 +1554,8 @@ Wrap the success schema with `HttpApiSchema.WithHeaders(schema, headers)`. The h
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -1653,8 +1625,8 @@ The body schema is authoritative for everything wire-level: status, content type
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 class UserNotFound extends Schema.TaggedError<UserNotFound>()("UserNotFound", {
@@ -1734,8 +1706,8 @@ For headers that should not appear in the API contract, call `HttpEffect.appendP
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpEffect, HttpRouter, HttpServerResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpEffect, HttpRouter, HttpServerResponse } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("api").add(
@@ -1780,8 +1752,8 @@ Set cookies on the response using `HttpEffect.appendPreResponseHandler` together
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpEffect, HttpRouter, HttpServerResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpEffect, HttpRouter, HttpServerResponse } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("api").add(
@@ -1828,9 +1800,9 @@ To redirect the client to a different URL, return an `HttpServerResponse.redirec
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpServerResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpServerResponse } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi").add(
@@ -1886,8 +1858,8 @@ With a streaming success schema, the handler returns a `Stream` directly, and th
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schedule, Stream } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("myApi").add(
@@ -1943,8 +1915,8 @@ The response will stream data (`a`, `b`, `c`) with a 500ms interval between each
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schedule, Schema, Stream } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Message = Schema.Struct({
@@ -2004,7 +1976,7 @@ yield * Stream.runForEach(events, (message) => Console.log(message.text))
 
 ### Typed Stream Failures
 
-`HttpApiSchema.StreamSse` accepts an `error` schema describing typed stream failures. Since the HTTP status is already sent when the stream fails, the failure cannot travel as a normal error response. Instead, the server encodes the full `Cause` into a reserved `effect/httpapi/stream/failure` event, and the derived client decodes that event and fails the stream with the original cause.
+`HttpApiSchema.StreamSse` accepts an `error` schema describing typed stream failures. Since the HTTP status is already sent when the stream fails, the failure cannot travel as a normal error response. Instead, the server encodes the full `Cause` into a reserved `effect/http-api/stream/failure` event, and the derived client decodes that event and fails the stream with the original cause.
 
 **Example** (Declaring a Typed Stream Failure)
 
@@ -2029,7 +2001,7 @@ Things to know:
 - Set a custom status or content type with `HttpApiSchema.status(code)` and the `contentType` option, for example `HttpApiSchema.status(206)(HttpApiSchema.StreamUint8Array({ contentType: "application/custom-bytes" }))`.
 - Wrap a stream schema with `HttpApiSchema.WithHeaders` to declare typed response headers (see [Setting Response Headers](#setting-response-headers)). The handler returns `HttpApiSchema.withHeaders({ body, headers })` with the stream as `body`, and the client resolves to the same shape.
 - An endpoint may declare at most one streaming success schema, `HEAD` endpoints cannot declare one, and streaming schemas are not supported in error responses.
-- The `effect/httpapi/stream/failure` event name is reserved: `events` schemas may not declare it, and the client treats such an event as a stream failure only when its `data` decodes to a `Cause`.
+- The `effect/http-api/stream/failure` event name is reserved: `events` schemas may not declare it, and the client treats such an event as a stream failure only when its `data` decodes to a `Cause`.
 
 # Error Handling
 
@@ -2042,15 +2014,8 @@ Endpoints can declare the errors they may return. Each error is a schema annotat
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiScalar,
-  HttpApiSchema
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar, HttpApiSchema } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -2139,15 +2104,8 @@ The `HttpApiError` module provides ready-made error schemas for common HTTP stat
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiError,
-  HttpApiGroup,
-  HttpApiScalar
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -2223,15 +2181,8 @@ Each predefined error also has a `NoContent` variant that responds with the stat
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiError,
-  HttpApiGroup,
-  HttpApiScalar
-} from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -2295,7 +2246,7 @@ In this example, if a client sends a non-integer `id` query parameter, the API r
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
+import { HttpRouter } from "effect/http"
 import {
   HttpApi,
   HttpApiBuilder,
@@ -2304,7 +2255,7 @@ import {
   HttpApiMiddleware,
   HttpApiScalar,
   HttpApiSchema
-} from "effect/unstable/httpapi"
+} from "effect/http-api"
 import { createServer } from "node:http"
 
 // Define a custom error for validation failures
@@ -2388,7 +2339,7 @@ Middleware lets you run shared logic — like logging or authentication — befo
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http"
+import { HttpRouter, HttpServerRequest } from "effect/http"
 import {
   HttpApi,
   HttpApiBuilder,
@@ -2397,7 +2348,7 @@ import {
   HttpApiMiddleware,
   HttpApiScalar,
   HttpApiSchema
-} from "effect/unstable/httpapi"
+} from "effect/http-api"
 import { createServer } from "node:http"
 
 class Logger extends HttpApiMiddleware.Service<Logger>()("Http/Logger", {
@@ -2476,7 +2427,7 @@ When you attach interdependent middleware to an endpoint, group, or API, the mid
 
 ```ts
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api"
 
 class AuthInfo extends Context.Service<AuthInfo, {
   readonly userId: string
@@ -2541,7 +2492,7 @@ Attach a security scheme to an endpoint, group, or the entire API via `HttpApiMi
 
 ```ts
 import { Context, Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSecurity } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSecurity } from "effect/http-api"
 
 // Define a schema for the "User"
 class User extends Schema.Class<User>("User")({ id: Schema.Finite }) {}
@@ -2602,7 +2553,7 @@ To enforce a security scheme, implement its middleware as a `Layer`. The layer r
 
 ```ts
 import { Context, Effect, Layer, Redacted, Schema } from "effect"
-import { HttpApiMiddleware, HttpApiSecurity } from "effect/unstable/httpapi"
+import { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api"
 
 class User extends Schema.Class<User>("User")({ id: Schema.Finite }) {}
 
@@ -2658,7 +2609,7 @@ Use `HttpApiSecurity.annotate` to attach metadata — like a description — to 
 
 ```ts
 import { Context, Schema } from "effect"
-import { HttpApiMiddleware, HttpApiSecurity, OpenApi } from "effect/unstable/httpapi"
+import { HttpApiMiddleware, HttpApiSecurity, OpenApi } from "effect/http-api"
 
 class User extends Schema.Class<User>("User")({ id: Schema.Finite }) {}
 
@@ -2695,7 +2646,7 @@ Use `HttpApiBuilder.securitySetCookie` to set a security cookie from a handler. 
 
 ```ts
 import { Redacted, Schema } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSecurity } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSecurity } from "effect/http-api"
 
 const Api = HttpApi.make("MyApi")
   .add(
@@ -2732,8 +2683,8 @@ Handlers can access any Effect service. Because `HttpApiBuilder.group` returns a
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -2798,8 +2749,8 @@ Add interactive API documentation with `HttpApiScalar` (Scalar UI) or `HttpApiSw
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 
 const User = Schema.Struct({
@@ -2911,7 +2862,7 @@ Below is a list of available annotations for a top-level `HttpApi`. They can be 
 
 ```ts
 import { Schema } from "effect"
-import { HttpApi, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, OpenApi } from "effect/http-api"
 
 const api = HttpApi.make("api")
   // Provide additional schemas
@@ -3014,7 +2965,7 @@ The following annotations can be added to an `HttpApiGroup`:
 **Example** (Annotating a Group)
 
 ```ts
-import { HttpApi, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const api = HttpApi.make("api")
   .add(
@@ -3090,7 +3041,7 @@ For an `HttpApiEndpoint`, you can use the following annotations:
 
 ```ts
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const api = HttpApi.make("api").add(
   HttpApiGroup.make("group")
@@ -3212,7 +3163,7 @@ The default response description is "Success". You can override this by annotati
 
 ```ts
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const User = Schema.Struct({
   id: Schema.Finite,
@@ -3312,7 +3263,7 @@ When a group is `topLevel`, its name is not prepended to operation IDs in the Op
 
 ```ts
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const api = HttpApi.make("api").add(
   // Mark the group as top-level
@@ -3391,9 +3342,9 @@ The `HttpApiClient` module generates a fully typed client from your API definiti
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { FetchHttpClient } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { FetchHttpClient } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -3450,9 +3401,9 @@ When a group is `topLevel`, its endpoints are exposed as top-level methods on th
 ```ts
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { FetchHttpClient } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpRouter } from "effect/http"
+import { FetchHttpClient } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { createServer } from "node:http"
 
 const Api = HttpApi.make("MyApi")
@@ -3499,8 +3450,8 @@ If you need to plug your API into an existing HTTP server (instead of using `Nod
 
 ```ts
 import { Effect, Layer, Schema } from "effect"
-import { HttpRouter, HttpServer } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServer } from "effect/http"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiScalar } from "effect/http-api"
 import * as http from "node:http"
 
 const Api = HttpApi.make("myApi").add(

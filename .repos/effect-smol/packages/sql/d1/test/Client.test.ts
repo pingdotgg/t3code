@@ -2,8 +2,8 @@ import type { D1Result } from "@cloudflare/workers-types"
 import { D1Client } from "@effect/sql-d1"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Effect } from "effect"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import { Statement } from "effect/unstable/sql"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import { Statement } from "effect/sql"
 import { D1Miniflare } from "./utils.ts"
 
 describe("Client", () => {

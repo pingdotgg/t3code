@@ -1,4 +1,4 @@
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerResponse } from "effect/http"
 import * as inspector from "node:inspector/promises"
 
 const WARMUP = 5_000

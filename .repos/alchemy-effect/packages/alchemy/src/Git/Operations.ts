@@ -1,9 +1,9 @@
 /** Repository operations over storage services. HTTP handlers adapt these results. */
-import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Base64 } from "effect/encoding";
 import * as Layer from "effect/Layer";
 import type {
   CompactRepo,
@@ -864,7 +864,7 @@ export const makeOperations = Effect.gen(function* () {
           oid: params.oid,
           size: data.size,
           encoding: "base64" as const,
-          content: Encoding.encodeBase64(data.content),
+          content: Base64.encode(data.content),
         };
       }),
     diff: ({

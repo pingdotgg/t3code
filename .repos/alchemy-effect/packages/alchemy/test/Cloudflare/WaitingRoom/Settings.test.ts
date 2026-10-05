@@ -48,125 +48,134 @@ const getSetting = (zoneId: string) =>
   );
 
 // Both cases mutate the same zone-level Waiting Room settings singleton; run them serially so they don't corrupt each other's captured baseline under the global concurrent test config.
-describe("Settings", () => {
-  test.provider(
-    "pins the settings to the default baseline without touching the API",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+describe(
+  "Settings",
+  { tags: ["provider:cloudflare", "provider:cloudflare:waitingroom", "live"] },
+  () => {
+    test.provider(
+      "pins the settings to the default baseline without touching the API",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        // The zone's baseline is the Cloudflare default (false). Desired ==
-        // observed, so reconcile skips the plan-gated PUT entirely — this
-        // converges even on unentitled zones.
-        const settings = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.WaitingRoom.Settings("Settings", {
-              zoneId,
-              searchEngineCrawlerBypass: false,
-            });
-          }),
-        );
-
-        expect(settings.zoneId).toEqual(zoneId);
-        expect(settings.searchEngineCrawlerBypass).toEqual(false);
-        // The pre-management value was captured for restore-on-destroy.
-        expect(settings.initialSearchEngineCrawlerBypass).toEqual(false);
-
-        // Out-of-band verification via the distilled API.
-        const live = yield* getSetting(zoneId);
-        expect(live.searchEngineCrawlerBypass).toEqual(false);
-
-        // Destroy restores the initial value — also a no-op here.
-        yield* stack.destroy();
-
-        const restored = yield* getSetting(zoneId);
-        expect(restored.searchEngineCrawlerBypass).toEqual(false);
-      }).pipe(logLevel),
-  );
-
-  test.provider(
-    "surfaces the typed ZoneNotEntitled error when enabling on unentitled zones",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-
-        // The plan-gated PUT must fail with the typed entitlement tag.
-        const error = yield* waitingRooms
-          .putSetting({ zoneId, searchEngineCrawlerBypass: true })
-          .pipe(
-            Effect.retry({
-              while: (e) => e._tag === "Forbidden",
-              schedule: forbiddenRetrySchedule,
-              times: 8,
+          // The zone's baseline is the Cloudflare default (false). Desired ==
+          // observed, so reconcile skips the plan-gated PUT entirely — this
+          // converges even on unentitled zones.
+          const settings = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.WaitingRoom.Settings("Settings", {
+                zoneId,
+                searchEngineCrawlerBypass: false,
+              });
             }),
-            Effect.flip,
           );
-        expect(error._tag).toEqual("ZoneNotEntitled");
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-  );
+          expect(settings.zoneId).toEqual(zoneId);
+          expect(settings.searchEngineCrawlerBypass).toEqual(false);
+          // The pre-management value was captured for restore-on-destroy.
+          expect(settings.initialSearchEngineCrawlerBypass).toEqual(false);
 
-  test.provider.skipIf(!entitledZoneId)(
-    "enables the crawler bypass and restores the original value on destroy",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = entitledZoneId!;
+          // Out-of-band verification via the distilled API.
+          const live = yield* getSetting(zoneId);
+          expect(live.searchEngineCrawlerBypass).toEqual(false);
 
-        yield* stack.destroy();
-        // Known baseline: the bypass defaults to false.
-        yield* waitingRooms.putSetting({
-          zoneId,
-          searchEngineCrawlerBypass: false,
-        });
+          // Destroy restores the initial value — also a no-op here.
+          yield* stack.destroy();
 
-        const settings = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.WaitingRoom.Settings("Settings", {
-              zoneId,
-              searchEngineCrawlerBypass: true,
-            });
-          }),
-        );
+          const restored = yield* getSetting(zoneId);
+          expect(restored.searchEngineCrawlerBypass).toEqual(false);
+        }).pipe(logLevel),
+      { tags: ["provider:cloudflare:zone"] },
+    );
 
-        expect(settings.searchEngineCrawlerBypass).toEqual(true);
-        expect(settings.initialSearchEngineCrawlerBypass).toEqual(false);
+    test.provider(
+      "surfaces the typed ZoneNotEntitled error when enabling on unentitled zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        const live = yield* getSetting(zoneId);
-        expect(live.searchEngineCrawlerBypass).toEqual(true);
+          yield* stack.destroy();
 
-        yield* stack.destroy();
+          // The plan-gated PUT must fail with the typed entitlement tag.
+          const error = yield* waitingRooms
+            .putSetting({ zoneId, searchEngineCrawlerBypass: true })
+            .pipe(
+              Effect.retry({
+                while: (e) => e._tag === "Forbidden",
+                schedule: forbiddenRetrySchedule,
+                times: 8,
+              }),
+              Effect.flip,
+            );
+          expect(error._tag).toEqual("ZoneNotEntitled");
 
-        // Destroy restored the value the zone had before we managed it.
-        const restored = yield* getSetting(zoneId);
-        expect(restored.searchEngineCrawlerBypass).toEqual(false);
-      }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { tags: ["provider:cloudflare:zone"] },
+    );
 
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for these per-zone settings, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider("list enumerates the settings across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
+    test.provider.skipIf(!entitledZoneId)(
+      "enables the crawler bypass and restores the original value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = entitledZoneId!;
 
-      const provider = yield* Provider.findProvider(
-        Cloudflare.WaitingRoom.Settings,
-      );
-      const all = yield* provider.list();
+          yield* stack.destroy();
+          // Known baseline: the bypass defaults to false.
+          yield* waitingRooms.putSetting({
+            zoneId,
+            searchEngineCrawlerBypass: false,
+          });
 
-      expect(all.length).toBeGreaterThan(0);
-      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+          const settings = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.WaitingRoom.Settings("Settings", {
+                zoneId,
+                searchEngineCrawlerBypass: true,
+              });
+            }),
+          );
 
-      // `stack` is unused here (the singleton always exists on every zone),
-      // but keep the destroy bookend so the harness state stays clean.
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+          expect(settings.searchEngineCrawlerBypass).toEqual(true);
+          expect(settings.initialSearchEngineCrawlerBypass).toEqual(false);
+
+          const live = yield* getSetting(zoneId);
+          expect(live.searchEngineCrawlerBypass).toEqual(true);
+
+          yield* stack.destroy();
+
+          // Destroy restored the value the zone had before we managed it.
+          const restored = yield* getSetting(zoneId);
+          expect(restored.searchEngineCrawlerBypass).toEqual(false);
+        }).pipe(logLevel),
+      { timeout: 120_000 },
+    );
+
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for these per-zone settings, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider(
+      "list enumerates the settings across all zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          const provider = yield* Provider.findProvider(
+            Cloudflare.WaitingRoom.Settings,
+          );
+          const all = yield* provider.list();
+
+          expect(all.length).toBeGreaterThan(0);
+          expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+          // `stack` is unused here (the singleton always exists on every zone),
+          // but keep the destroy bookend so the harness state stays clean.
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { tags: ["provider:cloudflare:zone"] },
+    );
+  },
+);

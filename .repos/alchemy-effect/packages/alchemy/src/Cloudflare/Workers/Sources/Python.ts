@@ -1,8 +1,10 @@
+import { dotAlchemyDirectory } from "../../../AlchemyContext.ts";
+import { isPathWithin } from "../../../Util/isPathWithin.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { glob } from "tinyglobby";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { convertPathToPattern, glob } from "tinyglobby";
 import path from "pathe";
 import * as Artifacts from "../../../Artifacts.ts";
 import * as Bundle from "../../../Bundle/Bundle.ts";
@@ -177,7 +179,10 @@ const resolvePythonModulesDir = Effect.fn(function* (
     `${pythonVersion}\0${target.index}\0${pyprojectContent}`,
   );
 
-  const staging = path.resolve(".alchemy", "python", options.id);
+  const runtimeBase = process.cwd();
+  const dotAlchemy = yield* dotAlchemyDirectory;
+  // uv runs from the Worker root, so its arguments need absolute staging paths.
+  const staging = path.resolve(runtimeBase, dotAlchemy, "python", options.id);
   const vendorDir = path.join(staging, "python_modules");
   const tokenFile = path.join(staging, ".synced");
 
@@ -315,6 +320,8 @@ export const readPythonWorkerBundle = Effect.fn(function* (
   const fs = yield* FileSystem.FileSystem;
   const main = yield* resolveMainPath(options.main);
   const root = path.dirname(main);
+  const runtimeBase = process.cwd();
+  const dotAlchemy = yield* dotAlchemyDirectory;
   const entryName = path.basename(main);
 
   const readTextModule = Effect.fn(function* (name: string) {
@@ -339,9 +346,16 @@ export const readPythonWorkerBundle = Effect.fn(function* (
       "**/.venv*/**",
       "**/node_modules/**",
       "**/.alchemy/**",
+      `${convertPathToPattern(path.resolve(runtimeBase, dotAlchemy))}/**`,
     ],
   }).pipe(
-    Effect.map((names) => names.filter((name) => name !== entryName)),
+    Effect.map((names) =>
+      names.filter(
+        (name) =>
+          name !== entryName &&
+          !isPathWithin(dotAlchemy, path.join(root, name), runtimeBase),
+      ),
+    ),
     Effect.flatMap(
       Effect.forEach(readTextModule, { concurrency: "unbounded" }),
     ),
