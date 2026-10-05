@@ -53,7 +53,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
-import { claudeAgentMessage } from "@t3tools/shared/toolActivity";
+import { claudeAgentMessage, isClaudeAgentMessageItem } from "@t3tools/shared/toolActivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
@@ -945,11 +945,16 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   // Tool calls show the call in the foreground and the result muted below it.
   const shownItem = fetchedItem ?? row.projectedItem.item;
   const item = row.projectedItem.item;
+  const isAgentMessage =
+    item.type === "dynamic_tool" && isClaudeAgentMessageItem(item.toolName, item.input);
+  // A long message arrives summarized, so parse the fetched item when there is one.
   const agentMessage =
-    item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+    shownItem.type === "dynamic_tool"
+      ? claudeAgentMessage(shownItem.toolName, shownItem.input)
+      : undefined;
   const agentMessageBody = agentMessage?.message;
   const call =
-    expanded && agentMessageBody
+    expanded && isAgentMessage
       ? null
       : expanded && !isRead && shownItem.type === "command_execution"
         ? toolCallLines({ command: shownItem.input })
@@ -965,7 +970,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       ? shownItem.exitCode
       : null;
   const fullDetail =
-    expanded && !reasoning && !call
+    expanded && !reasoning && !call && !isAgentMessage
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
@@ -973,17 +978,27 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
   const fetchedOutput = !expanded
     ? null
-    : shownItem.type === "file_search" || shownItem.type === "web_search"
-      ? turnItemOutputText(shownItem)
-      : fetchedItem
-        ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
+    : isAgentMessage
+      ? agentMessageBody !== undefined
+        ? null
         : fetchedDetail.error
-          ? `Couldn't load output: ${fetchedDetail.error}`
+          ? `Couldn't load message: ${fetchedDetail.error}`
           : row.fetchesDetail
             ? fetchedDetail.data
-              ? "Output is no longer available."
-              : "Loading output…"
-            : null;
+              ? "Message is no longer available."
+              : "Loading message…"
+            : null
+      : shownItem.type === "file_search" || shownItem.type === "web_search"
+        ? turnItemOutputText(shownItem)
+        : fetchedItem
+          ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
+          : fetchedDetail.error
+            ? `Couldn't load output: ${fetchedDetail.error}`
+            : row.fetchesDetail
+              ? fetchedDetail.data
+                ? "Output is no longer available."
+                : "Loading output…"
+              : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -1134,6 +1149,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 
       {expanded &&
       (reasoning ||
+        agentMessageBody ||
         fullDetail ||
         call ||
         fetchedOutput ||

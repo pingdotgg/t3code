@@ -824,6 +824,11 @@ function toFeedActivity(
       : null;
   const agentMessage =
     item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+  // A long message arrives summarized; its body comes with the fetched item.
+  const summarizedAgentMessage =
+    agentMessage === undefined &&
+    item.type === "dynamic_tool" &&
+    isClaudeAgentMessageItem(item.toolName, item.input);
   // An agent message expands to its body.
   const getFullDetail = memoizeValue(() =>
     readPaths
@@ -855,9 +860,12 @@ function toFeedActivity(
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
         : agentMessage
           ? agentMessage.message !== undefined
-          : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
-    // Read rows show their paths, then the fetched file contents.
-    fetchesDetail: turnItemNeedsDetailFetch(item),
+          : summarizedAgentMessage ||
+            turnItemHasDetail(item) ||
+            workEntry.questionAnswer !== undefined),
+    // Read rows show their paths, then the fetched file contents. A message
+    // already carries its body unless it was summarized for transport.
+    fetchesDetail: agentMessage ? false : turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),

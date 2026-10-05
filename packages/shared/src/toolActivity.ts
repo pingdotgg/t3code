@@ -61,7 +61,7 @@ export function claudeAgentMessage(
 ): ClaudeAgentMessage | undefined {
   if (toolName !== "SendMessage") return undefined;
   const record = asRecord(input);
-  if (record === undefined) return undefined;
+  if (record === undefined || isTransportSummary(record)) return undefined;
   // The CLI echoes a truncated `content` preview beside `message`; older
   // team messages carried their text in `content` alone.
   const body = record.message ?? record.content;
@@ -89,17 +89,26 @@ export function claudeAgentMessage(
   };
 }
 
+/** The wire projection replaces a large tool input with `{ summary, truncated: true }`. */
+function isTransportSummary(record: Record<string, unknown>): boolean {
+  return record.truncated === true && typeof record.summary === "string";
+}
+
 /**
  * Whether a tool call is a Claude agent message, including one whose input the
- * server summarized to a string for transport. Structured protocol messages
- * such as shutdown requests are not.
+ * server summarized for transport (its body is fetched with the full item).
+ * Structured protocol messages such as shutdown requests are not.
  */
 export function isClaudeAgentMessageItem(
   toolName: string | null | undefined,
   input: unknown,
 ): boolean {
   if (toolName !== "SendMessage") return false;
-  return typeof input === "string" || claudeAgentMessage(toolName, input) !== undefined;
+  const record = asRecord(input);
+  return (
+    (record !== undefined && isTransportSummary(record)) ||
+    claudeAgentMessage(toolName, input) !== undefined
+  );
 }
 
 const CLAUDE_AGENT_ID_PATTERN = /^a[0-9a-f]{16}$/u;

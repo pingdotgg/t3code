@@ -1023,7 +1023,10 @@ describe("agent messages", () => {
   it("summarizes a run of messages, counting refused deliveries as failures", () => {
     const delivered = sendMessage("one", "completed", { to: "main", message: "Done." });
     // An input the server summarized for transport is still a message.
-    const summarized = sendMessage("two", "failed", '{ "to": "ghost-agent", …');
+    const summarized = sendMessage("two", "failed", {
+      summary: '{"to":"ghost-agent","message":"…',
+      truncated: true,
+    });
     expect(summarizeToolGroup([delivered, summarized])).toEqual({
       summary: "Sent 2 messages",
       hasFailure: true,

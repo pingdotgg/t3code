@@ -191,7 +191,10 @@ describe("toolActivity", () => {
 
   it("counts text and transport-summarized messages, not protocol payloads", () => {
     expect(isClaudeAgentMessageItem("SendMessage", { to: "main", message: "Done." })).toBe(true);
-    expect(isClaudeAgentMessageItem("SendMessage", '{ "to": "ghost-agent", …')).toBe(true);
+    const summarized = { summary: '{"to":"ghost-agent","message":"…', truncated: true };
+    expect(isClaudeAgentMessageItem("SendMessage", summarized)).toBe(true);
+    // A summarized input carries no readable fields; the full item has them.
+    expect(claudeAgentMessage("SendMessage", summarized)).toBeUndefined();
     expect(
       isClaudeAgentMessageItem("SendMessage", {
         to: "researcher",

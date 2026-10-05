@@ -25,6 +25,7 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ScopedThreadRef,
@@ -67,7 +68,11 @@ import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
-import { claudeAgentMessage, claudeSkillInvocation } from "@t3tools/shared/toolActivity";
+import {
+  claudeAgentMessage,
+  claudeSkillInvocation,
+  isClaudeAgentMessageItem,
+} from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   createContext,
@@ -280,7 +285,7 @@ import {
   formatDayAwareTimestamp,
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
-import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { FetchedToolOutput, useFetchedTurnItem, V2ItemInspector } from "./V2ItemInspector";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
@@ -5520,6 +5525,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     payload?.type === "dynamic_tool"
       ? claudeAgentMessage(payload.toolName, payload.input)
       : undefined;
+  // A long message arrives summarized; its body comes with the fetched item.
+  const summarizedAgentMessage =
+    agentMessage === undefined &&
+    payload?.type === "dynamic_tool" &&
+    isClaudeAgentMessageItem(payload.toolName, payload.input);
   // Reads and skills expand to plain text instead of the item inspector. A
   // skill's heading already names it, so only its arguments are left to show.
   // An agent message expands to its body.
@@ -5528,7 +5538,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? workEntryReadOutput(workEntry, workspaceRoot)
       : skill
         ? (skill.args ?? null)
-        : agentMessage
+        : agentMessage || summarizedAgentMessage
           ? null
           : undefined;
   const trailingPreview = answerPreview ?? agentMessage?.preview ?? null;
@@ -5566,6 +5576,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const plainOutputFetches =
     plainOutput !== undefined &&
     !agentMessage &&
+    !summarizedAgentMessage &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
@@ -5573,6 +5584,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? Boolean(
           plainOutput ||
           agentMessage?.message ||
+          summarizedAgentMessage ||
           viewedImage ||
           workEntry.questionAnswer ||
           plainOutputFetches,
@@ -5770,22 +5782,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
-      {expanded && agentMessage?.message ? (
+      {expanded && (agentMessage?.message || summarizedAgentMessage) ? (
         // The message bubble the recipient sees, so it doesn't read as the agent's own reply.
         <WorkLogDetails kind="media">
-          <div className="max-h-96 overflow-auto rounded-2xl bg-message p-3 text-message-foreground select-text">
-            <ChatMarkdown
-              className="text-message-foreground"
-              text={agentMessage.message}
-              cwd={ctx.markdownCwd}
-              threadRef={threadRef ?? undefined}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          {agentMessage?.message ? (
+            <SentAgentMessageBubble text={agentMessage.message} onImageExpand={onImageExpand} />
+          ) : workEntry.projectedItem ? (
+            <SummarizedAgentMessage
+              projectedItem={workEntry.projectedItem}
               onImageExpand={onImageExpand}
-              lineBreaks
             />
-          </div>
+          ) : null}
         </WorkLogDetails>
       ) : null}
       {expanded &&
@@ -5824,6 +5831,48 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
+  );
+}
+
+/** A message one agent sent another, in the bubble its recipient sees. */
+function SentAgentMessageBubble(props: {
+  readonly text: string;
+  readonly onImageExpand: (preview: ExpandedImagePreview) => void;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="max-h-96 overflow-auto rounded-2xl bg-message p-3 text-message-foreground select-text">
+      <ChatMarkdown
+        className="text-message-foreground"
+        text={props.text}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        skills={ctx.skills}
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+        onImageExpand={props.onImageExpand}
+        lineBreaks
+      />
+    </div>
+  );
+}
+
+/** A long message the wire summarized: its body comes with the fetched item. */
+function SummarizedAgentMessage(props: {
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly onImageExpand: (preview: ExpandedImagePreview) => void;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const { item, output } = useFetchedTurnItem(props.projectedItem, ctx.activeThreadEnvironmentId);
+  const message =
+    item.type === "dynamic_tool"
+      ? claudeAgentMessage(item.toolName, item.input)?.message
+      : undefined;
+  if (message) return <SentAgentMessageBubble text={message} onImageExpand={props.onImageExpand} />;
+  return (
+    <p className="text-sm text-muted-foreground">
+      {output.pending ? "Loading message…" : (output.error ?? "Message is no longer available.")}
+    </p>
   );
 }
 
