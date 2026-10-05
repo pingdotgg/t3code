@@ -2535,6 +2535,10 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("language")}
+          // The search index supplies the English title every other row uses;
+          // this row is new, so it overrides that with a translated one and
+          // stays consistent with its own translated description and value.
+          title={t("settings.language.title")}
           description={t("settings.language.description")}
           resetAction={
             settings.languagePreference !== DEFAULT_UNIFIED_SETTINGS.languagePreference ? (
