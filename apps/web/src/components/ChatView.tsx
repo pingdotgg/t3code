@@ -2190,10 +2190,6 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
-  const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
-    containerWidth: workspaceLayoutWidth ?? undefined,
-    widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
-  });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
@@ -2316,6 +2312,12 @@ export default function ChatView(props: ChatViewProps) {
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
+    containerWidth: workspaceLayoutWidth ?? undefined,
+    enabled: !shouldUsePlanSidebarSheet && !rightPanelMaximized,
+    open: rightPanelOpen,
+    widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
+  });
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
