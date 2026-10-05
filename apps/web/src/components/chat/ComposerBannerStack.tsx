@@ -306,7 +306,7 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
             aria-label="Notice details"
             tooltipStyle
             side="top"
-            className="max-w-80 whitespace-normal wrap-anywhere"
+            className="max-w-80 whitespace-normal wrap-anywhere [--inline-button-white-space:normal]"
           >
             <ComposerBanner.Scroll className="max-h-[min(var(--available-height),24rem,40dvh)]">
               {children}
