@@ -1,7 +1,8 @@
 # Voice input
 
-Voice input edits a draft in the composer or a supported text editor and never
-submits it automatically. The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
+Voice input edits a draft in the composer or a supported text editor. Dictation
+alone does not submit it; web and desktop can queue an explicit Send, submit, or
+save request until the completed transcript is inserted. The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 binds a recording to its transcriber and resolved locale. Draft ownership, text,
 revision, and selection are captured before recording and checked before insertion,
 so a late transcript cannot overwrite a draft that was edited or replaced.
@@ -42,6 +43,11 @@ therefore requires implementations to settle only after their work has stopped;
 the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
 cancellation between native calls and discards late results.
 
-Web and desktop cancellation aborts the client request and prevents late transcript
-insertion. Editors remain read-only and submission stays disabled while voice input
-is busy, but draft revision checks still protect against external changes.
+Web and desktop cancellation aborts the client request, prevents late transcript
+insertion, and clears any queued submission. Editors remain read-only while voice
+input is busy, but draft revision checks still protect against external changes.
+Submission controls are disabled during preparation. Once recording starts, a
+submission request finishes recording and waits for transcription and optional
+cleanup before submitting the completed draft. The request can also be queued
+while transcription or cleanup is already running; see the
+[client integration](../../apps/web/src/speech/useEnvironmentSpeechInput.ts).
