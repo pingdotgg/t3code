@@ -1429,7 +1429,10 @@ export function AddProjectDestinationScreen(props: {
                   isSubmitting
                 }
                 loading={isSavingCloneFolder}
-                onPress={() => void saveCloneParentDirectory()}
+                onPress={
+                  /** Start the save without awaiting it; the operation reports errors on this screen. */
+                  () => void saveCloneParentDirectory()
+                }
               />
             </View>
           ) : null}

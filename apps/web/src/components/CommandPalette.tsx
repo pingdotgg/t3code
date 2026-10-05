@@ -3572,7 +3572,10 @@ function OpenCommandPaletteDialog(props: {
                   isRemoteProjectPending ||
                   !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
                 }
-                onClick={() => void saveCloneParentDirectory()}
+                onClick={
+                  /** Start the save without awaiting it; the operation reports its result through toasts. */
+                  () => void saveCloneParentDirectory()
+                }
               >
                 {isSavingCloneFolder
                   ? "Saving…"
