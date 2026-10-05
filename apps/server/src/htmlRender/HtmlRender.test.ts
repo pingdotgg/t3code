@@ -94,6 +94,27 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("inlines an SVG behind processing instructions and a doctype subset", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
+      const svg = path.join(directory, "styled.svg");
+      const source = [
+        '<?xml version="1.0"?>',
+        '<?xml-stylesheet href="theme.css"?>',
+        '<!DOCTYPE svg [ <!ENTITY fill "red"> ]>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"/>',
+      ].join("\n");
+      yield* fileSystem.writeFileString(svg, source);
+
+      const prepared = yield* htmlRender.prepare(`<img src="${svg}">`);
+
+      expect(prepared).toContain(`data:image/svg+xml;base64,${Encoding.encodeBase64(source)}`);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("lists every local image it cannot read", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

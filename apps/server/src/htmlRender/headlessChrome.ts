@@ -1,6 +1,5 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -50,8 +49,17 @@ const CAPTURE_TIMEOUT = "20 seconds";
 const PAGE_URL = "http://t3-page.localhost/page.html";
 // Stack traces and load errors name the page this way instead of its URL.
 const PAGE_NAME = "page.html";
-// Each measuring load gets its own copy of the page over the pipe.
+// Each measuring load reads its own copy of the page off the pipe.
 const MEASURE_CONCURRENCY = 3;
+
+const textEncoder = new TextEncoder();
+
+/**
+ * A page as the base64 bytes `PAGE_URL` serves, encoded once however often it
+ * loads. Node's encoder, since pages run to 25 MiB.
+ */
+const pageBody = (html: string) =>
+  Buffer.from(Buffer.from(html, "utf8").toString("base64"), "latin1");
 // What Chrome prints before aborting when it cannot sandbox itself, e.g. on
 // Ubuntu 23.10+ where AppArmor restricts unprivileged user namespaces.
 const NO_SANDBOX_SIGNATURE = "No usable sandbox";
@@ -150,8 +158,8 @@ const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
 interface PageEvents {
-  /** The page, base64, served for `PAGE_URL`. */
-  body: string | undefined;
+  /** The page served for `PAGE_URL`, from `pageBody`. */
+  body: Uint8Array | undefined;
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
   omittedConsoleMessages: number;
@@ -236,6 +244,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       ),
     ).pipe(Effect.asVoid);
 
+  // Serves the page. Its body is shared bytes between two small JSON halves,
+  // queued together, so loading a page of up to 25 MiB at several widths never
+  // copies it on this side.
+  const fulfillPage = (sessionId: string, requestId: string, body: Uint8Array) =>
+    Queue.offerAll(outgoing, [
+      textEncoder.encode(
+        `{"id":${++nextId},"sessionId":${JSON.stringify(sessionId)},"method":"Fetch.fulfillRequest","params":{"requestId":${JSON.stringify(requestId)},"responseCode":200,"responseHeaders":[{"name":"Content-Type","value":"text/html; charset=utf-8"}],"body":"`,
+      ),
+      body,
+      textEncoder.encode('"}}\0'),
+    ]).pipe(Effect.asVoid);
+
   const receive = (raw: string) => {
     const message = Option.getOrUndefined(decodeCdpMessage(raw));
     if (message?.id !== undefined) {
@@ -263,16 +283,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       if (!paused) return Effect.void;
       const body = page.body;
       return paused.request.url.split("#", 1)[0] === PAGE_URL && body !== undefined
-        ? post(
-            "Fetch.fulfillRequest",
-            {
-              requestId: paused.requestId,
-              responseCode: 200,
-              responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }],
-              body,
-            },
-            sessionId,
-          )
+        ? fulfillPage(sessionId, paused.requestId, body)
         : post(
             "Fetch.failRequest",
             { requestId: paused.requestId, errorReason: "AccessDenied" },
@@ -397,8 +408,8 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       sessionId,
     );
 
-    /** Loads the page, given base64, so callers loading it often encode it once. */
-    const load = Effect.fnUntraced(function* (body: string, urlFragment: string) {
+    /** Loads a page from `pageBody`, so callers loading it often encode it once. */
+    const load = Effect.fnUntraced(function* (body: Uint8Array, urlFragment: string) {
       const loaded = yield* Deferred.make<void, BrowserFailure>();
       events.body = body;
       events.loaded = loaded;
@@ -450,7 +461,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
             },
           ];
 
-    return { load, screenshot, consoleMessages };
+    // Frees the page in the browser once it is no longer needed.
+    const close = send("Target.closeTarget", { targetId }, Ignored).pipe(
+      Effect.ensuring(Effect.sync(() => pages.delete(sessionId))),
+      Effect.ignore,
+    );
+
+    return { load, screenshot, consoleMessages, close };
   });
 
   return { openPage };
@@ -487,7 +504,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
       profileDirectory: path.join(directory, "profile"),
     });
     const page = yield* browser.openPage(input.width);
-    const contentHeight = yield* page.load(Encoding.encodeBase64(input.html), input.urlFragment);
+    const contentHeight = yield* page.load(pageBody(input.html), input.urlFragment);
     const capturedHeight = Math.max(1, Math.min(contentHeight, MAX_CAPTURE_HEIGHT));
     const png = yield* page.screenshot(capturedHeight);
     return { png, contentHeight, capturedHeight, consoleMessages: page.consoleMessages() };
@@ -523,12 +540,14 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     noSandbox: input.noSandbox,
     profileDirectory: path.join(directory, "profile"),
   });
-  const body = Encoding.encodeBase64(input.html);
+  const body = pageBody(input.html);
   return yield* Effect.forEach(
     input.widths,
     (width) =>
       browser.openPage(width).pipe(
-        Effect.flatMap((page) => page.load(body, input.urlFragment)),
+        Effect.flatMap((page) =>
+          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
+        ),
         Effect.map((height) => [width, height] as const),
       ),
     { concurrency: MEASURE_CONCURRENCY },

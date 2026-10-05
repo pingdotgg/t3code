@@ -18,7 +18,6 @@ import {
 } from "@t3tools/shared/themePalettes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -179,8 +178,9 @@ const isImageBytes = (bytes: Uint8Array) => {
   ) {
     return true;
   }
-  // An SVG's root element is <svg>, after an optional XML declaration, comments, and doctype.
-  return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--[\s\S]*?-->|<!doctype[^>]*>)\s*)*<svg[\s/>]/i.test(
+  // An SVG's root element is <svg>, after any XML declaration or processing
+  // instructions, comments, and a doctype with an optional internal subset.
+  return /^\s*(?:(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!doctype[^>[]*(?:\[[\s\S]*?\])?\s*>)\s*)*<svg[\s/>]/i.test(
     new TextDecoder().decode(bytes.subarray(0, 4096)),
   );
 };
@@ -242,7 +242,11 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const dataUris = new Map(
     images.map(
       (image) =>
-        [image.path, dataUriPrefix(image.path) + Encoding.encodeBase64(image.bytes)] as const,
+        // Node's encoder: images run to 10 MiB.
+        [
+          image.path,
+          dataUriPrefix(image.path) + Buffer.from(image.bytes).toString("base64"),
+        ] as const,
     ),
   );
   const parts: Array<string> = [];
