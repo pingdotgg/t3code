@@ -24,6 +24,7 @@ const withService = <A, E>(
     readonly failHoldWrite?: boolean;
     readonly failActivityWrite?: boolean;
     readonly relayFails?: boolean;
+    readonly failActivityRead?: boolean;
   },
   body: (input: {
     readonly preferences: CloudPreferences.CloudPreferences["Service"];
@@ -51,7 +52,15 @@ const withService = <A, E>(
     );
     const dependencies = Layer.mergeAll(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
-        get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+        get: (name) =>
+          options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET
+            ? Effect.fail(
+                new ServerSecretStore.SecretStoreReadError({
+                  resource: name,
+                  cause: new Error("busy"),
+                }),
+              )
+            : Effect.succeed(Option.fromNullishOr(stored.get(name))),
         set: (name, value) =>
           (options.failHoldWrite && name === HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET) ||
           (options.failActivityWrite && name === PUBLISH_AGENT_ACTIVITY_SECRET)
@@ -133,6 +142,19 @@ it.effect("keeps both settings unchanged when the relay refuses the hold change"
         new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
         "false",
       );
+    }),
+  ),
+);
+
+it.effect("changes nothing when the current activity setting can't be read", () =>
+  withService({ failActivityRead: true, relayFails: true }, ({ preferences, stored, relayCalls }) =>
+    Effect.gen(function* () {
+      const error = yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepEqual(relayCalls, []);
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
     }),
   ),
 );

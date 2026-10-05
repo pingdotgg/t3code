@@ -77,9 +77,11 @@ const make = Effect.gen(function* () {
     function* (input) {
       // All or nothing: the activity setting is saved first, before the relay
       // is told anything, and put back if the hold change then fails.
+      // A failed read stops here, before anything changes: guessing "unset"
+      // would make a later rollback delete the real setting.
       const previousActivity = yield* secrets
         .get(PUBLISH_AGENT_ACTIVITY_SECRET)
-        .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
+        .pipe(Effect.catch(internalError("Could not read environment cloud preferences.")));
       yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
