@@ -1,5 +1,6 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -17,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import { statusForPhase } from "./agentActivityAggregate.ts";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
@@ -198,27 +200,21 @@ function shouldUpdateLiveActivity(input: {
   );
 }
 
-// Completions replayed long after the fact (server restarts republish every
-// recently-finished thread) must not ring the device again.
-
-function notificationForAggregate(input: {
+// A push describes only the thread whose publish caused it. The aggregate's top
+// row is often another thread's recent Done, so alerting from it re-rang that
+// completion for every unrelated publish (subagent tombstones, other threads).
+function notificationForState(input: {
   readonly target: LiveActivities.TargetRow;
-  readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly state?: RelayAgentActivityState | null;
   readonly nowMs: number;
 }): ApnsNotificationPayload | null {
-  if (!input.target.push_token || input.aggregate === null) {
+  const state = input.state;
+  if (!input.target.push_token || !state || isExpiredAgentActivityState(state, input.nowMs)) {
     return null;
   }
   const preferences = parsePreferences(input.target.preferences_json);
-  if (!preferences?.notificationsEnabled) {
-    return null;
-  }
-  const activity = input.aggregate.activities[0];
-  if (!activity) {
-    return null;
-  }
-  if (!shouldAlertForActivity({ ...activity, preferences, nowMs: input.nowMs })) return null;
-  return notificationForActivity(activity);
+  if (!shouldAlertForActivity({ ...state, preferences, nowMs: input.nowMs })) return null;
+  return notificationForActivity({ ...state, status: statusForPhase(state.phase) });
 }
 
 // "suppressed" means a Live Activity owns this state but no update is due
@@ -308,6 +304,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly state?: RelayAgentActivityState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenDelivery | null {
@@ -318,7 +315,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = input.replay ? null : notificationForAggregate(input);
+  const notification = input.replay ? null : notificationForState(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -522,12 +519,10 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      /** The published thread's state; the only thread a push may describe. */
+      readonly state?: RelayAgentActivityState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
-    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
-    readonly sendPushNotificationForTarget: (input: {
-      readonly target: LiveActivities.TargetRow;
-      readonly aggregate: RelayAgentActivityAggregateState | null;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
@@ -1100,31 +1095,12 @@ export const make = Effect.gen(function* () {
     sendLiveActivity,
     sendPushNotification,
     processSignedJob,
-    sendPushNotificationForTarget: Effect.fnUntraced(function* (input) {
-      if (!config.apns) return null;
-      const now = yield* DateTime.now;
-      const notification = notificationForAggregate({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: now.epochMilliseconds,
-      });
-      const token = input.target.push_token;
-      return yield* notification && token
-        ? deliveryQueue.enqueuePushNotification({
-            userId: input.target.user_id,
-            deviceId: input.target.device_id,
-            token,
-            bundleId: input.target.bundle_id,
-            apsEnvironment: input.target.aps_environment,
-            notification,
-          })
-        : Effect.succeed(null);
-    }),
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
+        state: input.state ?? null,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
       });
@@ -1144,9 +1120,9 @@ export const make = Effect.gen(function* () {
       }
       const notification = input.replay
         ? null
-        : notificationForAggregate({
+        : notificationForState({
             target: input.target,
-            aggregate: input.aggregate,
+            state: input.state ?? null,
             nowMs: input.nowMs,
           });
       // The end event doubles as the "task finished" moment. When a companion

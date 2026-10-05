@@ -257,8 +257,7 @@ describe("ApnsDeliveries", () => {
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
     return Effect.gen(function* () {
       const service = yield* ApnsDeliveries.ApnsDeliveries;
-      expect(yield* service.sendForTarget({ target, aggregate, nowMs: 0 })).toBeNull();
-      expect(yield* service.sendPushNotificationForTarget({ target, aggregate })).toBeNull();
+      expect(yield* service.sendForTarget({ target, aggregate, state, nowMs: 0 })).toBeNull();
       expect(
         yield* service.sendLiveActivity({
           target,
@@ -700,6 +699,7 @@ describe("ApnsDeliveries", () => {
             preferences_json: disabledPreferences,
           },
           aggregate: inputAggregate,
+          state: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -759,6 +759,7 @@ describe("ApnsDeliveries", () => {
           preferences_json: notificationsDisabledPreferences,
         },
         aggregate: inputAggregate,
+        state: { ...state, phase: "waiting_for_input" },
         nowMs: 5_000,
       });
 
@@ -804,6 +805,7 @@ describe("ApnsDeliveries", () => {
             remote_started_at: null,
           },
           aggregate: inputAggregate,
+          state: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -846,6 +848,7 @@ describe("ApnsDeliveries", () => {
           remote_started_at: null,
         },
         aggregate,
+        state,
         nowMs: 5_000,
       });
 
@@ -853,6 +856,47 @@ describe("ApnsDeliveries", () => {
       expect(queuedJobs).toEqual([]);
       expect(attempts).toEqual([]);
     }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+  });
+
+  it.effect("alerts a push-only device once per completion, not per later publish", () => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const pushOnly = {
+      ...target,
+      push_token: "apns-device-token",
+      push_to_start_token: null,
+      activity_push_token: null,
+      remote_started_at: null,
+    };
+    const completed = { ...state, phase: "completed" as const };
+    const doneAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed", status: "Done" }],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: pushOnly,
+        aggregate: doneAggregate,
+        state: completed,
+        nowMs: 5_000,
+      });
+      // The thread's subagents are tombstoned right after it finishes. Each
+      // publish still sees the parent's Done at the top of the aggregate.
+      for (let index = 0; index < 3; index++) {
+        yield* deliveries.sendForTarget({
+          target: pushOnly,
+          aggregate: doneAggregate,
+          state: null,
+          nowMs: 6_000,
+        });
+      }
+
+      expect(queuedJobs).toMatchObject([
+        { payload: { kind: "push_notification", notification: { body: "Done: Project" } } },
+      ]);
+    }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
   });
 
   it.effect("queues bounded alert notification payloads", () => {
@@ -884,6 +928,13 @@ describe("ApnsDeliveries", () => {
           remote_started_at: null,
         },
         aggregate: inputAggregate,
+        state: {
+          ...state,
+          projectTitle: longTitle,
+          threadTitle: longTitle,
+          phase: "waiting_for_input",
+          deepLink: "https://example.test/not-an-app-link",
+        },
         nowMs: 5_000,
       });
 
