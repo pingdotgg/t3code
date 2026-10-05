@@ -26,6 +26,7 @@ const withService = <A, E>(
     readonly failActivityWrite?: boolean;
     readonly relayFails?: boolean;
     readonly failActivityRead?: boolean;
+    readonly failHoldRead?: boolean;
     /** The first relay call reports itself, then waits for this before answering. */
     readonly holdFirstRelayCall?: {
       readonly started: () => void;
@@ -63,7 +64,8 @@ const withService = <A, E>(
     const dependencies = Layer.mergeAll(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
         get: (name) =>
-          options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET
+          (options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET) ||
+          (options.failHoldRead && name === HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)
             ? Effect.fail(
                 new ServerSecretStore.SecretStoreReadError({
                   resource: name,
@@ -201,3 +203,17 @@ it.effect("two overlapping updates are applied one after the other", () => {
     }),
   );
 });
+
+it.effect("changes nothing when the current hold setting can't be read", () =>
+  withService({ failHoldRead: true, failHoldWrite: true }, ({ preferences, stored, relayCalls }) =>
+    Effect.gen(function* () {
+      stored.set(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("true"));
+      const error = yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: false })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepEqual(relayCalls, []);
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
+    }),
+  ),
+);

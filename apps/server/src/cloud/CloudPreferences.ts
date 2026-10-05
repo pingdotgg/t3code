@@ -16,7 +16,6 @@ import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import {
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
-  readHoldWebhooksWhileOffline,
   readRelayConnection,
 } from "./config.ts";
 
@@ -86,16 +85,22 @@ const make = Effect.gen(function* () {
   const update: CloudPreferences["Service"]["update"] = Effect.fn("CloudPreferences.update")(
     function* (input) {
       // All or nothing: the activity setting is saved first, before the relay
-      // is told anything, and put back if the hold change then fails.
-      // A failed read stops here, before anything changes: guessing "unset"
-      // would make a later rollback delete the real setting.
-      const previousActivity = yield* secrets
-        .get(PUBLISH_AGENT_ACTIVITY_SECRET)
-        .pipe(Effect.catch(internalError("Could not read environment cloud preferences.")));
+      // is told anything, and put back if the hold change then fails. Both
+      // current values are read up front; a failed read stops here, before
+      // anything changes, because a guessed value would be the rollback target.
+      const readCurrent = (name: string) =>
+        secrets
+          .get(name)
+          .pipe(Effect.catch(internalError("Could not read environment cloud preferences.")));
+      const previousActivity = yield* readCurrent(PUBLISH_AGENT_ACTIVITY_SECRET);
+      const previousHold = yield* readCurrent(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET);
       yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
-        const previous = yield* readHoldWebhooksWhileOffline.pipe(withSecrets);
+        const previous = Option.match(previousHold, {
+          onNone: () => false,
+          onSome: (bytes) => new TextDecoder().decode(bytes) === "true",
+        });
         yield* pushHoldWebhooksWhileOffline(next).pipe(
           Effect.andThen(
             save(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, next).pipe(
