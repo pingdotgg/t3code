@@ -807,6 +807,8 @@ export const layer: Layer.Layer<
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
         Effect.gen(function* () {
+          // Without a local workspace the turn runs remotely and outlives this stream:
+          // losing it locally is not the turn's outcome, and recovery reattaches it.
           const checkpointFilesystem =
             input.session.providerSession.capabilities.checkpointing.appCanCheckpointFilesystem;
           // Startup failure and stream shutdown can report the same attempt.
@@ -877,10 +879,7 @@ export const layer: Layer.Layer<
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
-                if (
-                  Cause.hasInterruptsOnly(cause) ||
-                  (input.session.driver === "kilo-cloud" && input.reattach)
-                ) {
+                if (Cause.hasInterruptsOnly(cause) || input.reattach === true) {
                   return yield* Effect.failCause(cause);
                 }
                 yield* Effect.logError("orchestration V2 run preparation failed", {
@@ -1143,12 +1142,9 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
-            // Non-completed terminals drop background tracking immediately.
-            if (
-              terminal !== null &&
-              terminal.status !== "completed" &&
-              input.session.driver !== "kilo-cloud"
-            ) {
+            // Non-completed local terminals drop background tracking immediately; remote
+            // sandbox and billing state keep reporting after the turn ends.
+            if (terminal !== null && terminal.status !== "completed" && checkpointFilesystem) {
               return true;
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
@@ -1304,7 +1300,7 @@ export const layer: Layer.Layer<
                     cause,
                   }).pipe(
                     Effect.andThen(
-                      finalized || input.session.driver === "kilo-cloud"
+                      finalized || !checkpointFilesystem
                         ? Effect.void
                         : Ref.get(latestProviderThread).pipe(
                             Effect.flatMap((providerThread) =>
@@ -1416,8 +1412,7 @@ export const layer: Layer.Layer<
             : input.session.startTurn(turnInput);
           yield* Effect.andThen(shouldStart, startTurn).pipe(
             Effect.catchCause((cause) =>
-              input.session.driver === "kilo-cloud" &&
-              (input.reattach || Cause.hasInterruptsOnly(cause))
+              input.reattach === true || (!checkpointFilesystem && Cause.hasInterruptsOnly(cause))
                 ? stopProviderEvents.pipe(
                     Effect.andThen(
                       Effect.fail(

@@ -55,6 +55,10 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
+// Sessions whose provider runs in the local workspace, which T3 checkpoints.
+const localWorkspaceSession = {
+  capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+};
 const driver = ProviderDriverKind.make("codex");
 
 const RunExecutionTestLayer = RunExecutionService.layer.pipe(
@@ -545,7 +549,7 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
       providerTurnId: null,
     } as OrchestrationV2RunAttempt;
     const session = {
-      providerSession: { capabilities: { checkpointing: { appCanCheckpointFilesystem: true } } },
+      providerSession: localWorkspaceSession,
       events: Stream.never,
       startTurn: () => Ref.update(providerStarts, (count) => count + 1),
     } as unknown as ProviderAdapterV2SessionRuntime;
@@ -592,7 +596,7 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
   }).pipe(Effect.provide(RunExecutionTestLayer)),
 );
 
-it.effect.each([
+const readFailures = [
   { driverName: "codex", reattach: false, failAt: 1 },
   { driverName: "kilo", reattach: false, failAt: 0 },
   { driverName: "kilo", reattach: false, failAt: 1 },
@@ -600,140 +604,140 @@ it.effect.each([
   { driverName: "kilo-cloud", reattach: false, failAt: 1 },
   { driverName: "kilo-cloud", reattach: true, failAt: 0 },
   { driverName: "kilo-cloud", reattach: true, failAt: 1 },
-])(
-  "fences ownership-read failure for $driverName reattach=$reattach at check $failAt",
-  ({ driverName, reattach, failAt }) =>
-    Effect.gen(function* () {
-      const driver = ProviderDriverKind.make(driverName);
-      const checkpointFilesystem = driverName !== "kilo-cloud";
-      const baselineCalls = yield* Ref.make(0);
-      const closedSubscriptions = yield* Ref.make(0);
-      const guardCalls = yield* Ref.make(0);
-      const providerStarts = yield* Ref.make(0);
-      const writes = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-      const threadId = ThreadId.make("thread:run-execution-start-guard-read");
-      const runId = RunId.make("run:run-execution-start-guard-read");
-      const attemptId = RunAttemptId.make("attempt:run-execution-start-guard-read");
-      const providerInstanceId = ProviderInstanceId.make(driverName);
-      const testLayer = RunExecutionService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.mock(CheckpointService.CheckpointServiceV2)({
-              captureBaseline: () => Ref.update(baselineCalls, (n) => n + 1),
-            }),
-            Layer.mock(EventSink.EventSinkV2)({
-              writeIfRunCurrent: (input) => {
-                assert.equal(input.runId, runId);
-                assert.equal(input.activeAttemptId, attemptId);
-                assert.equal(input.expectedStatus, "running");
-                return Ref.update(writes, (current) => [...current, ...input.events]).pipe(
-                  Effect.as({ committed: true, storedEvents: [] }),
-                );
-              },
-            }),
-            IdAllocator.layer,
-            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-              ingestNormalized: () => Effect.succeed([]),
-            }),
-            ServerSettings.layerTest(),
-          ),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-        const result = yield* Effect.exit(
-          runExecution.startRootRun({
-            commandId: CommandId.make("command:run-execution-start-guard-read"),
-            appThread: { id: threadId } as OrchestrationV2AppThread,
-            providerSessionId: ProviderSessionId.make("session:run-execution-start-guard-read"),
-            reattach,
-            session: {
-              driver,
-              providerSession: {
-                capabilities: {
-                  checkpointing: { appCanCheckpointFilesystem: checkpointFilesystem },
-                },
-              },
-              subscribeEvents: Effect.succeed({
-                events: Stream.never,
-                close: Ref.update(closedSubscriptions, (n) => n + 1),
-              }),
-              events: Stream.never,
-              startTurn: () => Ref.update(providerStarts, (count) => count + 1),
-            } as unknown as ProviderAdapterV2SessionRuntime,
-            run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
-            rootNode: {
-              id: NodeId.make("node:run-execution-start-guard-read"),
-            } as OrchestrationV2ExecutionNode,
-            checkpointScope: {
-              id: CheckpointScopeId.make("checkpoint-scope:run-execution-start-guard-read"),
-            } as OrchestrationV2CheckpointScope,
-            providerThread: {
-              id: ProviderThreadId.make("provider-thread:run-execution-start-guard-read"),
-              driver,
-            } as OrchestrationV2ProviderThread,
-            attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
-            attemptId,
-            providerTurnOrdinal: 1,
-            // The preparation check passes; the check right before the provider
-            // call cannot read the run.
-            shouldStartProviderTurn: () =>
-              Ref.getAndUpdate(guardCalls, (calls) => calls + 1).pipe(
-                Effect.flatMap((calls) =>
-                  calls < failAt
-                    ? Effect.succeed(true)
-                    : Effect.fail(
-                        new ProjectionStore.ProjectionStoreReadError({
-                          threadId,
-                          cause: "database unavailable",
-                        }),
-                      ),
-                ),
-              ),
-            // The failure is settled by the guarded write, not by another read.
-            shouldFinalizeRun: () =>
-              Effect.fail(
-                new ProjectionStore.ProjectionStoreReadError({
-                  threadId,
-                  cause: "database unavailable",
-                }),
-              ),
-            message: {
-              messageId: MessageId.make("message:run-execution-start-guard-read"),
-              text: "Start while the store is down.",
-              attachments: [],
-              createdBy: "user",
-              creationSource: "web",
-            },
-            modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
-            runtimePolicy: {
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              cwd: process.cwd(),
-              approvalPolicy: "never",
-              sandboxPolicy: {
-                type: "readOnly",
-                access: { type: "fullAccess" },
-                networkAccess: false,
-              },
+];
+it.effect.each(readFailures)("ownership read failure $driverName/$reattach/$failAt", (input) =>
+  Effect.gen(function* () {
+    const { driverName, reattach, failAt } = input;
+    const driver = ProviderDriverKind.make(driverName);
+    const checkpointFilesystem = driverName !== "kilo-cloud";
+    const baselineCalls = yield* Ref.make(0);
+    const closedSubscriptions = yield* Ref.make(0);
+    const guardCalls = yield* Ref.make(0);
+    const providerStarts = yield* Ref.make(0);
+    const writes = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const threadId = ThreadId.make("thread:run-execution-start-guard-read");
+    const runId = RunId.make("run:run-execution-start-guard-read");
+    const attemptId = RunAttemptId.make("attempt:run-execution-start-guard-read");
+    const providerInstanceId = ProviderInstanceId.make(driverName);
+    const testLayer = RunExecutionService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            captureBaseline: () => Ref.update(baselineCalls, (n) => n + 1),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeIfRunCurrent: (input) => {
+              assert.equal(input.runId, runId);
+              assert.equal(input.activeAttemptId, attemptId);
+              assert.equal(input.expectedStatus, "running");
+              return Ref.update(writes, (current) => [...current, ...input.events]).pipe(
+                Effect.as({ committed: true, storedEvents: [] }),
+              );
             },
           }),
-        );
-        assert.equal(Exit.isFailure(result), reattach);
-      }).pipe(Effect.provide(testLayer));
+          IdAllocator.layer,
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
 
-      assert.equal(yield* Ref.get(guardCalls), failAt + 1);
-      assert.equal(yield* Ref.get(baselineCalls), checkpointFilesystem ? 1 : 0);
-      assert.equal(yield* Ref.get(closedSubscriptions), failAt);
-      if (reattach) assert.isEmpty(yield* Ref.get(writes));
-      assert.equal(yield* Ref.get(providerStarts), 0);
-      const runUpdate = (yield* Ref.get(writes)).find((event) => event.type === "run.updated");
-      assert.equal(
-        runUpdate?.type === "run.updated" ? runUpdate.payload.status : undefined,
-        reattach ? undefined : "failed",
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      const result = yield* Effect.exit(
+        runExecution.startRootRun({
+          commandId: CommandId.make("command:run-execution-start-guard-read"),
+          appThread: { id: threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make("session:run-execution-start-guard-read"),
+          reattach,
+          session: {
+            driver,
+            providerSession: {
+              capabilities: {
+                checkpointing: { appCanCheckpointFilesystem: checkpointFilesystem },
+              },
+            },
+            subscribeEvents: Effect.succeed({
+              events: Stream.never,
+              close: Ref.update(closedSubscriptions, (n) => n + 1),
+            }),
+            events: Stream.never,
+            startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
+          rootNode: {
+            id: NodeId.make("node:run-execution-start-guard-read"),
+          } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make("checkpoint-scope:run-execution-start-guard-read"),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: {
+            id: ProviderThreadId.make("provider-thread:run-execution-start-guard-read"),
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+          attemptId,
+          providerTurnOrdinal: 1,
+          // The preparation check passes; the check right before the provider
+          // call cannot read the run.
+          shouldStartProviderTurn: () =>
+            Ref.getAndUpdate(guardCalls, (calls) => calls + 1).pipe(
+              Effect.flatMap((calls) =>
+                calls < failAt
+                  ? Effect.succeed(true)
+                  : Effect.fail(
+                      new ProjectionStore.ProjectionStoreReadError({
+                        threadId,
+                        cause: "database unavailable",
+                      }),
+                    ),
+              ),
+            ),
+          // The failure is settled by the guarded write, not by another read.
+          shouldFinalizeRun: () =>
+            Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId,
+                cause: "database unavailable",
+              }),
+            ),
+          message: {
+            messageId: MessageId.make("message:run-execution-start-guard-read"),
+            text: "Start while the store is down.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        }),
       );
-    }),
+      assert.equal(Exit.isFailure(result), reattach);
+    }).pipe(Effect.provide(testLayer));
+
+    assert.equal(yield* Ref.get(guardCalls), failAt + 1);
+    assert.equal(yield* Ref.get(baselineCalls), checkpointFilesystem ? 1 : 0);
+    assert.equal(yield* Ref.get(closedSubscriptions), failAt);
+    if (reattach) assert.isEmpty(yield* Ref.get(writes));
+    assert.equal(yield* Ref.get(providerStarts), 0);
+    const runUpdate = (yield* Ref.get(writes)).find((event) => event.type === "run.updated");
+    assert.equal(
+      runUpdate?.type === "run.updated" ? runUpdate.payload.status : undefined,
+      reattach ? undefined : "failed",
+    );
+  }),
 );
 
 it.effect(
@@ -762,9 +766,7 @@ it.effect(
           appThread: { id: threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.never,
             startTurn: () =>
               Effect.sync(() => {
@@ -839,9 +841,7 @@ it.effect("refreshes MCP credential liveness before calling the provider", () =>
         appThread: { id: threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make("session:run-execution-mcp-liveness"),
         session: {
-          providerSession: {
-            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-          },
+          providerSession: localWorkspaceSession,
           events: Stream.never,
           startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
         } as unknown as ProviderAdapterV2SessionRuntime,
@@ -953,9 +953,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
         appThread: { id: threadId } as OrchestrationV2AppThread,
         providerSessionId,
         session: {
-          providerSession: {
-            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-          },
+          providerSession: localWorkspaceSession,
           events: Stream.never,
           startTurn: () => Ref.update(providerStarts, (count) => count + 1),
         } as unknown as ProviderAdapterV2SessionRuntime,
@@ -1092,9 +1090,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
           appThread: { id: threadId } as OrchestrationV2AppThread,
           providerSessionId,
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.never,
             startTurn: () => Ref.update(providerStarts, (count) => count + 1),
           } as unknown as ProviderAdapterV2SessionRuntime,
@@ -1344,9 +1340,7 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
         appThread: { id: threadId } as OrchestrationV2AppThread,
         providerSessionId,
         session: {
-          providerSession: {
-            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-          },
+          providerSession: localWorkspaceSession,
           events: Stream.fromIterable(events),
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapterV2SessionRuntime,
@@ -1727,9 +1721,7 @@ it.effect(
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make(`session:${key}`),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.empty,
             // Session-wide stays true forever; the root must consult the
             // thread-scoped probe instead of being pinned by siblings.
@@ -1947,9 +1939,7 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
-          providerSession: {
-            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-          },
+          providerSession: localWorkspaceSession,
           events: Stream.empty,
           hasPendingBackgroundWork: Effect.succeed(true),
           hasPendingBackgroundWorkForThread: () => Effect.succeed(true),
@@ -2142,9 +2132,7 @@ it.effect(
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make(`session:${key}`),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.empty,
             hasPendingBackgroundWork: Effect.succeed(true),
             hasPendingBackgroundWorkForThread: () => Effect.succeed(true),
@@ -2305,9 +2293,7 @@ it.effect(
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make(`session:${key}`),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.empty,
             // Session-wide stays true (sibling has work). Stop must use only
             // the scoped probe for this root's provider thread.
@@ -2492,9 +2478,7 @@ it.effect(
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make("session:subagent-interrupt-cascade"),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.empty,
             subscribeEvents: Effect.succeed({
               events: Stream.fromIterable([
@@ -2849,9 +2833,7 @@ it.effect(
           appThread: { id: ids.threadId } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make("session:subagent-link-survives-terminal"),
           session: {
-            providerSession: {
-              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-            },
+            providerSession: localWorkspaceSession,
             events: Stream.empty,
             subscribeEvents: Effect.succeed({
               events: Stream.fromIterable([
@@ -3608,113 +3590,112 @@ function captureRootRunTermination(input: {
 
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      yield* runExecution
-        .startRootRun({
-          commandId: CommandId.make(`command:${input.key}`),
-          appThread: { id: ids.threadId } as OrchestrationV2AppThread,
-          providerSessionId: ProviderSessionId.make(`session:${input.key}`),
-          reattach: input.cloudReattach ?? false,
-          ...(input.nativeThreadHasTurns === undefined
-            ? {}
-            : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
-          session: {
-            driver: input.cloudReattach ? ProviderDriverKind.make("kilo-cloud") : driver,
-            providerSession: {
-              capabilities: {
-                checkpointing: {
-                  appCanCheckpointFilesystem: input.checkpointFilesystem ?? !input.cloudReattach,
-                },
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:${input.key}`),
+        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make(`session:${input.key}`),
+        reattach: input.cloudReattach ?? false,
+        ...(input.nativeThreadHasTurns === undefined
+          ? {}
+          : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+        session: {
+          driver: input.cloudReattach ? ProviderDriverKind.make("kilo-cloud") : driver,
+          providerSession: {
+            capabilities: {
+              checkpointing: {
+                appCanCheckpointFilesystem: input.checkpointFilesystem ?? !input.cloudReattach,
               },
             },
-            events: Stream.empty,
-            subscribeEvents: Effect.succeed({
-              events:
-                input.events?.(ids) ??
-                Stream.fromIterable([
-                  ...(input.seedOpenSubagent
-                    ? [
-                        { type: "subagent.updated", driver, subagent: runningSubagent } as const,
-                        {
-                          type: "node.updated",
-                          driver,
-                          node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
-                        } as const,
-                        {
-                          type: "turn_item.updated",
-                          driver,
-                          turnItem: makeRunOwnedSubagentTurnItemFixture({
-                            ids,
-                            providerInstanceId,
-                            childThreadId: ids.childThreadId,
-                            driver,
-                            status: "running",
-                          }),
-                        } as const,
-                      ]
-                    : []),
-                  rootTerminalEvent(ids, "interrupted"),
-                ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
-              close: Deferred.succeed(ingestionDone, undefined),
-            }),
-            startTurn: input.startTurn ?? (() => Effect.void),
-          } as unknown as ProviderAdapterV2SessionRuntime,
-          run: {
-            id: ids.runId,
-            threadId: ids.threadId,
-            ordinal: 1,
-            providerInstanceId,
-          } as OrchestrationV2Run,
-          rootNode: {
-            id: ids.rootNodeId,
-            providerTurnId: ids.rootProviderTurnId,
-          } as OrchestrationV2ExecutionNode,
-          checkpointScope: {
-            id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
-          } as OrchestrationV2CheckpointScope,
-          providerThread: {
-            id: ids.providerThreadId,
-            driver,
-          } as OrchestrationV2ProviderThread,
-          attempt: {
-            id: ids.attemptId,
-            providerTurnId: ids.rootProviderTurnId,
-          } as OrchestrationV2RunAttempt,
-          attemptId: ids.attemptId,
-          providerTurnOrdinal: 1,
-          shouldFinalizeRun: input.shouldFinalizeRun,
-          ...(input.hasUnpairedRunInterruptRequest === undefined
-            ? {}
-            : {
-                hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
-              }),
-          message: {
-            messageId: MessageId.make(`message:${input.key}`),
-            text: "interrupt projection",
-            attachments: [],
-            createdBy: "user",
-            creationSource: "web",
           },
-          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
-          runtimePolicy: {
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-            approvalPolicy: "never",
-            sandboxPolicy: {
-              type: "readOnly",
-              access: { type: "fullAccess" },
-              networkAccess: false,
-            },
-          },
-        })
-        .pipe(
-          Effect.catch((error) => {
-            if (!input.cloudReattach) return Effect.fail(error);
-            startFailed = true;
-            return Effect.void;
+          events: Stream.empty,
+          subscribeEvents: Effect.succeed({
+            events:
+              input.events?.(ids) ??
+              Stream.fromIterable([
+                ...(input.seedOpenSubagent
+                  ? [
+                      { type: "subagent.updated", driver, subagent: runningSubagent } as const,
+                      {
+                        type: "node.updated",
+                        driver,
+                        node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                      } as const,
+                      {
+                        type: "turn_item.updated",
+                        driver,
+                        turnItem: makeRunOwnedSubagentTurnItemFixture({
+                          ids,
+                          providerInstanceId,
+                          childThreadId: ids.childThreadId,
+                          driver,
+                          status: "running",
+                        }),
+                      } as const,
+                    ]
+                  : []),
+                rootTerminalEvent(ids, "interrupted"),
+              ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
+            close: Deferred.succeed(ingestionDone, undefined),
           }),
-        );
-    }).pipe(Effect.provide(testLayer));
+          startTurn: input.startTurn ?? (() => Effect.void),
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: ids.runId,
+          threadId: ids.threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: ids.rootNodeId,
+          providerTurnId: ids.rootProviderTurnId,
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ids.providerThreadId,
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: ids.attemptId,
+          providerTurnId: ids.rootProviderTurnId,
+        } as OrchestrationV2RunAttempt,
+        attemptId: ids.attemptId,
+        providerTurnOrdinal: 1,
+        shouldFinalizeRun: input.shouldFinalizeRun,
+        ...(input.hasUnpairedRunInterruptRequest === undefined
+          ? {}
+          : {
+              hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
+            }),
+        message: {
+          messageId: MessageId.make(`message:${input.key}`),
+          text: "interrupt projection",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(
+      Effect.provide(testLayer),
+      Effect.catch((error) => {
+        if (!input.cloudReattach) return Effect.fail(error);
+        startFailed = true;
+        return Effect.void;
+      }),
+    );
 
     yield* Deferred.await(ingestionDone);
     return {
@@ -4107,9 +4088,7 @@ function runBackgroundItemScenario(
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
-          providerSession: {
-            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
-          },
+          providerSession: localWorkspaceSession,
           events: Stream.empty,
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
