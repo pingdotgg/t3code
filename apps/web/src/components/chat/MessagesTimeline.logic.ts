@@ -716,6 +716,8 @@ function deriveSupersededAttemptFolds(
       entry.attempt?.status !== "superseded" ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
+      // A published page stays visible, as it does when its turn folds.
+      entry.kind === "html-render" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
     ) {

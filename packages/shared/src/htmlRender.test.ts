@@ -34,6 +34,17 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.match(/name="viewport"/g)).toHaveLength(1);
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
   });
+
+  it("ignores tags written inside comments and scripts", () => {
+    const html =
+      '<!-- copy <head> and <meta name="viewport"> here --><html><head>' +
+      "<script>const tag = '<meta name=\"viewport\">';</script></head><body>x</body></html>";
+    const injected = injectHtmlRenderBootstrap(html);
+    expect(injected.indexOf('<style id="t3-theme">')).toBeGreaterThan(
+      injected.indexOf("<html><head>"),
+    );
+    expect(injected).toContain('<meta name="viewport" content="width=device-width');
+  });
 });
 
 describe("htmlRenderTheme", () => {

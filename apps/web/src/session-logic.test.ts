@@ -1319,6 +1319,28 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
+  it("keeps a render visible when its superseded attempt folds", () => {
+    const attempt: OrchestrationV2RunAttempt = {
+      id: RunAttemptId.make("attempt-superseded"),
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make("node-superseded"),
+      providerInstanceId: ProviderInstanceId.make("codex-default"),
+      providerThreadId: ProviderThreadId.make("provider-thread"),
+      providerTurnId: null,
+      reason: "initial",
+      status: "superseded",
+      startedAt: at(0),
+      completedAt: at(4),
+    };
+    const entries = turn(
+      renderCall("completed", { structuredContent: { htmlRender }, content: [] }),
+    ).map((entry) =>
+      entry.kind === "message" && entry.message.role === "user" ? entry : { ...entry, attempt },
+    );
+    expect(rowsFor(entries, true)).toEqual(["message", "turn-fold", "attempt-fold", "html-render"]);
+  });
+
   it.each([
     ["running", "running", undefined],
     ["failed", "failed", { content: [{ type: "text", text: "Invalid HTML" }], isError: true }],

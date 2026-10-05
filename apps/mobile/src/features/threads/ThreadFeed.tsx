@@ -2923,6 +2923,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [contentWidth, expandedWorkRows, workRowSizing.fixedRowHeight],
   );
+  // HTML render rows' fixed heights follow the width, so a rotation or split
+  // resize drops the cached sizes, as a text-size change does.
+  const hasHtmlRenders = useMemo(
+    () => presentedFeed.some((entry) => entry.type === "html-render"),
+    [presentedFeed],
+  );
+  const previousContentWidth = useRef(contentWidth);
+  useLayoutEffect(() => {
+    if (previousContentWidth.current === contentWidth) return;
+    previousContentWidth.current = contentWidth;
+    if (hasHtmlRenders) props.listRef.current?.clearCaches({ mode: "sizes" });
+  }, [contentWidth, hasHtmlRenders, props.listRef]);
 
   // Disclosures can mount existing offscreen rows as well as new work rows.
   // Fade those in after movement; never retain removed rows over replacements.

@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { readCaller } from "../../threadAccess.ts";
 import { HtmlPreviewToolkit, HtmlRenderToolkit, type HtmlToolkit } from "./tools.ts";
 
@@ -21,6 +22,12 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
 const handlers = {
   html_preview: (input) =>
     Effect.gen(function* () {
+      // The headless browser runs on the host and can open local files, so
+      // only agents T3 launched, which already work on this machine, get it.
+      yield* McpInvocationContext.requireThreadScope(
+        yield* McpInvocationContext.McpInvocationContext,
+        "html_preview",
+      );
       const htmlRender = yield* HtmlRender.HtmlRender;
       const { png, ...preview } = yield* htmlRender.preview(input).pipe(Effect.mapError(toFailure));
       return {
@@ -35,10 +42,12 @@ const handlers = {
     }),
   html_render: (input) =>
     Effect.gen(function* () {
+      // The page shows in the calling thread, so there must be one.
       const { scope } = yield* readCaller();
+      const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
       const reference = yield* htmlRender
-        .publish({ threadId: scope.threadId, ...input })
+        .publish({ threadId: thread.threadId, ...input })
         .pipe(Effect.mapError(toFailure));
       return {
         htmlRender: reference,

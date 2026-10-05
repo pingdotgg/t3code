@@ -8,8 +8,10 @@ import {
   htmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
 import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -24,7 +26,12 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 // example one T3 installed under <T3 home>/tools/chrome-headless-shell.
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
-const htmlRenderLayer = (executable?: string) =>
+const htmlRenderLayer = (
+  executable?: string,
+  installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
+    Option.fromUndefinedOr(executable),
+  ),
+) =>
   HtmlRender.layer.pipe(
     Layer.provide(
       Layer.succeed(
@@ -34,7 +41,7 @@ const htmlRenderLayer = (executable?: string) =>
             executable === undefined
               ? Effect.die("This test has no preview browser.")
               : Effect.succeed(executable),
-          installed: Effect.succeed(Option.fromUndefinedOr(executable)),
+          installed,
         }),
       ),
     ),
@@ -137,6 +144,40 @@ describe("HtmlRender", () => {
       expect(html).toContain('<style id="t3-theme">');
       expect(html).toContain("<p>Quarterly revenue</p>");
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes the page when publishing is interrupted", () =>
+    Effect.gen(function* () {
+      const measuring = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const storedPages = fileSystem
+          .readDirectory(config.attachmentsDir, { recursive: true })
+          .pipe(Effect.map((names) => names.filter((name) => name.endsWith(".html"))));
+
+        const publishing = yield* htmlRender
+          .publish({
+            threadId: ThreadId.make("thread-html-cancel"),
+            html: "<p>x</p>",
+            title: "X",
+            height: 200,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(measuring);
+        expect(yield* storedPages).toHaveLength(1);
+        yield* Fiber.interrupt(publishing);
+        expect(yield* storedPages).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          htmlRenderLayer(
+            undefined,
+            Deferred.succeed(measuring, undefined).pipe(Effect.andThen(Effect.never)),
+          ),
+        ),
+      );
+    }),
   );
 
   it.live(

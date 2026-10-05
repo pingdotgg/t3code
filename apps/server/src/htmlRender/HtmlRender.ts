@@ -25,6 +25,7 @@ import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
@@ -194,18 +195,29 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   if (pageBytes > MAX_PAGE_BYTES) {
     return yield* new HtmlRenderPageTooLargeError({ sizeBytes: pageBytes });
   }
+  // Reads stop one byte past the limit, so a file that grew after `stat` is caught.
+  const images = yield* Effect.forEach(
+    files.filter((file) => file.size !== undefined),
+    (file) =>
+      fileSystem.stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 }).pipe(
+        Stream.mkUint8Array,
+        Effect.map((bytes) => [{ path: file.path, bytes }]),
+        Effect.orElseSucceed(() => []),
+      ),
+    { concurrency: 4 },
+  ).pipe(Effect.map((entries) => entries.flat()));
+  const grown = images.find((image) => image.bytes.byteLength > MAX_IMAGE_BYTES);
+  if (grown !== undefined) {
+    return yield* new HtmlRenderImageTooLargeError({
+      path: grown.path,
+      sizeBytes: grown.bytes.byteLength,
+    });
+  }
   const dataUris = new Map(
-    yield* Effect.forEach(
-      files.filter((file) => file.size !== undefined),
-      (file) =>
-        fileSystem.readFile(filePathFor(file.path)).pipe(
-          Effect.map((bytes) => [
-            [file.path, dataUriPrefix(file.path) + Encoding.encodeBase64(bytes)] as const,
-          ]),
-          Effect.orElseSucceed(() => []),
-        ),
-      { concurrency: 4 },
-    ).pipe(Effect.map((entries) => entries.flat())),
+    images.map(
+      (image) =>
+        [image.path, dataUriPrefix(image.path) + Encoding.encodeBase64(image.bytes)] as const,
+    ),
   );
   const parts: Array<string> = [];
   let cursor = 0;
@@ -216,8 +228,13 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     cursor = reference.end;
   }
   parts.push(html.slice(cursor));
+  const inlined = parts.join("");
+  const inlinedBytes = Buffer.byteLength(inlined);
+  if (inlinedBytes > MAX_PAGE_BYTES) {
+    return yield* new HtmlRenderPageTooLargeError({ sizeBytes: inlinedBytes });
+  }
   return {
-    html: parts.join(""),
+    html: inlined,
     missing: files.filter((file) => !dataUris.has(file.path)).map((file) => file.path),
   };
 });
@@ -344,10 +361,13 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
-    yield* fileSystem
-      .writeFileString(filePath, html)
-      .pipe(Effect.mapError((cause) => new HtmlRenderStoreError({ cause })));
-    const heights = yield* measure(filePath);
+    const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
+      Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
+      Effect.andThen(measure(filePath)),
+      // Only the returned reference lets thread deletion find the page, so a
+      // publish that fails or is interrupted before returning removes it.
+      Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),
+    );
     return {
       attachmentId,
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",

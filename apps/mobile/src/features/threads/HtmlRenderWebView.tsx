@@ -129,10 +129,11 @@ export function HtmlRenderWebView(props: {
         scrollEnabled={scrollable}
         nestedScrollEnabled={props.nested && overflows}
         overScrollMode={props.nested ? "never" : "always"}
+        // Only the page itself loads here. Other top-frame navigations open in
+        // the browser once the page is up, and are dropped before that.
         onShouldStartLoadWithRequest={(request) => {
           if (
             request.isTopFrame === false ||
-            !loadedRef.current ||
             withoutFragment(request.url) === withoutFragment(props.uri)
           ) {
             return true;

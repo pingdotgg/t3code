@@ -251,7 +251,7 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   "Give charts fixed pixel heights rather than heights that scale with width.",
 ].join(" ");
 
-export const HTML_RENDER_THEME_MESSAGE_TYPE = "t3-html-render-theme";
+const HTML_RENDER_THEME_MESSAGE_TYPE = "t3-html-render-theme";
 
 const THEME_FRAGMENT_KEY = "t3-theme";
 
@@ -284,16 +284,15 @@ function rootRule(theme: HtmlRenderTheme): string {
 // then drops the fragment so a page's own hash routing never sees it.
 const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});})();`;
 
-function bootstrapMarkup(html: string): string {
+function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
   const light = htmlRenderTheme(T3_CODE_LIGHT_THEME_COLORS, "light");
   // Without a client-provided theme (a direct download, the headless preview
   // without a fragment) the page follows the OS appearance.
   const defaultCss = `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`;
-  const head = html.slice(0, 4096);
   return [
-    /<meta\s[^>]*charset/i.test(head) ? "" : '<meta charset="utf-8">',
-    /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(html)
+    /<meta\s[^>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
+    /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(markup)
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="t3-theme">${defaultCss}</style>`,
@@ -301,18 +300,26 @@ function bootstrapMarkup(html: string): string {
   ].join("");
 }
 
+// Comments, scripts, and styles blanked to the same length, so offsets still
+// line up and a tag written inside one is never taken for a real element.
+const blankNonMarkup = (html: string) =>
+  html.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, (match) =>
+    " ".repeat(match.length),
+  );
+
 /**
  * Inserts the theme bootstrap at the start of the document head, so a page's
  * own styles and scripts come after it.
  */
 export function injectHtmlRenderBootstrap(html: string): string {
-  const markup = bootstrapMarkup(html);
-  const headOpen = /<head(?:\s[^>]*)?>/i.exec(html);
+  const scan = blankNonMarkup(html);
+  const markup = bootstrapMarkup(scan);
+  const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
     return html.slice(0, at) + markup + html.slice(at);
   }
-  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(html);
+  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(scan);
   if (htmlOpen) {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
