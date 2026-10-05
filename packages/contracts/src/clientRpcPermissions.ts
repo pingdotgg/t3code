@@ -42,12 +42,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
+const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
-    const payload = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput)(input);
+    const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
