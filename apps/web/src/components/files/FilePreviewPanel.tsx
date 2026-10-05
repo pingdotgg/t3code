@@ -1,6 +1,5 @@
 import { Spinner } from "~/components/ui/spinner";
 import type {
-  ChatFileAttachment,
   EditorId,
   EnvironmentId,
   ResolvedKeybindingsConfig,
@@ -40,6 +39,7 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import type { ChatFileAttachment } from "~/types";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -1193,6 +1193,7 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+              htmlRender={attachment.htmlRender === true}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview

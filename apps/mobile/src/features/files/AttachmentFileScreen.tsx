@@ -24,6 +24,7 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
 
 /**
  * Both the thread stack and the new-task sheet stack register this screen, so a chip in a
@@ -38,6 +39,8 @@ export type AttachmentFileRouteParams = {
   readonly sizeBytes: string;
   /** Present for a draft attachment, which may still live only on this device. */
   readonly draftKey?: string;
+  /** Present for a page an agent published with `html_render`, which takes the app theme. */
+  readonly htmlRender?: "1";
 };
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
@@ -54,6 +57,7 @@ function AttachmentDocumentBody(props: {
   readonly document: ReturnType<typeof useAttachmentDocument>;
   readonly name: string;
   readonly environmentId: EnvironmentId | null;
+  readonly htmlRender: boolean;
   readonly nativeViewer: "pending" | "open" | "unavailable" | null;
   readonly nativeError: string | null;
   readonly onOpenNative: () => void;
@@ -141,7 +145,11 @@ function AttachmentDocumentBody(props: {
     return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
   }
   if (document.kind === "html") {
-    return <WorkspaceFileWebPreview uri={document.uri} />;
+    return props.htmlRender ? (
+      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
+    ) : (
+      <WorkspaceFileWebPreview uri={document.uri} />
+    );
   }
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
@@ -339,7 +347,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     },
     [menuActions],
   );
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"} · ${formatAttachmentSize(sizeBytes)}`;
+  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
 
   return (
     <View className="flex-1 bg-sheet">
@@ -405,6 +413,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         document={document}
         name={params.name}
         environmentId={environmentId}
+        htmlRender={params.htmlRender === "1"}
         nativeViewer={nativeViewer}
         nativeError={nativeError}
         onOpenNative={() => {

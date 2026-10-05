@@ -1,18 +1,23 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
   EnvironmentId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer, Tool } from "effect/ai";
+import { FetchHttpClient } from "effect/http";
 
+import * as ServerConfig from "../../config.ts";
 import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
@@ -40,11 +45,13 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
 import { PullRequestsToolkit } from "./pullRequests/tools.ts";
+import { HtmlToolkit } from "./html/tools.ts";
 import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
   resolveT3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 
@@ -61,6 +68,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     PreviewControlsToolkit,
     DeviceToolkit,
     PullRequestsToolkit,
+    HtmlToolkit,
   ]) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);
@@ -165,6 +173,52 @@ it.effect("returns a bounded public failure without serializing storage causes",
                   cause: new Error("private-storage-path"),
                 }),
               ),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "html_render",
+        arguments: { html: "<p>Revenue</p>", title: "Revenue", height: 240 },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const reference = htmlRenderFromToolItem({
+      toolName: "t3-code.html_render",
+      output: result.structuredContent,
+    });
+    expect(reference).toMatchObject({ title: "Revenue", height: 240 });
+    expect(
+      htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
+    ).toEqual(reference);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.HtmlToolkitRegistrationLive.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
+        Layer.provide(NodeServices.layer),
+        // The preview browser is not installed in a fresh home, so nothing downloads.
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            // A live run: publishing stores a page, so it needs the caller's active turn.
+            getThreadShell: () =>
+              Effect.succeed({
+                id: threadId,
+                deletedAt: null,
+                archivedAt: null,
+                activeRunId: RunId.make("mcp-core-run"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              } as OrchestrationV2ThreadShell),
           }),
         ),
       ),

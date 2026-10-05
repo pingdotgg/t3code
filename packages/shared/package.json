@@ -115,6 +115,10 @@
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
     },
+    "./htmlRender": {
+      "types": "./src/htmlRender.ts",
+      "import": "./src/htmlRender.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"

@@ -108,8 +108,11 @@ function formatMcpContent(result: unknown): string {
       if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
     }
   }
+  // Most T3 tools mirror structuredContent in a text block. Repeating it would
+  // leave T3's own output parsing two JSON documents instead of one.
   if (record.structuredContent !== undefined) {
-    texts.push(JSON.stringify(record.structuredContent));
+    const structured = JSON.stringify(record.structuredContent);
+    if (!texts.includes(structured)) texts.push(structured);
   }
   if (texts.length > 0) return texts.join("\\n");
   return JSON.stringify(result);

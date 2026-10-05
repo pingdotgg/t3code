@@ -11,13 +11,15 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { PreviewAutomationError } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as PreviewBrowser from "../htmlRender/PreviewBrowser.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -58,6 +60,11 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import {
+  HtmlPreviewToolkitHandlersLive,
+  HtmlRenderToolkitHandlersLive,
+} from "./toolkits/html/handlers.ts";
+import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -510,12 +517,13 @@ interface ImageToolResult {
 }
 
 /**
- * Failures surface only their tag: the remote message may carry renderer or
- * device output the agent should not see, and the tag is what it can act on.
+ * Failures surface only their tag unless the tool describes them: the remote
+ * message may carry renderer or device output the agent should not see, and
+ * the tag is what it can act on. A describer returns a server-built message.
  */
 const imageToolFailure =
-  (toolName: string, operation: string, failureText: string) =>
-  <E>(cause: Cause.Cause<E>) => {
+  <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
+  (cause: Cause.Cause<E>) => {
     if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
       return Effect.failCause(cause).pipe(Effect.orDie);
     }
@@ -528,6 +536,10 @@ const imageToolFailure =
       typeof firstFailure._tag === "string"
         ? firstFailure._tag
         : `${toolName}Error`;
+    const message =
+      typeof failureText === "string" || failures[0] === undefined
+        ? undefined
+        : failureText(failures[0].error);
     const result = new McpSchema.CallToolResult({
       isError: true,
       structuredContent: {
@@ -535,9 +547,16 @@ const imageToolFailure =
           _tag: errorTag,
           operation,
           failureCount: failures.length,
+          ...(message === undefined ? {} : { message }),
         },
       },
-      content: [{ type: "text", text: failureText }],
+      // Some clients show only the text content and others only structuredContent, so both carry it.
+      content: [
+        {
+          type: "text",
+          text: typeof failureText === "string" ? failureText : (message ?? `${toolName} failed.`),
+        },
+      ],
     });
     return Effect.logWarning(`${toolName} failed`, {
       operation,
@@ -563,7 +582,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
     McpInvocationContext.McpInvocationContext
   >,
   operation: string,
-  failureText: string,
+  failureText: string | ((error: E) => string),
 ) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -647,6 +666,32 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   );
 });
 
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
+
+const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
+  const htmlRender = yield* HtmlRender.HtmlRender;
+  const built = yield* HtmlPreviewToolkit;
+  yield* registerImageTool(
+    HtmlPreviewTool,
+    (payload) =>
+      built
+        .handle("html_preview", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) => effect.pipe(Effect.provideService(HtmlRender.HtmlRender, htmlRender)),
+    "preview",
+    // Parameter errors and HTML render errors are both written by the server for the agent.
+    (error) =>
+      isOrchestratorMcpFailure(error) || AiError.isAiError(error)
+        ? error.message
+        : "HTML preview failed.",
+  );
+});
+
+export const HtmlToolkitRegistrationLive = Layer.mergeAll(
+  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlRenderToolkitHandlersLive)),
+  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlPreviewToolkitHandlersLive)),
+).pipe(Layer.provide(HtmlRender.layer), Layer.provide(PreviewBrowser.layer));
+
 const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
@@ -726,4 +771,5 @@ export const layer = Layer.mergeAll(
   WorktreeToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
+  HtmlToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

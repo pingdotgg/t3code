@@ -70,6 +70,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
+import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
@@ -4556,13 +4557,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
-      sql<{ id: string }>`
+      Effect.all([
+        sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
-    `.pipe(
-        Effect.map((rows) => rows.map((row) => row.id)),
+    `,
+        // Pages published by html_render live in the attachment store too.
+        sql<{ payload_json: string }>`
+      SELECT payload_json
+      FROM orchestration_v2_projection_turn_items
+      WHERE thread_id = ${threadId}
+        AND type = 'dynamic_tool'
+        AND payload_json LIKE '%htmlRender%'
+    `,
+      ]).pipe(
+        Effect.map(([messages, renders]) => [
+          ...new Set([
+            ...messages.map((row) => row.id),
+            ...threadHtmlRenderAttachmentIds(
+              threadId,
+              renders.map((row) => {
+                const item = parseEncodedPayload(row.payload_json);
+                return {
+                  toolName: typeof item.toolName === "string" ? item.toolName : null,
+                  output: item.output,
+                };
+              }),
+            ),
+          ]),
+        ]),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
 
@@ -5871,17 +5896,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           ),
         ),
       getThreadAttachmentIds: (threadId) =>
-        service
-          .getThreadProjection(threadId)
-          .pipe(
-            Effect.map((projection) => [
-              ...new Set(
-                projection.messages.flatMap((message) =>
-                  message.attachments.map((attachment) => attachment.id),
+        service.getThreadProjection(threadId).pipe(
+          Effect.map((projection) => [
+            ...new Set([
+              ...projection.messages.flatMap((message) =>
+                message.attachments.map((attachment) => attachment.id),
+              ),
+              ...threadHtmlRenderAttachmentIds(
+                threadId,
+                projection.turnItems.flatMap((item) =>
+                  item.type === "dynamic_tool" ? [item] : [],
                 ),
               ),
             ]),
-          ),
+          ]),
+        ),
       getThreadRecords: (threadId, fields, filter) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
