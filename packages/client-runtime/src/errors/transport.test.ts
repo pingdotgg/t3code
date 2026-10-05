@@ -22,6 +22,7 @@ describe("isTransportConnectionErrorMessage", () => {
 
   it("recognizes connection errors emitted by the Effect RPC session", () => {
     expect(isTransportConnectionErrorMessage("Test environment disconnected.")).toBe(true);
+    expect(isTransportConnectionErrorMessage("Test environment stopped responding.")).toBe(true);
     expect(
       isTransportConnectionErrorMessage(
         "Test environment could not establish a WebSocket connection.",
@@ -34,6 +35,7 @@ describe("isTransportConnectionErrorMessage", () => {
   it("recognizes relay connection errors that carry the network hint", () => {
     for (const sentence of [
       "Relay environment disconnected.",
+      "Relay environment stopped responding.",
       "Relay environment could not establish a WebSocket connection.",
     ]) {
       expect(isTransportConnectionErrorMessage(`${sentence} ${NETWORK_BLOCKING_HINT}`)).toBe(true);
