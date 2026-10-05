@@ -5790,6 +5790,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ) : workEntry.projectedItem ? (
             <SummarizedAgentMessage
               projectedItem={workEntry.projectedItem}
+              workspaceRoot={workspaceRoot}
               onImageExpand={onImageExpand}
             />
           ) : null}
@@ -5860,15 +5861,32 @@ function SentAgentMessageBubble(props: {
 /** A long message the wire summarized: its body comes with the fetched item. */
 function SummarizedAgentMessage(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly workspaceRoot: string | undefined;
   readonly onImageExpand: (preview: ExpandedImagePreview) => void;
 }) {
   const ctx = use(TimelineRowCtx);
   const { item, output } = useFetchedTurnItem(props.projectedItem, ctx.activeThreadEnvironmentId);
   const message =
-    item.type === "dynamic_tool"
-      ? claudeAgentMessage(item.toolName, item.input)?.message
-      : undefined;
-  if (message) return <SentAgentMessageBubble text={message} onImageExpand={props.onImageExpand} />;
+    item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+  if (message?.message) {
+    return <SentAgentMessageBubble text={message.message} onImageExpand={props.onImageExpand} />;
+  }
+  // A structured protocol message, once fetched, gets the generic tool view.
+  if (item !== props.projectedItem.item && message === undefined) {
+    return (
+      <div className="rounded-md bg-muted/40 px-3 py-2">
+        <V2ItemInspector
+          projectedItem={props.projectedItem}
+          environmentId={ctx.activeThreadEnvironmentId}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={props.workspaceRoot}
+          onOpenThread={ctx.onOpenThread}
+          onOpenTurnDiff={ctx.onOpenTurnDiff}
+          onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+        />
+      </div>
+    );
+  }
   return (
     <p className="text-sm text-muted-foreground">
       {output.pending ? "Loading message…" : (output.error ?? "Message is no longer available.")}

@@ -945,13 +945,16 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   // Tool calls show the call in the foreground and the result muted below it.
   const shownItem = fetchedItem ?? row.projectedItem.item;
   const item = row.projectedItem.item;
-  const isAgentMessage =
-    item.type === "dynamic_tool" && isClaudeAgentMessageItem(item.toolName, item.input);
   // A long message arrives summarized, so parse the fetched item when there is one.
   const agentMessage =
     shownItem.type === "dynamic_tool"
       ? claudeAgentMessage(shownItem.toolName, shownItem.input)
       : undefined;
+  // Once fetched, only a text message keeps the message view; a structured
+  // protocol message falls back to the generic tool view.
+  const isAgentMessage = fetchedItem
+    ? agentMessage !== undefined
+    : item.type === "dynamic_tool" && isClaudeAgentMessageItem(item.toolName, item.input);
   const agentMessageBody = agentMessage?.message;
   const call =
     expanded && isAgentMessage
