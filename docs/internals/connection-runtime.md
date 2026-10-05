@@ -15,6 +15,9 @@ five minutes, that resets only after a connection stays up. Without jitter, ever
 client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
+Incompatible server configuration is reported as unsupported, so the registry
+disables the environment instead of retrying the same subscription. Compatibility
+must be restored before re-enabling it.
 
 Foregrounding, an explicit retry, and an offline report probe the established
 session, and only a failed probe reconnects. Offline reports are often wrong, for
@@ -53,6 +56,10 @@ initial server configuration before becoming ready. Shell and thread data then
 have their own synchronization state. A failed shell subscription can coexist
 with a healthy connection; labeling that state "reconnecting" promises a
 transport retry that will never happen.
+
+The always-on config subscription owns session termination. Its decode failure
+must reach the supervisor before any generic socket-disconnect signal can mask
+it as transient; initial snapshots and later config updates use the same rule.
 
 Cached projections remain readable offline. They must neither imply a live
 connection nor overwrite newer live data during a reconnect. Loading and

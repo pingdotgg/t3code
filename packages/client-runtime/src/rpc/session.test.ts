@@ -288,6 +288,73 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect.each([
+    { legacyStyle: "", mode: "repo_conventions", instructions: "" },
+    { legacyStyle: "   ", mode: "repo_conventions", instructions: "" },
+    {
+      legacyStyle: "  Prefer concise wording.\nKeep issue references.  ",
+      mode: "custom",
+      instructions: "Prefer concise wording.\nKeep issue references.",
+    },
+  ])(
+    "establishes readiness with legacy writing style '$legacyStyle'",
+    ({ legacyStyle, mode, instructions }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { factory, sockets } = yield* makeFactory();
+          const session = yield* factory.connect(PREPARED);
+          const ready = yield* session.ready.pipe(Effect.exit, Effect.forkChild);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          yield* completeInitialConfig(socket, {
+            ...ENCODED_SERVER_CONFIG,
+            settings: { ...ENCODED_SERVER_CONFIG.settings, sourceControlWritingStyle: legacyStyle },
+          });
+
+          expect(yield* Fiber.join(ready)).toMatchObject({ _tag: "Success" });
+          expect((yield* session.initialConfig).settings.sourceControlWritingStyle).toEqual({
+            mode,
+            customInstructions: instructions,
+            followChangeRequestTemplates: true,
+          });
+        }),
+      ),
+  );
+
+  it.effect.each([{ established: false }, { established: true }])(
+    "blocks incompatible config chunks when established=$established",
+    ({ established }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { factory, sockets } = yield* makeFactory();
+          const session = yield* factory.connect(PREPARED);
+          const ready = yield* session.ready.pipe(Effect.exit, Effect.forkChild);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          if (established) {
+            yield* completeInitialConfig(socket);
+            expect(yield* Fiber.join(ready)).toMatchObject({ _tag: "Success" });
+          }
+          const closed = yield* session.closed.pipe(Effect.exit, Effect.forkChild);
+          yield* completeInitialConfig(socket, {
+            ...ENCODED_SERVER_CONFIG,
+            cwd: 42,
+          });
+
+          for (const exit of [
+            ...(established ? [] : [yield* Fiber.join(ready)]),
+            yield* Fiber.join(closed),
+          ]) {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.squash(exit.cause)).toBeInstanceOf(ConnectionBlockedError);
+              expect(Cause.squash(exit.cause)).toMatchObject({ reason: "unsupported" });
+            }
+          }
+        }),
+      ),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
