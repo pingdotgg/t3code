@@ -1,13 +1,12 @@
 import {
-  ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  setRoutesInCatalog,
   removeCatalogValue,
   replaceCatalogValue,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -21,6 +20,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
@@ -28,11 +28,12 @@ function targetPersistenceError(
     | "list-targets"
     | "list-disabled-targets"
     | "register-connection"
+    | "set-connection-routes"
     | "remove-connection"
     | "set-connection-enabled",
   error: ConnectionTransientError,
 ) {
-  return new ConnectionPersistenceError({
+  return new Persistence.ConnectionPersistenceError({
     operation,
     message: error.message,
   });
@@ -47,7 +48,7 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog.update((document) => ({ ...document, githubRoutingPermissions })),
     });
 
-    const targetStore = ConnectionTargetStore.of({
+    const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((error) => targetPersistenceError("list-targets", error)),
@@ -57,14 +58,18 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.mapError((error) => targetPersistenceError("list-disabled-targets", error)),
       ),
     });
-    const registrationStore = ConnectionRegistrationStore.of({
-      register: (registration) =>
+    const registrationStore = Persistence.ConnectionRegistrationStore.of({
+      register: (registration, routes) =>
         catalog
-          .update((document) => registerConnectionInCatalog(document, registration))
+          .update((document) => registerConnectionInCatalog(document, registration, routes))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
-      remove: (target) =>
+      setRoutes: (environmentId, routes) =>
         catalog
-          .update((document) => removeConnectionFromCatalog(document, target))
+          .update((document) => setRoutesInCatalog(document, environmentId, routes))
+          .pipe(Effect.mapError((error) => targetPersistenceError("set-connection-routes", error))),
+      remove: (environmentId) =>
+        catalog
+          .update((document) => removeConnectionFromCatalog(document, environmentId))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
       setEnabled: (environmentId, enabled) =>
         catalog
@@ -144,9 +149,9 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    return Context.make(ConnectionTargetStore, targetStore).pipe(
+    return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
-      Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),

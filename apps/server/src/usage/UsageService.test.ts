@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
 // transcript trees on disk, outside the service's Effect FileSystem.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -34,6 +35,7 @@ import * as UsageService from "./UsageService.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
   return `${JSON.stringify({
@@ -116,100 +118,136 @@ const serviceLayers = (input: {
     ),
   );
 
+/** Outside `NARROW_WINDOW`, inside `WINDOW`. Seconds, as `utimes` takes them. */
+const BEFORE_NARROW_WINDOW = Date.parse("2026-08-01T10:00:00Z") / 1000;
+const NARROW_WINDOW: UsageSummaryInput = {
+  timeZone: "UTC",
+  sinceDay: UsageDay.make("2026-09-01"),
+  untilDay: UsageDay.make("2026-09-02"),
+};
+
+/**
+ * A FIFO named like a transcript. A scan's read of it waits in `open` until
+ * `openGate`, then fails at once, so a gate holds that scan's directory reads
+ * in flight. Each waiting gate holds one libuv pool thread; keep at most three.
+ */
+const makeGate = (path: string, lastWriteSeconds?: number) =>
+  Effect.promise(async () => {
+    NodeChildProcess.execFileSync("mkfifo", [path]);
+    if (lastWriteSeconds !== undefined) {
+      await NodeFSP.utimes(path, lastWriteSeconds, lastWriteSeconds);
+    }
+  });
+
+/**
+ * Returns once a scan has opened the gate. A scan opens every file of a
+ * directory at once, so it then holds the directory's transcripts open too.
+ */
+const openGate = (path: string) =>
+  Effect.promise(async () => (await NodeFSP.open(path, "w")).close());
+
+/** Replaces a file by rename, so a scan holding the old one keeps reading it. */
+const replaceFile = (path: string, content: string) =>
+  Effect.promise(async () => {
+    await NodeFSP.writeFile(path + ".next", content);
+    await NodeFSP.rename(path + ".next", path);
+  });
+
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
 describe("UsageService", () => {
-  for (const explicitDefault of [true, false]) {
-    it.live(
-      `reads shared managed ${explicitDefault ? "explicit" : "legacy"} default and disabled extra account history once`,
-      () =>
-        Effect.gen(function* () {
-          const { home, settings } = yield* setup;
-          const summary = yield* Effect.gen(function* () {
-            for (const [id, output] of [
-              ["codex", 17],
-              ["codex-personal", 23],
-            ] as const) {
-              const sessions = NodePath.join(home, "shared-codex", "sessions");
-              yield* Effect.promise(async () => {
-                await NodeFSP.mkdir(sessions, { recursive: true });
-                await NodeFSP.writeFile(
-                  NodePath.join(sessions, `${id}-rollout.jsonl`),
-                  [
-                    { type: "session_meta", payload: { id } },
-                    { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
-                    {
-                      type: "event_msg",
-                      timestamp: "2026-08-01T10:00:00Z",
-                      payload: {
-                        type: "token_count",
-                        info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
-                      },
+  it.live.each([
+    { explicitDefault: true, label: "explicit" },
+    { explicitDefault: false, label: "legacy" },
+  ])(
+    "reads shared managed $label default and disabled extra account history once",
+    ({ explicitDefault }) =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const summary = yield* Effect.gen(function* () {
+          for (const [id, output] of [
+            ["codex", 17],
+            ["codex-personal", 23],
+          ] as const) {
+            const sessions = NodePath.join(home, "shared-codex", "sessions");
+            yield* Effect.promise(async () => {
+              await NodeFSP.mkdir(sessions, { recursive: true });
+              await NodeFSP.writeFile(
+                NodePath.join(sessions, `${id}-rollout.jsonl`),
+                [
+                  { type: "session_meta", payload: { id } },
+                  { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+                  {
+                    type: "event_msg",
+                    timestamp: "2026-08-01T10:00:00Z",
+                    payload: {
+                      type: "token_count",
+                      info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
                     },
-                  ]
-                    .map((line) => encodeUnknownJsonString(line))
-                    .join("\n") + "\n",
-                );
-              });
-            }
-            const service = yield* UsageService.make;
-            return yield* service.readSummary(WINDOW);
-          }).pipe(
-            Effect.provide(
-              serviceLayers({
-                prefix: "usage-managed-accounts",
-                home,
-                settings: {
-                  ...settings,
-                  providers: {
-                    ...settings.providers,
-                    codex: { setupMode: "managed", homePath: NodePath.join(home, "shared-codex") },
                   },
-                  providerInstances: {
-                    ...(explicitDefault
-                      ? {
-                          [ProviderInstanceId.make("codex")]: {
-                            driver: ProviderDriverKind.make("codex"),
-                            config: {
-                              setupMode: "managed",
-                              homePath: NodePath.join(home, "shared-codex"),
-                            },
+                ]
+                  .map((line) => encodeUnknownJsonString(line))
+                  .join("\n") + "\n",
+              );
+            });
+          }
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-managed-accounts",
+              home,
+              settings: {
+                ...settings,
+                providers: {
+                  ...settings.providers,
+                  codex: { setupMode: "managed", homePath: NodePath.join(home, "shared-codex") },
+                },
+                providerInstances: {
+                  ...(explicitDefault
+                    ? {
+                        [ProviderInstanceId.make("codex")]: {
+                          driver: ProviderDriverKind.make("codex"),
+                          config: {
+                            setupMode: "managed",
+                            homePath: NodePath.join(home, "shared-codex"),
                           },
-                        }
-                      : {}),
-                    [ProviderInstanceId.make("codex-personal")]: {
-                      driver: ProviderDriverKind.make("codex"),
-                      enabled: false,
-                      config: {
-                        setupMode: "managed",
-                        homePath: NodePath.join(home, "shared-codex"),
-                        shadowHomePath: NodePath.join(home, "personal-shadow"),
-                      },
-                      environment: [
-                        {
-                          name: "CODEX_HOME",
-                          value: NodePath.join(home, "ignored-environment"),
-                          sensitive: false,
                         },
-                      ],
+                      }
+                    : {}),
+                  [ProviderInstanceId.make("codex-personal")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    enabled: false,
+                    config: {
+                      setupMode: "managed",
+                      homePath: NodePath.join(home, "shared-codex"),
+                      shadowHomePath: NodePath.join(home, "personal-shadow"),
                     },
+                    environment: [
+                      {
+                        name: "CODEX_HOME",
+                        value: NodePath.join(home, "ignored-environment"),
+                        sensitive: false,
+                      },
+                    ],
                   },
                 },
-              }),
-            ),
-          );
-          assert.strictEqual(totalOutputTokens(summary), 40);
-          assert.strictEqual(
-            summary.sources.filter(
-              (source) => source.fingerprint.provider === "codex" && source.status === "ok",
-            ).length,
-            1,
-          );
-        }).pipe(Effect.scoped),
-    );
-  }
+              },
+            }),
+          ),
+        );
+        assert.strictEqual(totalOutputTokens(summary), 40);
+        assert.strictEqual(
+          summary.sources.filter(
+            (source) => source.fingerprint.provider === "codex" && source.status === "ok",
+          ).length,
+          1,
+        );
+      }).pipe(Effect.scoped),
+  );
   it.live("omits Cursor account usage when no file login is saved", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -787,6 +825,98 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live(
+    "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sessions = NodePath.join(home, "codex", "sessions");
+        const rollout = (sessionId: string, outputTokens: number) =>
+          [
+            { type: "session_meta", payload: { id: sessionId } },
+            { type: "turn_context", payload: { model: "gpt-6-astra" } },
+            {
+              type: "event_msg",
+              payload: {
+                type: "thread_settings_applied",
+                thread_settings: { service_tier: "ultrafast" },
+              },
+            },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+              },
+            },
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n";
+        const live = NodePath.join(sessions, "live.jsonl");
+        const deleted = NodePath.join(sessions, "deleted.jsonl");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          await NodeFSP.writeFile(live, rollout("live", 10));
+          await NodeFSP.writeFile(deleted, rollout("deleted", 20));
+        });
+
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+          yield* (yield* UsageService.make).readSummary(WINDOW);
+
+          // Rewrite the cache as a v4 server left it: every Codex record at
+          // speed 0 (standard), and no tier in the reducer state.
+          const legacy = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
+            };
+            for (const file of Object.values(document.files)) {
+              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
+              delete file.cs.speed;
+            }
+            const text = encodeUnknownJsonString({ ...document, version: 4 });
+            await NodeFSP.writeFile(legacyPath, text);
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(deleted);
+            return text;
+          });
+
+          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          // The live rollout re-parses at the ultrafast rate (10 x 6); the
+          // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
+          assert.strictEqual(totalOutputTokens(summary), 30);
+          assert.strictEqual(
+            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            80,
+          );
+          // A v4 server sharing this state directory still finds its own cache.
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+            legacy,
+          );
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-v4-upgrade-test",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -875,6 +1005,157 @@ describe("UsageService", () => {
           }),
         ),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("credits the same copy of a duplicate after its transcripts are deleted", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const dir = NodePath.dirname(transcript);
+      // The walk-first file is the original, padded so it finishes parsing
+      // after the small fork copy that repeats its record under a new session.
+      const [first = "", second = ""] = yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+        return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
+      });
+      const forked = (line: string) => line.replace('"session-1"', '"session-2"');
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          first,
+          claudeLine(1, 5).replace(
+            '"message":',
+            '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
+          ),
+        );
+        await NodeFSP.writeFile(second, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const live = yield* service.readSummary(WINDOW);
+        assert.strictEqual(live.buckets[0]?.sessions, 2);
+
+        yield* Effect.promise(() => Promise.all([NodeFSP.rm(first), NodeFSP.rm(second)]));
+        const saved = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(saved.buckets, live.buckets);
+        assert.deepStrictEqual(saved.sources, live.sources);
+        const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, live.buckets);
+      }).pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-copy-order-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps a newer cached read when a slower scan of another window finishes later",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const dir = NodePath.dirname(transcript);
+        const probe = NodePath.join(dir, "probe.jsonl");
+        const hold = NodePath.join(dir, "hold.jsonl");
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* makeGate(probe, BEFORE_NARROW_WINDOW);
+        yield* makeGate(hold, BEFORE_NARROW_WINDOW);
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+          yield* openGate(probe);
+          yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+          // The narrow scan caches the newer read while the wide one waits.
+          yield* service.readSummary(NARROW_WINDOW);
+          yield* openGate(hold);
+          yield* Fiber.join(wide);
+
+          yield* Effect.promise(() =>
+            Promise.all([transcript, probe, hold].map((path) => NodeFSP.rm(path))),
+          );
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
+        }).pipe(
+          Effect.provide(
+            serviceLayers({ prefix: "usage-service-stale-read-test", home, settings }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps the later read when a scan that read earlier finishes first",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const dir = NodePath.dirname(transcript);
+        const gate = (name: string) => NodePath.join(dir, `${name}.jsonl`);
+        const wideProbe = gate("wide-probe");
+        const wideHold = gate("wide-hold");
+        const narrowProbe = gate("narrow-probe");
+        const narrowHold = gate("narrow-hold");
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* makeGate(wideProbe, BEFORE_NARROW_WINDOW);
+        yield* makeGate(wideHold, BEFORE_NARROW_WINDOW);
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+          yield* openGate(wideProbe);
+          yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+          // Made after the wide scan's walk, so only the narrow scan waits on them.
+          yield* makeGate(narrowProbe);
+          yield* makeGate(narrowHold);
+          const narrow = yield* service.readSummary(NARROW_WINDOW).pipe(Effect.forkChild);
+          yield* openGate(narrowProbe);
+          // Both scans started from an empty cache entry; the earlier read lands first.
+          yield* openGate(wideHold);
+          yield* Fiber.join(wide);
+          yield* openGate(narrowHold);
+          yield* Fiber.join(narrow);
+
+          yield* Effect.promise(() =>
+            Promise.all(
+              [transcript, wideProbe, wideHold, narrowProbe, narrowHold].map((path) =>
+                NodeFSP.rm(path),
+              ),
+            ),
+          );
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
+        }).pipe(
+          Effect.provide(serviceLayers({ prefix: "usage-service-late-read-test", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("reports saved usage of a removed directory only for windows it reaches", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-saved-window-test", home, settings }),
+        ),
+      );
+      const first = yield* service.readSummary(WINDOW);
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+
+      const reached = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(reached.buckets, first.buckets);
+      assert.strictEqual(reached.sources[0]?.status, "ok");
+
+      // A missing source cannot claim this directory from another environment
+      // that still reads it, so it adds nothing to a window after its last write.
+      const later = yield* service.readSummary({
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-10"),
+        untilDay: UsageDay.make("2026-08-12"),
+      });
+      assert.deepStrictEqual(later.buckets, []);
+      assert.strictEqual(later.sources[0]?.status, "missing");
+      assert.strictEqual(later.sources[0]?.scannedFiles, 0);
     }).pipe(Effect.scoped),
   );
 

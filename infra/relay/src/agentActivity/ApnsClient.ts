@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Headers from "effect/unstable/http/Headers";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "../Config.ts";
+import { ApnsEnvironment, type ApnsCredentials } from "../Config.ts";
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
@@ -58,7 +58,7 @@ export class ApnsHttpRequestError extends Schema.TaggedError<ApnsHttpRequestErro
   {
     requestKind: ApnsRequestKindSchema,
     event: Schema.NullOr(ApnsLiveActivityEventSchema),
-    environment: ApnsEnvironmentSchema,
+    environment: ApnsEnvironment,
     bundleId: Schema.String,
     tokenSuffix: Schema.String,
     stage: Schema.Literals(["send", "read-response"]),
@@ -168,6 +168,12 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
   };
 }
 
+function notificationThreadId(notification: ApnsNotificationPayload): string {
+  return notification.threadId.length > 0
+    ? `${notification.environmentId}/${notification.threadId}`
+    : "t3-agent-alerts";
+}
+
 function makePushNotificationRequest(input: {
   readonly token: string;
   readonly notification: ApnsNotificationPayload;
@@ -182,6 +188,9 @@ function makePushNotificationRequest(input: {
           body: input.notification.body,
         },
         sound: "default",
+        // Notification Center stacks alerts by thread so a chatty thread does
+        // not bury the others; a grouped alert for several threads stays alone.
+        "thread-id": notificationThreadId(input.notification),
       },
       environmentId: input.notification.environmentId,
       threadId: input.notification.threadId,

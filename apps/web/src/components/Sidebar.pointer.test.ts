@@ -23,7 +23,9 @@ function pointer(type: string, values: Partial<PointerEvent> = {}) {
   });
 }
 
-function gesture() {
+function gesture(
+  extraOptions: Partial<ConstructorParameters<typeof SidebarPointerSensor>[0]["options"]> = {},
+) {
   const callbacks = {
     onStart: vi.fn(),
     onMove: vi.fn(),
@@ -37,7 +39,7 @@ function gesture() {
   const props = {
     active: "thread",
     event: pointer("pointerdown"),
-    options: { distance: 6, onAttach: vi.fn(), onFinish },
+    options: { distance: 6, onAttach: vi.fn(), onFinish, ...extraOptions },
     ...callbacks,
   } as unknown as SensorProps<ConstructorParameters<typeof SidebarPointerSensor>[0]["options"]>;
   const sensor = new SidebarPointerSensor(props);
@@ -78,6 +80,13 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onFinish).toHaveBeenCalledOnce();
   });
 
+  it("moves to the pointer on the move that starts the drag", () => {
+    const drag = gesture();
+    document.dispatchEvent(pointer("pointermove", { clientY: 90 }));
+    expect(drag.onStart).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 10 });
+    expect(drag.onMove).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 90 });
+  });
+
   const interruptions = {
     blur: () => window.dispatchEvent(new Event("blur")),
     hidden: () => {
@@ -113,6 +122,49 @@ describe("sidebar pointer lifecycle", () => {
       expect(next.onEnd).toHaveBeenCalledOnce();
     });
   }
+
+  it("hands claimed moves and drops to the context handlers and cancels the sort", () => {
+    const onMove = vi.fn((point: { x: number; y: number }) => point.x > 50);
+    const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
+    const drag = gesture({ onMove, onDrop });
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 30 }));
+    expect(drag.onMove).toHaveBeenNthCalledWith(1, { x: 10, y: 20 });
+    expect(drag.onMove).toHaveBeenNthCalledWith(2, { x: 30, y: 30 });
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
+    // Outside the list the sort no longer sees the pointer.
+    expect(drag.onMove).toHaveBeenCalledTimes(2);
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 90, clientY: 30 }));
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 90, y: 30 });
+    expect(drag.onCancel).toHaveBeenCalledOnce();
+    expect(drag.onEnd).not.toHaveBeenCalled();
+    expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+
+    const inside = gesture({ onMove, onDrop });
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 10, clientY: 20 }));
+    expect(inside.onEnd).toHaveBeenCalledOnce();
+    expect(inside.onCancel).not.toHaveBeenCalled();
+  });
+
+  it("resumes reordering when a context drag returns to the sidebar", () => {
+    const drag = gesture({
+      onMove: (point) => point.x > 50,
+      onDrop: (point) => point.x > 50,
+    });
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 30 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 100 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 200 }));
+    expect(drag.onMove).toHaveBeenCalledTimes(2);
+    expect(drag.onMove).toHaveBeenLastCalledWith({ x: 30, y: 30 });
+
+    document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 60 }));
+    expect(drag.onMove).toHaveBeenLastCalledWith({ x: 30, y: 60 });
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 30, clientY: 60 }));
+    expect(drag.onEnd).toHaveBeenCalledOnce();
+    expect(drag.onCancel).not.toHaveBeenCalled();
+  });
 
   it("suppresses a delayed release click after cancellation, then accepts the next click", () => {
     const drag = gesture();

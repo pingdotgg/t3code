@@ -7,12 +7,12 @@ import {
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
-  LockIcon,
-  LockOpenIcon,
+  ExternalLinkIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
+import { Lock as LockGlyph, LockOpen } from "lucide";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
@@ -22,6 +22,9 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
+  type AcpRegistryUrlAuthAction,
+  type EnvironmentId,
+  type ProjectId,
   type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -37,18 +40,20 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
-import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
+import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
-import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -130,6 +135,12 @@ function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefin
   return readCustomModelEntries((config as Record<string, unknown>).customModels);
 }
 
+function readConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 /**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
  * provider settings field updates, does not drop empty-looking values — the
@@ -185,6 +196,102 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
       revealTooltip="Click to reveal email"
       hideTooltip="Click to hide email"
       className="max-w-full truncate"
+    />
+  );
+}
+
+export function readProviderEnvironmentVariable(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  name: string,
+): ProviderInstanceEnvironmentVariable | undefined {
+  return environment?.find((variable) => variable.name === name);
+}
+
+export function providerEnvironmentWithoutNames(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  names: ReadonlySet<string>,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  return (environment ?? []).filter((variable) => !names.has(variable.name));
+}
+
+export function nextProviderEnvironmentWithFieldValue(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  field: ProviderEnvironmentFieldDefinition,
+  value: string,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const trimmed = value.trim();
+  const next: ProviderInstanceEnvironmentVariable[] = [];
+  let found = false;
+
+  for (const variable of environment ?? []) {
+    if (variable.name !== field.name) {
+      next.push(variable);
+      continue;
+    }
+    found = true;
+    if (trimmed.length > 0) {
+      next.push({
+        name: variable.name,
+        value: trimmed,
+        sensitive: field.sensitive ?? true,
+      });
+    }
+  }
+
+  if (!found && trimmed.length > 0) {
+    next.push({
+      name: field.name,
+      value: trimmed,
+      sensitive: field.sensitive ?? true,
+    });
+  }
+
+  return next;
+}
+
+function ProviderEnvironmentFieldRow(props: {
+  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly idPrefix: string;
+  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+}) {
+  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+  const placeholder = props.variable?.valueRedacted
+    ? "Stored secret - enter a new value to replace"
+    : props.field.placeholder;
+
+  return (
+    <SettingsRow
+      title={<label htmlFor={inputId}>{props.field.label}</label>}
+      description={props.field.description}
+      control={
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <DraftInput
+            id={inputId}
+            size="sm"
+            className="min-w-0 flex-1"
+            type={props.field.sensitive === false ? undefined : "password"}
+            autoComplete="off"
+            value={value}
+            onCommit={(next) => props.onCommit(props.field, next)}
+            placeholder={placeholder}
+            spellCheck={false}
+          />
+          {props.variable ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost-destructive"
+              onClick={() => props.onRemove(props.field)}
+              aria-label={`Clear ${props.field.label}`}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      }
     />
   );
 }
@@ -331,11 +438,10 @@ function ProviderEnvironmentSection(props: {
                       aria-pressed={variable.sensitive}
                       aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
                     >
-                      {variable.sensitive ? (
-                        <LockIcon className="size-3" />
-                      ) : (
-                        <LockOpenIcon className="size-3" />
-                      )}
+                      <MorphIcon
+                        className="size-3"
+                        icon={variable.sensitive ? LockGlyph : LockOpen}
+                      />
                     </Button>
                   }
                 />
@@ -399,7 +505,18 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly acpProjects?:
+    | ReadonlyArray<{
+        readonly id: ProjectId;
+        readonly title: string;
+        readonly workspaceRoot: string;
+      }>
+    | undefined;
 }
+
+const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 
 /**
  * Renders one provider instance as either a compact selectable list row or
@@ -408,7 +525,7 @@ interface ProviderInstanceCardProps {
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
- *     match is available (e.g. the server hasn't probed yet, or the
+ *     match is available (e.g. the server hasn't checked it yet, or the
  *     driver is not shipped by the current build) the card still renders
  *     with a neutral "checking" summary.
  *   - Unknown drivers (`driverOption === undefined`) get a read-only
@@ -443,6 +560,9 @@ export function ProviderInstanceCard({
   onRunUpdate,
   onInstallRecommended,
   isUpdating = false,
+  onAcceptUrlAuth,
+  environmentId,
+  acpProjects = EMPTY_ACP_PROJECTS,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
@@ -473,8 +593,12 @@ export function ProviderInstanceCard({
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
-  const onRunVersionAction = versionAdvisory?.targetVersion ? onInstallRecommended : onRunUpdate;
-  const FallbackIconComponent = driverOption?.icon;
+  const onRunVersionAction = readOnly
+    ? undefined
+    : versionAdvisory?.targetVersion
+      ? onInstallRecommended
+      : onRunUpdate;
+  const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
@@ -506,7 +630,7 @@ export function ProviderInstanceCard({
     : null;
   const customModels =
     instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
-  // Server-returned models may lag behind settings writes. Treat probe
+  // Server-returned models may lag behind settings writes. Treat server
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
@@ -565,28 +689,41 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
+  // Drivers that need a named secret (Cursor's API key) get a dedicated field;
+  // the generic editor only shows the remaining variables.
+  const environmentFields = driverOption?.environmentFields ?? [];
+  const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
+  const genericEnvironment = providerEnvironmentWithoutNames(
+    instance.environment,
+    environmentFieldNames,
+  );
+  const updateGenericEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) => {
+    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
+      environmentFieldNames.has(variable.name),
+    );
+    updateEnvironment([...dedicatedEnvironment, ...environment]);
+  };
+  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+  };
+  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+  };
 
-  const titleIconNode = driverKind ? (
+  const titleIconNode = (
     <ProviderInstanceIcon
-      driverKind={driverKind}
+      driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      acpRegistryAgentId={readConfigString(instance.config, "agentId") ?? undefined}
+      acpRegistryIconUrl={readConfigString(instance.config, "registryIconUrl") ?? undefined}
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
     />
-  ) : FallbackIconComponent ? (
-    <span className="inline-flex size-5 shrink-0 items-center justify-center">
-      <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-    </span>
-  ) : (
-    <span
-      className="inline-flex size-5 shrink-0 items-center justify-center text-3xs font-semibold leading-none text-foreground/80"
-      aria-hidden
-    >
-      {providerInstanceInitials(displayName)}
-    </span>
   );
 
   const titleTailNode = headerAction ? (
@@ -632,6 +769,101 @@ export function ProviderInstanceCard({
         ) : null}
       </>
     );
+  const versionAdvisoryNode = versionAdvisory ? (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  size={mode === "list" ? "icon-micro" : "icon-xs"}
+                  variant="ghost-muted"
+                  className={mode === "list" ? "pointer-events-auto relative shrink-0" : undefined}
+                  aria-label={`${versionAdvisory.title} — view details`}
+                >
+                  <VersionAdvisoryIcon
+                    className={cn(
+                      mode === "list" && "size-3.5",
+                      hasCompatibilityWarning && "text-warning",
+                    )}
+                  />
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">{versionAdvisory.title}</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
+        <div className="grid min-w-0 gap-3">
+          <div className="grid gap-0.5">
+            <p className="text-sm font-semibold leading-tight text-foreground">
+              {versionAdvisory.title}
+            </p>
+            <p
+              className={cn(
+                "text-xs leading-snug",
+                versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {versionAdvisory.detail}
+            </p>
+          </div>
+          {onRunVersionAction ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="w-full"
+              disabled={isUpdating}
+              onClick={onRunVersionAction}
+            >
+              {isUpdating ? <Spinner /> : <DownloadIcon />}
+              {isUpdating
+                ? "Updating"
+                : versionAdvisory.targetVersion
+                  ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
+                  : "Update now"}
+            </Button>
+          ) : null}
+          {onRunVersionAction && updateCommand ? (
+            <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+              <span aria-hidden className="h-px flex-1 bg-border" />
+              or, update manually using
+              <span aria-hidden className="h-px flex-1 bg-border" />
+            </div>
+          ) : null}
+          {updateCommand ? (
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
+                {updateCommand}
+              </code>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      className="shrink-0"
+                      onClick={() => copyToClipboard(updateCommand, { providerName: displayName })}
+                      aria-label="Copy update command"
+                    >
+                      <CopyIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Copy command</TooltipPopup>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  ) : null;
+
   if (mode === "list") {
     return (
       <div
@@ -663,49 +895,7 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </code>
               ) : null}
-              {versionAdvisory ? (
-                hasCompatibilityWarning ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          tabIndex={0}
-                          role="img"
-                          aria-label={versionAdvisory.title}
-                          className="pointer-events-auto relative inline-flex shrink-0 text-warning"
-                        >
-                          <VersionAdvisoryIcon className="size-3.5" />
-                        </span>
-                      }
-                    />
-                    <TooltipPopup side="top">{versionAdvisory.detail}</TooltipPopup>
-                  </Tooltip>
-                ) : updateCommand ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-micro"
-                          variant="ghost-muted"
-                          className="pointer-events-auto relative shrink-0"
-                          aria-label={`Copy ${displayName} update command`}
-                          onClick={() =>
-                            copyToClipboard(updateCommand, { providerName: displayName })
-                          }
-                        >
-                          <ArrowUpCircleIcon className="size-3.5" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Copy update command</TooltipPopup>
-                  </Tooltip>
-                ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                )
-              ) : null}
+              {versionAdvisoryNode}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
               {statusDotNode ? (
@@ -743,105 +933,12 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
+      {versionAdvisoryNode}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
         className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
       >
-        {versionAdvisory ? (
-          <Popover>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        aria-label={`${versionAdvisory.title} — view details`}
-                      >
-                        <VersionAdvisoryIcon
-                          className={cn(hasCompatibilityWarning && "text-warning")}
-                        />
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TooltipPopup side="top">{versionAdvisory.title}</TooltipPopup>
-            </Tooltip>
-            <PopoverPopup side="bottom" align="end" width="md">
-              <div className="grid min-w-0 gap-3">
-                <div className="grid gap-0.5">
-                  <p className="text-sm font-semibold leading-tight text-foreground">
-                    {versionAdvisory.title}
-                  </p>
-                  <p
-                    className={cn(
-                      "text-xs leading-snug",
-                      versionAdvisory.emphasis === "strong"
-                        ? "text-warning"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {versionAdvisory.detail}
-                  </p>
-                </div>
-                {onRunVersionAction ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    className="w-full"
-                    disabled={isUpdating}
-                    onClick={onRunVersionAction}
-                  >
-                    {isUpdating ? <Spinner /> : <DownloadIcon />}
-                    {isUpdating
-                      ? "Updating"
-                      : versionAdvisory.targetVersion
-                        ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
-                        : "Update now"}
-                  </Button>
-                ) : null}
-                {onRunVersionAction && updateCommand ? (
-                  <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                    or, update manually using
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                  </div>
-                ) : null}
-                {updateCommand ? (
-                  <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                    <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
-                      {updateCommand}
-                    </code>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            className="shrink-0"
-                            onClick={() =>
-                              copyToClipboard(updateCommand, { providerName: displayName })
-                            }
-                            aria-label="Copy update command"
-                          >
-                            <CopyIcon className="size-3" />
-                          </Button>
-                        }
-                      />
-                      <TooltipPopup side="top">Copy command</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                ) : null}
-              </div>
-            </PopoverPopup>
-          </Popover>
-        ) : null}
         {titleTailNode}
         {onDelete ? (
           <Button
@@ -885,14 +982,39 @@ export function ProviderInstanceCard({
         <SettingsRow
           title="Display name"
           status={
-            <ProviderStatusDiagnostic detail={statusDiagnostic}>
-              <div
-                tabIndex={statusDiagnostic ? 0 : undefined}
-                className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
-              >
-                {editorStatusNode}
-              </div>
-            </ProviderStatusDiagnostic>
+            <>
+              <ProviderStatusDiagnostic detail={statusDiagnostic}>
+                <div
+                  tabIndex={statusDiagnostic ? 0 : undefined}
+                  className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
+                >
+                  {editorStatusNode}
+                </div>
+              </ProviderStatusDiagnostic>
+              {urlAuthAction && onAcceptUrlAuth ? (
+                <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+                  <p>{urlAuthAction.message}</p>
+                  <code className="break-all text-2xs">{urlAuthAction.url}</code>
+                  <Button
+                    render={
+                      <a
+                        href={urlAuthAction.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                      />
+                    }
+                    size="xs"
+                    variant="outline"
+                    className="w-fit"
+                    disabled={readOnly}
+                  >
+                    <ExternalLinkIcon />
+                    Continue authentication
+                  </Button>
+                </div>
+              ) : null}
+            </>
           }
           control={
             <div
@@ -924,7 +1046,31 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
-      {setup ? <SettingsSection title="Setup">{setup}</SettingsSection> : null}
+      {setup || environmentFields.length > 0 ? (
+        <SettingsSection title="Setup">
+          {setup}
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            {environmentFields.length > 0 ? (
+              <>
+                {environmentFields.map((field) => (
+                  <ProviderEnvironmentFieldRow
+                    key={field.name}
+                    field={field}
+                    variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                    idPrefix={`provider-instance-${instanceId}`}
+                    onCommit={updateEnvironmentField}
+                    onRemove={removeEnvironmentField}
+                  />
+                ))}
+              </>
+            ) : null}
+          </div>
+        </SettingsSection>
+      ) : null}
 
       {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
         <div
@@ -941,7 +1087,7 @@ export function ProviderInstanceCard({
             {runtime ?? runtimeFields}
           </FoldedSettingsSection>
         </div>
-      ) : (
+      ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
         <SettingsSection
           title="Runtime"
           inert={readOnly}
@@ -950,7 +1096,7 @@ export function ProviderInstanceCard({
         >
           {runtimeFields}
         </SettingsSection>
-      )}
+      ) : null}
 
       <SettingsSection
         title="Environment"
@@ -959,9 +1105,18 @@ export function ProviderInstanceCard({
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
         <ProviderEnvironmentSection
-          environment={instance.environment ?? []}
-          onChange={updateEnvironment}
+          environment={genericEnvironment}
+          onChange={updateGenericEnvironment}
         />
+        {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+          <AcpSessionManagementSection
+            environmentId={environmentId}
+            instanceId={instanceId}
+            provider={liveProvider}
+            projects={acpProjects}
+            readOnly={readOnly}
+          />
+        ) : null}
       </SettingsSection>
 
       {driverOption !== undefined ? (
