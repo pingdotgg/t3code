@@ -6529,7 +6529,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
               updatedAt: completedAt,
-              presentation: toolCall.presentation,
+              // A message sent right after a background launch can start before
+              // that subagent is registered; by its result the name resolves.
+              presentation:
+                toolCall.presentation ??
+                (yield* agentMessagePresentation(context, toolCall.toolName, toolCall.input)),
             });
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
