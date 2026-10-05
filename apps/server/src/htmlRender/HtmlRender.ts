@@ -260,24 +260,32 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   if (pageBytes > MAX_PAGE_BYTES) {
     return yield* new HtmlRenderPageTooLargeError({ sizeBytes: pageBytes });
   }
-  // Reads stop one byte past the limit, so a file that grew after `stat` is caught.
+  // Files can grow after `stat`. Each read stops one byte past the image
+  // limit, and reading stops once the images read so far cannot fit the page.
+  let readBytes = 0;
   const images = yield* Effect.forEach(
     files.filter((file) => file.size !== undefined),
     (file) =>
-      fileSystem.stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 }).pipe(
-        Stream.mkUint8Array,
-        Effect.map((bytes) => (isImageBytes(bytes) ? [{ path: file.path, bytes }] : [])),
-        Effect.orElseSucceed(() => []),
-      ),
+      Effect.gen(function* () {
+        const read = yield* fileSystem
+          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
+          .pipe(Stream.mkUint8Array, Effect.option);
+        if (Option.isNone(read) || !isImageBytes(read.value)) return [];
+        const bytes = read.value;
+        if (bytes.byteLength > MAX_IMAGE_BYTES) {
+          return yield* new HtmlRenderImageTooLargeError({
+            path: file.path,
+            sizeBytes: bytes.byteLength,
+          });
+        }
+        readBytes += Math.ceil(bytes.byteLength / 3) * 4;
+        if (readBytes > MAX_PAGE_BYTES) {
+          return yield* new HtmlRenderPageTooLargeError({ sizeBytes: readBytes });
+        }
+        return [{ path: file.path, bytes }];
+      }),
     { concurrency: 4 },
   ).pipe(Effect.map((entries) => entries.flat()));
-  const grown = images.find((image) => image.bytes.byteLength > MAX_IMAGE_BYTES);
-  if (grown !== undefined) {
-    return yield* new HtmlRenderImageTooLargeError({
-      path: grown.path,
-      sizeBytes: grown.bytes.byteLength,
-    });
-  }
   const dataUris = new Map(
     images.map(
       (image) =>

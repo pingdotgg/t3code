@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { readCaller } from "../../threadAccess.ts";
+import { readMutationCaller } from "../../threadAccess.ts";
 import { HtmlPreviewToolkit, HtmlRenderToolkit, type HtmlToolkit } from "./tools.ts";
 
 const INVALID_PAGE_ERRORS = new Set([
@@ -42,8 +42,9 @@ const handlers = {
     }),
   html_render: (input) =>
     Effect.gen(function* () {
-      // The page shows in the calling thread, so there must be one.
-      const { scope } = yield* readCaller();
+      // The page is stored in the calling thread, so it needs that thread's
+      // live run, like any other write.
+      const { scope } = yield* readMutationCaller();
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
       const reference = yield* htmlRender

@@ -6,6 +6,7 @@ import {
   ChatImageAttachment,
   EnvironmentId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -209,8 +210,15 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            // A live run: publishing stores a page, so it needs the caller's active turn.
             getThreadShell: () =>
-              Effect.succeed({ id: threadId, deletedAt: null } as OrchestrationV2ThreadShell),
+              Effect.succeed({
+                id: threadId,
+                deletedAt: null,
+                archivedAt: null,
+                activeRunId: RunId.make("mcp-core-run"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              } as OrchestrationV2ThreadShell),
           }),
         ),
       ),

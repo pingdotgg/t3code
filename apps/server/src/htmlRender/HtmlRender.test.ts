@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - a plain local HTTP server stands in for a LAN service.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
@@ -313,6 +315,44 @@ describe("HtmlRender", () => {
           expect(texts.join(" ")).not.toContain("abc123");
         }).pipe(Effect.scoped, Effect.provide(htmlRenderLayer(executable)));
       }),
+    30_000,
+  );
+
+  it.live(
+    "keeps the page off this machine's local network",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        // Chrome's Local Network Access refuses these before connecting; a
+        // Chrome pin that stopped doing so would let pages read local services.
+        let requests = 0;
+        const server = yield* Effect.acquireRelease(
+          Effect.callback<NodeHttp.Server>((resume) => {
+            const listening = NodeHttp.createServer((_request, response) => {
+              requests += 1;
+              response.end("<p>LOCAL</p>");
+            });
+            listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+          }),
+          (listening) =>
+            Effect.callback<void>((resume) => {
+              listening.close(() => resume(Effect.void));
+            }),
+        );
+        const address = server.address();
+        const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+        yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          yield* htmlRender.preview({
+            html: [
+              `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
+              `<script>fetch("${origin}/").catch(() => {});</script>`,
+            ].join(""),
+          });
+        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        expect(requests).toBe(0);
+      }).pipe(Effect.scoped),
     30_000,
   );
 
