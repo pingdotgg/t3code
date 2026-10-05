@@ -64,12 +64,13 @@ export function ShellCommandBlock({ command }: { command: string }) {
   if (!code) return null;
   const plain = <PlainWords code={code} />;
   return (
-    <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border/50 bg-background/60 p-2 font-mono text-2xs leading-relaxed text-foreground/85 select-text">
+    // The tool body sets the monospace, pre-wrapped text this sits in.
+    <div className="text-foreground/85">
       <RenderErrorBoundary fallback={plain} resetKeys={[code]}>
         <Suspense fallback={plain}>
           <HighlightedCommand code={code} theme={resolvedTheme} />
         </Suspense>
       </RenderErrorBoundary>
-    </pre>
+    </div>
   );
 }
