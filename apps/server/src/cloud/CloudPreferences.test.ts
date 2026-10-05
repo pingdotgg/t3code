@@ -11,6 +11,7 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as CloudPreferences from "./CloudPreferences.ts";
 import {
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
+  PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
@@ -19,7 +20,7 @@ const encode = (value: string) => new TextEncoder().encode(value);
 
 /** A linked environment whose secret store can refuse writes, and the relay calls it made. */
 const withService = <A, E>(
-  options: { readonly failHoldWrite?: boolean },
+  options: { readonly failHoldWrite?: boolean; readonly failActivityWrite?: boolean },
   body: (input: {
     readonly preferences: CloudPreferences.CloudPreferences["Service"];
     readonly stored: Map<string, Uint8Array>;
@@ -45,7 +46,8 @@ const withService = <A, E>(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
         get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
         set: (name, value) =>
-          options.failHoldWrite && name === HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET
+          (options.failHoldWrite && name === HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET) ||
+          (options.failActivityWrite && name === PUBLISH_AGENT_ACTIVITY_SECRET)
             ? Effect.fail(
                 new ServerSecretStore.SecretStorePersistError({
                   resource: name,
@@ -89,6 +91,22 @@ it.effect("puts the relay back when the local save fails", () =>
         .pipe(Effect.flip);
       assert.equal(error._tag, "EnvironmentHttpInternalServerError");
       assert.deepEqual(relayCalls, [true, false]);
+      assert.equal(
+        new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
+        "false",
+      );
+    }),
+  ),
+);
+
+it.effect("leaves the relay untouched when the activity setting can't be saved", () =>
+  withService({ failActivityWrite: true }, ({ preferences, stored, relayCalls }) =>
+    Effect.gen(function* () {
+      const error = yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepEqual(relayCalls, []);
       assert.equal(
         new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
         "false",

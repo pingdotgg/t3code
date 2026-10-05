@@ -73,6 +73,9 @@ const make = Effect.gen(function* () {
 
   const update: CloudPreferences["Service"]["update"] = Effect.fn("CloudPreferences.update")(
     function* (input) {
+      // Saved before the relay is told anything, so a failure here leaves the
+      // relay and the hold setting as they were.
+      yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
         const previous = yield* readHoldWebhooksWhileOffline(secrets);
@@ -85,7 +88,6 @@ const make = Effect.gen(function* () {
           ),
         );
       }
-      yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       yield* awarenessRelay.requestCatchUp();
     },
   );
