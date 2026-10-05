@@ -17,7 +17,9 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 
-class SessionHttpClientUnavailable extends Data.TaggedError("SessionHttpClientUnavailable") {}
+export class SessionHttpClientUnavailable extends Data.TaggedError(
+  "SessionHttpClientUnavailable",
+) {}
 
 function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
