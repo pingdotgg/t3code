@@ -135,6 +135,19 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Spell check languages
+
+On Windows and Linux, the desktop app checks spelling in English (United States)
+by default. To write in other languages, open **Settings → General → Spell check
+languages** and pick every language you write in. A word counts as correct when
+any selected language accepts it. Changes apply right away; words that are
+already underlined update the next time you edit the text. The first time you
+pick a language, its dictionary is downloaded, which needs a network connection.
+
+On macOS, the system spell checker detects the language as you type. In a browser,
+spell check follows the browser's language settings, and on iPhone and Android it
+follows the keyboard language.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

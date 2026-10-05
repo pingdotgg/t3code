@@ -190,6 +190,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  getSpellCheckState: () =>
+    ipcRenderer.invoke(IpcChannels.GET_SPELL_CHECK_STATE_CHANNEL, undefined),
+  setSpellCheckLanguages: (languages) =>
+    ipcRenderer.invoke(IpcChannels.SET_SPELL_CHECK_LANGUAGES_CHANNEL, languages),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,

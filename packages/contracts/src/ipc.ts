@@ -538,6 +538,25 @@ export const PickedThemeFileSchema = Schema.Struct({
   text: Schema.String,
 });
 
+/**
+ * Languages the desktop spell checker underlines against. A word passes when
+ * any selected language accepts it.
+ */
+export interface DesktopSpellCheckState {
+  availableLanguages: readonly string[];
+  languages: readonly string[];
+}
+
+export const DesktopSpellCheckStateSchema = Schema.Struct({
+  availableLanguages: Schema.Array(Schema.String),
+  languages: Schema.Array(Schema.String),
+});
+
+/** An empty list would silently fall back to `en-US`, so at least one is required. */
+export const DesktopSpellCheckLanguagesSchema = Schema.Array(Schema.String).check(
+  Schema.isMinLength(1),
+);
+
 export interface DesktopWslDistro {
   name: string;
   isDefault: boolean;
@@ -1208,6 +1227,13 @@ export interface DesktopBridge {
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /**
+   * Null on macOS, where the OS spell checker detects the language itself.
+   * Optional: older desktop builds lack it.
+   */
+  getSpellCheckState?: () => Promise<DesktopSpellCheckState | null>;
+  /** Applies immediately; Chromium persists the list across restarts. */
+  setSpellCheckLanguages?: (languages: readonly string[]) => Promise<DesktopSpellCheckState | null>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

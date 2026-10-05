@@ -1,7 +1,7 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { DesktopBridge, EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -50,6 +50,10 @@ export interface SettingsSearchItem {
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
+  // Its row is hidden on macOS, where the OS owns the setting.
+  readonly notMac?: boolean;
+  // Its row needs a bridge method that older desktop shells lack.
+  readonly desktopBridgeMethod?: keyof DesktopBridge;
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
@@ -401,6 +405,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Send shortcut",
     to: "/settings/general",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
+  },
+  {
+    id: "spell-check-languages",
+    title: "Spell check languages",
+    to: "/settings/general",
+    searchTerms: [
+      "spelling spellcheck dictionary misspelled typos red underline language locale composer",
+    ],
+    desktopOnly: true,
+    notMac: true,
+    desktopBridgeMethod: "getSpellCheckState",
   },
   {
     id: "follow-up-behavior",
@@ -1023,11 +1038,18 @@ export function searchSettings(
   if (normalizedQuery.length === 0) return [];
   const queryTokens = normalizedQuery.split(" ");
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+  const desktopBridge = typeof window === "undefined" ? undefined : window.desktopBridge;
 
   return items
     .flatMap((item, index) => {
       if (!isElectron && item.desktopOnly === true) return [];
       if (item.macOnly && !isMacPlatform(platform)) return [];
+      if (item.notMac && isMacPlatform(platform)) return [];
+      if (
+        item.desktopBridgeMethod &&
+        typeof desktopBridge?.[item.desktopBridgeMethod] !== "function"
+      )
+        return [];
       if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
 
       const title = normalizeSearchText(item.title);

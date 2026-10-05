@@ -139,6 +139,39 @@ describe("searchSettings", () => {
     }
   });
 
+  it("hides settings macOS manages itself on macOS only", () => {
+    const items = [
+      { id: "spell", title: "Spell check languages", to: "/settings/general", notMac: true },
+    ] as const;
+    try {
+      vi.stubGlobal("navigator", { platform: "MacIntel" });
+      expect(searchSettings("spell", items)).toEqual([]);
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+      expect(searchSettings("spell", items).map((item) => item.id)).toEqual(["spell"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides settings whose desktop bridge method this shell lacks", () => {
+    const items = [
+      {
+        id: "spell",
+        title: "Spell check languages",
+        to: "/settings/general",
+        desktopBridgeMethod: "getSpellCheckState",
+      },
+    ] as const;
+    try {
+      vi.stubGlobal("window", { desktopBridge: {} });
+      expect(searchSettings("spell", items)).toEqual([]);
+      vi.stubGlobal("window", { desktopBridge: { getSpellCheckState: async () => null } });
+      expect(searchSettings("spell", items).map((item) => item.id)).toEqual(["spell"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("registers the WSL backend as a desktop-only setting", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
       id: "wsl-backend",
