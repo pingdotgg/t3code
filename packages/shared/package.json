@@ -95,6 +95,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./KeyedLock": {
+      "types": "./src/KeyedLock.ts",
+      "import": "./src/KeyedLock.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
