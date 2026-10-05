@@ -2404,6 +2404,38 @@ describe("delegate_work MCP tool", () => {
     }
   });
 
+  it("applies the settings thinking level", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-settings-reasoning-"));
+    const cliPath = path.join(root, "t3-test");
+    const argsPath = path.join(root, "cli-args.txt");
+    const originalArgsPath = process.env.T3_MCP_TEST_ARGS;
+
+    try {
+      await writeFile(cliPath, nestedCliScript(createdOutcome));
+      await chmod(cliPath, 0o755);
+      process.env.T3_MCP_TEST_ARGS = argsPath;
+
+      await __testing.delegateWorkTool(
+        {
+          ...options(root, cliPath),
+          delegatedDefaultModelSelection: {
+            ...options(root, cliPath).delegatedDefaultModelSelection,
+            options: [{ id: "reasoning", value: "high" }],
+          },
+        },
+        { children: [{ title: "A", prompt: "Do A." }] },
+      );
+
+      expect((await readFile(argsPath, "utf8")).trim().split("\n")).toEqual(
+        expect.arrayContaining(["--reasoning", "high"]),
+      );
+    } finally {
+      if (originalArgsPath === undefined) delete process.env.T3_MCP_TEST_ARGS;
+      else process.env.T3_MCP_TEST_ARGS = originalArgsPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects reasoning without an explicit model even with a settings default", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-reasoning-"));
     const cliPath = path.join(root, "t3-test");

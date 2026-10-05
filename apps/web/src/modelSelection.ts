@@ -380,8 +380,8 @@ export function resolveDefaultModelSelectionState(
  * without an explicit model) against live provider availability. Falls back
  * to the first enabled/available instance — and finally to factory
  * Copilot `gpt-6-luna` — when the saved instance is disabled or missing.
- * Unlike the text-generation resolver, no per-model options are preserved:
- * the delegation MCP layer only reads instance + model slug.
+ * Options (e.g. the thinking level) survive only while the saved instance
+ * stays available; a fallback instance starts from the provider default.
  */
 export function resolveDelegatedThreadModelSelectionState(
   settings: UnifiedSettings,
@@ -405,7 +405,11 @@ export function resolveDelegatedThreadModelSelectionState(
       resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
       entry.models[0]?.slug ??
       DEFAULT_DELEGATED_THREAD_MODEL;
-    return createModelSelection(entry.instanceId, model);
+    return createModelSelection(
+      entry.instanceId,
+      model,
+      selectedEntry ? selection.options : undefined,
+    );
   }
 
   return createModelSelection(DEFAULT_DELEGATED_THREAD_INSTANCE_ID, DEFAULT_DELEGATED_THREAD_MODEL);

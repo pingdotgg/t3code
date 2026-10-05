@@ -165,7 +165,7 @@ const relatedTerms: Readonly<Record<string, string>> = {
   "Browser recording frame rate": "capture video fps",
   "Review prompt": "review code instructions",
   "Fix prompt": "review prompt fix issues instructions",
-  "Delegated thread model": "child agent model",
+  "Delegated thread model": "child agent model reasoning thinking effort",
   Theme: "appearance dark light system",
   "UI density": "spacing compact comfortable spacious",
   "Archived threads": "archive restore delete",
