@@ -54,7 +54,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertRuleSetDeleted(ruleSet.ruleSetName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -85,5 +85,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertRuleSetDeleted("alchemy-test-ses-ruleset-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

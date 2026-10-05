@@ -1,5 +1,5 @@
+import * as SchemaBinary from "effect/encoding/SchemaBinary"
 import * as Schema from "effect/Schema"
-import * as SchemaBinary from "effect/unstable/encoding/SchemaBinary"
 
 const schema = Schema.Struct({
   a: Schema.String,

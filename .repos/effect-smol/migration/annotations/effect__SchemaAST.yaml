@@ -35,11 +35,11 @@
   replacement: "SchemaAST.Boolean"
   note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
 "effect/SchemaAST#BrandAnnotation":
-  replacement: "Schema.Annotations.Bottom[\"brands\"]"
-  note: "Brands are stored under the string-keyed brands annotation and normally added with Schema.brand."
+  replacement: "none"
+  note: "Runtime brand annotations were removed. Schema.brand adds a TypeScript-only nominal distinction and does not store brand metadata in the AST."
 "effect/SchemaAST#BrandAnnotationId":
   replacement: "Schema.brand"
-  note: "Symbol annotation IDs were removed; add brands through Schema.brand."
+  note: "Use Schema.brand for a TypeScript-only nominal distinction. V4 does not store brand metadata in the AST."
 "effect/SchemaAST#Compiler":
   replacement: "none"
   note: "The generic AST compiler abstraction was removed; traverse the discriminated SchemaAST.AST union directly or use a higher-level Schema derivation API."
@@ -119,8 +119,8 @@
   replacement: "none"
   note: "Batching annotations were removed. ParseOptions.concurrency controls product child parsing only; configure request batching separately."
 "effect/SchemaAST#getBrandAnnotation":
-  replacement: "SchemaAST.resolveAt(\"brands\")"
-  note: "Resolve the string-keyed brands annotation."
+  replacement: "none"
+  note: "Runtime brand inspection was removed because Schema.brand is type-only and does not store brand metadata in the AST."
 "effect/SchemaAST#getCompiler":
   replacement: "none"
   note: "The Match-based compiler was removed; traverse SchemaAST.AST directly or use the relevant Schema derivation API."
@@ -326,7 +326,7 @@
   replacement: "none"
   note: "The symbol annotation was removed; use message or expected annotations."
 "effect/SchemaAST#ParseJsonSchemaId":
-  replacement: "Schema.UnknownFromJsonString"
+  replacement: "Schema.fromJsonString(Schema.Unknown)"
   note: "Use the built-in JSON string codec instead of checking the old schema ID."
 "effect/SchemaAST#ParseOptions":
   replacement: "SchemaAST.ParseOptions"

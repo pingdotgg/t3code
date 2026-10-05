@@ -1,0 +1,154 @@
+---
+title: Vite
+description: Package a Vite client build as a Neon Function, with native Vite development.
+sidebar:
+  order: 1
+---
+
+`Neon.Website.Vite` builds a Vite app and packages its static assets with a
+Node 24 Fetch handler in a Neon Function ZIP. It does not provision a container,
+start a listening Bun server, or upload the site to S3. For SSR, use the
+[framework-specific constructors](/neon/frontend/astro) instead.
+
+## Prepare the app
+
+Start with an existing Vite app or the
+[runnable Vite example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-vite).
+Keep your plugins in `vite.config.*`. From the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+The integration drives the build; `@vercel/nft` traces runtime dependencies for
+packaging. Configure your deployment account key using [Neon setup](/neon/setup).
+In CI, set `CI=true` and `NEON_API_KEY` in the deployment environment, not the
+website's `env`.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonVite",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Vite("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+An omitted scope creates an owned Ohio (`aws-us-east-2`) Project on live deploy,
+then a Function on its default branch. `site.function` exposes the Function;
+`site.url` is its URL. Keep the local state files for subsequent deploys and cleanup.
+
+## Choose routing
+
+Vite defaults to SPA routing: unmatched GET/HEAD paths fall back to `index.html`.
+For a multi-page build that emits `404.html`, change only the asset fallback:
+
+```diff lang="typescript"
+    const site = yield* Neon.Website.Vite("Web", {
+      rootDir: ".",
++     assets: { notFoundHandling: "404-page" },
+    });
+```
+
+The `vite` prop accepts serializable `outDir` and `base` overrides. Keep plugin
+instances in `vite.config.*`, not in resource props.
+
+## Develop locally
+
+```sh
+pnpm exec alchemy dev
+```
+
+This runs Vite's native dev server and HMR. The site returns a local URL with
+`function` and `domain` undefined; it creates no implicit Neon Project. Any
+explicit backend resources you declare separately still have their own lifecycle.
+
+## Opt out of local development
+
+Apply `Alchemy.remote()` to the site to deploy it even during `alchemy dev`:
+
+```diff lang="typescript"
+    const site = yield* Neon.Website.Vite("Web", {
+      rootDir: ".",
+-   });
++   }).pipe(Alchemy.remote());
+```
+
+This requires cloud credentials and incurs the normal live resource lifecycle.
+
+## Deploy and remove
+
+```sh
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run `destroy` when finished, from the same directory and with the same stage and
+state. It removes the site's owned resources, including an implicit Project.
+
+## Scope and credentials
+
+All 13 Neon Website constructors accept either `project` or `branch`, never both.
+A project selects its current default branch; a branch pins an explicit identity.
+For an existing branch, add just the scope to the site props:
+
+```diff lang="typescript"
+    const site = yield* Neon.Website.Vite("Web", {
+      rootDir: ".",
++     branch: { projectId: "your-project-id", branchId: "your-branch-id" },
+    });
+```
+
+Replace both IDs with your own. Referenced projects and branches are not owned by
+the Website. When declaring a Project for a combined website/storage backend,
+choose `region: "aws-us-east-2"` (Ohio) and verify service availability for your
+account.
+
+The deployment account key is not an application credential.
+[`Neon.Credential`](/providers/neon/credential) grants branch-and-descendant
+permissions, not per-bucket permissions. Request only needed scopes; storage
+reads currently require explicit `storage:read`, even with `storage:write`.
+Never put account keys or privileged service tokens in a browser bundle.
+
+## Environment and deployment limits
+
+The website's `env` is supplied to build, native dev, and Function configuration.
+Vite embeds `VITE_*` values into browser assets; there is no Vite server application
+to read private runtime values. `Redacted` does not prevent a build tool from
+embedding secrets. SSR constructors use the same shared environment contract,
+with their own framework's public-variable rules.
+
+:::caution[Verification boundaries]
+Native development and local Fetch tests do not establish live acceptance for
+all frameworks. Live probes have observed new active deployment IDs while the
+Function URL still served old code and environment. Verify actual HTTP behavior
+after a deploy; metadata success or `memo: false` is not a verified workaround.
+:::
+
+Static files are served inside the Function, currently with
+`Cache-Control: no-cache`; this composition adds no CDN or durable framework cache.
+The `domain` prop registers a custom hostname and exposes `site.domain.cnameTarget` for a
+DNS-only CNAME. Registration and the returned URL do not establish DNS propagation
+or valid TLS; verify HTTPS separately. Follow [Custom domains](/neon/guides/custom-domains)
+for DNS, CAA, HTTPS checks, and safe retirement, or see the
+[`CustomDomain` reference](/providers/neon/customdomain).
+
+## Reference
+
+- [Vite API](/providers/neon/website/vite)
+- [Function API](/providers/neon/function)
+- [Runnable Vite example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-vite)

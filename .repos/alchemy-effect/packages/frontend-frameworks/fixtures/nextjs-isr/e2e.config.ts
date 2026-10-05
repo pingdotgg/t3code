@@ -1,5 +1,6 @@
 import { KvNamespace } from "@alchemy.run/cloudflare-runtime/core/bindings";
 import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
+import { make } from "@alchemy.run/frontend-frameworks/nextjs";
 import { kCurrentWorker } from "miniflare";
 
 /**
@@ -13,7 +14,7 @@ import { kCurrentWorker } from "miniflare";
  * built worker. The preview (miniflare) config declares them explicitly.
  */
 export default Options.make({
-  framework: "@alchemy.run/frontend-frameworks/nextjs",
+  framework: (options) => make({ ...options, nextjs: { cache: "kv" } }),
   vite: {
     compatibilityDate: "2026-05-12",
     compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],

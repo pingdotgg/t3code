@@ -1,7 +1,7 @@
 import { MssqlClient } from "@effect/sql-mssql"
 import { assert, it } from "@effect/vitest"
 import { Effect } from "effect"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import type * as Tedious from "tedious"
 import { vi } from "vitest"
 

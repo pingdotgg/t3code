@@ -1,5 +1,10 @@
 import { projectBuckets } from "./GraphQL.ts";
-import * as railway from "@distilled.cloud/railway";
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import {
+  Railway,
+  type Bucket as RailwayBucket,
+  type BucketS3CompatibleCredentials,
+} from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -22,31 +27,52 @@ import {
 import type { Providers } from "./Providers.ts";
 import { withEnvironmentConfigLock } from "./transient.ts";
 
-const selection = {
-  id: true,
-  name: true,
-  projectId: true,
-  createdAt: true,
-  updatedAt: true,
-} as const satisfies railway.Selection<"Bucket">;
-const credentialsSelection = {
-  accessKeyId: true,
-  bucketName: true,
-  endpoint: true,
-  region: true,
-  secretAccessKey: true,
-  urlStyle: true,
-} as const satisfies railway.Selection<"BucketS3CompatibleCredentials">;
-type CreateBucketResponse = railway.Result<"Bucket!", typeof selection>;
-type UpdateBucketResponse = railway.Result<"Bucket!", typeof selection>;
-type ProjectResponseBucketsEdgesItemNode = railway.Result<
-  "Bucket!",
-  typeof selection
+const bucketFields = <E>(bucket: Query<RailwayBucket, E>) => ({
+  id: bucket.id,
+  name: bucket.name,
+  projectId: bucket.projectId,
+  createdAt: bucket.createdAt,
+  updatedAt: bucket.updatedAt,
+});
+const credentialsFields = <E>(
+  credentials: Query<BucketS3CompatibleCredentials, E>,
+) => ({
+  accessKeyId: credentials.accessKeyId,
+  bucketName: credentials.bucketName,
+  endpoint: credentials.endpoint,
+  region: credentials.region,
+  secretAccessKey: credentials.secretAccessKey,
+  urlStyle: credentials.urlStyle,
+});
+type CloudBucket = UnwrapPlan<ReturnType<typeof bucketFields>>;
+type BucketS3CredentialsResultItem = UnwrapPlan<
+  ReturnType<typeof credentialsFields>
 >;
-type BucketS3CredentialsResultItem = railway.Result<
-  "BucketS3CompatibleCredentials!",
-  typeof credentialsSelection
->;
+
+const readEnvironmentConfig = Query.fn((id: string, projectId: string) => ({
+  config: Railway.environment({ id, projectId }).config,
+}));
+
+const environmentPatchCommit = Query.fn(
+  (input: {
+    environmentId: string;
+    commitMessage: string;
+    patch: Record<string, unknown>;
+  }) => Railway.environmentPatchCommit(input),
+);
+
+const readBucketS3Credentials = Query.fn(
+  (input: { bucketId: string; environmentId: string; projectId: string }) =>
+    Railway.bucketS3Credentials(input).pipe(Query.map(credentialsFields)),
+);
+
+const bucketCreate = Query.fn((input: { projectId: string; name: string }) =>
+  bucketFields(Railway.bucketCreate({ input })),
+);
+
+const bucketUpdate = Query.fn((id: string, name: string) =>
+  bucketFields(Railway.bucketUpdate({ id, input: { name } })),
+);
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -235,7 +261,7 @@ const BucketResource = Resource<Bucket>("Railway.Bucket");
  *
  * **Example:** Put an object from a Service
  * ```typescript
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * export default class Api extends Railway.Service<Api>()(
  *   "Api",
@@ -273,6 +299,7 @@ const BucketResource = Resource<Bucket>("Railway.Bucket");
  * ```
  *
  * @resource
+ * @product Bucket
  */
 export const Bucket: typeof BucketResource = Object.assign(
   (
@@ -312,11 +339,6 @@ class BucketDeployPending extends Data.TaggedError(
 )<{
   bucketId: string;
 }> {}
-
-type CloudBucket =
-  | ProjectResponseBucketsEdgesItemNode
-  | CreateBucketResponse
-  | UpdateBucketResponse;
 
 type BucketInstanceConfig = {
   region?: string | null;
@@ -421,29 +443,29 @@ const resolveName = (id: string, name: string | undefined, existing?: string) =>
   });
 
 const listProjectBuckets = (projectId: string) =>
-  projectBuckets(projectId, selection).pipe(
-    railway.catchTags(["RailwayNotFound"], () =>
-      Effect.succeed([] as ProjectResponseBucketsEdgesItemNode[]),
+  projectBuckets(projectId, bucketFields).pipe(
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed([] as CloudBucket[]),
     ),
   );
 
 const findInProject = (
   projectId: string,
-  match: (bucket: ProjectResponseBucketsEdgesItemNode) => boolean,
+  match: (bucket: CloudBucket) => boolean,
 ) =>
   listProjectBuckets(projectId).pipe(
     Effect.map((buckets) => buckets.find(match)),
   );
 
 const getEnvironmentConfig = (environmentId: string, projectId: string) =>
-  railway.environment({ id: environmentId, projectId }, { config: true }).pipe(
+  readEnvironmentConfig(environmentId, projectId).pipe(
     Effect.map((env) => parseEnvironmentConfig(env.config)),
     Effect.retry({
-      while: (e) => railway.isErrorTag(e, "RailwayNotFound"),
+      while: (e) => e._tag === "RailwayNotFound",
       times: 8,
       schedule: Schedule.spaced("1 second"),
     }),
-    railway.catchTags(["RailwayNotFound"], () =>
+    Effect.catchTag("RailwayNotFound", () =>
       Effect.succeed({} as EnvironmentConfigShape),
     ),
   );
@@ -452,28 +474,27 @@ const environmentIdsOf = (project: {
   projectId: string;
   environmentId: string;
 }) =>
-  railway.environments
-    .items(
-      { projectId: project.projectId, first: 50 },
-      { id: true, deletedAt: true },
-    )
-    .pipe(
-      Stream.filter((env) => env.deletedAt == null),
-      Stream.map((env) => env.id),
-      Stream.runCollect,
-      Effect.map((ids) => {
-        const set = new Set(Array.from(ids));
-        if (project.environmentId.length > 0) {
-          set.add(project.environmentId);
-        }
-        return Array.from(set);
-      }),
-      railway.catchTags(["RailwayNotFound"], () =>
-        Effect.succeed(
-          project.environmentId.length > 0 ? [project.environmentId] : [],
-        ),
+  Query.items(
+    Railway.environments({ projectId: project.projectId, first: 50 }).pipe(
+      Query.map((env) => ({ id: env.id, deletedAt: env.deletedAt })),
+    ),
+  ).pipe(
+    Stream.filter((env) => env.deletedAt == null),
+    Stream.map((env) => env.id),
+    Stream.runCollect,
+    Effect.map((ids) => {
+      const set = new Set(Array.from(ids));
+      if (project.environmentId.length > 0) {
+        set.add(project.environmentId);
+      }
+      return Array.from(set);
+    }),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed(
+        project.environmentId.length > 0 ? [project.environmentId] : [],
       ),
-    );
+    ),
+  );
 
 const commitBucketPatch = (input: {
   environmentId: string;
@@ -482,7 +503,7 @@ const commitBucketPatch = (input: {
 }) =>
   withEnvironmentConfigLock(
     input.environmentId,
-    railway.environmentPatchCommit({
+    environmentPatchCommit({
       environmentId: input.environmentId,
       commitMessage: input.commitMessage,
       patch: input.patch,
@@ -516,7 +537,7 @@ const ensureDeployed = Effect.fn(function* (input: {
     },
   }).pipe(
     Effect.retry({
-      while: (e) => railway.isErrorTag(e, "RailwayNotFound"),
+      while: (e) => e._tag === "RailwayNotFound",
       times: 8,
       schedule: Schedule.spaced("1 second"),
     }),
@@ -547,38 +568,31 @@ const fetchCredentials = (input: {
   environmentId: string;
   projectId: string;
 }) =>
-  railway
-    .bucketS3Credentials(
-      {
-        bucketId: input.bucketId,
-        environmentId: input.environmentId,
-        projectId: input.projectId,
-      },
-      credentialsSelection,
-    )
-    .pipe(
-      Effect.flatMap((items) => {
-        const first = items[0];
-        if (first === undefined) {
-          return Effect.fail(
-            new BucketCredentialsPending({ bucketId: input.bucketId }),
-          );
-        }
-        return Effect.succeed(first);
-      }),
-      railway.catchTags(
-        ["RailwayNotFound", "RailwayBucketCredentialsNotReady"],
-        () =>
-          Effect.fail(
-            new BucketCredentialsPending({ bucketId: input.bucketId }),
-          ),
-      ),
-      Effect.retry({
-        while: (e) => e._tag === "Railway.BucketCredentialsPending",
-        times: 4,
-        schedule: Schedule.spaced("2 seconds"),
-      }),
-    );
+  readBucketS3Credentials({
+    bucketId: input.bucketId,
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+  }).pipe(
+    Effect.flatMap((items) => {
+      const first = items[0];
+      if (first === undefined) {
+        return Effect.fail(
+          new BucketCredentialsPending({ bucketId: input.bucketId }),
+        );
+      }
+      return Effect.succeed(first);
+    }),
+    Effect.catchTag(
+      ["RailwayNotFound", "RailwayBucketCredentialsNotReady"],
+      () =>
+        Effect.fail(new BucketCredentialsPending({ bucketId: input.bucketId })),
+    ),
+    Effect.retry({
+      while: (e) => e._tag === "Railway.BucketCredentialsPending",
+      times: 4,
+      schedule: Schedule.spaced("2 seconds"),
+    }),
+  );
 
 const waitUntilGone = (input: {
   bucketId: string;
@@ -735,26 +749,16 @@ export const BucketProvider = () =>
       }
 
       if (current === undefined) {
-        const created = yield* railway
-          .createBucket(
-            {
-              input: {
-                projectId,
-                name,
-              },
-            },
-            selection,
-          )
-          .pipe(
-            Effect.retry({
-              while: (e) => railway.isErrorTag(e, "RailwayNotFound"),
-              times: 8,
-              schedule: Schedule.spaced("1 second"),
-            }),
-            railway.catchTags("RailwayValidationError", () =>
-              Effect.succeed(undefined),
-            ),
-          );
+        const created = yield* bucketCreate({ projectId, name }).pipe(
+          Effect.retry({
+            while: (e) => e._tag === "RailwayNotFound",
+            times: 8,
+            schedule: Schedule.spaced("1 second"),
+          }),
+          Effect.catchTag("RailwayValidationError", () =>
+            Effect.succeed(undefined),
+          ),
+        );
         current =
           created ??
           (yield* findInProject(projectId, (bucket) => bucket.name === name));
@@ -765,13 +769,7 @@ export const BucketProvider = () =>
       }
 
       if (current.name !== name) {
-        current = yield* railway.updateBucket(
-          {
-            id: current.id,
-            input: { name },
-          },
-          selection,
-        );
+        current = yield* bucketUpdate(current.id, name);
       }
 
       const deployed = yield* ensureDeployed({
@@ -809,7 +807,7 @@ export const BucketProvider = () =>
             [bucketId]: { isDeleted: true },
           },
         },
-      }).pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
+      }).pipe(Effect.catchTag("RailwayNotFound", () => Effect.void));
       if (projectId.length > 0) {
         yield* waitUntilGone({ bucketId, projectId, environmentId });
       }

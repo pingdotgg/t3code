@@ -4,9 +4,9 @@ import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import { flow, pipe } from "effect/Function"
+import { Persistable, Persistence } from "effect/persistence"
 import * as Request from "effect/Request"
 import * as Resolver from "effect/RequestResolver"
-import { Persistable, Persistence } from "effect/unstable/persistence"
 
 class Counter extends Context.Service<Counter, { count: number }>()("Counter") {}
 class Requests extends Context.Service<Requests, { count: number }>()("Requests") {}
@@ -157,8 +157,8 @@ describe("Request", { concurrent: false }, () => {
   it("compares StructuralProto values when hashes collide", () => {
     class Req extends Request.Class<{ id: string; account: string }, string> {}
 
-    const a = new Req({ id: "id-8", account: "acct-2811" })
-    const b = new Req({ id: "id-14", account: "acct-755" })
+    const a = new Req({ id: "id-8", account: "acct-1975" })
+    const b = new Req({ id: "id-18", account: "acct-433" })
 
     assert.strictEqual(Hash.hash(a), Hash.hash(b))
     assert.strictEqual(Equal.equals(a, b), false)

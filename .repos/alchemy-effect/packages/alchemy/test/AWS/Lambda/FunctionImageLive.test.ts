@@ -144,7 +144,10 @@ test.provider.skipIf(skipLive)(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: liveTestTimeout },
+  {
+    tags: ["provider:aws", "provider:aws:ecr", "provider:aws:lambda", "live"],
+    timeout: liveTestTimeout,
+  },
 );
 
 test.provider.skipIf(skipLive)(
@@ -288,7 +291,10 @@ test.provider.skipIf(skipLive)(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: liveTestTimeout },
+  {
+    tags: ["provider:aws", "provider:aws:ecr", "provider:aws:lambda", "live"],
+    timeout: liveTestTimeout,
+  },
 );
 
 test.provider.skipIf(skipLive)(
@@ -324,7 +330,10 @@ test.provider.skipIf(skipLive)(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: liveTestTimeout },
+  {
+    tags: ["provider:aws", "provider:aws:ecr", "provider:aws:lambda", "live"],
+    timeout: liveTestTimeout,
+  },
 );
 
 test.provider.skipIf(skipLive)(
@@ -365,7 +374,10 @@ test.provider.skipIf(skipLive)(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: liveTestTimeout },
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "live"],
+    timeout: liveTestTimeout,
+  },
 );
 
 const ImageInvocationResponse = Schema.Struct({

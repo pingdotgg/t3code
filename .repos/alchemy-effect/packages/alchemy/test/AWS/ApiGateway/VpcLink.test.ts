@@ -47,6 +47,7 @@ test.provider.skipIf(!!process.env.FAST || !targetArn)(
       yield* stack.destroy();
       yield* assertVpcLinkDeleted(link.vpcLinkId);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );
 
 /**
@@ -78,4 +79,5 @@ test.provider.skipIf(!!process.env.FAST || !targetArn)(
       yield* stack.destroy();
       yield* assertVpcLinkDeleted(link.vpcLinkId);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );

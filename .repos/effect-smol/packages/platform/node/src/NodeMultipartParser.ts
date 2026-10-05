@@ -5,8 +5,8 @@
  */
 // oxlint-disable typescript/no-unsafe-declaration-merging
 /// <reference types="node" />
-import type { BaseConfig, MultipartError, Parser, PartInfo } from "effect/unstable/http/MultipartParser"
-import { make as makeParser } from "effect/unstable/http/MultipartParser"
+import type { BaseConfig, MultipartError, Parser, PartInfo } from "effect/http/MultipartParser"
+import { make as makeParser } from "effect/http/MultipartParser"
 import type { IncomingHttpHeaders } from "node:http"
 import { Duplex, Readable } from "node:stream"
 

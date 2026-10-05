@@ -4,8 +4,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { Command, Flag } from "effect/unstable/cli";
-import * as Argument from "effect/unstable/cli/Argument";
+import { Command, Flag } from "effect/cli";
+import * as Argument from "effect/cli/Argument";
 import { readFileSync } from "node:fs";
 import { formatElapsed } from "../../Format.ts";
 

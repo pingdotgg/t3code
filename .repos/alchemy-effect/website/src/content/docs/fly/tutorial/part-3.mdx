@@ -22,19 +22,18 @@ per replica.
 
 There is no standalone Volume resource. Inside the Service's constructor,
 `Fly.MountVolume({ path, sizeGb })` creates a per-replica disk in
-the Service's app and region:
+the Service's App and region:
 
 ```diff lang="typescript"
 // src/api.ts
 import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Site } from "./app.ts";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+  { main: import.meta.url, region: "iad", port: 3000 },
   Effect.gen(function* () {
 +    const mount = yield* Fly.MountVolume({ path: "/data", sizeGb: 1 });
 
@@ -165,10 +164,10 @@ the Service's region (`iad`).
 
 ```sh
 # Store a file on the Volume
-curl -X PUT https://myapp-site-dev-a1b2c3d4.fly.dev/hello.txt -d 'Hello, Volume!'
+curl -X PUT https://myapp-api-dev-a1b2c3d4.fly.dev/hello.txt -d 'Hello, Volume!'
 
 # Read it back
-curl https://myapp-site-dev-a1b2c3d4.fly.dev/hello.txt
+curl https://myapp-api-dev-a1b2c3d4.fly.dev/hello.txt
 # → Hello, Volume!
 ```
 
@@ -184,5 +183,5 @@ You now have:
   no SDK, just files
 - Data that outlives deploys and Machine replacement
 
-In [Part 4](/fly/tutorial/part-4), you'll store a secret on the App
-and read it from the Service, then tear the stack down.
+In [Part 4](/fly/tutorial/part-4), you'll read a secret from `.env`
+in the Service, then tear the stack down.

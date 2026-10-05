@@ -9,37 +9,43 @@ import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-describe("AWS.CloudFront.OriginAccessControl", () => {
-  test.provider(
-    "list enumerates the deployed origin access control",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.CloudFront.OriginAccessControl",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    test.provider(
+      "list enumerates the deployed origin access control",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* OriginAccessControl("ListOriginAccessControl", {
-              description: "list",
-              originType: "s3",
-            });
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* OriginAccessControl("ListOriginAccessControl", {
+                description: "list",
+                originType: "s3",
+              });
+            }),
+          );
 
-        const provider = yield* Provider.findProvider(OriginAccessControl);
-        const all = yield* provider.list();
+          const provider = yield* Provider.findProvider(OriginAccessControl);
+          const all = yield* provider.list();
 
-        expect(
-          all.some(
-            (o) => o.originAccessControlId === deployed.originAccessControlId,
-          ),
-        ).toBe(true);
+          expect(
+            all.some(
+              (o) => o.originAccessControlId === deployed.originAccessControlId,
+            ),
+          ).toBe(true);
 
-        yield* stack.destroy();
-        yield* assertOriginAccessControlDeleted(deployed.originAccessControlId);
-      }),
-    { timeout: 300_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertOriginAccessControlDeleted(
+            deployed.originAccessControlId,
+          );
+        }),
+      { timeout: 300_000 },
+    );
+  },
+);
 
 const assertOriginAccessControlDeleted = (id: string) =>
   cloudfront.getOriginAccessControlConfig({ Id: id }).pipe(
