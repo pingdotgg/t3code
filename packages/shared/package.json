@@ -199,6 +199,10 @@
       "types": "./src/connectAuth.ts",
       "import": "./src/connectAuth.ts"
     },
+    "./symlink": {
+      "types": "./src/symlink.ts",
+      "import": "./src/symlink.ts"
+    },
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"

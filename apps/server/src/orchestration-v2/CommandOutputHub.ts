@@ -230,9 +230,9 @@ export const make = Effect.gen(function* () {
             ),
             Effect.forkScoped,
           );
-        const item = yield* projections.getTurnItem(target.threadId, target.itemId);
+        const item = yield* projections.getTurnItem(target);
         // Only command rows have output; anything else would hold a subscription open forever.
-        if (item?.type !== "command_execution") {
+        if (item === null || item.type !== "command_execution") {
           return yield* new OrchestrationV2CommandOutputError({
             threadId: target.threadId,
             message: "No such command.",

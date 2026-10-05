@@ -93,6 +93,8 @@ const RawCheckSchema = Schema.Struct({
   workflowName: Schema.optional(Schema.NullOr(Schema.String)),
   startedAt: Schema.optional(Schema.NullOr(Schema.String)),
   completedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Branch protection requires this check; read by the detail query on github.com only. */
+  isRequired: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const RawListItemSchema = Schema.Struct({
@@ -706,8 +708,15 @@ export const PULL_REQUEST_LIST_JSON_FIELDS =
 
 export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
 
-/** Pull refs let the comparison share the detail read without first resolving a fork branch. */
-export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+/**
+ * Pull refs let the comparison share the detail read without first resolving a fork branch.
+ * `isRequired` is asked for on github.com only: an older Enterprise server may not know it, and
+ * an unknown field fails the whole read.
+ */
+export const pullRequestCoreGraphQlQuery = (host: string) => {
+  const required =
+    host.toLowerCase() === "github.com" ? " isRequired(pullRequestNumber: $number)" : "";
+  return `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
@@ -727,9 +736,9 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
         nodes { commit { statusCheckRollup { contexts(first: 100) {
           nodes {
             __typename
-            ... on StatusContext { context state targetUrl createdAt description }
+            ... on StatusContext { context state targetUrl createdAt description${required} }
             ... on CheckRun {
-              name status conclusion startedAt completedAt detailsUrl
+              name status conclusion startedAt completedAt detailsUrl${required}
               checkSuite { workflowRun { workflow { name } } }
             }
           }
@@ -739,6 +748,7 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
     }
   }
 }`;
+};
 
 export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -1468,6 +1478,7 @@ function toCheckEntries(
           status: toCheckStatus(check),
           description: trimmed(check.description),
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
+          ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
         },
         workflowName: trimmed(check.workflowName),
         at: realTimestamp(check.completedAt) ?? realTimestamp(check.startedAt),
@@ -2082,6 +2093,7 @@ export interface GitHubReviewThreadComments {
   /** The host's own count of the conversation, which a bounded read can fall short of. */
   readonly commentCount: number;
   readonly truncated: boolean;
+  readonly reviewThreadsTruncated: boolean;
   /** The pull request's own reactions, which sit on its description. */
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   /** Reactions by node id, for the comments and reviews the `gh` JSON read carries no reaction on. */

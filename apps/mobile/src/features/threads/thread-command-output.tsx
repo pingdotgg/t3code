@@ -41,15 +41,20 @@ function spanStyle(style: TerminalSpanStyle): TextStyle {
  * shows its final output. Subscribes only while mounted, so collapsed rows and
  * other threads receive nothing.
  */
+/** True when the environment streams command output; older servers only return final output. */
+export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean {
+  return (
+    useServerConfigs().get(environmentId)?.environment.capabilities.commandOutputStreaming === true
+  );
+}
+
 export function ThreadCommandOutput(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
 }) {
-  const supported =
-    useServerConfigs().get(props.environmentId)?.environment.capabilities.commandOutputStreaming ===
-    true;
-  const { data } = useEnvironmentQuery(
+  const supported = useCommandOutputStreaming(props.environmentId);
+  const { data, error } = useEnvironmentQuery(
     supported
       ? orchestrationEnvironment.v2.commandOutput({
           environmentId: props.environmentId,
@@ -67,7 +72,20 @@ export function ThreadCommandOutput(props: {
       terminalOutputSpans(text, TERMINAL_PALETTES[themeAppearance === "dark" ? "dark" : "light"]),
     [text, themeAppearance],
   );
-  if (text.length === 0) return null;
+  if (text.length === 0) {
+    const message = error
+      ? `Couldn't load output: ${error}`
+      : data === null
+        ? "Loading output…"
+        : data.running
+          ? null
+          : "No output.";
+    return message === null ? null : (
+      <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
+        {message}
+      </Text>
+    );
+  }
   return (
     <View className="pt-1.5">
       {data?.output.truncated ? (

@@ -52,6 +52,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -412,7 +413,10 @@ function latestTerminalResultRun(
         run.status !== "rolled_back" &&
         (run.id === delegatedRun?.id || run.startedAt !== null),
     )
-    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    .reduce<OrchestrationV2Run | undefined>(
+      (latest, run) => (latest === undefined || runRanAfter(run, latest) ? run : latest),
+      undefined,
+    );
 }
 
 function canExposeTaskRunResult(run: OrchestrationV2Run | undefined): run is OrchestrationV2Run {
@@ -1055,7 +1059,16 @@ const make = Effect.gen(function* () {
         messages: [...childControls.messages, ...resultRecords.messages],
         turnItems: resultRecords.turnItems,
       };
-      const workState = task.result !== null ? "result_available" : progress.state;
+      // A restart cut the child's run and its continuation has not settled, or
+      // the child started working again after this read.
+      const heldForRestart =
+        task.result === null &&
+        progress.state === "result_available" &&
+        (yield* threadManagement
+          .delegatedTaskResultPending(task.childThreadId)
+          .pipe(Effect.mapError(threadManagementFailure)));
+      const workState =
+        task.result !== null ? "result_available" : heldForRestart ? "working" : progress.state;
       const status =
         task.result !== null
           ? taskStatusForRun(
@@ -1510,6 +1523,8 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
+        // Published task results stay terminal. Later child-thread messages do not
+        // reopen the task, so cancelling it must not interrupt those separate runs.
         if (isTerminalTaskStatus(current.status)) {
           yield* disposeCompletionDelivery;
           return {

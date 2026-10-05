@@ -3,10 +3,13 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2Run,
+  OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
+type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
 
 const MAX_LABEL_LENGTH = 160;
 
@@ -120,25 +123,69 @@ export function isRestartNoteSource(
   );
 }
 
-/** A restart continuation whose prompt is the note rather than a resume. */
+/**
+ * The note a restart continuation of `source` carries, and whether the turn it
+ * continues had settled (the note is then the whole prompt). A continuation cut
+ * before its provider turn completed may not have delivered its own note:
+ * adapters can announce a running turn before accepting the prompt. Carry the
+ * note forward until a completed turn proves delivery.
+ */
+export function restartContinuationNote(
+  source: OrchestrationV2Run,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+  attempts: ReadonlyArray<Attempt>,
+): { readonly work: ReadonlyArray<Work>; readonly settled: boolean } {
+  const completedAttempts = new Set(
+    providerTurns.filter((turn) => turn.status === "completed").map((turn) => turn.runAttemptId),
+  );
+  const completedRuns = new Set(
+    attempts.filter((attempt) => completedAttempts.has(attempt.id)).map((attempt) => attempt.runId),
+  );
+  let current = source;
+  let work = current.restartCancelledBackgroundWork ?? [];
+  const visited = new Set([current.id]);
+  while (
+    current.restartContinuationOfRunId !== undefined &&
+    !completedRuns.has(current.id) &&
+    !(current.activeAttemptId !== null && completedAttempts.has(current.activeAttemptId))
+  ) {
+    const previous = runs.find((candidate) => candidate.id === current.restartContinuationOfRunId);
+    if (previous === undefined || visited.has(previous.id)) break;
+    visited.add(previous.id);
+    current = previous;
+    work = mergeRestartCancelledBackgroundWork(current.restartCancelledBackgroundWork ?? [], work);
+  }
+  return { work, settled: isRestartNoteSource(current, providerTurns) };
+}
+
+/**
+ * A restart continuation prompted with the note rather than a native resume.
+ * A turn cut mid-way that lost background work is prompted too, so the note
+ * is delivered with it; only a continuation without a note resumes natively.
+ */
 export function isRestartNoteContinuation(
   run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
   runs: ReadonlyArray<OrchestrationV2Run>,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+  attempts: ReadonlyArray<Attempt>,
 ): boolean {
   const source =
     run.restartContinuationOfRunId === undefined
       ? undefined
       : runs.find((candidate) => candidate.id === run.restartContinuationOfRunId);
-  return source !== undefined && isRestartNoteSource(source, providerTurns);
+  return (
+    source !== undefined &&
+    restartContinuationNote(source, runs, providerTurns, attempts).work.length > 0
+  );
 }
 
 /**
  * Work cancelled by a restart that the run's provider thread has not been told
  * about yet. The note belongs to the provider thread that lost the work: turns
  * on another provider (after a switch) neither owe it nor deliver it. A later
- * run on the same provider thread delivers it once its attempt reaches the
- * provider, so the pending set is derived rather than cleared. Compactions and
+ * completed turn on the same provider thread proves delivery, so the pending
+ * set is derived rather than cleared. Compactions and
  * resumed turns carry no note, and a rolled-back run left native history, so
  * none of them counts as delivery. A note continuation's own prompt is the note.
  */
@@ -150,13 +197,14 @@ export function pendingRestartCancelledBackgroundWork(input: {
     OrchestrationV2Run,
     | "id"
     | "ordinal"
+    | "completedAt"
     | "userMessageId"
     | "providerThreadId"
     | "restartContinuationOfRunId"
     | "activeAttemptId"
   >;
-  /** Every attempt id of `run`; a steer replaces the attempt but not the run. */
-  readonly runAttemptIds: ReadonlyArray<OrchestrationV2Run["activeAttemptId"] & string>;
+  /** Include earlier attempts: a steer replaces the attempt but not the run. */
+  readonly attempts: ReadonlyArray<Attempt>;
 }): ReadonlyArray<Work> {
   const isCompaction = (run: typeof input.run) => input.compactionMessageIds.has(run.userMessageId);
   // The current run prepends the note unless it is a compaction or a
@@ -170,7 +218,7 @@ export function pendingRestartCancelledBackgroundWork(input: {
   const providerThreadId = input.run.providerThreadId;
   const deliveredAttemptIds = new Set(
     input.providerTurns
-      .filter((turn) => turn.providerThreadId === providerThreadId)
+      .filter((turn) => turn.providerThreadId === providerThreadId && turn.status === "completed")
       .map((turn) => turn.runAttemptId),
   );
   const sameThread = input.runs.filter((run) => run.providerThreadId === providerThreadId);
@@ -179,23 +227,29 @@ export function pendingRestartCancelledBackgroundWork(input: {
       candidate.id !== input.run.id &&
       candidate.activeAttemptId !== null &&
       candidate.status !== "rolled_back" &&
-      deliveredAttemptIds.has(candidate.activeAttemptId) &&
+      (deliveredAttemptIds.has(candidate.activeAttemptId) ||
+        input.attempts.some(
+          (attempt) => attempt.runId === candidate.id && deliveredAttemptIds.has(attempt.id),
+        )) &&
       !isCompaction(candidate) &&
       (candidate.restartContinuationOfRunId === undefined ||
-        isRestartNoteContinuation(candidate, input.runs, input.providerTurns)),
+        isRestartNoteContinuation(candidate, input.runs, input.providerTurns, input.attempts)),
   );
   // A steer restarts this run on a new attempt: an earlier attempt that already
   // reached the provider delivered the note, so the replacement must not repeat it.
-  const alreadyDelivered = input.runAttemptIds.some(
-    (attemptId) => attemptId !== input.run.activeAttemptId && deliveredAttemptIds.has(attemptId),
+  const alreadyDelivered = input.attempts.some(
+    (attempt) =>
+      attempt.runId === input.run.id &&
+      attempt.id !== input.run.activeAttemptId &&
+      deliveredAttemptIds.has(attempt.id),
   );
   if (alreadyDelivered) return [];
   return sameThread
     .filter(
       (source) =>
-        source.ordinal < input.run.ordinal &&
+        runRanAfter(input.run, source) &&
         (source.restartCancelledBackgroundWork?.length ?? 0) > 0 &&
-        !prompted.some((later) => later.ordinal > source.ordinal),
+        !prompted.some((later) => runRanAfter(later, source)),
     )
     .reduce<ReadonlyArray<Work>>(
       (work, source) =>
