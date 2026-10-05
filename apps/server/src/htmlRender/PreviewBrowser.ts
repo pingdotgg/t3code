@@ -2,6 +2,7 @@
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
@@ -150,6 +151,8 @@ export interface PreviewBrowserOptions {
 }
 
 const DOWNLOAD_TIMEOUT = "15 minutes";
+// Longer than any install can run: the download times out at 15 minutes.
+const STAGING_STALE_AFTER_MS = 60 * 60_000;
 
 const wrapFailure = (detail: string) => (cause: unknown) =>
   isInstallError(cause) ? cause : new PreviewBrowserInstallError({ detail, cause });
@@ -331,18 +334,30 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         yield* fs.remove(destination, { recursive: true, force: true });
         yield* fs.rename(unpacked, destination);
       }).pipe(Effect.scoped);
-      // Older builds and abandoned staging directories.
+      // Older builds and abandoned staging directories. Two servers can share a
+      // home, so a staging directory touched within the last hour may be another
+      // server's install in progress and stays.
       const entries = yield* fs.readDirectory(installRoot);
+      const now = yield* Clock.currentTimeMillis;
       yield* Effect.forEach(
         entries.filter((name) => name !== release.version),
         (name) =>
-          fs
-            .remove(path.join(installRoot, name), { recursive: true, force: true })
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Could not remove an old preview browser.", { name, cause }),
-              ),
+          Effect.gen(function* () {
+            const target = path.join(installRoot, name);
+            if (name.startsWith(".install-")) {
+              const info = yield* fs.stat(target);
+              const modifiedAt = Option.match(info.mtime, {
+                onNone: () => now,
+                onSome: (date) => date.getTime(),
+              });
+              if (now - modifiedAt < STAGING_STALE_AFTER_MS) return;
+            }
+            yield* fs.remove(target, { recursive: true, force: true });
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove an old preview browser.", { name, cause }),
             ),
+          ),
         { discard: true },
       );
       return path.join(installRoot, release.version, executableName);

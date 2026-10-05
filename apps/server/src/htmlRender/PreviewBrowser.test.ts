@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -124,6 +125,13 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness();
       yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
+      // Another server's install in progress, and one abandoned two hours ago.
+      const active = path.join(installRoot, ".install-other");
+      const abandoned = path.join(installRoot, ".install-abandoned");
+      yield* fs.makeDirectory(active);
+      yield* fs.makeDirectory(abandoned);
+      const twoHoursAgo = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 2 }));
+      yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
       expect(yield* browser.installed).toEqual(Option.none());
 
       const executable = yield* browser.executable;
@@ -138,8 +146,11 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         expect(yield* mode("libEGL.so")).toBe(0o755);
         expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
       }
-      // The old build and the staging directory are gone.
-      expect(yield* fs.readDirectory(installRoot)).toEqual(["1.2.3"]);
+      // The old build and stale staging directories are gone; a fresh one stays.
+      expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
+        ".install-other",
+        "1.2.3",
+      ]);
       expect(yield* browser.executable).toBe(executable);
       expect(yield* browser.installed).toEqual(Option.some(executable));
       expect(requests).toHaveLength(1);
