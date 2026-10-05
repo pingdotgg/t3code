@@ -81,6 +81,25 @@ describe("mobile model options", () => {
         claude("claude_work", { displayName: "Work" }),
       ]),
     ).toEqual([{ displayName: "Personal" }, { displayName: "Work" }]);
+
+    // Different ACP agents have their own glyphs, so they need no badge.
+    const acp = (instanceId: string) => ({
+      ...claude(instanceId),
+      driver: "acpRegistry",
+    });
+    const acpConfig = {
+      providers: [acp("acp_a"), acp("acp_b")],
+      settings: {
+        providerInstances: {
+          acp_a: { driver: "acpRegistry", config: { agentId: "agent-a" } },
+          acp_b: { driver: "acpRegistry", config: { agentId: "agent-b" } },
+        },
+      },
+    } as unknown as ServerConfig;
+    expect(buildModelOptions(acpConfig, null).map((option) => option.providerBadge)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("carries configured ACP identity into model and provider catalogs", () => {

@@ -168,9 +168,25 @@ export function buildModelOptions(
   providerInstanceId?: ModelSelection["instanceId"],
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
-  const badgeEntries = (config?.providers ?? []).map((provider) => ({
-    driverKind: provider.driver,
-  }));
+  // Settings carry each ACP instance's agent, whose own glyph already tells it apart.
+  const badgeEntry = (provider: T3ServerConfig["providers"][number]) => {
+    const settings = config?.settings?.providerInstances[provider.instanceId]?.config;
+    const agentId = typeof settings === "object" && settings ? Reflect.get(settings, "agentId") : null;
+    return {
+      driverKind: provider.driver,
+      ...(typeof agentId === "string" && agentId.trim() ? { acpRegistryAgentId: agentId.trim() } : {}),
+    };
+  };
+  const badgeEntries = (config?.providers ?? []).map(badgeEntry);
+  const providerBadgeFor = (provider: T3ServerConfig["providers"][number]) => {
+    const accentColor = normalizeProviderAccentColor(provider.accentColor);
+    return shouldShowInstanceBadge({ ...badgeEntry(provider), accentColor }, badgeEntries)
+      ? {
+          displayName: resolveProviderInstanceDisplayName(provider),
+          ...(accentColor ? { accentColor } : {}),
+        }
+      : undefined;
+  };
 
   for (const provider of config?.providers ?? []) {
     if (
@@ -184,16 +200,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
-    const accentColor = normalizeProviderAccentColor(provider.accentColor);
-    const providerBadge = shouldShowInstanceBadge(
-      { driverKind: provider.driver, accentColor },
-      badgeEntries,
-    )
-      ? {
-          displayName: resolveProviderInstanceDisplayName(provider),
-          ...(accentColor ? { accentColor } : {}),
-        }
-      : undefined;
+    const providerBadge = providerBadgeFor(provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -251,6 +258,7 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const providerBadge = provider ? providerBadgeFor(provider) : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
@@ -258,6 +266,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        ...(providerBadge ? { providerBadge } : {}),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)
