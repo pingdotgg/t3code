@@ -18,8 +18,11 @@ import {
   getNewProjectGitHubRepository,
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  resolveCloneParentDirectory,
+  resolveNewProjectParentDirectory,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
@@ -60,6 +63,7 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { serverEnvironment } from "../../state/server";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
@@ -74,6 +78,7 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -83,6 +88,7 @@ interface EnvironmentOption {
   readonly baseDirectory: string | null;
   /** Folder for projects started from just a name; null on servers without it. */
   readonly newProjectsRoot: string | null;
+  readonly supportsNewProjectFolder: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
@@ -278,6 +284,7 @@ function ProjectPathInput(props: {
   readonly value: string;
   readonly onChangeText: (value: string) => void;
   readonly onSubmit: () => void;
+  readonly placeholder?: string;
 }) {
   return (
     <TextInput
@@ -286,7 +293,7 @@ function ProjectPathInput(props: {
       onChangeText={props.onChangeText}
       autoCapitalize="none"
       autoCorrect={false}
-      placeholder="~/projects/my-app"
+      placeholder={props.placeholder ?? "~/projects/my-app"}
       returnKeyType="done"
       onSubmitEditing={props.onSubmit}
     />
@@ -296,7 +303,12 @@ function ProjectPathInput(props: {
 // `pinnedDirectoryName` is the repository folder the clone destination keeps
 // appended to whatever folder the user browses to. The plain add-project flow
 // passes nothing, so it keeps proposing the browsed folder itself.
-function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
+/** Keep navigation and prefetches relative to the same project on the selected server. */
+function useBrowsePathInput(
+  environment: EnvironmentOption | null,
+  pinnedDirectoryName = "",
+  currentProjectCwd: string | null = null,
+) {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
@@ -323,10 +335,11 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [browseNavigation],
   );
   const navigateToBrowsePath = useCallback(
-    async (input: {
+    /** Commit a folder change only after its listing has loaded in the destination context. */
+    async function navigateToBrowsePath(input: {
       readonly browseDirectoryPath: string;
       readonly selectedDirectoryName?: string;
-    }) => {
+    }) {
       const selectedDirectoryPath = input.selectedDirectoryName
         ? appendBrowsePathSegment(input.browseDirectoryPath, input.selectedDirectoryName)
         : input.browseDirectoryPath;
@@ -341,11 +354,15 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
           : getCloneDestinationPath(selectedDirectoryPath, pinnedDirectoryName);
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
-        async () => {
+        /** Warm the listing before committing; skip unavailable connections. */
+        async function preloadBrowseDirectory() {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
-              input: { partialPath: selectedDirectoryPath },
+              input: {
+                partialPath: selectedDirectoryPath,
+                ...(currentProjectCwd ? { cwd: currentProjectCwd } : {}),
+              },
             });
           }
         },
@@ -359,6 +376,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [
       browseNavigation,
       clonePathCaseSensitive,
+      currentProjectCwd,
       environment,
       environmentRuntime?.connectionState,
       loadBrowsePath,
@@ -407,6 +425,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
         newProjectsRoot: config?.newProjectsRoot ?? null,
+        supportsNewProjectFolder: config?.newProjectParentDirectory === true,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
@@ -830,6 +849,7 @@ export function AddProjectRepositoryScreen(props: {
   );
 }
 
+/** List folders using the destination server and its active project context. */
 function FolderBrowser(props: {
   readonly environment: EnvironmentOption;
   readonly pathInput: string;
@@ -839,14 +859,23 @@ function FolderBrowser(props: {
     readonly selectedDirectoryName?: string;
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
+  readonly currentProjectCwd?: string | null;
 }) {
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
   );
   const browseInput = useMemo(
-    () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
-    [browsePath.directoryPath],
+    /** Keep relative listings anchored to the same project as clone validation. */
+    function buildBrowseInput() {
+      return browsePath.directoryPath.length > 0
+        ? {
+            partialPath: browsePath.directoryPath,
+            ...(props.currentProjectCwd ? { cwd: props.currentProjectCwd } : {}),
+          }
+        : null;
+    },
+    [browsePath.directoryPath, props.currentProjectCwd],
   );
   const browseState = useEnvironmentQuery(
     browseInput === null
@@ -933,6 +962,7 @@ function FolderBrowser(props: {
  */
 export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
+  const { selectedProject } = useNewTaskFlow();
   // Starts on the machine picked in Add project; the rows below switch it.
   const environmentOptions = useEnvironmentOptions().filter(
     (option) => option.newProjectsRoot !== null,
@@ -941,6 +971,25 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
     () => stringParam(props.environmentId) as EnvironmentId | null,
   );
   const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
+  const currentProjectCwd =
+    environment && selectedProject?.environmentId === environment.environmentId
+      ? selectedProject.workspaceRoot
+      : null;
+  const supportsNewProjectFolder =
+    environment?.supportsNewProjectFolder === true && environment.platform.length > 0;
+  const { pathInput, setPathInput, navigateToBrowsePath, isBrowseNavigating } = useBrowsePathInput(
+    environment
+      ? {
+          ...environment,
+          baseDirectory:
+            (supportsNewProjectFolder ? environment.baseDirectory?.trim() : "") ||
+            environment.newProjectsRoot,
+        }
+      : null,
+    "",
+    currentProjectCwd,
+  );
+  const [isChoosingFolder, setIsChoosingFolder] = useState(false);
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -958,11 +1007,61 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   const [publishesToGitHub, setPublishesToGitHub] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const homeDirectoryQuery = useEnvironmentQuery(
+    environment && supportsNewProjectFolder
+      ? filesystemEnvironment.browse({
+          environmentId: environment.environmentId,
+          input: { partialPath: "~/" },
+        })
+      : null,
+  );
+  const resolvedParent = environment
+    ? resolveNewProjectParentDirectory({
+        rawPath: pathInput,
+        currentProjectCwd,
+        platform: environment.platform,
+      })
+    : null;
+  const parentDirectory = resolvedParent?.ok ? resolvedParent.path : null;
+  const isDefaultFolder = isDefaultCloneParentDirectory({
+    parentDirectory,
+    baseDirectory: environment?.baseDirectory?.trim() || environment?.newProjectsRoot,
+    homeDirectory: homeDirectoryQuery.data?.parentPath,
+    currentProjectCwd,
+  });
   const trimmedName = name.trim();
   const pathPreview =
-    environment?.newProjectsRoot != null
-      ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
-      : null;
+    parentDirectory !== null ? getNewProjectPathPreview(parentDirectory, trimmedName) : null;
+
+  /** Remember the chosen parent on its server, leaving this project's destination unchanged. */
+  async function saveParentDirectory(): Promise<void> {
+    if (
+      !environment ||
+      !supportsNewProjectFolder ||
+      parentDirectory === null ||
+      isDefaultFolder ||
+      homeDirectoryQuery.isPending ||
+      isSavingFolder ||
+      isSubmitting ||
+      isBrowseNavigating
+    )
+      return;
+    setError(null);
+    setIsSavingFolder(true);
+    try {
+      const result = await updateEnvironmentSettings({
+        environmentId: environment.environmentId,
+        input: { patch: { addProjectBaseDirectory: parentDirectory } },
+      });
+      if (AsyncResult.isFailure(result)) setError(errorMessage(Cause.squash(result.cause)));
+    } finally {
+      setIsSavingFolder(false);
+    }
+  }
 
   // Shown when there is a choice, or when the selected machine went away and
   // another one can take over.
@@ -985,7 +1084,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             }
             selected={selected}
             // The create in flight keeps the machine it started on.
-            disabled={isSubmitting}
+            disabled={isSubmitting || isSavingFolder}
             isFirst={index === 0}
             right={
               selected ? (
@@ -997,7 +1096,10 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                 />
               ) : null
             }
-            onPress={() => setSelectedEnvironmentId(option.environmentId)}
+            onPress={() => {
+              setIsChoosingFolder(false);
+              setSelectedEnvironmentId(option.environmentId);
+            }}
           />
         );
       })}
@@ -1007,14 +1109,29 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   // State lags a render behind, so a double tap could start a second create.
   const submittingRef = useRef(false);
   const submit = async () => {
-    if (!environment || trimmedName.length === 0 || submittingRef.current) return;
+    if (
+      !environment ||
+      trimmedName.length === 0 ||
+      submittingRef.current ||
+      isSavingFolder ||
+      isBrowseNavigating ||
+      isChoosingFolder
+    )
+      return;
+    if (!resolvedParent?.ok) {
+      setError(resolvedParent?.error ?? "Choose a parent folder.");
+      return;
+    }
     submittingRef.current = true;
     setError(null);
     setIsSubmitting(true);
     try {
       const result = await createNew({
         environmentId: environment.environmentId,
-        input: { name: trimmedName },
+        input: {
+          name: trimmedName,
+          ...(supportsNewProjectFolder ? { parentDirectory: resolvedParent.path } : {}),
+        },
       });
       if (AsyncResult.isFailure(result)) {
         setError(errorMessage(Cause.squash(result.cause)));
@@ -1084,13 +1201,73 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           />
           {pathPreview !== null ? (
             <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
-              {trimmedName.length > 0
-                ? `Creates ${pathPreview}`
-                : `Goes in ${environment.newProjectsRoot}`}
+              {trimmedName.length > 0 ? `Creates ${pathPreview}` : `Goes in ${parentDirectory}`}
               {showMachines ? ` on ${environment.label}` : null}
             </Text>
           ) : null}
           {machineRows}
+          {supportsNewProjectFolder ? (
+            <>
+              <ListSection>
+                <ListRow
+                  title="Parent folder"
+                  subtitle={pathInput}
+                  icon={
+                    <SymbolView
+                      name="folder"
+                      size={Platform.OS === "android" ? 24 : 17}
+                      tintColorClassName="accent-icon"
+                      type="monochrome"
+                    />
+                  }
+                  isFirst
+                  disabled={isSubmitting || isSavingFolder}
+                  onPress={() => setIsChoosingFolder((choosing) => !choosing)}
+                  right={<Text className="text-sm text-foreground-muted">Change folder</Text>}
+                />
+              </ListSection>
+              {isChoosingFolder ? (
+                <>
+                  {resolvedParent && !resolvedParent.ok ? (
+                    <ErrorBanner message={resolvedParent.error} />
+                  ) : null}
+                  <ProjectPathInput
+                    value={pathInput}
+                    onChangeText={setPathInput}
+                    placeholder="~/Code"
+                    onSubmit={() => {
+                      if (resolvedParent?.ok) setIsChoosingFolder(false);
+                    }}
+                  />
+                  <FolderBrowser
+                    environment={environment}
+                    pathInput={pathInput}
+                    setPathInput={setPathInput}
+                    navigateToBrowsePath={navigateToBrowsePath}
+                    currentProjectCwd={currentProjectCwd}
+                  />
+                  <PrimaryActionButton
+                    label="Use folder"
+                    disabled={!resolvedParent?.ok || isBrowseNavigating}
+                    onPress={() => setIsChoosingFolder(false)}
+                  />
+                </>
+              ) : (
+                <PrimaryActionButton
+                  label={isDefaultFolder ? "Default folder" : "Use this folder by default"}
+                  disabled={
+                    parentDirectory === null ||
+                    isDefaultFolder ||
+                    homeDirectoryQuery.isPending ||
+                    isSavingFolder ||
+                    isSubmitting
+                  }
+                  loading={isSavingFolder}
+                  onPress={() => void saveParentDirectory()}
+                />
+              )}
+            </>
+          ) : null}
           {githubTarget !== null ? (
             <ListSection>
               <ListRow
@@ -1121,7 +1298,14 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           ) : null}
           <PrimaryActionButton
             label="Create project"
-            disabled={isSubmitting || trimmedName.length === 0}
+            disabled={
+              isSubmitting ||
+              isSavingFolder ||
+              isBrowseNavigating ||
+              isChoosingFolder ||
+              parentDirectory === null ||
+              trimmedName.length === 0
+            }
             onPress={() => void submit()}
             loading={isSubmitting}
           />
@@ -1216,6 +1400,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   );
 }
 
+/** Clone into a path on the selected server, falling back to blocking clones on older servers. */
 export function AddProjectDestinationScreen(props: {
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
@@ -1228,8 +1413,16 @@ export function AddProjectDestinationScreen(props: {
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
+  const { selectedProject } = useNewTaskFlow();
+  const currentProjectCwd =
+    environment && selectedProject?.environmentId === environment.environmentId
+      ? selectedProject.workspaceRoot
+      : null;
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
@@ -1241,93 +1434,153 @@ export function AddProjectDestinationScreen(props: {
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
     repositoryName,
+    currentProjectCwd,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submitPath = useCallback(async () => {
-    if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting) return;
-    setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
-    if (!resolved.ok) {
-      setError(resolved.error);
-      return;
-    }
+  const [isSavingCloneFolder, setIsSavingCloneFolder] = useState(false);
+  const cloneParentDirectory =
+    environment && environment.platform.length > 0
+      ? resolveCloneParentDirectory({
+          rawPath: pathInput,
+          platform: environment.platform,
+          currentProjectCwd,
+        })
+      : null;
+  const cloneHomeDirectoryQuery = useEnvironmentQuery(
+    environment
+      ? filesystemEnvironment.browse({
+          environmentId: environment.environmentId,
+          input: { partialPath: "~/" },
+        })
+      : null,
+  );
+  const isDefaultCloneFolder = isDefaultCloneParentDirectory({
+    parentDirectory: cloneParentDirectory,
+    baseDirectory: environment?.baseDirectory,
+    homeDirectory: cloneHomeDirectoryQuery.data?.parentPath,
+    currentProjectCwd,
+  });
 
-    setIsSubmitting(true);
-    if (environment.supportsCloneTracking) {
-      // The server creates the project and clones in the background; the
-      // draft screen shows progress and holds Start until the files land.
-      const projectId = ProjectId.make(uuidv4());
-      const title = inferProjectTitleFromPath(resolved.path);
-      const startResult = await startProjectClone({
+  /** Save the server's starting folder without changing the destination shown on this device. */
+  async function saveCloneParentDirectory(): Promise<void> {
+    if (
+      !environment ||
+      cloneParentDirectory === null ||
+      isDefaultCloneFolder ||
+      cloneHomeDirectoryQuery.isPending ||
+      isSavingCloneFolder ||
+      isSubmitting
+    )
+      return;
+    setError(null);
+    setIsSavingCloneFolder(true);
+    const result = await updateEnvironmentSettings({
+      environmentId: environment.environmentId,
+      input: { patch: { addProjectBaseDirectory: cloneParentDirectory } },
+    });
+    setIsSavingCloneFolder(false);
+    if (AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+    }
+  }
+
+  /** Start the save while its pending state and errors remain owned by this screen. */
+  function handleSaveCloneParentDirectory(): void {
+    void saveCloneParentDirectory();
+  }
+
+  const submitPath = useCallback(
+    /** Validate the destination and wait for the streamed project record before opening its draft. */
+    async function submitCloneDestination() {
+      if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
+        return;
+      setError(null);
+      const resolved = resolveAddProjectPath({
+        rawPath: pathInput,
+        currentProjectCwd,
+        platform: environment.platform,
+      });
+      if (!resolved.ok) {
+        setError(resolved.error);
+        return;
+      }
+
+      setIsSubmitting(true);
+      if (environment.supportsCloneTracking) {
+        // The server creates the project and clones in the background; the
+        // draft screen shows progress and holds Start until the files land.
+        const projectId = ProjectId.make(uuidv4());
+        const title = inferProjectTitleFromPath(resolved.path);
+        const startResult = await startProjectClone({
+          environmentId: environment.environmentId,
+          input: {
+            projectId,
+            title,
+            createdAt: new Date().toISOString(),
+            remoteUrl,
+            destinationPath: resolved.path,
+          },
+        });
+        if (AsyncResult.isFailure(startResult)) {
+          setError(errorMessage(Cause.squash(startResult.cause)));
+        } else {
+          // The draft screen resolves its project from the client store, so it
+          // must not open before the create event has arrived (it would fall
+          // back to the project picker and lose the clone controls). Stay in
+          // the submitting state until then; the clone keeps running either way.
+          const project = await waitForProject(
+            { environmentId: environment.environmentId, projectId },
+            15_000,
+          );
+          if (project === null) {
+            setError(
+              "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            );
+          } else {
+            openNewTaskDraft(navigation, {
+              environmentId: environment.environmentId,
+              projectId,
+              title,
+              cloning: "1",
+            });
+          }
+        }
+        setIsSubmitting(false);
+        return;
+      }
+      const cloneResult = await cloneRepository({
         environmentId: environment.environmentId,
         input: {
-          projectId,
-          title,
-          createdAt: new Date().toISOString(),
           remoteUrl,
           destinationPath: resolved.path,
         },
       });
-      if (AsyncResult.isFailure(startResult)) {
-        setError(errorMessage(Cause.squash(startResult.cause)));
+      if (AsyncResult.isFailure(cloneResult)) {
+        setError(errorMessage(Cause.squash(cloneResult.cause)));
       } else {
-        // The draft screen resolves its project from the client store, so it
-        // must not open before the create event has arrived (it would fall
-        // back to the project picker and lose the clone controls). Stay in
-        // the submitting state until then; the clone keeps running either way.
-        const project = await waitForProject(
-          { environmentId: environment.environmentId, projectId },
-          15_000,
-        );
-        if (project === null) {
-          setError(
-            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
-          );
-        } else {
-          openNewTaskDraft(navigation, {
-            environmentId: environment.environmentId,
-            projectId,
-            title,
-            cloning: "1",
-          });
+        const createResult = await createProject(cloneResult.value.cwd);
+        if (createResult && AsyncResult.isFailure(createResult)) {
+          setError(errorMessage(Cause.squash(createResult.cause)));
         }
       }
       setIsSubmitting(false);
-      return;
-    }
-    const cloneResult = await cloneRepository({
-      environmentId: environment.environmentId,
-      input: {
-        remoteUrl,
-        destinationPath: resolved.path,
-      },
-    });
-    if (AsyncResult.isFailure(cloneResult)) {
-      setError(errorMessage(Cause.squash(cloneResult.cause)));
-    } else {
-      const createResult = await createProject(cloneResult.value.cwd);
-      if (createResult && AsyncResult.isFailure(createResult)) {
-        setError(errorMessage(Cause.squash(createResult.cause)));
-      }
-    }
-    setIsSubmitting(false);
-  }, [
-    cloneRepository,
-    createProject,
-    environment,
-    isBrowseNavigating,
-    isSubmitting,
-    navigation,
-    pathInput,
-    remoteUrl,
-    startProjectClone,
-  ]);
+    },
+    [
+      cloneRepository,
+      createProject,
+      currentProjectCwd,
+      environment,
+      isBrowseNavigating,
+      isSavingCloneFolder,
+      isSubmitting,
+      navigation,
+      pathInput,
+      remoteUrl,
+      startProjectClone,
+    ],
+  );
 
   return (
     <AddProjectShell title="Clone destination">
@@ -1349,16 +1602,43 @@ export function AddProjectDestinationScreen(props: {
           />
           <PrimaryActionButton
             label="Clone project"
-            disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
+            disabled={isBrowseNavigating || isSubmitting || isSavingCloneFolder || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
+          {cloneParentDirectory !== null ? (
+            <View className="gap-2 rounded-[24px] bg-grouped-card px-4 py-3">
+              <Text className="text-xs text-foreground-muted">Parent folder</Text>
+              <Text className="text-sm" numberOfLines={2}>
+                {cloneParentDirectory}
+              </Text>
+              <MaterialButton
+                label={
+                  isSavingCloneFolder
+                    ? "Saving…"
+                    : isDefaultCloneFolder
+                      ? "Default folder"
+                      : "Use this folder by default"
+                }
+                tone="secondary"
+                disabled={
+                  isDefaultCloneFolder ||
+                  cloneHomeDirectoryQuery.isPending ||
+                  isBrowseNavigating ||
+                  isSubmitting
+                }
+                loading={isSavingCloneFolder}
+                onPress={handleSaveCloneParentDirectory}
+              />
+            </View>
+          ) : null}
           <FolderBrowser
             environment={environment}
             navigateToBrowsePath={navigateToBrowsePath}
             pathInput={pathInput}
             setPathInput={setPathInput}
             pinnedDirectoryName={repositoryName}
+            currentProjectCwd={currentProjectCwd}
           />
         </>
       ) : (

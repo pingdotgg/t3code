@@ -525,6 +525,8 @@ export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 /** A project started from just a name, in a new folder the server makes. */
 export const ProjectCreateNewInput = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /** Absolute or home-relative folder on this server; omitted uses newProjectsRoot. */
+  parentDirectory: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 

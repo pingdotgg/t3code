@@ -13,7 +13,10 @@ import {
   getNewProjectGitHubRepository,
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
+  resolveCloneParentDirectory,
+  resolveNewProjectParentDirectory,
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -684,6 +687,7 @@ function CommandPaletteDialog(props: {
   );
 }
 
+/** Keep command navigation and project actions scoped to the currently browsed environment. */
 function OpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
@@ -725,6 +729,9 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
+    reportFailure: false,
+  });
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
@@ -873,6 +880,9 @@ function OpenCommandPaletteDialog(props: {
     readonly environmentId: EnvironmentId;
     /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
+    readonly parentDirectory: string | null;
+    /** The name to restore after choosing a folder; null while naming the project. */
+    readonly folderSelectionName: string | null;
   } | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
@@ -882,6 +892,7 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [isSavingProjectFolder, setIsSavingProjectFolder] = useState(false);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1075,6 +1086,7 @@ function OpenCommandPaletteDialog(props: {
   );
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
+  const isChoosingNewProjectFolder = newProjectFlow?.folderSelectionName != null;
   // The destination step pins the repository folder onto the browsed path, so
   // the proposed clone target is "<chosen folder>/<repo>" instead of the bare
   // folder. A lookup reports "owner/repo"; a pasted clone URL falls back to its
@@ -1090,13 +1102,16 @@ function OpenCommandPaletteDialog(props: {
       getFilesystemBrowsePath(
         query,
         browseEnvironmentPlatform,
-        browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null,
+        browseEnvironmentId !== null &&
+          !isRemoteProjectRepositoryStep &&
+          (newProjectFlow === null || isChoosingNewProjectFolder),
       ),
     [
       browseEnvironmentId,
       browseEnvironmentPlatform,
       isRemoteProjectRepositoryStep,
       newProjectFlow,
+      isChoosingNewProjectFolder,
       query,
     ],
   );
@@ -1495,6 +1510,12 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    if (newProjectFlow?.folderSelectionName != null) {
+      setQuery(newProjectFlow.folderSelectionName);
+      setNewProjectFlow({ ...newProjectFlow, folderSelectionName: null });
+      setHighlightedItemValue(null);
+      return;
+    }
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
@@ -1512,7 +1533,7 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     setQuery(nextQuery);
-    if (nextQuery === "" && currentView?.initialQuery) {
+    if (nextQuery === "" && currentView?.initialQuery && !isChoosingNewProjectFolder) {
       popView();
     }
   }
@@ -1574,7 +1595,12 @@ function OpenCommandPaletteDialog(props: {
     (environmentId: EnvironmentId, sourcesEnvironmentId: EnvironmentId | null): void => {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
-      setNewProjectFlow({ environmentId, sourcesEnvironmentId });
+      setNewProjectFlow({
+        environmentId,
+        sourcesEnvironmentId,
+        parentDirectory: null,
+        folderSelectionName: null,
+      });
       setNewProjectPublishesToGitHub(false);
       pushPaletteView({
         addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
@@ -2510,11 +2536,35 @@ function OpenCommandPaletteDialog(props: {
 
   const newProjectGitHubTarget =
     newProjectFlow === null ? null : getNewProjectGitHubTarget(sourceControlDiscovery.data ?? null);
-  const newProjectName = query.trim();
+  const newProjectName = newProjectFlow?.folderSelectionName ?? query.trim();
+  const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
+  const supportsNewProjectFolder =
+    browseEnvironment?.serverConfig?.newProjectParentDirectory === true &&
+    browseEnvironment.serverConfig.environment.platform.os !== "unknown";
+  const newProjectParentInput =
+    newProjectFlow?.parentDirectory ??
+    (supportsNewProjectFolder
+      ? browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory.trim() || newProjectsRoot
+      : newProjectsRoot);
+  const resolvedNewProjectParent =
+    newProjectParentInput === null
+      ? null
+      : resolveNewProjectParentDirectory({
+          rawPath: newProjectParentInput,
+          currentProjectCwd: currentProjectCwdForBrowse,
+          platform: browseEnvironmentPlatform,
+        });
+  const newProjectParentDirectory = resolvedNewProjectParent?.ok
+    ? resolvedNewProjectParent.path
+    : null;
   const canSubmitNewProject =
     newProjectFlow !== null &&
+    !isChoosingNewProjectFolder &&
+    newProjectParentDirectory !== null &&
+    newProjectFlow.environmentId === browseEnvironmentId &&
     newProjectName.length > 0 &&
     !isCreatingNewProject &&
+    !isSavingProjectFolder &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
 
   async function submitNewProject(): Promise<void> {
@@ -2527,6 +2577,9 @@ function OpenCommandPaletteDialog(props: {
       const created = await createNewProject({
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
+        ...(supportsNewProjectFolder && newProjectParentDirectory !== null
+          ? { parentDirectory: newProjectParentDirectory }
+          : {}),
         github: newProjectPublishesToGitHub ? newProjectGitHubTarget : null,
       });
       if (created) setOpen(false);
@@ -2540,8 +2593,9 @@ function OpenCommandPaletteDialog(props: {
     return getAddProjectInitialQueryForEnvironment(environmentId);
   }
 
+  /** Clone the explicit destination on its selected server, using tracked clones when supported. */
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
-    if (!addProjectCloneFlow) {
+    if (!addProjectCloneFlow || isSavingProjectFolder) {
       return;
     }
     if (!canCreateProjectInEnvironment(browseEnvironment?.connection.phase)) {
@@ -2788,6 +2842,99 @@ function OpenCommandPaletteDialog(props: {
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
 
+  const newProjectFolderSelection = isChoosingNewProjectFolder
+    ? resolveNewProjectParentDirectory({
+        rawPath: resolvedAddProjectPath,
+        currentProjectCwd: currentProjectCwdForBrowse,
+        platform: browseEnvironmentPlatform,
+      })
+    : null;
+  const canSelectNewProjectFolder =
+    newProjectFolderSelection?.ok === true &&
+    supportsNewProjectFolder &&
+    newProjectFlow?.environmentId === browseEnvironmentId &&
+    canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
+
+  const projectParentPlatformOs = browseEnvironment?.serverConfig?.environment.platform.os;
+  // A browser-platform fallback is useful for browsing, but cannot define a server preference.
+  const projectParentDirectory =
+    newProjectFlow !== null && supportsNewProjectFolder && !isChoosingNewProjectFolder
+      ? newProjectParentDirectory
+      : addProjectCloneFlow?.step === "confirm" &&
+          projectParentPlatformOs !== undefined &&
+          projectParentPlatformOs !== "unknown"
+        ? resolveCloneParentDirectory({
+            rawPath: resolvedAddProjectPath,
+            currentProjectCwd: currentProjectCwdForBrowse,
+            platform: browseEnvironmentPlatform,
+          })
+        : null;
+  const projectHomeDirectoryQuery = useEnvironmentQuery(
+    (addProjectCloneFlow?.step === "confirm" || newProjectFlow !== null) &&
+      browseEnvironmentId !== null &&
+      canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+      ? filesystemEnvironment.browse({
+          environmentId: browseEnvironmentId,
+          input: { partialPath: "~/" },
+        })
+      : null,
+  );
+  const isDefaultProjectFolder = isDefaultCloneParentDirectory({
+    parentDirectory: projectParentDirectory,
+    baseDirectory:
+      browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory.trim() ||
+      (newProjectFlow !== null ? newProjectsRoot : ""),
+    homeDirectory: projectHomeDirectoryQuery.data?.parentPath,
+    currentProjectCwd: currentProjectCwdForBrowse,
+  });
+
+  /** Remember the parent on its server without changing the current project destination. */
+  async function saveProjectParentDirectory(): Promise<void> {
+    const targetEnvironmentId = newProjectFlow?.environmentId ?? addProjectCloneFlow?.environmentId;
+    if (
+      (newProjectFlow === null && addProjectCloneFlow?.step !== "confirm") ||
+      targetEnvironmentId == null ||
+      targetEnvironmentId !== browseEnvironmentId ||
+      projectParentDirectory === null ||
+      isDefaultProjectFolder ||
+      projectHomeDirectoryQuery.isPending ||
+      isSavingProjectFolder ||
+      isRemoteProjectCloning ||
+      isCreatingNewProject ||
+      !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+    ) {
+      return;
+    }
+    setIsSavingProjectFolder(true);
+    const result = await updateEnvironmentSettings({
+      environmentId: targetEnvironmentId,
+      input: { patch: { addProjectBaseDirectory: projectParentDirectory } },
+    });
+    setIsSavingProjectFolder(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to save default folder",
+            description: errorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: "Default project folder saved",
+      description: projectParentDirectory,
+    });
+  }
+
+  /** Start the save while the operation owns pending state and result toasts. */
+  function handleSaveProjectParentDirectory(): void {
+    void saveProjectParentDirectory();
+  }
+
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
   const browseGroups = buildBrowseGroups({
@@ -2819,9 +2966,43 @@ function OpenCommandPaletteDialog(props: {
     };
   }, [addProjectCloneFlow]);
 
-  const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
   const newProjectPathPreview =
-    newProjectsRoot === null ? null : getNewProjectPathPreview(newProjectsRoot, newProjectName);
+    newProjectParentDirectory === null
+      ? null
+      : getNewProjectPathPreview(newProjectParentDirectory, newProjectName);
+
+  /** Browse the selected server while retaining the project name and current destination. */
+  function chooseNewProjectFolder(): void {
+    if (
+      !newProjectFlow ||
+      !supportsNewProjectFolder ||
+      isCreatingNewProject ||
+      isSavingProjectFolder
+    )
+      return;
+    browseNavigation.invalidate();
+    setNewProjectFlow({ ...newProjectFlow, folderSelectionName: query.trim() });
+    setHighlightedItemValue(null);
+    setQuery(ensureBrowseDirectoryPath(newProjectParentInput ?? "~/"));
+  }
+
+  /** Accept the parent path without creating a project; Back leaves the old parent intact. */
+  function confirmNewProjectFolder(): void {
+    if (
+      newProjectFlow?.folderSelectionName == null ||
+      !canSelectNewProjectFolder ||
+      !newProjectFolderSelection?.ok
+    )
+      return;
+    browseNavigation.invalidate();
+    setQuery(newProjectFlow.folderSelectionName);
+    setNewProjectFlow({
+      ...newProjectFlow,
+      parentDirectory: newProjectFolderSelection.path,
+      folderSelectionName: null,
+    });
+    setHighlightedItemValue(null);
+  }
   const newProjectGitHubToggleValue = "new-project:github";
   // The name step's way out to folders and clones, for the selected machine.
   // It replaces the name step (and a sources view for another machine under
@@ -2841,7 +3022,9 @@ function OpenCommandPaletteDialog(props: {
   // Switching machines keeps the typed name; the GitHub option follows the
   // machine because source control discovery reads addProjectEnvironmentId.
   const switchNewProjectEnvironment = (environmentId: EnvironmentId) => {
-    setNewProjectFlow((flow) => (flow === null ? flow : { ...flow, environmentId }));
+    setNewProjectFlow((flow) =>
+      flow === null ? flow : { ...flow, environmentId, parentDirectory: null },
+    );
     setAddProjectEnvironmentId(environmentId);
   };
   const selectedNewProjectEnvironment =
@@ -2874,7 +3057,7 @@ function OpenCommandPaletteDialog(props: {
               switchNewProjectEnvironment,
             ),
             // The create in flight keeps the machine it started on.
-            ...(isCreatingNewProject ? { disabled: true } : {}),
+            ...(isCreatingNewProject || isSavingProjectFolder ? { disabled: true } : {}),
             ...(option.environmentId === newProjectFlow.environmentId
               ? {
                   titleTrailingContent: (
@@ -2941,7 +3124,9 @@ function OpenCommandPaletteDialog(props: {
         ];
 
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
-  if (newProjectFlow !== null) {
+  if (isChoosingNewProjectFolder) {
+    displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
+  } else if (newProjectFlow !== null) {
     displayedGroups = [
       ...(newProjectMachineGroup ? [newProjectMachineGroup] : []),
       ...newProjectOptionGroups,
@@ -2958,8 +3143,9 @@ function OpenCommandPaletteDialog(props: {
   const autoHighlightsFirstRow =
     !isBrowsing && !isRemoteProjectCloneFlow && newProjectFlow === null;
 
-  const inputPlaceholder =
-    newProjectFlow !== null
+  const inputPlaceholder = isChoosingNewProjectFolder
+    ? "Parent folder"
+    : newProjectFlow !== null
       ? "Project name"
       : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
         getCommandPaletteInputPlaceholder(paletteMode));
@@ -3000,6 +3186,7 @@ function OpenCommandPaletteDialog(props: {
   const fileManagerName = getLocalFileManagerName(navigator.platform);
   const canOpenProjectFromFileManager =
     isBrowsing &&
+    newProjectFlow === null &&
     browseEnvironmentId !== null &&
     // For a desktop-local (WSL) env, only offer the picker once we have resolved
     // its desktop pool instance id. Without it pickFolder can't be routed to the
@@ -3073,6 +3260,7 @@ function OpenCommandPaletteDialog(props: {
     // highlighted, in which case it runs that item.
     if (
       newProjectFlow !== null &&
+      !isChoosingNewProjectFolder &&
       event.key === "Enter" &&
       highlightedItemValue === null &&
       // Enter that confirms an IME composition is part of typing the name.
@@ -3085,13 +3273,15 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const shouldSubmitBrowsePath =
-      canSubmitBrowsePath &&
+      (isChoosingNewProjectFolder ? canSelectNewProjectFolder : canSubmitBrowsePath) &&
       event.key === "Enter" &&
       (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event));
 
     if (shouldSubmitBrowsePath) {
       event.preventDefault();
-      if (isCloneDestinationStep) {
+      if (isChoosingNewProjectFolder) {
+        confirmNewProjectFolder();
+      } else if (isCloneDestinationStep) {
         void submitAddProjectCloneFlow(resolvedAddProjectPath);
       } else {
         void handleAddProject(resolvedAddProjectPath);
@@ -3278,107 +3468,120 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
-  const inputAccessory =
-    newProjectFlow !== null ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-              aria-label="Create (Enter)"
-              disabled={!canSubmitNewProject}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitNewProject();
-              }}
-            />
-          }
-        >
-          <span>{isCreatingNewProject ? "Creating" : "Create"}</span>
-          <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>Enter</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">Create (Enter)</TooltipPopup>
-      </Tooltip>
-    ) : addProjectCloneFlow?.step === "repository" ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-              aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-              disabled={!canSubmitRemoteProjectFlow}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitAddProjectCloneFlow();
-              }}
-            />
-          }
-        >
-          <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
-          <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>Enter</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{remoteProjectButtonLabel ?? "Continue"} (Enter)</TooltipPopup>
-      </Tooltip>
-    ) : isBrowsing ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-              aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={
-                !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
-                relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
+  const inputAccessory = isChoosingNewProjectFolder ? (
+    <Button
+      variant="outline"
+      size="xs"
+      className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+      disabled={!canSelectNewProjectFolder}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={confirmNewProjectFolder}
+    >
+      Use folder
+    </Button>
+  ) : newProjectFlow !== null ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            tabIndex={-1}
+            className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+            aria-label="Create (Enter)"
+            disabled={!canSubmitNewProject}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              void submitNewProject();
+            }}
+          />
+        }
+      >
+        <span>{isCreatingNewProject ? "Creating" : "Create"}</span>
+        <KbdGroup className="pointer-events-none -me-0.5">
+          <Kbd>Enter</Kbd>
+        </KbdGroup>
+      </TooltipTrigger>
+      <TooltipPopup side="top">Create (Enter)</TooltipPopup>
+    </Tooltip>
+  ) : addProjectCloneFlow?.step === "repository" ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            tabIndex={-1}
+            className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+            aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
+            disabled={!canSubmitRemoteProjectFlow}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              void submitAddProjectCloneFlow();
+            }}
+          />
+        }
+      >
+        <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
+        <KbdGroup className="pointer-events-none -me-0.5">
+          <Kbd>Enter</Kbd>
+        </KbdGroup>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{remoteProjectButtonLabel ?? "Continue"} (Enter)</TooltipPopup>
+    </Tooltip>
+  ) : isBrowsing ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            tabIndex={-1}
+            className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+            aria-label={`${submitActionLabel} (${addShortcutLabel})`}
+            disabled={
+              !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
+              relativePathNeedsActiveProject ||
+              (isCloneDestinationStep && (isRemoteProjectPending || isSavingProjectFolder))
+            }
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              if (relativePathNeedsActiveProject) {
+                return;
               }
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (relativePathNeedsActiveProject) {
-                  return;
-                }
-                if (isCloneDestinationStep) {
-                  void submitAddProjectCloneFlow(resolvedAddProjectPath);
-                } else {
-                  void handleAddProject(resolvedAddProjectPath);
-                }
-              }}
-            />
-          }
-        >
-          <span>
-            {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
-          </span>
-          <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          {submitActionLabel} ({addShortcutLabel})
-        </TooltipPopup>
-      </Tooltip>
-    ) : null;
+              if (isCloneDestinationStep) {
+                void submitAddProjectCloneFlow(resolvedAddProjectPath);
+              } else {
+                void handleAddProject(resolvedAddProjectPath);
+              }
+            }}
+          />
+        }
+      >
+        <span>
+          {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+        </span>
+        <KbdGroup className="pointer-events-none -me-0.5">
+          <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+        </KbdGroup>
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {submitActionLabel} ({addShortcutLabel})
+      </TooltipPopup>
+    </Tooltip>
+  ) : null;
 
-  const footerActionLabel =
-    newProjectFlow !== null
+  const footerActionLabel = isChoosingNewProjectFolder
+    ? hasHighlightedBrowseItem
+      ? "Select"
+      : "Use folder"
+    : newProjectFlow !== null
       ? highlightedItemValue === null
         ? "Create"
         : highlightedItemValue === newProjectGitHubToggleValue
@@ -3456,7 +3659,10 @@ function OpenCommandPaletteDialog(props: {
       showBackHint={isSubmenu}
       value={query}
     >
-      {newProjectPathPreview !== null ? (
+      {newProjectFolderSelection && !newProjectFolderSelection.ok ? (
+        <div className="px-4 py-2 text-sm text-destructive">{newProjectFolderSelection.error}</div>
+      ) : null}
+      {newProjectFlow !== null && newProjectParentInput !== null && !isChoosingNewProjectFolder ? (
         <div className="p-2 pb-0">
           <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
             <FolderGit2Icon className={ITEM_ICON_CLASS} />
@@ -3465,13 +3671,49 @@ function OpenCommandPaletteDialog(props: {
                 {newProjectName.length > 0 ? newProjectName : "New project"}
               </span>
               <span className="truncate text-muted-foreground/85 text-xs">
-                {newProjectName.length > 0
+                {newProjectName.length > 0 && newProjectPathPreview !== null
                   ? `Creates ${newProjectPathPreview}`
-                  : `Goes in ${newProjectsRoot}`}
+                  : `Goes in ${newProjectParentInput}`}
                 {newProjectEnvironmentLabel === null ? null : ` on ${newProjectEnvironmentLabel}`}
               </span>
             </span>
+            {supportsNewProjectFolder ? (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={isCreatingNewProject || isSavingProjectFolder}
+                onClick={chooseNewProjectFolder}
+              >
+                Change folder
+              </Button>
+            ) : null}
           </div>
+          {resolvedNewProjectParent && !resolvedNewProjectParent.ok ? (
+            <div className="px-2 py-1.5 text-sm text-destructive">
+              {resolvedNewProjectParent.error}
+            </div>
+          ) : null}
+          {supportsNewProjectFolder ? (
+            <div className="flex justify-end px-2 py-1.5">
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={
+                  isDefaultProjectFolder ||
+                  projectHomeDirectoryQuery.isPending ||
+                  isSavingProjectFolder ||
+                  isCreatingNewProject
+                }
+                onClick={handleSaveProjectParentDirectory}
+              >
+                {isSavingProjectFolder
+                  ? "Saving…"
+                  : isDefaultProjectFolder
+                    ? "Default folder"
+                    : "Use this folder by default"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {remoteProjectContext ? (
@@ -3486,6 +3728,33 @@ function OpenCommandPaletteDialog(props: {
               </span>
             </span>
           </div>
+          {projectParentDirectory !== null ? (
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-muted-foreground text-xs">Parent folder</span>
+                <span className="truncate text-sm">{projectParentDirectory}</span>
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={
+                  addProjectCloneFlow?.environmentId !== browseEnvironmentId ||
+                  isDefaultProjectFolder ||
+                  projectHomeDirectoryQuery.isPending ||
+                  isSavingProjectFolder ||
+                  isRemoteProjectPending ||
+                  !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+                }
+                onClick={handleSaveProjectParentDirectory}
+              >
+                {isSavingProjectFolder
+                  ? "Saving…"
+                  : isDefaultProjectFolder
+                    ? "Default folder"
+                    : "Use this folder by default"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults

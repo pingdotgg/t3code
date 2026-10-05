@@ -1175,7 +1175,7 @@ const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
-// Makes a folder under ServerConfig.newProjectsRoot with a first commit, then the project.
+// Makes a fresh repository under the chosen parent or ServerConfig.newProjectsRoot.
 const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   payload: ProjectCreateNewInput,
   success: ProjectCreateNewResult,

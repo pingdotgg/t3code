@@ -2163,6 +2163,7 @@ function LegacyFeaturesSection() {
   );
 }
 
+/** Edit environment defaults or project overrides through the current settings scope. */
 export function GeneralSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
@@ -3068,7 +3069,7 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}
           {...searchableSetting("add-project-starts-in")}
-          description='Leave empty to use "~/" when the Add Project browser opens.'
+          description="Parent folder for new projects, clones, and the local project browser. Leave empty to use each flow's built-in folder."
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (

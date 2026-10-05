@@ -18,9 +18,12 @@ import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
+  getBrowseParentPath,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
+  normalizeProjectPathForComparison,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -318,6 +321,7 @@ export function getCloneDestinationBrowsePath(input: {
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
 }
 
+/** Validate a destination for its server's platform and resolve active-project relative paths. */
 export function resolveAddProjectPath(input: {
   readonly rawPath: string;
   readonly currentProjectCwd?: string | null;
@@ -337,6 +341,73 @@ export function resolveAddProjectPath(input: {
   return path.length === 0 ? { ok: false, error: "Enter a project path." } : { ok: true, path };
 }
 
+/** The parent of the final clone destination, including renamed or existing repository folders. */
+export function resolveCloneParentDirectory(input: {
+  readonly rawPath: string;
+  readonly currentProjectCwd?: string | null;
+  readonly platform: string;
+}): string | null {
+  const resolved = resolveAddProjectPath(input);
+  if (
+    !resolved.ok ||
+    isExplicitRelativeProjectPath(resolved.path) ||
+    !isFilesystemBrowseQuery(resolved.path, input.platform)
+  ) {
+    return null;
+  }
+  return getBrowseParentPath(resolved.path);
+}
+
+/** Resolve a new project's parent without allowing an ambiguous server-relative path. */
+export function resolveNewProjectParentDirectory(input: {
+  readonly rawPath: string;
+  readonly currentProjectCwd?: string | null;
+  readonly platform: string;
+}): ReturnType<typeof resolveAddProjectPath> {
+  if (/^[a-z]:$/i.test(input.rawPath.trim())) {
+    return { ok: false, error: "Choose an absolute or home-relative parent folder." };
+  }
+  const resolved = resolveAddProjectPath({
+    ...input,
+    rawPath: input.rawPath.trim() === "~" ? "~/" : input.rawPath,
+  });
+  if (!resolved.ok) return resolved;
+  if (resolved.path === "~") return { ok: true, path: "~/" };
+  if (
+    isExplicitRelativeProjectPath(resolved.path) ||
+    !isFilesystemBrowseQuery(resolved.path, input.platform) ||
+    /^[a-z]:$/i.test(resolved.path)
+  ) {
+    return { ok: false, error: "Choose an absolute or home-relative parent folder." };
+  }
+  return resolved;
+}
+
+/** Compare a clone parent with the default using the selected environment's home and browse cwd. */
+export function isDefaultCloneParentDirectory(input: {
+  readonly parentDirectory: string | null;
+  readonly baseDirectory: string | null | undefined;
+  readonly homeDirectory: string | null | undefined;
+  readonly currentProjectCwd?: string | null;
+}): boolean {
+  if (input.parentDirectory === null) return false;
+  /** Expand home and project-relative paths before comparing separators, case, and trailing slashes. */
+  function normalize(value: string): string {
+    const path = value.trim();
+    const expanded =
+      input.homeDirectory && (path === "~" || path.startsWith("~/") || path.startsWith("~\\"))
+        ? resolveProjectPathForDispatch(`./${path.slice(2)}`, input.homeDirectory)
+        : path;
+    return normalizeProjectPathForComparison(
+      resolveProjectPathForDispatch(expanded, input.currentProjectCwd),
+    );
+  }
+  return (
+    normalize(input.parentDirectory) === normalize(getAddProjectInitialQuery(input.baseDirectory))
+  );
+}
+
+/** Find an existing workspace in this environment using normalized path comparison. */
 export function findExistingAddProject(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId;

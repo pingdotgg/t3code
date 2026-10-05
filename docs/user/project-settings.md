@@ -38,6 +38,22 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Default project folder
+
+When creating a new Git project, choose **Change folder** to select its parent directory
+before creating it. The server creates a fresh repository inside that folder, adding a
+numeric suffix when the project name is already taken.
+
+In the new-project or clone destination flow, select **Use this folder by default**
+to remember the parent folder for new projects, future clones, and the local project browser.
+For example, cloning to `~/Code/my-repo` remembers `~/Code`, so the next repository starts there too.
+The preference is saved on the selected environment and is shared by web, desktop, and mobile.
+
+On web and desktop, change or reset it in **Settings → General → Add project starts in**.
+Leaving it empty restores the built-in folders: your home folder for clones and browsing,
+and T3 Code's projects folder for new repositories. You can still choose a different destination
+for any individual project. Older servers retain their managed new-project folder until updated.
+
 ## Worktree branch names
 
 In **Settings → Source Control → Worktree branch naming**, choose a static prefix,

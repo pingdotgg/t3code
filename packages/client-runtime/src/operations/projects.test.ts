@@ -17,13 +17,47 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  resolveCloneParentDirectory,
+  resolveNewProjectParentDirectory,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("resolves new-project parents on the destination platform", () => {
+    expect(
+      resolveNewProjectParentDirectory({ rawPath: "  ~/Code  ", platform: "MacIntel" }),
+    ).toEqual({ ok: true, path: "~/Code" });
+    expect(resolveNewProjectParentDirectory({ rawPath: "~", platform: "Linux" })).toEqual({
+      ok: true,
+      path: "~/",
+    });
+    expect(
+      resolveNewProjectParentDirectory({
+        rawPath: "../Code",
+        currentProjectCwd: "/work/app",
+        platform: "Linux",
+      }),
+    ).toEqual({ ok: true, path: "/work/Code" });
+    expect(
+      resolveNewProjectParentDirectory({ rawPath: "C:\\Coding Stuff", platform: "Win32" }),
+    ).toEqual({ ok: true, path: "C:\\Coding Stuff" });
+    expect(
+      resolveNewProjectParentDirectory({ rawPath: "\\\\server\\share\\Code", platform: "Win32" })
+        .ok,
+    ).toBe(true);
+  });
+  it("rejects ambiguous or foreign-platform new-project parents", () => {
+    for (const rawPath of ["", "Code", "../Code", "C:\\Code", "~\\Code"]) {
+      expect(resolveNewProjectParentDirectory({ rawPath, platform: "Linux" }).ok).toBe(false);
+    }
+    for (const rawPath of ["C:", "C:Code", "\\Code"]) {
+      expect(resolveNewProjectParentDirectory({ rawPath, platform: "Win32" }).ok).toBe(false);
+    }
+  });
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
     expect(canCreateProjectInEnvironment("available")).toBe(false);
@@ -157,6 +191,191 @@ describe("add project shared logic", () => {
         caseSensitive: false,
       }),
     ).toBe("C:\\Projects\\Repo\\");
+  });
+
+  it("remembers the parent of a clone destination instead of the repository folder", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "~/Code/repo", platform: "darwin" })).toBe(
+      "~/Code/",
+    );
+    expect(
+      resolveCloneParentDirectory({ rawPath: "  /work/My Projects/renamed/  ", platform: "linux" }),
+    ).toBe("/work/My Projects/");
+    expect(resolveCloneParentDirectory({ rawPath: "~/repo/", platform: "darwin" })).toBe("~/");
+    expect(resolveCloneParentDirectory({ rawPath: "/repo", platform: "linux" })).toBe("/");
+  });
+
+  it("remembers clone parents on Windows drives and network shares", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "C:\\Code\\repo\\", platform: "win32" })).toBe(
+      "C:\\Code\\",
+    );
+    expect(
+      resolveCloneParentDirectory({ rawPath: "\\\\host\\share\\repo", platform: "win32" }),
+    ).toBe("\\\\host\\share\\");
+  });
+
+  it("remembers Windows home-relative clone parents only on Windows environments", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "win32" })).toBe(
+      "~\\Code\\",
+    );
+    expect(resolveCloneParentDirectory({ rawPath: "~\\repo\\", platform: "win32" })).toBe("~\\");
+    expect(
+      resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "darwin" }),
+    ).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "~\\Code\\repo", platform: "linux" })).toBeNull();
+  });
+
+  it("resolves a relative clone parent against its environment's active project", () => {
+    expect(
+      resolveCloneParentDirectory({
+        rawPath: "../next",
+        currentProjectCwd: "/work/current",
+        platform: "linux",
+      }),
+    ).toBe("/work/");
+  });
+
+  it("does not save ambiguous, unsupported or root destinations as clone parents", () => {
+    expect(resolveCloneParentDirectory({ rawPath: "../repo", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "Code/repo", platform: "linux" })).toBeNull();
+    expect(
+      resolveCloneParentDirectory({ rawPath: "C:\\Code\\repo", platform: "darwin" }),
+    ).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "/", platform: "linux" })).toBeNull();
+    expect(resolveCloneParentDirectory({ rawPath: "C:\\", platform: "win32" })).toBeNull();
+    expect(
+      resolveCloneParentDirectory({ rawPath: "\\\\host\\share\\", platform: "win32" }),
+    ).toBeNull();
+  });
+
+  it("recognizes a tilde default when browsing an absolute clone destination", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/remote/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("recognizes a tilde clone destination when the default is absolute", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "~/Code/",
+        baseDirectory: "/Users/remote/Code/",
+        homeDirectory: "/Users/remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("uses the selected server's home for empty and explicit home defaults", () => {
+    for (const baseDirectory of [null, undefined, "", "  ", "~", "~/"]) {
+      expect(
+        isDefaultCloneParentDirectory({
+          parentDirectory: "/home/remote/",
+          baseDirectory,
+          homeDirectory: "/home/remote",
+        }),
+      ).toBe(true);
+    }
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/local/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+  });
+
+  it("compares Windows tilde defaults across separators and case", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "c:\\users\\remote\\code\\",
+        baseDirectory: "~\\Code",
+        homeDirectory: "C:\\Users\\Remote",
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "\\\\host\\share\\code\\",
+        baseDirectory: "~/Code",
+        homeDirectory: "\\\\HOST\\Share\\",
+      }),
+    ).toBe(true);
+  });
+
+  it("resolves relative defaults and clone parents against the same browse cwd", () => {
+    for (const input of [
+      {
+        parentDirectory: "/work/Code/",
+        baseDirectory: "../Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "/work/current/Code/",
+        baseDirectory: "./Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "../Code/",
+        baseDirectory: "/work/Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "c:\\users\\remote\\code\\",
+        baseDirectory: "..\\Code",
+        currentProjectCwd: "C:\\Users\\Remote\\current",
+      },
+      {
+        parentDirectory: "\\\\host\\share\\code\\",
+        baseDirectory: "../Code",
+        currentProjectCwd: "\\\\HOST\\Share\\current",
+      },
+    ]) {
+      expect(isDefaultCloneParentDirectory({ ...input, homeDirectory: null })).toBe(true);
+    }
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/work/Code-other/",
+        baseDirectory: "../Code",
+        currentProjectCwd: "/work/current",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not guess a project cwd when comparing relative defaults", () => {
+    const input = {
+      parentDirectory: "/work/Code/",
+      baseDirectory: "../Code",
+      homeDirectory: "/home/remote",
+    };
+    expect(isDefaultCloneParentDirectory(input)).toBe(false);
+    expect(isDefaultCloneParentDirectory({ ...input, currentProjectCwd: null })).toBe(false);
+  });
+
+  it("keeps different folders distinct and falls back while the server home is unavailable", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/remote/Code-other/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "~/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: null,
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: null,
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {

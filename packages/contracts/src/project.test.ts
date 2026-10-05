@@ -12,6 +12,7 @@ import {
   StoredProjectIcon,
   ProjectReadFileError,
   ProjectCreatePayload,
+  ProjectCreateNewInput,
   ProjectUpdatePayload,
   ProjectMutation,
   ProjectSearchContentsError,
@@ -24,6 +25,18 @@ import {
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+
+describe("new project destinations", () => {
+  const decode = Schema.decodeUnknownSync(ProjectCreateNewInput);
+  it("keeps name-only requests compatible and trims an optional server folder", () => {
+    expect(decode({ name: "Example" })).toEqual({ name: "Example" });
+    expect(decode({ name: "Example", parentDirectory: "  ~/Code  " })).toEqual({
+      name: "Example",
+      parentDirectory: "~/Code",
+    });
+    expect(() => decode({ name: "Example", parentDirectory: "  " })).toThrow();
+  });
+});
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
 

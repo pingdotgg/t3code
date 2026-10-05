@@ -666,6 +666,8 @@ export const ServerConfig = Schema.Struct({
    * servers that answer projects.createNew.
    */
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Whether projects.createNew accepts a parentDirectory on this server. */
+  newProjectParentDirectory: Schema.optionalKey(Schema.Boolean),
   /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a

@@ -20,6 +20,18 @@ describe("filesystem browse model", () => {
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
 
+  it("browses Windows home-relative paths only on Windows environments", () => {
+    expect(getFilesystemBrowsePath("~\\Code\\repo", "win32")).toEqual({
+      isBrowsing: true,
+      directoryPath: "~\\Code\\",
+      filterQuery: "repo",
+      parentPath: "~\\",
+      canBrowseUp: true,
+    });
+    expect(getFilesystemBrowsePath("~\\Code\\repo", "darwin").isBrowsing).toBe(false);
+    expect(getFilesystemBrowsePath("~\\Code\\repo", "linux").isBrowsing).toBe(false);
+  });
+
   it("filters names, hidden directories, and exact matches consistently", () => {
     const entries = [
       { name: ".config", fullPath: "/Users/test/.config" },

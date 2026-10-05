@@ -21,8 +21,8 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Starts a project from just a name. The server makes a folder under its
- * `newProjectsRoot` with a README, an icon, and a first commit; this then
+ * Starts a project from a name. The server makes a folder under the chosen
+ * parent (or `newProjectsRoot`) with a README, an icon, and a first commit; this then
  * opens a new thread draft in it. With `github`, it also publishes the
  * repository as private, without holding up the draft.
  *
@@ -77,11 +77,15 @@ export function useNewProject() {
     async (input: {
       readonly environmentId: EnvironmentId;
       readonly name: string;
+      readonly parentDirectory?: string;
       readonly github: { readonly account: string | null } | null;
     }): Promise<boolean> => {
       const result = await createNew({
         environmentId: input.environmentId,
-        input: { name: input.name },
+        input: {
+          name: input.name,
+          ...(input.parentDirectory ? { parentDirectory: input.parentDirectory } : {}),
+        },
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
@@ -97,7 +101,7 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError } = result.value;
-      // The folder sits in T3 Code's data directory, so always say where.
+      // Report the actual path, including any suffix added for an occupied name.
       toastManager.add(
         stackedThreadToast(
           commitError === undefined

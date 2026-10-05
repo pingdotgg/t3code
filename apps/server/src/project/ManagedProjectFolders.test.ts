@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, GitCommandError, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -403,6 +404,74 @@ it.effect("gives concurrent named projects with the same name distinct folders",
   ),
 );
 
+it.effect("creates a committed project in a chosen parent and preserves occupied folders", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parentDirectory = path.join(baseDir, "Coding Stuff", "nested");
+        const first = yield* folders.createNamedProject({ name: "My App", parentDirectory });
+        yield* fileSystem.writeFileString(path.join(first.workspaceRoot, "keep.txt"), "keep");
+        const second = yield* folders.createNamedProject({ name: "My App", parentDirectory });
+        assert.equal(first.workspaceRoot, path.join(parentDirectory, "my-app"));
+        assert.equal(second.workspaceRoot, path.join(parentDirectory, "my-app-2"));
+        assert.equal(
+          Option.getOrThrow(yield* projects.getById(first.projectId)).workspaceRoot,
+          first.workspaceRoot,
+        );
+        assert.equal(
+          yield* gitOutput(first.workspaceRoot, ["log", "--format=%s"]),
+          "Initial commit",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(first.workspaceRoot, "keep.txt")),
+          "keep",
+        );
+        assert.isFalse(yield* fileSystem.exists(folders.namedProjectsRoot));
+      }),
+    ),
+  ),
+);
+
+it.effect("expands a chosen home-relative parent on the server", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const path = yield* Path.Path;
+        const parentDirectory = `~/${path.relative(NodeOS.homedir(), path.join(baseDir, "Code"))}`;
+        const created = yield* folders.createNamedProject({
+          name: "Home Project",
+          parentDirectory,
+        });
+        assert.equal(created.workspaceRoot, path.join(baseDir, "Code", "home-project"));
+      }),
+    ),
+  ),
+);
+
+it.effect("rejects ambiguous parents before writing folders", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const before = yield* fileSystem.readDirectory(baseDir);
+      for (const parentDirectory of ["", "code", "../code", "C:code", "C:"]) {
+        const error = yield* Effect.flip(
+          folders.createNamedProject({ name: "Rejected", parentDirectory }),
+        );
+        assert.equal(error._tag, "NamedProjectParentDirectoryError");
+      }
+      assert.deepEqual(yield* fileSystem.readDirectory(baseDir), before);
+    }),
+  ),
+);
+
 it.effect("keeps a named project and reports why when Git cannot commit", () =>
   withScratch(({ baseDir }) =>
     // No identity anywhere, and Git may not guess one from the host name.
@@ -476,10 +545,19 @@ it.effect("removes the folder when the project create is rejected for another re
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
 
-          const failure = yield* Effect.flip(folders.createNamedProject({ name: "Rejected" }));
+          const parentDirectory = path.join(baseDir, "chosen-parent");
+          yield* fileSystem.makeDirectory(parentDirectory);
+          yield* fileSystem.writeFileString(path.join(parentDirectory, "keep.txt"), "keep");
+          const failure = yield* Effect.flip(
+            folders.createNamedProject({ name: "Rejected", parentDirectory }),
+          );
 
           assert.equal(failure._tag, "NamedProjectCreateError");
-          assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
+          assert.deepEqual(yield* fileSystem.readDirectory(parentDirectory), ["keep.txt"]);
+          assert.equal(
+            yield* fileSystem.readFileString(path.join(parentDirectory, "keep.txt")),
+            "keep",
+          );
         }),
       ),
     {

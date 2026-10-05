@@ -462,7 +462,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Add project starts in",
     to: "/settings/general",
     scope: "environment-defaults",
-    searchTerms: ["base directory folder browser path home"],
+    searchTerms: [
+      "base directory folder browser path home clone repository destination default new project",
+    ],
   },
   {
     id: "unpin-confirmation",

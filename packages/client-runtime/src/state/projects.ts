@@ -77,6 +77,7 @@ function splitAbsolutePath(value: string): {
   return null;
 }
 
+/** Recognize directory queries supported by the selected environment's filesystem browser. */
 export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
   const allowWindowsPaths = isWindowsPlatform(platform);
   return (
@@ -86,6 +87,7 @@ export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
     value.startsWith("..\\") ||
     value.startsWith("/") ||
     value.startsWith("~/") ||
+    (allowWindowsPaths && value.startsWith("~\\")) ||
     (allowWindowsPaths && isWindowsAbsolutePath(value))
   );
 }
