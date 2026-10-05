@@ -813,10 +813,8 @@ export const layer: Layer.Layer<
             input.session.providerSession.capabilities.checkpointing.appCanCheckpointFilesystem;
           // Startup failure and stream shutdown can report the same attempt.
           const refreshAfterTurn = yield* Effect.cached(
-            (checkpointFilesystem
-              ? finalizationObserver.refreshAfterTurn(input.appThread.projectId)
-              : Effect.void
-            ).pipe(
+            finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
+              Effect.when(Effect.succeed(checkpointFilesystem)),
               Effect.catchCause((cause) =>
                 Effect.logWarning("failed to refresh pull requests after run termination", {
                   threadId: input.run.threadId,
@@ -853,22 +851,22 @@ export const layer: Layer.Layer<
                     .responseStreamingMode,
               ),
             );
-            if (checkpointFilesystem)
-              yield* checkpointService
-                .captureBaseline({
-                  scope: input.checkpointScope,
-                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-                })
-                .pipe(
-                  Effect.catchCause((cause) =>
-                    Cause.hasInterruptsOnly(cause)
-                      ? Effect.failCause(cause)
-                      : Effect.logWarning(
-                          "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                          { runId: input.run.id },
-                        ),
-                  ),
-                );
+            yield* checkpointService
+              .captureBaseline({
+                scope: input.checkpointScope,
+                ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Effect.logWarning(
+                        "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                        { runId: input.run.id },
+                      ),
+                ),
+                Effect.when(Effect.succeed(checkpointFilesystem)),
+              );
             if (
               input.shouldStartProviderTurn !== undefined &&
               !(yield* input.shouldStartProviderTurn())
@@ -1410,70 +1408,72 @@ export const layer: Layer.Layer<
                 }),
               ))
             : input.session.startTurn(turnInput);
-          yield* Effect.andThen(shouldStart, startTurn).pipe(
+          const started = yield* Effect.exit(Effect.andThen(shouldStart, startTurn));
+          // A remote turn outlives a lost start; recovery reattaches it instead of failing the run.
+          if (
+            Exit.isFailure(started) &&
+            (input.reattach === true ||
+              (!checkpointFilesystem && Cause.hasInterruptsOnly(started.cause)))
+          ) {
+            yield* stopProviderEvents;
+            return yield* new RunExecutionStartError({
+              commandId: input.commandId,
+              runId: input.run.id,
+              cause: started.cause,
+            });
+          }
+          yield* started.pipe(
             Effect.catchCause((cause) =>
-              input.reattach === true || (!checkpointFilesystem && Cause.hasInterruptsOnly(cause))
-                ? stopProviderEvents.pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new RunExecutionStartError({
-                          commandId: input.commandId,
-                          runId: input.run.id,
-                          cause,
-                        }),
-                      ),
-                    ),
-                  )
-                : Effect.logError("orchestration V2 provider turn start failed", {
-                    runId: input.run.id,
-                    cause,
-                  }).pipe(
-                    Effect.andThen(stopProviderEvents),
-                    Effect.andThen(Ref.get(latestProviderThread)),
-                    Effect.flatMap((providerThread) =>
-                      Ref.get(latestTurnItemOrdinal).pipe(
-                        Effect.flatMap((latestItemOrdinal) =>
-                          Ref.get(openRunOwnedSubagents).pipe(
-                            Effect.flatMap((openSubagents) =>
-                              writeFinalRunEvents({
-                                checkpointFilesystem,
-                                run: input.run,
-                                rootNode: input.rootNode,
-                                checkpointScope: input.checkpointScope,
-                                providerThread,
-                                attempt: input.attempt,
-                                // Ownership reads can fail; fence the failure in the write transaction.
-                                writeIfRunCurrent: {
-                                  activeAttemptId: input.attempt.id,
-                                  expectedStatus: "running",
-                                },
-                                openRunOwnedSubagents: openSubagents,
-                                terminal: makeFailedTerminalEvent(
-                                  makeProviderFailure({
-                                    cause: Cause.squash(cause),
-                                    class: Exit.isFailure(shouldStart)
-                                      ? "unknown"
-                                      : "provider_error",
-                                  }),
-                                  latestItemOrdinal + 1,
-                                ),
-                                failureItemPersisted: false,
-                                refreshAfterTurn,
+              Effect.logError("orchestration V2 provider turn start failed", {
+                runId: input.run.id,
+                cause,
+              }).pipe(
+                Effect.andThen(stopProviderEvents),
+                Effect.andThen(Ref.get(latestProviderThread)),
+                Effect.flatMap((providerThread) =>
+                  Ref.get(latestTurnItemOrdinal).pipe(
+                    Effect.flatMap((latestItemOrdinal) =>
+                      Ref.get(openRunOwnedSubagents).pipe(
+                        Effect.flatMap((openSubagents) =>
+                          writeFinalRunEvents({
+                            checkpointFilesystem,
+                            run: input.run,
+                            rootNode: input.rootNode,
+                            checkpointScope: input.checkpointScope,
+                            providerThread,
+                            attempt: input.attempt,
+                            // Checked in the write transaction, not by another
+                            // read that can fail like the one before the start.
+                            writeIfRunCurrent: {
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running",
+                            },
+                            openRunOwnedSubagents: openSubagents,
+                            terminal: makeFailedTerminalEvent(
+                              makeProviderFailure({
+                                cause: Cause.squash(cause),
+                                // A failed ownership read is not the provider's fault.
+                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
                               }),
+                              latestItemOrdinal + 1,
                             ),
-                          ),
+                            failureItemPersisted: false,
+                            refreshAfterTurn,
+                          }),
                         ),
                       ),
                     ),
-                    Effect.mapError(
-                      (writeCause) =>
-                        new RunExecutionStartError({
-                          commandId: input.commandId,
-                          runId: input.run.id,
-                          cause: { start: cause, write: writeCause },
-                        }),
-                    ),
                   ),
+                ),
+                Effect.mapError(
+                  (writeCause) =>
+                    new RunExecutionStartError({
+                      commandId: input.commandId,
+                      runId: input.run.id,
+                      cause: { start: cause, write: writeCause },
+                    }),
+                ),
+              ),
             ),
           );
         }),
