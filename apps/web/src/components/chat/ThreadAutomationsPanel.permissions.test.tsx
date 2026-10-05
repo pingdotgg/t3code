@@ -7,6 +7,7 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => state.allowed,
   readEnvironmentScope: () => state.allowed,
 }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.allowed }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../settings/ScheduledTasksSettings", () => ({
   relativeLabel: () => "later",
@@ -16,7 +17,7 @@ vi.mock("../../state/server", () => ({
   serverEnvironment: {
     scheduledTasksLive: () => null,
     setScheduledTaskEnabled: "toggle",
-    runScheduledTaskNow: "run",
+    runScheduledTaskNow: { permissionAtom: () => null },
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({

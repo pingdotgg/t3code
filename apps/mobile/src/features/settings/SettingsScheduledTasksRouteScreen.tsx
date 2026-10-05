@@ -1,5 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope } from "../../state/session";
 import type {
   EnvironmentId,
   ProjectId,
@@ -582,7 +583,9 @@ function TaskForm({
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
-  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canOperate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
+  );
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
     reportFailure: false,
@@ -1124,7 +1127,9 @@ function EnvironmentTasks({
   const visibleTasks = tasks.data?.tasks.filter(
     (task) => projectIds === null || projectIds.includes(task.projectId),
   );
-  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canOperate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
+  );
   const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
     reportFailure: false,
