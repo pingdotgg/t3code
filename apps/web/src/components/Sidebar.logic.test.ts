@@ -444,6 +444,14 @@ describe("sidebar thread lineage helpers", () => {
         new Set([`${environmentId}:${projectId}`]),
       ).map((thread) => thread.id),
     ).toEqual([parentId, fork.id]);
+    // An archived project hides its threads, scoped or not.
+    expect(
+      filterSidebarV2VisibleThreads(
+        [root, otherProject],
+        null,
+        new Set([`${environmentId}:${projectId}`]),
+      ).map((thread) => thread.id),
+    ).toEqual([otherProject.id]);
   });
 
   it("identifies subagent threads so the sidebar can hide them", () => {
@@ -1856,6 +1864,18 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+
+    // A pinned project leads in every order.
+    const pinned = projects.map((project) =>
+      project.projectKey === "logical-older"
+        ? { ...project, pinnedAt: "2026-03-01T00:00:00.000Z", pinOrderKey: "m" }
+        : project,
+    );
+    for (const order of ["manual", "updated_at"] as const) {
+      expect(
+        sortLogicalProjectsForSidebar(pinned, threads, order).map((project) => project.projectKey),
+      ).toEqual(["logical-older", "logical-newer"]);
+    }
   });
 });
 

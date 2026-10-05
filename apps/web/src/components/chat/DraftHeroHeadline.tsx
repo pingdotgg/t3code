@@ -3,7 +3,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { FolderPlusIcon, MessageSquareDashedIcon, PinIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
@@ -143,11 +143,14 @@ export function DraftHeroHeadline({
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
   const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
-  const canChooseProject = projectPickerEntries.length > 0;
+  // Archived projects are not choices, so a catalog of only archived projects
+  // shows the add-project prompt instead of an empty picker.
+  const choosableEntries = projectPickerEntries.filter(({ group }) => group.archivedAt == null);
+  const canChooseProject = choosableEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
   // The project that hosts threads without a project appears once, as the
   // "No project" item, not as a project row.
-  const menuEntries = projectPickerEntries.filter(
+  const menuEntries = choosableEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
   );
@@ -296,12 +299,18 @@ export function DraftHeroHeadline({
                       machineByEnvironmentId={environmentMachineById}
                     />
                   ) : null}
+                  {group.pinnedAt != null ? (
+                    <PinIcon
+                      aria-label="Pinned"
+                      className="size-3 shrink-0 text-muted-foreground"
+                    />
+                  ) : null}
                 </span>
               </MenuRadioItem>
             );
           })}
         </MenuRadioGroup>
-        {projectPickerEntries.length > 0 ? <MenuSeparator /> : null}
+        {choosableEntries.length > 0 ? <MenuSeparator /> : null}
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
           Add project

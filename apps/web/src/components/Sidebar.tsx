@@ -133,6 +133,7 @@ import {
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import { useProjectGroupActions } from "../hooks/useProjectGroupActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
@@ -2478,10 +2479,29 @@ export default function Sidebar() {
       sidebarProjectSortOrder,
     ],
   );
-  const projectGroups = useMemo(
+  const sortedProjectGroups = useMemo(
     () => sortSidebarV2ProjectGroups(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  // Archived projects leave the scope menu, and their threads leave the list.
+  const projectGroups = useMemo(
+    () => sortedProjectGroups.filter((project) => project.archivedAt == null),
+    [sortedProjectGroups],
+  );
+  const archivedProjectKeys = useMemo(
+    () =>
+      new Set(
+        sortedProjectGroups.flatMap((project) =>
+          project.archivedAt == null
+            ? []
+            : project.memberProjectRefs.map(
+                (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+              ),
+        ),
+      ),
+    [sortedProjectGroups],
+  );
+  const { canOrganize: canOrganizeProject, setPinned: setProjectPinned } = useProjectGroupActions();
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
@@ -2706,7 +2726,7 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, archivedProjectKeys);
     inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2807,6 +2827,7 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
+    archivedProjectKeys,
     nowMinute,
     optimisticDrop,
     scopedProjectKeys,
@@ -4946,6 +4967,47 @@ export default function Sidebar() {
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
+                            {project && canOrganizeProject(project) ? (
+                              // Pinned rows always show their pin; others on hover.
+                              <span
+                                className={cn(
+                                  "ml-auto flex",
+                                  project.pinnedAt == null &&
+                                    "opacity-0 in-data-highlighted:opacity-100",
+                                )}
+                              >
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost-muted"
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  title={
+                                    project.pinnedAt == null
+                                      ? `Pin ${project.displayName}`
+                                      : `Unpin ${project.displayName}`
+                                  }
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void setProjectPinned(
+                                      project,
+                                      project.pinnedAt == null,
+                                      sortedProjectGroups,
+                                    );
+                                  }}
+                                >
+                                  {project.pinnedAt == null ? (
+                                    <PinIcon className="size-3.5" />
+                                  ) : (
+                                    <>
+                                      <PinIcon className="size-3.5 in-data-highlighted:hidden" />
+                                      <PinOffIcon className="hidden size-3.5 in-data-highlighted:block" />
+                                    </>
+                                  )}
+                                </Button>
+                              </span>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -4953,7 +5015,7 @@ export default function Sidebar() {
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
+                                className={canOrganizeProject(project) ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);

@@ -1,4 +1,5 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import { resolveProjectGroupOrganization } from "@t3tools/client-runtime/state/project-organization";
 import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
 import type { Project } from "./types";
 
@@ -119,6 +120,8 @@ export function buildSidebarProjectSnapshots(input: {
 
     return {
       ...representative,
+      // Pin and archive belong to the whole group, not the representative.
+      ...resolveProjectGroupOrganization(members),
       projectKey: group.key,
       displayName: group.label,
       groupedProjectCount: members.length,
@@ -166,12 +169,13 @@ export function buildSidebarProjectPickerEntries(input: {
 
     return [{ group, targetProject, isPreferred }];
   });
+  // The preferred project leads the unpinned ones. Pinned projects keep their
+  // order ahead of it, and a pinned preferred project stays in its slot.
   const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
-  if (preferredIndex <= 0) return entries;
-
-  return [
-    entries[preferredIndex]!,
-    ...entries.slice(0, preferredIndex),
-    ...entries.slice(preferredIndex + 1),
-  ];
+  const preferred = entries[preferredIndex];
+  if (!preferred || preferred.group.pinnedAt != null) return entries;
+  const rest = entries.filter((_, index) => index !== preferredIndex);
+  const pinnedCount = rest.findIndex((entry) => entry.group.pinnedAt == null);
+  const insertAt = pinnedCount === -1 ? rest.length : pinnedCount;
+  return [...rest.slice(0, insertAt), preferred, ...rest.slice(insertAt)];
 }

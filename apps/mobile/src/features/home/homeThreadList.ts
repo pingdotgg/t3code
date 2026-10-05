@@ -1,4 +1,9 @@
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  type ProjectGroupOrganization,
+  resolveProjectGroupOrganization,
+  sortPinnedProjectsFirst,
+} from "@t3tools/client-runtime/state/project-organization";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -21,7 +26,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
-export interface HomeProjectScope {
+export interface HomeProjectScope extends ProjectGroupOrganization {
   readonly key: string;
   readonly title: string;
   readonly representative: EnvironmentProject;
@@ -45,24 +50,58 @@ export function buildHomeProjectScopes(input: {
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }): ReadonlyArray<HomeProjectScope> {
+  const settings = {
+    sidebarProjectGroupingMode: input.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  };
+  const organize = (group: ReturnType<typeof buildProjectGroups>[number]) =>
+    resolveProjectGroupOrganization(group.members.map((member) => member.project));
+  // Pin and archive belong to the whole project, so read them from every
+  // machine before narrowing the list to one.
+  const organizationByKey =
+    input.environmentId === null
+      ? null
+      : new Map(
+          buildProjectGroups({ projects: input.projects, settings }).map(
+            (group) => [group.key, organize(group)] as const,
+          ),
+        );
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
-  return buildProjectGroups({
-    projects,
-    settings: {
-      sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
-    },
-  }).map((group) => {
+  return buildProjectGroups({ projects, settings }).map((group) => {
+    const members = group.members.map((member) => member.project);
     return {
+      ...(organizationByKey?.get(group.key) ?? organize(group)),
       key: group.key,
       title: group.label,
       representative: group.representative,
-      projects: group.members.map((member) => member.project),
+      projects: members,
       projectRefs: group.memberProjectRefs,
     };
   });
+}
+
+/** Filter choices for the project menu: pinned first, archived left out. */
+export function homeProjectFilterOptions(
+  scopes: ReadonlyArray<HomeProjectScope>,
+): ReadonlyArray<{ readonly key: string; readonly label: string }> {
+  return sortPinnedProjectsFirst(scopes.filter((scope) => scope.archivedAt === null)).map(
+    (scope) => ({ key: scope.key, label: scope.title }),
+  );
+}
+
+/** `environmentId:projectId` keys of archived projects, whose threads stay hidden. */
+export function archivedProjectRefKeys(scopes: ReadonlyArray<HomeProjectScope>): Set<string> {
+  return new Set(
+    scopes.flatMap((scope) =>
+      scope.archivedAt === null
+        ? []
+        : scope.projectRefs.map((projectRef) =>
+            scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+          ),
+    ),
+  );
 }
 
 export function sortHomeProjectScopes(input: {
@@ -102,25 +141,27 @@ export function sortHomeProjectScopes(input: {
     );
   }
 
-  return Arr.sort(
-    input.scopes,
-    Order.mapInput(
-      Order.Struct({
-        timestamp: Order.flip(Order.Number),
-        title: Order.String,
-        key: Order.String,
-      }),
-      (scope: HomeProjectScope) => ({
-        timestamp:
-          latestActivityByScope.get(scope.key) ??
-          Math.max(
-            ...scope.projects.map((project) =>
-              getProjectSortTimestamp(project, input.projectSortOrder),
+  return sortPinnedProjectsFirst(
+    Arr.sort(
+      input.scopes,
+      Order.mapInput(
+        Order.Struct({
+          timestamp: Order.flip(Order.Number),
+          title: Order.String,
+          key: Order.String,
+        }),
+        (scope: HomeProjectScope) => ({
+          timestamp:
+            latestActivityByScope.get(scope.key) ??
+            Math.max(
+              ...scope.projects.map((project) =>
+                getProjectSortTimestamp(project, input.projectSortOrder),
+              ),
             ),
-          ),
-        title: scope.title,
-        key: scope.key,
-      }),
+          title: scope.title,
+          key: scope.key,
+        }),
+      ),
     ),
   );
 }

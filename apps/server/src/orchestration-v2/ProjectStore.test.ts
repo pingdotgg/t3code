@@ -52,5 +52,62 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
         );
       }),
     );
+
+    it.effect("keeps pin and archive state across unrelated updates", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const projectId = ProjectId.make("project-organization");
+        const event = {
+          eventId: EventId.make("event-organization"),
+          aggregateKind: "project" as const,
+          aggregateId: projectId,
+          occurredAt: "2026-03-24T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        };
+        yield* projects.apply({
+          ...event,
+          sequence: 1,
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "Organized",
+            workspaceRoot: "/tmp/project-organization",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-03-24T00:00:00.000Z",
+            updatedAt: "2026-03-24T00:00:00.000Z",
+          },
+        });
+        yield* projects.apply({
+          ...event,
+          sequence: 2,
+          type: "project.meta-updated",
+          payload: {
+            projectId,
+            pinnedAt: "2026-03-25T00:00:00.000Z",
+            pinOrderKey: "m",
+            archivedAt: "2026-03-26T00:00:00.000Z",
+            updatedAt: "2026-03-26T00:00:00.000Z",
+          },
+        });
+        yield* projects.apply({
+          ...event,
+          sequence: 3,
+          type: "project.meta-updated",
+          payload: { projectId, title: "Renamed", updatedAt: "2026-03-27T00:00:00.000Z" },
+        });
+
+        const shell = Option.getOrNull(yield* projects.getShell(projectId));
+        assert.deepInclude(shell, {
+          title: "Renamed",
+          pinnedAt: "2026-03-25T00:00:00.000Z",
+          pinOrderKey: "m",
+          archivedAt: "2026-03-26T00:00:00.000Z",
+        });
+      }),
+    );
   },
 );

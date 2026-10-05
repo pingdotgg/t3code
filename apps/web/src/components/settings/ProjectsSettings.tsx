@@ -1,11 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
+import { ProjectsList } from "./ProjectsList";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsPageContainer } from "./settingsLayout";
 
-/** Project identity and checkout management for the selected project. */
+/** The list of every project, or one project's identity and checkouts once picked. */
 export function ProjectsSettings() {
   const { search: value, scope } = useSettingsScope();
   // The panel follows remembered members when grouping replaces a project key.
@@ -27,9 +27,7 @@ export function ProjectsSettings() {
           <p className="text-sm text-muted-foreground">{scope.message}</p>
         </SettingsPageContainer>
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <ProjectsList />
       )}
     </div>
   );

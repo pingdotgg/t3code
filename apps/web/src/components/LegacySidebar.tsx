@@ -3255,7 +3255,8 @@ export default function LegacySidebar() {
       resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
       isWslEnvironment: (environmentId) => wslEnvironmentIds.has(environmentId),
-    });
+      // Archived projects and their threads stay out of the sidebar.
+    }).filter((project) => project.archivedAt == null);
   }, [
     environmentLabelById,
     desktopLocalEnvironmentIds,

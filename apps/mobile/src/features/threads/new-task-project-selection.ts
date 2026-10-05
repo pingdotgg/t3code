@@ -104,6 +104,9 @@ export function resolveDraftProjectSelection(
     return { kind: "preserve" };
   }
 
-  const onlyProject = getOnlySelectableProject(projectScopes);
+  // An archived project is not offered in the picker, so never pick it either.
+  const onlyProject = getOnlySelectableProject(
+    projectScopes.filter((scope) => scope.archivedAt === null),
+  );
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }

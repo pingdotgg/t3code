@@ -46,7 +46,7 @@ function ChatRouteGlobalShortcuts() {
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
+      }).filter((group) => group.archivedAt == null).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>

@@ -25,6 +25,8 @@ import { cn } from "../../lib/cn";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { organizeProjectRecords } from "@t3tools/client-runtime/state/project-organization";
 import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -141,7 +143,23 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const projectGroupingSettings = useMobileProjectGroupingSettings();
+  // Pinned projects first; archived projects and their threads stay out.
+  const projects = useMemo(
+    () => organizeProjectRecords({ projects: allProjects, settings: projectGroupingSettings }),
+    [allProjects, projectGroupingSettings],
+  );
+  const archivedProjectKeys = useMemo(() => {
+    const visible = new Set(
+      projects.map((project) => scopedProjectKey(project.environmentId, project.id)),
+    );
+    return new Set(
+      allProjects
+        .map((project) => scopedProjectKey(project.environmentId, project.id))
+        .filter((key) => !visible.has(key)),
+    );
+  }, [allProjects, projects]);
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
@@ -260,8 +278,9 @@ export function CommandPalette(props: {
           }),
       },
     ];
+    // Every record, so the current thread's project resolves even when archived.
     const projectByKey = new Map(
-      projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+      allProjects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
     const activeProject = activeThread
       ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
@@ -317,7 +336,11 @@ export function CommandPalette(props: {
         }),
     }));
     const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null)
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          !archivedProjectKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+      )
       .sort((left, right) =>
         (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
           left.latestUserMessageAt ?? left.updatedAt,
@@ -345,6 +368,8 @@ export function CommandPalette(props: {
   }, [
     activeThread,
     activeThreadRef,
+    allProjects,
+    archivedProjectKeys,
     navigation,
     projects,
     runCommand,

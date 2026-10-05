@@ -5,7 +5,12 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, sortHomeProjectScopes } from "./homeThreadList";
+import {
+  archivedProjectRefKeys,
+  buildHomeProjectScopes,
+  homeProjectFilterOptions,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 
 function makeProject(
@@ -177,6 +182,85 @@ describe("home project scopes", () => {
         projectSortOrder: "updated_at",
       }).map((scope) => scope.representative.id),
     ).toEqual([olderProject.id, newerProject.id]);
+  });
+
+  it("puts pinned projects first and marks archived ones", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const recent = makeProject({
+      environmentId,
+      id: ProjectId.make("project-recent"),
+      title: "Recent project",
+      createdAt: "2026-06-03T00:00:00.000Z",
+    });
+    const pinned = makeProject({
+      environmentId,
+      id: ProjectId.make("project-pinned"),
+      title: "Pinned project",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      pinnedAt: "2026-06-04T00:00:00.000Z",
+      pinOrderKey: "m",
+    });
+    const archived = makeProject({
+      environmentId,
+      id: ProjectId.make("project-archived"),
+      title: "Archived project",
+      archivedAt: "2026-06-05T00:00:00.000Z",
+    });
+    const scopes = sortHomeProjectScopes({
+      scopes: buildHomeProjectScopes({
+        projects: [recent, pinned, archived],
+        environmentId: null,
+        projectGroupingMode: "separate",
+      }),
+      threads: [],
+      pendingTasks: [],
+      projectSortOrder: "created_at",
+    });
+
+    expect(scopes.map((scope) => scope.representative.id).slice(0, 2)).toEqual([
+      pinned.id,
+      recent.id,
+    ]);
+    expect(scopes.find((scope) => scope.representative.id === archived.id)?.archivedAt).toBe(
+      "2026-06-05T00:00:00.000Z",
+    );
+  });
+
+  it("reads pin and archive from every machine when one machine is selected", () => {
+    const localEnvironmentId = EnvironmentId.make("environment-local");
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/example/shared",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/shared.git",
+      },
+    };
+    const archivedHere = makeProject({
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-local"),
+      title: "shared",
+      repositoryIdentity,
+      archivedAt: "2026-06-05T00:00:00.000Z",
+    });
+    const activeThere = makeProject({
+      environmentId: remoteEnvironmentId,
+      id: ProjectId.make("project-remote"),
+      title: "shared",
+      repositoryIdentity,
+      pinnedAt: "2026-06-04T00:00:00.000Z",
+    });
+    const [scope] = buildHomeProjectScopes({
+      projects: [archivedHere, activeThere],
+      environmentId: localEnvironmentId,
+      projectGroupingMode: "repository",
+    });
+
+    expect(scope?.projects.map((project) => project.id)).toEqual([archivedHere.id]);
+    expect(scope).toMatchObject({ archivedAt: null, pinnedAt: "2026-06-04T00:00:00.000Z" });
+    expect(homeProjectFilterOptions(scope ? [scope] : [])).toHaveLength(1);
+    expect(archivedProjectRefKeys(scope ? [scope] : []).size).toBe(0);
   });
 
   it("sorts invalid project creation timestamps after valid ones", () => {

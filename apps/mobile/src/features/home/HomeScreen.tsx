@@ -60,6 +60,7 @@ import {
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
+  archivedProjectRefKeys,
   buildHomeProjectScopes,
   sortHomeProjectScopes,
   type HomeProjectSortOrder,
@@ -384,6 +385,8 @@ export function HomeScreen(props: HomeScreenProps) {
       ),
     [v2ScopeProjects],
   );
+  // Threads of archived projects leave the list until the project is unarchived.
+  const archivedProjectKeys = useMemo(() => archivedProjectRefKeys(projectScopes), [projectScopes]);
   const v2ScopedProjectKeys = useMemo(
     () =>
       v2ScopedProjectGroup === null
@@ -548,7 +551,11 @@ export function HomeScreen(props: HomeScreenProps) {
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: props.threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          !archivedProjectKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+      ),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -582,6 +589,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads,
     matchedThreadKeys,
     v2ScopedProjectGroup,
+    archivedProjectKeys,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -612,10 +620,19 @@ export function HomeScreen(props: HomeScreenProps) {
             v2ScopedProjectKeys.has(
               scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
             )) &&
+          !archivedProjectKeys.has(
+            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+          ) &&
           (v2SearchQuery.length === 0 ||
             pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
       ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+    [
+      archivedProjectKeys,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      v2ScopedProjectKeys,
+      v2SearchQuery,
+    ],
   );
   const threadListV2Items = useMemo(
     () =>

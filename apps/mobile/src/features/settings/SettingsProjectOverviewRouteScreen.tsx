@@ -2,15 +2,21 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { AppText as Text, AppTextInput } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  nextProjectPinOrderKey,
+  resolveProjectGroupOrganization,
+} from "@t3tools/client-runtime/state/project-organization";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useProjects } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
@@ -19,7 +25,8 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 
 export function SettingsProjectOverviewRouteScreen() {
   const insets = useSafeAreaInsets();
-  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets, projectGroups, selectedProjectKey } =
+    useSettingsEnvironmentFilter();
   const group = projectGroups.find((entry) => entry.key === selectedProjectKey);
   const selectedEnvironmentIds = new Set(selectedTargets.map((entry) => entry.environmentId));
   const members =
@@ -47,7 +54,9 @@ export function SettingsProjectOverviewRouteScreen() {
             <ProjectOverviewContent
               key={`${selectedProjectKey}:${members.map((member) => member.id).join(",")}`}
               members={members}
+              allMembers={group?.members.map((entry) => entry.project) ?? members}
               environments={selectedTargets}
+              connectedEnvironments={availableTargets}
             />
           )}
         </ScrollView>
@@ -58,7 +67,10 @@ export function SettingsProjectOverviewRouteScreen() {
 
 function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
+  /** Every machine's record; pin and archive always change all of them. */
+  readonly allMembers: readonly EnvironmentProject[];
   readonly environments: readonly SettingsTarget[];
+  readonly connectedEnvironments: readonly SettingsTarget[];
 }) {
   const representative = props.members[0]!;
   const displayName = deriveProjectGroupLabel({ representative, members: props.members });
@@ -68,6 +80,38 @@ function ProjectOverviewContent(props: {
     label: "project name update",
     reportFailure: true,
   });
+  const projects = useProjects();
+  const organization = resolveProjectGroupOrganization(props.allMembers);
+  const canOrganize = props.allMembers.every(
+    (member) =>
+      props.connectedEnvironments.find((entry) => entry.environmentId === member.environmentId)
+        ?.serverConfig.environment.capabilities.projectOrganization === true,
+  );
+  const [isOrganizing, setIsOrganizing] = useState(false);
+  const updateOrganization = useAtomCommand(projectEnvironment.update, {
+    label: "project pin or archive",
+    reportFailure: true,
+  });
+  const organize = (input: {
+    readonly pinned?: boolean;
+    readonly pinOrderKey?: string | null;
+    readonly archived?: boolean;
+  }) => {
+    setIsOrganizing(true);
+    void (async () => {
+      try {
+        for (const member of props.allMembers) {
+          const result = await updateOrganization({
+            environmentId: member.environmentId,
+            input: { projectId: member.id, ...input },
+          });
+          if (result._tag === "Failure") return;
+        }
+      } finally {
+        setIsOrganizing(false);
+      }
+    })();
+  };
   const nextName = (draftName ?? displayName).trim();
   const canSave = !isSaving && nextName.length > 0 && nextName !== displayName;
 
@@ -138,6 +182,33 @@ function ProjectOverviewContent(props: {
           </View>
         </View>
       </SettingsSection>
+
+      {canOrganize ? (
+        <SettingsSection title="Organize">
+          <SettingsSwitchRow
+            icon="pin"
+            label="Pin"
+            subtitle="Pinned projects come first when you choose a project."
+            disabled={isOrganizing}
+            value={organization.pinnedAt !== null}
+            onValueChange={(pinned) =>
+              organize(
+                pinned
+                  ? { pinned: true, pinOrderKey: nextProjectPinOrderKey(projects) }
+                  : { pinned: false },
+              )
+            }
+          />
+          <SettingsSwitchRow
+            icon="archivebox"
+            label="Archive"
+            subtitle="Hides the project and its threads. Nothing is deleted."
+            disabled={isOrganizing}
+            value={organization.archivedAt !== null}
+            onValueChange={(archived) => organize({ archived })}
+          />
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection title="Checkouts">
         {props.members.map((member, index) => {

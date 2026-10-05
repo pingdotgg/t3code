@@ -37,6 +37,9 @@ export interface ProjectMetaUpdateCommand {
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly pinned?: boolean;
+  readonly pinOrderKey?: string | null;
+  readonly archived?: boolean;
 }
 
 export interface ProjectDeleteCommand {
@@ -206,6 +209,38 @@ export function planProjectCommand(input: {
         const conflict = requireWorkspaceAvailable(command.workspaceRoot);
         if (conflict !== undefined) return Result.fail(conflict);
       }
+      const willBePinned = command.pinned ?? project.pinnedAt !== null;
+      if (command.pinOrderKey != null && !willBePinned) {
+        return invariant("Only a pinned project has a pin order.");
+      }
+      // Pinning an already pinned project keeps its pinnedAt; unpinning drops
+      // its slot. Archive works the same way.
+      const pin =
+        command.pinned === undefined
+          ? command.pinOrderKey === undefined
+            ? {}
+            : { pinOrderKey: command.pinOrderKey }
+          : command.pinned
+            ? {
+                pinnedAt: project.pinnedAt ?? occurredAt,
+                ...(command.pinOrderKey === undefined ? {} : { pinOrderKey: command.pinOrderKey }),
+              }
+            : { pinnedAt: null, pinOrderKey: null };
+      const archive =
+        command.archived === undefined
+          ? {}
+          : { archivedAt: command.archived ? (project.archivedAt ?? occurredAt) : null };
+      // Pinning and archiving are not activity: clients order projects without
+      // threads by updatedAt, so those changes alone keep it.
+      const organizesOnly =
+        command.title === undefined &&
+        command.workspaceRoot === undefined &&
+        command.defaultModelSelection === undefined &&
+        command.defaultThreadEnvMode === undefined &&
+        command.autoPull === undefined &&
+        command.faviconPath === undefined &&
+        command.projectIcon === undefined &&
+        command.scripts === undefined;
       return Result.succeed({
         ...base,
         type: "project.meta-updated",
@@ -223,7 +258,9 @@ export function planProjectCommand(input: {
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
-          updatedAt: occurredAt,
+          ...pin,
+          ...archive,
+          updatedAt: organizesOnly ? project.updatedAt : occurredAt,
         },
       });
     }

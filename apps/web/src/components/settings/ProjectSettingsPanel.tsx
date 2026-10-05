@@ -6,11 +6,9 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { AsyncResult } from "effect/unstable/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import * as Cause from "effect/Cause";
-import { InfoIcon, Trash2Icon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -24,10 +22,12 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useProjectGroupActions } from "../../hooks/useProjectGroupActions";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SettingResetButton,
@@ -152,6 +152,7 @@ export function ProjectSettingsPanel({
     <ProjectDetail
       key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
       group={scopedGroup}
+      wholeGroup={selected}
       hasOtherMembers={members.length < selected.memberProjects.length}
     />
   );
@@ -159,9 +160,12 @@ export function ProjectSettingsPanel({
 
 function ProjectDetail({
   group,
+  wholeGroup,
   hasOtherMembers,
 }: {
   group: SidebarProjectSnapshot;
+  /** Pin and archive always apply to every machine, even when one is picked. */
+  wholeGroup: SidebarProjectSnapshot;
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
@@ -176,7 +180,6 @@ function ProjectDetail({
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
   const threads = useThreadShells();
-  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
 
@@ -204,53 +207,10 @@ function ProjectDetail({
     );
   }, []);
 
-  // Group-shared fields live on each physical project record, so a
-  // group-level edit fans out to every member.
-  const updateAllMembers = useCallback(
-    async (
-      input: Partial<{
-        title: string;
-        faviconPath: string | null;
-        projectIcon: ProjectIconOverride | null;
-      }>,
-      failureTitle: string,
-    ): Promise<AtomCommandResult<void, unknown>> => {
-      const unavailable = group.memberProjects.find((member) => {
-        const environment = environmentById.get(member.environmentId);
-        return environment?.connection.phase !== "connected" || !environment.serverConfig;
-      });
-      if (unavailable) {
-        const error = new Error(
-          `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
-        );
-        const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
-        reportFailure(failureTitle, result);
-        return result;
-      }
-      for (const member of group.memberProjects) {
-        const result = mapAtomCommandResult(
-          await updateProject({
-            environmentId: member.environmentId,
-            input: { projectId: member.id, ...input },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          // A partial fan-out is possible: earlier members already took the
-          // write. Name the environment so the user knows where it stopped.
-          reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
-              : failureTitle,
-            result,
-          );
-          return result;
-        }
-      }
-      return AsyncResult.success(undefined);
-    },
-    [environmentById, group.memberProjects, reportFailure, updateProject],
-  );
+  const { updateGroup, canOrganize, isBusy, setPinned, setArchived } = useProjectGroupActions();
+  const allGroups = useSettingsProjectGroups();
+  const isPinned = wholeGroup.pinnedAt != null;
+  const isArchived = wholeGroup.archivedAt != null;
 
   const renameGroup = useCallback(
     async (nextTitle: string, wasEdited: boolean) => {
@@ -268,9 +228,9 @@ function ProjectDetail({
       ) {
         return;
       }
-      await updateAllMembers({ title }, "Failed to rename project");
+      await updateGroup(group, { title }, "Failed to rename project");
     },
-    [group.memberProjects, updateAllMembers],
+    [group, updateGroup],
   );
 
   // ----- project icon -----
@@ -284,13 +244,13 @@ function ProjectDetail({
       savingFaviconRef.current = true;
       setIsSavingFavicon(true);
       try {
-        await updateAllMembers(input, "Failed to update project icon");
+        await updateGroup(group, input, "Failed to update project icon");
       } finally {
         savingFaviconRef.current = false;
         setIsSavingFavicon(false);
       }
     },
-    [updateAllMembers],
+    [group, updateGroup],
   );
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
@@ -488,6 +448,43 @@ function ProjectDetail({
               </div>
             }
           />
+          {canOrganize(wholeGroup) ? (
+            <>
+              <SettingsRow
+                title="Pin"
+                description="Pinned projects come first in every project picker."
+                control={
+                  <Switch
+                    aria-label="Pin project"
+                    checked={isPinned}
+                    disabled={isBusy(wholeGroup.projectKey)}
+                    onCheckedChange={(checked) =>
+                      void setPinned(wholeGroup, Boolean(checked), allGroups)
+                    }
+                  />
+                }
+              />
+              <SettingsRow
+                title="Archive"
+                description={
+                  isArchived
+                    ? "Archived. The project and its threads are hidden until you unarchive it."
+                    : "Hides the project and its threads. Nothing is deleted."
+                }
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isBusy(wholeGroup.projectKey)}
+                    onClick={() => void setArchived(wholeGroup, !isArchived)}
+                  >
+                    {isArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+                    {isArchived ? "Unarchive" : "Archive"}
+                  </Button>
+                }
+              />
+            </>
+          ) : null}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />

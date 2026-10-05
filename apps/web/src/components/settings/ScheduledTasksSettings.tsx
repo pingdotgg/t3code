@@ -30,7 +30,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { formatRelativeTime } from "../../timestampFormat";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
+import { selectProjectGroupingSettings } from "../../logicalProject";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -39,6 +40,7 @@ import {
 } from "../../providerInstances";
 import { useEnvironment, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
+import { organizeProjectRecords } from "@t3tools/client-runtime/state/project-organization";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -488,14 +490,21 @@ function ScheduledTaskEditorDialog({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  // Pinned projects first and archived ones out, except the task's own project.
   const projects = useMemo(
     () =>
-      allProjects.filter(
+      organizeProjectRecords({
+        projects: allProjects,
+        settings: projectGroupingSettings,
+        keep: (project) =>
+          project.environmentId === initialEnvironmentId && project.id === task?.projectId,
+      }).filter(
         (project) =>
           project.environmentId === environmentId &&
           matchesScheduledTaskScope(scope, environmentId, project.id),
       ),
-    [allProjects, environmentId, scope],
+    [allProjects, environmentId, initialEnvironmentId, projectGroupingSettings, scope, task],
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =

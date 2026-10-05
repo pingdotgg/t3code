@@ -40,6 +40,8 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
+import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { organizeProjectRecords } from "@t3tools/client-runtime/state/project-organization";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -566,7 +568,19 @@ function TaskForm({
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const allProjects = useProjects();
+  const projectGroupingSettings = useMobileProjectGroupingSettings();
+  // Pinned projects first and archived ones out, except the task's own project.
+  const savedProjectId = draft.task?.projectId;
+  const projects = useMemo(
+    () =>
+      organizeProjectRecords({
+        projects: allProjects,
+        settings: projectGroupingSettings,
+        keep: (project) => project.id === savedProjectId,
+      }).filter((project) => project.environmentId === environmentId),
+    [allProjects, environmentId, projectGroupingSettings, savedProjectId],
+  );
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask, {

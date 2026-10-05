@@ -113,9 +113,23 @@ Existing prompts for deleting a worktree manually remain available when this pol
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
+## Pin and archive projects
+
+**Settings → Projects** lists every project on every connected machine. Pin the ones you use
+most: pinned projects come first in every project picker, in the order you drag them to. You can
+also pin from the sidebar's project filter, or with **Pin project** in the command palette
+(`Cmd/Ctrl+K`).
+
+Archive a project you are done with. It leaves the project pickers, and its threads leave the
+sidebar and the command palette. Nothing is deleted, and threads keep their state. Find it under
+**Archived** in **Settings → Projects** and choose **Unarchive** to bring everything back.
+
+Pin and archive apply to the project on every machine, so every machine with the project must
+be connected. On mobile, use **Organize** in **Settings → Projects & threads → Overview**.
+
 ## Project icons
 
-Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to
+Select the project and open Projects to choose an icon, emoji, monogram, or image. The choice applies to
 every checkout in the project group and appears on connected clients. Choose **Automatic** to let
 T3 Code detect an icon again.
 

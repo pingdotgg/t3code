@@ -30,6 +30,9 @@ const row = (overrides: Partial<ProjectRow> = {}): ProjectRow => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  pinnedAt: null,
+  pinOrderKey: null,
+  archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -57,6 +60,7 @@ const update = (
     Extract<ProjectCommand, { type: "project.meta.update" }>,
     "type" | "commandId" | "projectId"
   >,
+  project: ProjectRow = row(),
 ) =>
   plan(
     {
@@ -65,7 +69,7 @@ const update = (
       projectId,
       ...fields,
     },
-    { project: row() },
+    { project },
   );
 
 const payloadOf = (result: ReturnType<typeof plan>) => {
@@ -177,6 +181,64 @@ describe("planProjectCommand", () => {
         "ProjectCommandInvariantError",
       );
     }
+  });
+
+  it("pins with a timestamp, keeps it on a re-pin, and drops the slot on unpin", () => {
+    assert.deepInclude(payloadOf(update({ pinned: true, pinOrderKey: "m" })), {
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+      pinOrderKey: "m",
+    });
+    const pinned = row({ pinnedAt: "2025-12-01T00:00:00.000Z", pinOrderKey: "m" });
+    const repin = payloadOf(update({ pinned: true }, pinned));
+    assert.equal(repin.pinnedAt, "2025-12-01T00:00:00.000Z");
+    assert.isFalse("pinOrderKey" in repin);
+    const moved = payloadOf(update({ pinOrderKey: "t" }, pinned));
+    assert.equal(moved.pinOrderKey, "t");
+    assert.isFalse("pinnedAt" in moved);
+    assert.deepInclude(payloadOf(update({ pinned: false }, pinned)), {
+      pinnedAt: null,
+      pinOrderKey: null,
+    });
+    const renamed = payloadOf(update({ title: "Renamed" }, pinned));
+    assert.isFalse("pinnedAt" in renamed || "pinOrderKey" in renamed || "archivedAt" in renamed);
+  });
+
+  it("keeps updatedAt when only the pin or archive changes", () => {
+    const earlier = row({ updatedAt: "2025-10-01T00:00:00.000Z" });
+    for (const fields of [{ pinned: true }, { archived: true }, { pinned: false }]) {
+      assert.equal(payloadOf(update(fields, earlier)).updatedAt, "2025-10-01T00:00:00.000Z");
+    }
+    assert.equal(
+      payloadOf(update({ pinned: true, title: "Renamed" }, earlier)).updatedAt,
+      "2026-01-01T00:00:00.000Z",
+    );
+  });
+
+  it("rejects a pin order for a project that stays unpinned", () => {
+    const pinned = row({ pinnedAt: "2025-12-01T00:00:00.000Z", pinOrderKey: "m" });
+    for (const result of [
+      update({ pinOrderKey: "m" }),
+      update({ pinned: false, pinOrderKey: "m" }, pinned),
+    ]) {
+      assert.include(failureOf(result).message, "Only a pinned project has a pin order.");
+    }
+    assert.deepInclude(payloadOf(update({ pinned: false, pinOrderKey: null }, pinned)), {
+      pinnedAt: null,
+      pinOrderKey: null,
+    });
+  });
+
+  it("archives and unarchives without touching the pin", () => {
+    const pinned = row({ pinnedAt: "2025-12-01T00:00:00.000Z", pinOrderKey: "m" });
+    const archived = payloadOf(update({ archived: true }, pinned));
+    assert.equal(archived.archivedAt, "2026-01-01T00:00:00.000Z");
+    assert.isFalse("pinnedAt" in archived);
+    const alreadyArchived = row({ archivedAt: "2025-11-01T00:00:00.000Z" });
+    assert.equal(
+      payloadOf(update({ archived: true }, alreadyArchived)).archivedAt,
+      "2025-11-01T00:00:00.000Z",
+    );
+    assert.isNull(payloadOf(update({ archived: false }, alreadyArchived)).archivedAt);
   });
 
   it("rejects a workspace root held by another active project", () => {

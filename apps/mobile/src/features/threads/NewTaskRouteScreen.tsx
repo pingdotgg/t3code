@@ -158,9 +158,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
   // Scratch projects are reached through the No project row, never as rows
-  // of their own.
+  // of their own. Archived projects stay out of the list.
   const listScopes = projectScopes.filter(
     (scope) =>
+      scope.archivedAt === null &&
       !scope.projects.every((project) =>
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
       ),
