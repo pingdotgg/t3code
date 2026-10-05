@@ -24,6 +24,38 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads GitHub Enterprise Cloud pull requests", () => {
+    const host = "my-awesome-company.ghe.com";
+    expect(parseChangeRequestUrl(`https://${host}/Platform/API/pull/9/files?w=1`)).toEqual({
+      host,
+      repository: "platform/api",
+      number: 9,
+    });
+  });
+
+  it("converts GitHub Enterprise Cloud issue autolinks into PR candidates", () => {
+    const host = "my-awesome-company.ghe.com";
+    expect(
+      pullRequestCandidateUrlFromReferenceAutolink(`https://${host}/platform/api/issues/9`),
+    ).toBe(`https://${host}/platform/api/pull/9`);
+  });
+
+  it("builds sibling GitHub Enterprise Cloud pull request URLs", () => {
+    const host = "my-awesome-company.ghe.com";
+    expect(siblingPullRequestUrl(`https://${host}/platform/api/pull/9`, 10)).toBe(
+      `https://${host}/platform/api/pull/10`,
+    );
+  });
+
+  it("does not treat similar domain names as GitHub Enterprise Cloud", () => {
+    for (const host of ["notghe.com", "ghe.com.example.test"]) {
+      expect(parseChangeRequestUrl(`https://${host}/team/repo/pull/9`)).toBeNull();
+      expect(
+        pullRequestCandidateUrlFromReferenceAutolink(`https://${host}/team/repo/issues/9`),
+      ).toBeNull();
+    }
+  });
+
   it("reads Forgejo URLs even when the hostname contains github", () => {
     expect(parseChangeRequestUrl("https://github.internal/team/repo/pulls/7")).toEqual({
       host: "github.internal",

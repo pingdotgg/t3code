@@ -23,6 +23,10 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.split(".").includes(label);
 }
 
+function isGitHubHost(hostname: string): boolean {
+  return isHostOf(hostname, "github.com", "github") || isHostOf(hostname, "ghe.com");
+}
+
 /**
  * The repository and number behind a change request URL on a host this can read, or null for
  * anything else — an issue, a commit, a repository root, a host this cannot tell apart from an
@@ -48,8 +52,8 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
 
-  // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
-  if (isHostOf(host, "github.com", "github")) {
+  // GitHub Cloud and recognisable Enterprise hosts: /{owner}/{repo}/pull/{n}
+  if (isGitHubHost(host)) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
   }
@@ -172,11 +176,7 @@ export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string):
   }
   if (
     (url.protocol !== "https:" && url.protocol !== "http:") ||
-    !(
-      url.hostname.toLowerCase() === "github.com" ||
-      url.hostname.toLowerCase().endsWith(".github.com") ||
-      url.hostname.toLowerCase().split(".").includes("github")
-    )
+    !isGitHubHost(url.hostname.toLowerCase())
   ) {
     return null;
   }
