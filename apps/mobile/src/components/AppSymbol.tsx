@@ -310,5 +310,14 @@ function AppSymbolView(props: AppSymbolViewProps) {
  * prop rather than a React Native style. Keep that third-party boundary here
  * so callers can use Uniwind's `tintColorClassName` instead of subscribing to
  * theme variables in every parent component.
+ *
+ * The mapping is required on Android: the Tabler fallback only reads
+ * `props.tintColor`, so without it `tintColorClassName="accent-…"` never
+ * resolves and icons (e.g. the composer `plus` / send `arrow.up`) render
+ * with `color={undefined}` — invisible on dark themes but still tappable.
+ * iOS forwards `tintColorClassName` to expo-symbols natively, which is why
+ * only Android is affected.
  */
-export const SymbolView = withUniwind(AppSymbolView);
+export const SymbolView = withUniwind(AppSymbolView, {
+  tintColor: { fromClassName: "tintColorClassName", styleProperty: "accentColor" },
+});
