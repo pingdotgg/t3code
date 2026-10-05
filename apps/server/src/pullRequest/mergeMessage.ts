@@ -17,13 +17,23 @@ export function removeAgentCredits(message: string): string {
   let removed = false;
   const newline = message.includes("\r\n") ? "\r\n" : "\n";
   const lines = message.split(/\r?\n/).filter((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (/^(?: {4}|\t)/.test(line)) return true;
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const marker = delimiter?.[1];
+    const remainder = delimiter?.[2] ?? "";
     if (marker !== undefined) {
-      if (fence === undefined) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      if (fence === undefined) {
+        if (marker[0] === "~" || !remainder.includes("`")) fence = marker;
+      } else if (
+        marker[0] === fence[0] &&
+        marker.length >= fence.length &&
+        /^[ \t]*$/.test(remainder)
+      ) {
+        fence = undefined;
+      }
       return true;
     }
-    if (fence !== undefined || /^(?: {4}|\t)/.test(line)) return true;
+    if (fence !== undefined) return true;
     const text = line.trim().replace(/^(?:[-*]\s+)/, "");
     const author = /^co-authored-by:\s*(.*?)\s*<([^<>]+)>\s*$/i.exec(text);
     // GitHub's generic noreply address is also used by people; require Copilot's name.

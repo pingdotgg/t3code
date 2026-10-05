@@ -48,6 +48,21 @@ describe("removeAgentCredits", () => {
     );
   });
 
+  it.each(["``` text ```", "    ```", "\t~~~"])(
+    "removes trailers after a line that cannot open a fence: %s",
+    (line) => {
+      expect(removeAgentCredits(`${line}\n\nCo-authored-by: Claude <noreply@anthropic.com>`)).toBe(
+        line,
+      );
+    },
+  );
+
+  it.each(["```", "~~~"])("keeps examples after a false closing fence: %s", (fence) => {
+    const example = "Co-authored-by: Claude <noreply@anthropic.com>";
+    const content = `${fence}text\n${fence} trailing text\n${example}\n    ${fence}\n${example}\n${fence.slice(0, 2)}\n${example}\n   ${fence}${fence[0]} \t`;
+    expect(removeAgentCredits(`${content}\n\n${example}`)).toBe(content);
+  });
+
   it("preserves CRLF line endings", () => {
     expect(
       removeAgentCredits(
