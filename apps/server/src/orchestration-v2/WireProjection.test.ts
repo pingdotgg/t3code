@@ -274,6 +274,23 @@ describe("orchestration V2 wire projection", () => {
     expect(item.input).toBe(input);
   });
 
+  it("leaves a screenshot's bytes out of the fetched tool output", () => {
+    const data = "A".repeat(600_000);
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "mcp__t3-code__device_screenshot",
+      input: { deviceId: "phone" },
+      output: {
+        content: [{ type: "image", source: { type: "base64", media_type: "image/png", data } }],
+      },
+    };
+    expect(projectTurnItemForDetail(item)).toMatchObject({
+      output: { content: [{ type: "image", mimeType: "image/png" }] },
+    });
+    expect(item.output.content[0]?.source.data).toBe(data);
+  });
+
   it("keeps failure evidence without retaining command output", () => {
     const item = {
       ...base,

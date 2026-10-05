@@ -1,4 +1,5 @@
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { readToolOutputImage, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -17,11 +18,14 @@ function textFromBlocks(value: unknown, depth: number): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     const parts = value.map((block) => textFromBlocks(block, depth + 1));
-    return parts.every((part) => part !== null) ? parts.join("\n") : null;
+    return parts.every((part) => part !== null)
+      ? parts.filter((part) => part !== "").join("\n")
+      : null;
   }
   if (!isRecord(value)) return null;
   if (value.type === "text" && typeof value.text === "string") return value.text;
-  if (value.type === "image") return "[image]";
+  // Images clients can show render on their own (see turnItemOutputImages).
+  if (value.type === "image") return readToolOutputImage(value) ? "" : "[image]";
   if (value.type === "resource_link" && typeof value.uri === "string") return value.uri;
   if (value.type === "resource" && isRecord(value.resource)) {
     const resource = value.resource;
@@ -198,6 +202,22 @@ export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null
     default:
       return null;
   }
+}
+
+/**
+ * Images in a fetched item's tool output, as assets. The detail read leaves
+ * the bytes out, so each loads over HTTP by its index.
+ */
+export function turnItemOutputImages(
+  item: OrchestrationV2TurnItem,
+): ReadonlyArray<Extract<AssetResource, { readonly _tag: "tool-output-image" }>> {
+  if (item.type !== "dynamic_tool" || item.outputOmitted === true) return [];
+  return toolOutputImages(item.output).map((_, index) => ({
+    _tag: "tool-output-image",
+    threadId: item.threadId,
+    itemId: item.id,
+    index,
+  }));
 }
 
 /**

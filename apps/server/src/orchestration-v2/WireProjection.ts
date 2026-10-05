@@ -4,7 +4,11 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  omitToolOutputImageData,
+  toolOutputIndicatesFailure,
+} from "@t3tools/shared/toolOutput";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
@@ -145,6 +149,7 @@ function boundDynamicValue(value: unknown): unknown {
 /**
  * Projects one item for an on-demand detail read: keeps the input and output
  * the timeline withholds, bounded so a huge result cannot stall the socket.
+ * Image bytes are left out; clients load them as `tool-output-image` assets.
  */
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
@@ -158,7 +163,7 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
       return {
         ...item,
         input: boundDynamicValue(item.input),
-        output: boundDynamicValue(item.output),
+        output: boundDynamicValue(omitToolOutputImageData(item.output)),
       };
     case "subagent":
       return {
