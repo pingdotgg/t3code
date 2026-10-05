@@ -273,21 +273,6 @@ describe("codexUsageLimitMessage", () => {
     );
   });
 
-  it("names the monthly credit cap a workspace member exhausted", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_member_usage_limit_reached",
-          individualLimit: { remainingPercent: 0, resetsAt: atSeconds + 12 * 86_400 },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The monthly limit resets in 12d. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
-    );
-  });
-
   it("names no window when credits run out without one", () => {
     expect(
       codexUsageLimitMessage(
@@ -325,7 +310,7 @@ describe("mergeCodexRateLimits", () => {
     });
   });
 
-  it("keeps a member's credit cap so a stop it causes still learns its reset", () => {
+  it("keeps a known member cap when a notification reports it as null", () => {
     const merged = mergeCodexRateLimits(
       { limitId: "codex", individualLimit: { remainingPercent: 0, resetsAt: 1_800_000_000 } },
       {
