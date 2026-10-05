@@ -76,7 +76,8 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { resolveAddProjectCwd, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -299,7 +300,12 @@ function ProjectPathInput(props: {
 // `pinnedDirectoryName` is the repository folder the clone destination keeps
 // appended to whatever folder the user browses to. The plain add-project flow
 // passes nothing, so it keeps proposing the browsed folder itself.
-function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
+/** Keep navigation and prefetches relative to the same project on the selected server. */
+function useBrowsePathInput(
+  environment: EnvironmentOption | null,
+  pinnedDirectoryName = "",
+  currentProjectCwd: string | null = null,
+) {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
@@ -326,6 +332,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [browseNavigation],
   );
   const navigateToBrowsePath = useCallback(
+    /** Commit a folder change only after its listing has loaded in the destination context. */
     async (input: {
       readonly browseDirectoryPath: string;
       readonly selectedDirectoryName?: string;
@@ -344,11 +351,15 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
           : getCloneDestinationPath(selectedDirectoryPath, pinnedDirectoryName);
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
+        /** Warm the listing before committing; skip unavailable connections. */
         async () => {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
-              input: { partialPath: selectedDirectoryPath },
+              input: {
+                partialPath: selectedDirectoryPath,
+                ...(currentProjectCwd ? { cwd: currentProjectCwd } : {}),
+              },
             });
           }
         },
@@ -362,6 +373,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [
       browseNavigation,
       clonePathCaseSensitive,
+      currentProjectCwd,
       environment,
       environmentRuntime?.connectionState,
       loadBrowsePath,
@@ -833,6 +845,7 @@ export function AddProjectRepositoryScreen(props: {
   );
 }
 
+/** List folders using the destination server and its active project context. */
 function FolderBrowser(props: {
   readonly environment: EnvironmentOption;
   readonly pathInput: string;
@@ -842,14 +855,22 @@ function FolderBrowser(props: {
     readonly selectedDirectoryName?: string;
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
+  readonly currentProjectCwd?: string | null;
 }) {
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
   );
   const browseInput = useMemo(
-    () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
-    [browsePath.directoryPath],
+    /** Keep relative listings anchored to the same project as clone validation. */
+    () =>
+      browsePath.directoryPath.length > 0
+        ? {
+            partialPath: browsePath.directoryPath,
+            ...(props.currentProjectCwd ? { cwd: props.currentProjectCwd } : {}),
+          }
+        : null,
+    [browsePath.directoryPath, props.currentProjectCwd],
   );
   const browseState = useEnvironmentQuery(
     browseInput === null
@@ -1237,6 +1258,11 @@ export function AddProjectDestinationScreen(props: {
   });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
+  const { selectedProject } = useNewTaskFlow();
+  const currentProjectCwd = resolveAddProjectCwd(
+    environment?.environmentId ?? null,
+    selectedProject,
+  );
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
@@ -1248,13 +1274,18 @@ export function AddProjectDestinationScreen(props: {
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
     repositoryName,
+    currentProjectCwd,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [isSavingCloneFolder, setIsSavingCloneFolder] = useState(false);
   const cloneParentDirectory = environment
-    ? resolveCloneParentDirectory({ rawPath: pathInput, platform: environment.platform })
+    ? resolveCloneParentDirectory({
+        rawPath: pathInput,
+        platform: environment.platform,
+        currentProjectCwd,
+      })
     : null;
   const cloneHomeDirectoryQuery = useEnvironmentQuery(
     environment
@@ -1268,10 +1299,11 @@ export function AddProjectDestinationScreen(props: {
     parentDirectory: cloneParentDirectory,
     baseDirectory: environment?.baseDirectory,
     homeDirectory: cloneHomeDirectoryQuery.data?.parentPath,
+    currentProjectCwd,
   });
 
   /** Save the server's starting folder without changing the destination shown on this device. */
-  const saveCloneParentDirectory = async () => {
+  async function saveCloneParentDirectory(): Promise<void> {
     if (
       !environment ||
       cloneParentDirectory === null ||
@@ -1291,7 +1323,12 @@ export function AddProjectDestinationScreen(props: {
     if (AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
-  };
+  }
+
+  /** Start the save while its pending state and errors remain owned by this screen. */
+  function handleSaveCloneParentDirectory(): void {
+    void saveCloneParentDirectory();
+  }
 
   const submitPath = useCallback(
     /** Validate the destination and wait for the streamed project record before opening its draft. */
@@ -1301,7 +1338,7 @@ export function AddProjectDestinationScreen(props: {
       setError(null);
       const resolved = resolveAddProjectPath({
         rawPath: pathInput,
-        currentProjectCwd: null,
+        currentProjectCwd,
         platform: environment.platform,
       });
       if (!resolved.ok) {
@@ -1372,6 +1409,7 @@ export function AddProjectDestinationScreen(props: {
     [
       cloneRepository,
       createProject,
+      currentProjectCwd,
       environment,
       isBrowseNavigating,
       isSavingCloneFolder,
@@ -1429,10 +1467,7 @@ export function AddProjectDestinationScreen(props: {
                   isSubmitting
                 }
                 loading={isSavingCloneFolder}
-                onPress={
-                  /** Start the save without awaiting it; the operation reports errors on this screen. */
-                  () => void saveCloneParentDirectory()
-                }
+                onPress={handleSaveCloneParentDirectory}
               />
             </View>
           ) : null}
@@ -1442,6 +1477,7 @@ export function AddProjectDestinationScreen(props: {
             pathInput={pathInput}
             setPathInput={setPathInput}
             pinnedDirectoryName={repositoryName}
+            currentProjectCwd={currentProjectCwd}
           />
         </>
       ) : (

@@ -2,7 +2,7 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { resolveAddProjectCwd, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
 
 const ENVIRONMENT_A = EnvironmentId.make("environment-a");
 const ENVIRONMENT_B = EnvironmentId.make("environment-b");
@@ -37,5 +37,22 @@ describe("resolveAddProjectEnvironment", () => {
         null,
       )?.environmentId,
     ).toBe(ENVIRONMENT_B);
+  });
+});
+
+describe("resolveAddProjectCwd", () => {
+  const selectedProject = { environmentId: ENVIRONMENT_A, workspaceRoot: "/work/current" };
+
+  it("uses the selected project's workspace in the destination environment", () => {
+    expect(resolveAddProjectCwd(ENVIRONMENT_A, selectedProject)).toBe("/work/current");
+  });
+
+  it("does not use another environment's workspace for relative paths", () => {
+    expect(resolveAddProjectCwd(ENVIRONMENT_B, selectedProject)).toBeNull();
+  });
+
+  it("has no project context when either selection is missing", () => {
+    expect(resolveAddProjectCwd(null, selectedProject)).toBeNull();
+    expect(resolveAddProjectCwd(ENVIRONMENT_A, null)).toBeNull();
   });
 });

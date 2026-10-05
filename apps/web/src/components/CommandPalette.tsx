@@ -2859,6 +2859,11 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  /** Start the save while the operation owns pending state and result toasts. */
+  function handleSaveCloneParentDirectory(): void {
+    void saveCloneParentDirectory();
+  }
+
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
   const browseGroups = buildBrowseGroups({
@@ -3573,10 +3578,7 @@ function OpenCommandPaletteDialog(props: {
                   isRemoteProjectPending ||
                   !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
                 }
-                onClick={
-                  /** Start the save without awaiting it; the operation reports its result through toasts. */
-                  () => void saveCloneParentDirectory()
-                }
+                onClick={handleSaveCloneParentDirectory}
               >
                 {isSavingCloneFolder
                   ? "Saving…"
