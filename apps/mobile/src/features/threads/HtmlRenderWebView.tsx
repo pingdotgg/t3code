@@ -20,6 +20,7 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const ROW_BOTTOM_MARGIN = 8;
+const FULL_SCREEN_GUTTER = 16;
 
 /** A render row is its frame's height plus spacing; the page's content never sizes it. */
 export function htmlRenderRowHeight(frameHeight: number) {
@@ -114,8 +115,20 @@ export function HtmlRenderWebView(props: {
     setGeneration((value) => value + 1);
   };
   const scrollable = !props.nested || overflows;
+  // Pages have no horizontal padding of their own, so full screen adds the
+  // feed's gutter in the page's background color.
   return (
-    <View style={{ flex: 1 }}>
+    <View
+      style={
+        props.nested
+          ? { flex: 1 }
+          : {
+              flex: 1,
+              paddingHorizontal: FULL_SCREEN_GUTTER,
+              backgroundColor: theme.variables["--background"],
+            }
+      }
+    >
       <WebView<object>
         key={generation}
         ref={webView}
