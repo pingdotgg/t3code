@@ -521,6 +521,45 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }),
   );
 
+  it.live("shows Claude's usage on the first refresh after signing back in", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const loginMarker = path.join(fixtures.claudeHomePath, "logged-in");
+      const instanceId = ProviderInstanceId.make("claude_relogin");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [{ name: "T3_CLAUDE_LOGIN_MARKER", value: loginMarker, sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+
+      const signedOut = yield* instance!.snapshot.refresh;
+      expect(signedOut.auth.status).toBe("unauthenticated");
+      expect(signedOut.usageLimits).toBeUndefined();
+
+      // `/login` in a terminal; T3 only learns of it on the next refresh.
+      yield* fs.writeFileString(loginMarker, "");
+      const signedIn = yield* instance!.snapshot.refresh;
+      expect(signedIn.auth.status).toBe("authenticated");
+      expect(signedIn.usageLimits?.unavailable).toBeUndefined();
+      expect(signedIn.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>
