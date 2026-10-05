@@ -29,6 +29,7 @@ import { getPendingThreadOrder, threadDropBusyAtom } from "../../state/thread-or
 import { environmentThreadShells } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import {
+  completeThreadDragGeometry,
   resolveThreadDrop,
   threadDragGapOffset,
   threadDropInsertionOffset,
@@ -48,6 +49,8 @@ const HOLD_MS = 200;
 const PRESS_SLOP = 10;
 const LIFT_SLOP = 6;
 const AUTO_SCROLL_EDGE = 56;
+// Matches the lists' estimatedItemSize for rows LegendList has not measured.
+const ESTIMATED_ROW_HEIGHT = 72;
 
 interface DragLayout {
   readonly sourceKey: string;
@@ -254,7 +257,8 @@ export function ThreadListDragSurface(props: {
           const state = list.getState();
           const maximum = Math.max(current.startScroll, state.contentLength - state.scrollLength);
           const scroll = Math.max(
-            Math.min(0, current.startScroll),
+            // iOS automatic insets rest the list at a negative offset.
+            Math.min(current.startScroll, -insets.top),
             Math.min(maximum, current.scroll + speed * elapsed * 0.5),
           );
           if (scroll !== current.scroll) {
@@ -285,8 +289,14 @@ export function ThreadListDragSurface(props: {
         const state = list.getState();
         const rows: ThreadDragRow[] = [];
         const offsets: Record<string, number> = {};
-        latest.current.items.forEach((item, index) => {
-          const offset = state.positionByKey(item.key) ?? state.positionAtIndex(index);
+        const items = latest.current.items;
+        const geometry = completeThreadDragGeometry(
+          items.map((item, index) => state.positionByKey(item.key) ?? state.positionAtIndex(index)),
+          items.map((item) => state.sizes.get(item.key)),
+          ESTIMATED_ROW_HEIGHT,
+        );
+        items.forEach((item, index) => {
+          const { offset, height } = geometry[index]!;
           offsets[item.key] = offset;
           if (!isThreadListV2ListItem(item)) return;
           rows.push({
@@ -297,7 +307,7 @@ export function ThreadListDragSurface(props: {
                 : null,
             section: dragSection(item),
             offset,
-            height: state.sizes.get(item.key) ?? state.sizeAtIndex(index),
+            height,
           });
         });
         const source = rows.find((row) => row.key === itemKey);
@@ -359,7 +369,14 @@ export function ThreadListDragSurface(props: {
   const previewStyle = useAnimatedStyle(() => ({ transform: [{ translateY: previewTop.value }] }));
 
   // A reordered or rebuilt list invalidates the drag-start layout.
-  const orderVersion = props.items.map((item) => item.key).join("|");
+  // Sections count too: a remote pin keeps the order but changes the drop.
+  const orderVersion = props.items
+    .map((item) =>
+      item.type === "v2-thread" && isThreadListV2ListItem(item)
+        ? `${item.key}:${dragSection(item)}`
+        : item.key,
+    )
+    .join("|");
   useEffect(() => {
     if (drag.current === null) return;
     drag.current = null;
@@ -438,6 +455,9 @@ export function useThreadListDragTarget(input: {
     active: false,
     startX: 0,
     startY: 0,
+    // The row this press began on; a recycled cell must not lift its new thread.
+    itemKey: "",
+    thread: input.thread,
   });
   const gesture = useMemo(() => {
     const state = press.current;
@@ -460,6 +480,8 @@ export function useThreadListDragTarget(input: {
           return;
         }
         menuOpen.current = false;
+        state.itemKey = latest.current.itemKey;
+        state.thread = latest.current.thread;
         state.startX = touch.absoluteX;
         state.startY = touch.absoluteY;
         state.timer = setTimeout(() => {
@@ -498,8 +520,8 @@ export function useThreadListDragTarget(input: {
         state.active = true;
         // Anchor to where the finger went down so the lift never jumps.
         controller?.start(
-          latest.current.itemKey,
-          latest.current.thread,
+          state.itemKey,
+          state.thread,
           event.y - (event.absoluteY - state.startY),
           state.startY,
         );
@@ -532,6 +554,10 @@ export function useThreadListDragTarget(input: {
       ],
     };
   });
+
+  // A press must not outlive its row: restore scrolling if the cell is
+  // recycled or unmounted while held.
+  useEffect(() => () => release.current(), [input.itemKey]);
 
   const onMenuOpen = useMemo(
     () => () => {

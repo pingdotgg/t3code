@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { threadDragAction, threadOrderAfterMove } from "./threadOrder";
 import {
+  completeThreadDragGeometry,
   resolveThreadDrop,
   threadDragGapOffset,
   threadDropInsertionOffset,
@@ -90,5 +91,61 @@ describe("thread list drop targets", () => {
     expect(threadDropInsertionOffset(rows, drop(240), 80)).toBe(250);
     expect(threadDropInsertionOffset(rows, drop(310), 80)).toBe(80);
     expect(threadDropInsertionOffset(rows, null, 80)).toBe(80);
+  });
+});
+
+describe("thread list drops into empty sections", () => {
+  const active: ThreadDragRow[] = [
+    { key: "a1", threadKey: "env:a1", section: "active", offset: 0, height: 80 },
+    { key: "a2", threadKey: "env:a2", section: "active", offset: 80, height: 80 },
+  ];
+  const pins: ThreadDragRow[] = [
+    { key: "p1", threadKey: "env:p1", section: "pinned", offset: 0, height: 80 },
+    { key: "p2", threadKey: "env:p2", section: "pinned", offset: 80, height: 80 },
+  ];
+  const drop = (rows: ThreadDragRow[], contentY: number, source: ThreadDragRow) =>
+    resolveThreadDrop({
+      rows,
+      contentY,
+      source: { threadKey: source.threadKey!, section: source.section! },
+      canDrop: () => true,
+    });
+
+  it("pins from the top edge when there are no pins", () => {
+    const pin = drop(active, 10, active[1]!);
+    expect(pin).toEqual({ section: "pinned", targetId: null, placement: "before" });
+    expect(threadDropInsertionOffset(active, pin, 80)).toBe(0);
+    expect(drop(active, 30, active[1]!)).toEqual({
+      section: "active",
+      targetId: "env:a1",
+      placement: "before",
+    });
+  });
+  it("unpins from the bottom edge of the pins when Active is empty", () => {
+    const unpin = drop(pins, 150, pins[0]!);
+    expect(unpin).toEqual({ section: "active", targetId: null, placement: "before" });
+    expect(threadDropInsertionOffset(pins, unpin, 0)).toBe(160);
+    expect(drop(pins, 130, pins[0]!)).toEqual({
+      section: "pinned",
+      targetId: "env:p2",
+      placement: "after",
+    });
+  });
+});
+
+describe("drag geometry outside the render window", () => {
+  it("derives unmeasured sizes from the next position, else the estimate", () => {
+    expect(
+      completeThreadDragGeometry(
+        [0, 90, 170, undefined],
+        [90, undefined, undefined, undefined],
+        72,
+      ),
+    ).toEqual([
+      { offset: 0, height: 90 },
+      { offset: 90, height: 80 },
+      { offset: 170, height: 72 },
+      { offset: 242, height: 72 },
+    ]);
   });
 });
