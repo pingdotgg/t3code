@@ -207,10 +207,11 @@ export function hasRelayRoute(
 }
 
 /**
- * The routes after the server reports where it listens. Each reported address
- * becomes a learned route that authenticates the same way as the route in use:
- * the paired token for a bearer route, the T3 Connect credential for relay.
- * Learned routes the server no longer reports are dropped, so a changed LAN
+ * The routes after the server reports where it listens. Each newly reported
+ * address becomes a learned route that authenticates the same way as the route
+ * in use: the paired token for a bearer route, the T3 Connect credential for
+ * relay. A learned route the server still reports keeps its place, so the
+ * user's order holds; one it no longer reports is dropped, so a changed LAN
  * address replaces the old one. Routes the user saved are never touched, and
  * an address already saved is not learned twice.
  */
@@ -242,15 +243,8 @@ export function mergeLearnedRoutes(input: {
       ? credentialConnectionId(active.connectionId)
       : undefined;
 
-  const kept = saved.filter((route) => !isLearned(route));
-  const normalized = (url: string) => url.replace(/\/+$/, "");
-  const known = new Set(
-    kept.flatMap((route) => {
-      const url = routeHttpBaseUrl(route);
-      return url === null ? [] : [normalized(url)];
-    }),
-  );
-  let next: ReadonlyArray<ConnectionRoute> = kept;
+  // Usable reported addresses, by origin.
+  const reported = new Map<string, URL>();
   for (const endpoint of input.reported) {
     let url: URL;
     try {
@@ -262,9 +256,26 @@ export function mergeLearnedRoutes(input: {
     if (url.protocol === "http:" && !input.allowInsecure) continue;
     // A loopback address names whichever device opens it, never the server.
     if (isLocalLoopbackHost(url.hostname)) continue;
+    reported.set(url.origin, url);
+  }
+  const normalized = (url: string) => url.replace(/\/+$/, "");
+  const known = new Set(
+    saved.flatMap((route) => {
+      const url = routeHttpBaseUrl(route);
+      return url === null || isLearned(route) ? [] : [normalized(url)];
+    }),
+  );
+  const kept = saved.filter((route) => {
+    if (!isLearned(route)) return true;
+    const url = routeHttpBaseUrl(route);
+    if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return false;
+    known.add(normalized(url));
+    return true;
+  });
+  let next: ReadonlyArray<ConnectionRoute> = kept;
+  for (const url of reported.values()) {
+    if (known.has(url.origin)) continue;
     const httpBaseUrl = `${url.origin}/`;
-    if (known.has(normalized(httpBaseUrl))) continue;
-    known.add(normalized(httpBaseUrl));
     const connectionId = learnedConnectionId(
       entry.target.environmentId,
       url.origin,

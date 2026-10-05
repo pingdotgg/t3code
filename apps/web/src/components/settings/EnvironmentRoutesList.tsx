@@ -119,8 +119,9 @@ export function EnvironmentRoutesList({
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
                 // The last route goes with the machine; that is "Remove from
-                // this device", not a route action.
-                removable={routes.length > 1}
+                // this device", not a route action. A learned route would be
+                // learned again, so it is only reordered.
+                removable={routes.length > 1 && !isLearned(route)}
                 onRemove={() => void confirmRemove(route)}
               />
             ))}

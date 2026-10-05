@@ -142,7 +142,10 @@ export function EnvironmentRoutesSection({
             }}
             onStep={(direction) => move(index, direction === "up" ? index - 1 : index + 1)}
             // The last route goes with the machine, which is "Remove" on the row.
-            onRemove={routes.length > 1 ? () => confirmRemove(route) : undefined}
+            // A learned route would be learned again, so it is only reordered.
+            onRemove={
+              routes.length > 1 && !isLearned(route) ? () => confirmRemove(route) : undefined
+            }
           />
         );
       })}

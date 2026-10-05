@@ -124,6 +124,38 @@ describe("learned routes", () => {
     expect(ids(moved)).toEqual([`learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773`, "relay"]);
   });
 
+  it("keeps a learned route where the user moved it while the server reports it", () => {
+    const lan = { httpBaseUrl: "http://192.168.1.10:3773/" };
+    const first = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [lan],
+      allowInsecure: true,
+    })!;
+    // The user prefers T3 Connect over the learned LAN address.
+    const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
+    expect(
+      mergeLearnedRoutes({
+        entry: reordered,
+        activeRoute: RELAY,
+        reported: [lan],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
+    // A newly reported address is still placed by speed.
+    const next = mergeLearnedRoutes({
+      entry: reordered,
+      activeRoute: RELAY,
+      reported: [lan, { httpBaseUrl: "http://100.101.102.103:3773/" }],
+      allowInsecure: true,
+    });
+    expect(ids(next)).toEqual([
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773`,
+      "relay",
+      `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
+    ]);
+  });
+
   it("leaves user routes alone and does not learn an address already saved", () => {
     const entry: ConnectionCatalogEntry = {
       target: LAN.target,
