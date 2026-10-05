@@ -34,7 +34,7 @@ for (const file of ENV_FILES) {
   const sourceStat = NodeFS.lstatSync(source, { throwIfNoEntry: false });
   if (!sourceStat) continue;
   if (!sourceStat.isFile()) {
-    console.warn(`Skipping ${file}: ${source} is not a regular file.`);
+    process.stderr.write(`Skipping ${file}: ${source} is not a regular file.\n`);
     continue;
   }
   const target = NodePath.join(worktree, file);
