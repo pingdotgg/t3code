@@ -149,8 +149,10 @@ type TestClaudeCapabilities = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly apiKeySource?: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly usage?: { readonly rate_limits_available: boolean; readonly rate_limits: null };
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -210,6 +212,7 @@ function recordingMockSpawnerLayer(
   const commands: Array<{
     readonly args: ReadonlyArray<string>;
     readonly env: NodeJS.ProcessEnv | undefined;
+    readonly cwd: string | undefined;
   }> = [];
   const layer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -218,9 +221,10 @@ function recordingMockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
         };
       };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
+      commands.push({ args: cmd.args, env: cmd.options?.env, cwd: cmd.options?.cwd });
       return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
@@ -3027,6 +3031,105 @@ it.layer(
         ),
       ),
     );
+
+    describe("when the CLI reports no token", () => {
+      const noToken = claudeCapabilities({
+        tokenSource: "none",
+        apiProvider: "firstParty",
+        usage: { rate_limits_available: false, rate_limits: null },
+      });
+      const authStatusLayer = (loggedIn: boolean) =>
+        layerMockSpawner((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+          if (joined === "auth status")
+            return {
+              stdout: `{"loggedIn":${loggedIn},"authMethod":"none"}\n`,
+              stderr: "",
+              code: 0,
+            };
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+
+      it.effect("reports a signed-out CLI as unauthenticated without usage limits", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(defaultClaudeSettings, noToken);
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          assert.strictEqual(status.usageLimits, undefined);
+        }).pipe(Effect.provide(authStatusLayer(false))),
+      );
+
+      it.effect("keeps an apiKeyHelper login authenticated, asking from the probe cwd", () => {
+        // A project-scoped apiKeyHelper only applies from the probed workspace.
+        const spawner = recordingMockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+          if (joined === "auth status")
+            return {
+              stdout: '{"loggedIn":true,"authMethod":"api_key_helper"}\n',
+              stderr: "",
+              code: 0,
+            };
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            noToken,
+            undefined,
+            "/workspace/project",
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+          const authStatus = spawner.commands.find((c) => c.args.join(" ") === "auth status");
+          assert.strictEqual(authStatus?.cwd, "/workspace/project");
+        }).pipe(Effect.provide(spawner.layer));
+      });
+
+      it.effect("keeps the previous result when auth status cannot answer", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(defaultClaudeSettings, noToken);
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return { stdout: "", stderr: "unknown command", code: 1 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps an API key login authenticated without asking auth status", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              tokenSource: "none",
+              apiKeySource: "ANTHROPIC_API_KEY",
+              apiProvider: "firstParty",
+              usage: { rate_limits_available: false, rate_limits: null },
+            }),
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+    });
 
     it.effect("returns a display label for claude subscription types", () =>
       Effect.gen(function* () {
