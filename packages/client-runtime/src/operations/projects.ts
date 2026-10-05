@@ -23,6 +23,7 @@ import {
   isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
+  normalizeProjectPathForComparison,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -320,6 +321,7 @@ export function getCloneDestinationBrowsePath(input: {
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
 }
 
+/** Validate a destination for its server's platform and resolve active-project relative paths. */
 export function resolveAddProjectPath(input: {
   readonly rawPath: string;
   readonly currentProjectCwd?: string | null;
@@ -354,6 +356,26 @@ export function resolveCloneParentDirectory(input: {
     return null;
   }
   return getBrowseParentPath(resolved.path);
+}
+
+/** Compare a clone parent with the default, expanding tilde paths using the selected server's home. */
+export function isDefaultCloneParentDirectory(input: {
+  readonly parentDirectory: string | null;
+  readonly baseDirectory: string | null | undefined;
+  readonly homeDirectory: string | null | undefined;
+}): boolean {
+  if (input.parentDirectory === null) return false;
+  const normalize = (value: string): string => {
+    const path = value.trim();
+    const expanded =
+      input.homeDirectory && (path === "~" || path.startsWith("~/") || path.startsWith("~\\"))
+        ? resolveProjectPathForDispatch(`./${path.slice(2)}`, input.homeDirectory)
+        : path;
+    return normalizeProjectPathForComparison(expanded);
+  };
+  return (
+    normalize(input.parentDirectory) === normalize(getAddProjectInitialQuery(input.baseDirectory))
+  );
 }
 
 export function findExistingAddProject(input: {

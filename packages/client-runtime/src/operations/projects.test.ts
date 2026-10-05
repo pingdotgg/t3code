@@ -17,6 +17,7 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   resolveCloneParentDirectory,
@@ -202,6 +203,86 @@ describe("add project shared logic", () => {
     expect(
       resolveCloneParentDirectory({ rawPath: "\\\\host\\share\\", platform: "win32" }),
     ).toBeNull();
+  });
+
+  it("recognizes a tilde default when browsing an absolute clone destination", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/remote/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("recognizes a tilde clone destination when the default is absolute", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "~/Code/",
+        baseDirectory: "/Users/remote/Code/",
+        homeDirectory: "/Users/remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("uses the selected server's home for empty and explicit home defaults", () => {
+    for (const baseDirectory of [null, undefined, "", "  ", "~", "~/"]) {
+      expect(
+        isDefaultCloneParentDirectory({
+          parentDirectory: "/home/remote/",
+          baseDirectory,
+          homeDirectory: "/home/remote",
+        }),
+      ).toBe(true);
+    }
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/local/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+  });
+
+  it("compares Windows tilde defaults across separators and case", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "c:\\users\\remote\\code\\",
+        baseDirectory: "~\\Code",
+        homeDirectory: "C:\\Users\\Remote",
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "\\\\host\\share\\code\\",
+        baseDirectory: "~/Code",
+        homeDirectory: "\\\\HOST\\Share\\",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps different folders distinct and falls back while the server home is unavailable", () => {
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/home/remote/Code-other/",
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "~/Code/",
+        baseDirectory: "~/Code",
+        homeDirectory: null,
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: null,
+        baseDirectory: "~/Code",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {

@@ -13,6 +13,7 @@ import {
   getNewProjectGitHubRepository,
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
   resolveCloneParentDirectory,
 } from "@t3tools/client-runtime/operations/projects";
@@ -2545,6 +2546,7 @@ function OpenCommandPaletteDialog(props: {
     return getAddProjectInitialQueryForEnvironment(environmentId);
   }
 
+  /** Clone the explicit destination on its selected server, using tracked clones when supported. */
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
     if (!addProjectCloneFlow || isSavingCloneFolder) {
       return;
@@ -2801,21 +2803,29 @@ function OpenCommandPaletteDialog(props: {
           platform: browseEnvironmentPlatform,
         })
       : null;
-  const isDefaultCloneFolder =
-    cloneParentDirectory !== null &&
-    findProjectByPath(
-      [
-        {
-          workspaceRoot: browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory || "~/",
-        },
-      ],
-      cloneParentDirectory,
-    ) !== undefined;
+  const cloneHomeDirectoryQuery = useEnvironmentQuery(
+    addProjectCloneFlow?.step === "confirm" &&
+      browseEnvironmentId !== null &&
+      canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
+      ? filesystemEnvironment.browse({
+          environmentId: browseEnvironmentId,
+          input: { partialPath: "~/" },
+        })
+      : null,
+  );
+  const isDefaultCloneFolder = isDefaultCloneParentDirectory({
+    parentDirectory: cloneParentDirectory,
+    baseDirectory: browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory,
+    homeDirectory: cloneHomeDirectoryQuery.data?.parentPath,
+  });
 
+  /** Persist only the browsed environment's preference, leaving this clone's destination intact. */
   async function saveCloneParentDirectory(): Promise<void> {
     if (
       addProjectCloneFlow?.step !== "confirm" ||
       cloneParentDirectory === null ||
+      isDefaultCloneFolder ||
+      cloneHomeDirectoryQuery.isPending ||
       isSavingCloneFolder ||
       isRemoteProjectCloning ||
       !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)
@@ -3556,6 +3566,7 @@ function OpenCommandPaletteDialog(props: {
                 size="xs"
                 disabled={
                   isDefaultCloneFolder ||
+                  cloneHomeDirectoryQuery.isPending ||
                   isSavingCloneFolder ||
                   isRemoteProjectPending ||
                   !canCreateProjectInEnvironment(browseEnvironment?.connection.phase)

@@ -18,6 +18,7 @@ import {
   getNewProjectGitHubRepository,
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  isDefaultCloneParentDirectory,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   resolveCloneParentDirectory,
@@ -36,7 +37,6 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
-  findProjectByPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -1219,6 +1219,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   );
 }
 
+/** Clone into a path on the selected server, falling back to blocking clones on older servers. */
 export function AddProjectDestinationScreen(props: {
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
@@ -1255,15 +1256,30 @@ export function AddProjectDestinationScreen(props: {
   const cloneParentDirectory = environment
     ? resolveCloneParentDirectory({ rawPath: pathInput, platform: environment.platform })
     : null;
-  const isDefaultCloneFolder =
-    cloneParentDirectory !== null &&
-    findProjectByPath(
-      [{ workspaceRoot: environment?.baseDirectory || "~/" }],
-      cloneParentDirectory,
-    ) !== undefined;
+  const cloneHomeDirectoryQuery = useEnvironmentQuery(
+    environment
+      ? filesystemEnvironment.browse({
+          environmentId: environment.environmentId,
+          input: { partialPath: "~/" },
+        })
+      : null,
+  );
+  const isDefaultCloneFolder = isDefaultCloneParentDirectory({
+    parentDirectory: cloneParentDirectory,
+    baseDirectory: environment?.baseDirectory,
+    homeDirectory: cloneHomeDirectoryQuery.data?.parentPath,
+  });
 
+  /** Save the server's starting folder without changing the destination shown on this device. */
   const saveCloneParentDirectory = async () => {
-    if (!environment || cloneParentDirectory === null || isSavingCloneFolder || isSubmitting)
+    if (
+      !environment ||
+      cloneParentDirectory === null ||
+      isDefaultCloneFolder ||
+      cloneHomeDirectoryQuery.isPending ||
+      isSavingCloneFolder ||
+      isSubmitting
+    )
       return;
     setError(null);
     setIsSavingCloneFolder(true);
@@ -1277,6 +1293,7 @@ export function AddProjectDestinationScreen(props: {
     }
   };
 
+  /** Validate the destination and wait for the streamed project record before opening its draft. */
   const submitPath = useCallback(async () => {
     if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
       return;
@@ -1402,7 +1419,12 @@ export function AddProjectDestinationScreen(props: {
                       : "Use this folder by default"
                 }
                 tone="secondary"
-                disabled={isDefaultCloneFolder || isBrowseNavigating || isSubmitting}
+                disabled={
+                  isDefaultCloneFolder ||
+                  cloneHomeDirectoryQuery.isPending ||
+                  isBrowseNavigating ||
+                  isSubmitting
+                }
                 loading={isSavingCloneFolder}
                 onPress={() => void saveCloneParentDirectory()}
               />

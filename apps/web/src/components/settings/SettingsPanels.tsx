@@ -2163,6 +2163,7 @@ function LegacyFeaturesSection() {
   );
 }
 
+/** Edit environment defaults or project overrides through the current settings scope. */
 export function GeneralSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
