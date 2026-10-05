@@ -9,6 +9,7 @@ import {
   BearerConnectionRegistration,
   BearerConnectionTarget,
   ConnectionBlockedError,
+  type ConnectionAttemptError,
   ConnectionTransientError,
   Connectivity,
   mapRemoteEnvironmentError,
@@ -499,6 +500,23 @@ export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
   );
 }
 
+/**
+ * A backend that rejected a bootstrap token will keep rejecting it, so the
+ * poll skips that exact signature until the desktop reports a new token or
+ * endpoint instead of re-presenting a dead credential every few seconds.
+ */
+export function isRejectedSecondaryBootstrap(
+  rejected: ReadonlyMap<string, string>,
+  backendId: string,
+  signature: string,
+): boolean {
+  return rejected.get(backendId) === signature;
+}
+
+export function isRejectedBootstrapCredentialError(error: ConnectionAttemptError): boolean {
+  return error._tag === "ConnectionBlockedError" && error.reason === "authentication";
+}
+
 export function secondaryRegistrationsToRetainAfterTopologyRead(
   previous: ReadonlyMap<string, CachedPlatformRegistration>,
   topologyRead: DesktopSecondaryBootstrapsRead,
@@ -523,6 +541,7 @@ const layerPlatformConnectionSource = Layer.effect(
       });
     }
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
+    const rejectedRef = yield* Ref.make(new Map<string, string>());
 
     // Resolve the full set of platform-managed environments the host currently
     // reports: the primary (same-origin cookie auth) plus any desktop-local
@@ -588,6 +607,8 @@ const layerPlatformConnectionSource = Layer.effect(
           cause: topologyRead.cause,
         });
       } else {
+        const rejected = yield* Ref.get(rejectedRef);
+        const nextRejected = new Map<string, string>();
         for (const bootstrap of topologyRead.bootstraps) {
           const signature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}|${bootstrap.bootstrapToken ?? ""}`;
           const cached = previous.get(bootstrap.id);
@@ -599,12 +620,21 @@ const layerPlatformConnectionSource = Layer.effect(
             registrations.push(cached.registration);
             continue;
           }
+          if (isRejectedSecondaryBootstrap(rejected, bootstrap.id, signature)) {
+            nextRejected.set(bootstrap.id, signature);
+            continue;
+          }
           const built = yield* loadSecondaryConnectionRegistration(bootstrap).pipe(
             Effect.tapError((error) =>
               Effect.logWarning("Could not connect a desktop-local backend.", {
                 id: bootstrap.id,
                 error,
               }),
+            ),
+            Effect.tapError((error) =>
+              isRejectedBootstrapCredentialError(error)
+                ? Effect.sync(() => nextRejected.set(bootstrap.id, signature))
+                : Effect.void,
             ),
             Effect.option,
           );
@@ -620,6 +650,7 @@ const layerPlatformConnectionSource = Layer.effect(
             registrations.push(cached.registration);
           }
         }
+        yield* Ref.set(rejectedRef, nextRejected);
       }
 
       yield* Ref.set(cacheRef, next);

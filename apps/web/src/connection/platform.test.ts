@@ -7,10 +7,16 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+} from "@t3tools/client-runtime/connection";
 
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  isRejectedBootstrapCredentialError,
+  isRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
@@ -199,6 +205,35 @@ describe("desktop-local bearer cache", () => {
         10_000,
       ),
     ).toEqual(new Map());
+  });
+});
+
+describe("rejected desktop-local bootstrap tokens", () => {
+  it("skips only the exact rejected signature until the token or endpoint changes", () => {
+    const rejected = new Map([["wsl:ubuntu", "http://a|ws://a|old-token"]]);
+
+    expect(isRejectedSecondaryBootstrap(rejected, "wsl:ubuntu", "http://a|ws://a|old-token")).toBe(
+      true,
+    );
+    expect(isRejectedSecondaryBootstrap(rejected, "wsl:ubuntu", "http://a|ws://a|new-token")).toBe(
+      false,
+    );
+    expect(isRejectedSecondaryBootstrap(rejected, "wsl:debian", "http://a|ws://a|old-token")).toBe(
+      false,
+    );
+  });
+
+  it("treats only authentication rejections as a dead credential", () => {
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionBlockedError({ reason: "authentication", detail: "invalid" }),
+      ),
+    ).toBe(true);
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionTransientError({ reason: "endpoint-unavailable", detail: "booting" }),
+      ),
+    ).toBe(false);
   });
 });
 
