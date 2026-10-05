@@ -1,5 +1,6 @@
 import {
-  AuthOrchestrationOperateScope,
+  AuthEnvironmentMaintainScope,
+  sessionGrantsScope,
   type AuthSessionState,
   type ExecutionEnvironmentCapabilities,
   type ServerProvider,
@@ -16,8 +17,7 @@ export function canMaintainEnvironment(session: AuthSessionState | null, connect
   return (
     connected &&
     session?.authenticated === true &&
-    session.scopes?.includes(session.auth.serverUpdateScope ?? AuthOrchestrationOperateScope) ===
-      true
+    sessionGrantsScope(session, AuthEnvironmentMaintainScope)
   );
 }
 
