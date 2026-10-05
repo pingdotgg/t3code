@@ -81,6 +81,11 @@ interface Drag {
   destination: ThreadDropDestination | null;
 }
 
+export interface ThreadListDragListProps {
+  readonly scrollEnabled: boolean;
+  readonly alwaysRender?: { readonly keys: string[] };
+}
+
 interface DragPreview {
   readonly title: string;
   readonly height: number;
@@ -89,7 +94,7 @@ interface DragPreview {
 
 interface ThreadListDragController {
   canStart(): boolean;
-  arm(): void;
+  arm(itemKey: string): void;
   disarm(): void;
   start(itemKey: string, thread: EnvironmentThreadShell, grabY: number, absoluteY: number): void;
   move(absoluteY: number): void;
@@ -204,9 +209,10 @@ export function ThreadListDragSurface(props: {
     thread: EnvironmentThreadShell,
     destination: ThreadDropDestination,
   ) => Promise<boolean>;
-  readonly children: (scrollEnabled: boolean) => ReactNode;
+  /** Spread onto the list: a held row stays mounted and the list stops scrolling. */
+  readonly children: (listProps: ThreadListDragListProps) => ReactNode;
 }) {
-  const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [heldKey, setHeldKey] = useState<string | null>(null);
   const layout = useSharedValue<DragLayout | null>(null);
   const previewTop = useSharedValue(0);
   const [preview, setPreview] = useState<DragPreview | null>(null);
@@ -322,13 +328,13 @@ export function ThreadListDragSurface(props: {
         drag.current === null &&
         getPendingThreadOrder() === null &&
         !appAtomRegistry.get(threadDropBusyAtom),
-      arm: () => {
-        setScrollEnabled(false);
+      arm: (itemKey) => {
+        setHeldKey(itemKey);
         container.current?.measureInWindow((_x, y, _width, height) => {
           geometry.current = { top: y, height };
         });
       },
-      disarm: () => setScrollEnabled(true),
+      disarm: () => setHeldKey(null),
       start: (itemKey, thread, grabY, absoluteY) => {
         const list = latest.current.listRef.current;
         if (list === null || drag.current !== null) return;
@@ -420,7 +426,16 @@ export function ThreadListDragSurface(props: {
 
   const context = useMemo(() => ({ controller, layout }), [controller, layout]);
   // Preview updates re-render only the surface; an unchanged element skips the list.
-  const list = useMemo(() => props.children(scrollEnabled), [props.children, scrollEnabled]);
+  const list = useMemo(
+    () =>
+      props.children(
+        heldKey === null
+          ? { scrollEnabled: true }
+          : // Recycling the held cell would cancel its gesture mid-drag.
+            { scrollEnabled: false, alwaysRender: { keys: [heldKey] } },
+      ),
+    [props.children, heldKey],
+  );
   return (
     <ThreadListDragContext value={context}>
       <View
@@ -475,12 +490,16 @@ export function useThreadListDragTarget(input: {
   const menuOpen = useRef(false);
   const release = useRef(() => {});
 
+  const row = useRef<ViewInstance>(null);
   const press = useRef({
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
     armed: false,
     active: false,
     startX: 0,
     startY: 0,
+    // Window top of the pressed row, measured while armed. Gesture `y` is not
+    // reliable inside the list, so the grab point comes from this.
+    rowTop: Number.NaN,
     // The row this press began on; a recycled cell must not lift its new thread.
     itemKey: "",
     thread: input.thread,
@@ -514,7 +533,11 @@ export function useThreadListDragTarget(input: {
           state.timer = undefined;
           if (menuOpen.current) return;
           state.armed = true;
-          controller.arm();
+          state.rowTop = Number.NaN;
+          row.current?.measureInWindow((_x, y) => {
+            state.rowTop = y;
+          });
+          controller.arm(state.itemKey);
         }, HOLD_MS);
       })
       .onTouchesMove((event, manager) => {
@@ -544,11 +567,15 @@ export function useThreadListDragTarget(input: {
       })
       .onStart((event) => {
         state.active = true;
-        // Anchor to where the finger went down so the lift never jumps.
+        // Anchor to where the finger went down so the lift never jumps. Touch
+        // and gesture events use different absolute spaces under a native
+        // header, so the anchor stays in gesture space via the translation.
         controller?.start(
           state.itemKey,
           state.thread,
-          event.y - (event.absoluteY - state.startY),
+          Number.isFinite(state.rowTop)
+            ? state.startY - state.rowTop
+            : event.y - event.translationY,
           state.startY,
         );
         controller?.move(event.absoluteY);
@@ -592,5 +619,5 @@ export function useThreadListDragTarget(input: {
     },
     [],
   );
-  return { gesture, style, onMenuOpen };
+  return { gesture, style, onMenuOpen, ref: row };
 }

@@ -1239,7 +1239,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   return (
     <GestureDetector gesture={drag.gesture}>
-      <Reanimated.View collapsable={false} style={drag.style}>
+      <Reanimated.View ref={drag.ref} collapsable={false} style={drag.style}>
         {customSnoozeOpen && (
           <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
         )}

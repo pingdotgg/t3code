@@ -986,10 +986,10 @@ export function HomeScreen(props: HomeScreenProps) {
             edgeInsets={dragEdgeInsets}
             onMoveThread={props.onMoveThread}
           >
-            {(scrollEnabled) => (
+            {(dragListProps) => (
               <LegendList
                 ref={listRef}
-                scrollEnabled={scrollEnabled}
+                {...dragListProps}
                 onLoad={() => activateVisibleRows(threadListV2Items)}
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
