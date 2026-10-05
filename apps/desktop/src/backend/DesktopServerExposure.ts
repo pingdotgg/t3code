@@ -10,7 +10,6 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -423,19 +422,15 @@ export const make = Effect.gen(function* () {
 
   // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
   // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
-  // spawn re-triggers the "Other apps" TCC prompt. An interrupted spawn is
-  // not cached, so the next read spawns again.
-  const magicDnsNameCache = yield* Cache.make({
-    capacity: 1,
-    timeToLive: TAILSCALE_STATUS_CACHE_TTL,
-    lookup: () =>
-      readTailscaleStatus.pipe(
-        Effect.map((status) => status.magicDnsName),
-        Effect.orElseSucceed(() => null),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      ),
-  });
-  const cachedReadMagicDnsName = Cache.get(magicDnsNameCache, undefined);
+  // spawn re-triggers the "Other apps" TCC prompt.
+  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
+    readTailscaleStatus.pipe(
+      Effect.map((status) => status.magicDnsName),
+      Effect.orElseSucceed(() => null),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+    ),
+    TAILSCALE_STATUS_CACHE_TTL,
+  );
 
   const readNetworkInterfaces = networkInterfaces.read;
 

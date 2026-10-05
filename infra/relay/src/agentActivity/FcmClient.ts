@@ -1,9 +1,6 @@
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -112,14 +109,10 @@ export const make = Effect.gen(function* () {
       ),
     );
   });
-  // Google access tokens last an hour. A failed or interrupted authorization
-  // is not kept, so the next delivery authorizes again.
-  const accessTokens = yield* Cache.makeWith(() => authorize, {
-    capacity: 1,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? "50 minutes" : Duration.zero),
-  });
-  const accessToken = Cache.get(accessTokens, undefined);
-  const invalidateToken = Cache.invalidate(accessTokens, undefined);
+  const [accessToken, invalidateToken] = yield* Effect.cachedInvalidateWithTTL(
+    authorize,
+    "50 minutes",
+  );
 
   return FcmClient.of({
     send: Effect.fn("relay.fcm.send")(function* (input) {
@@ -127,7 +120,7 @@ export const make = Effect.gen(function* () {
         return yield* new FcmClientError({ operation: "send", status: null });
       if (Option.isNone(account))
         return yield* new FcmClientError({ operation: "configuration", status: null });
-      const token = yield* accessToken;
+      const token = yield* accessToken.pipe(Effect.tapError(() => invalidateToken));
       const response = yield* HttpClientRequest.post(
         `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.value.project_id)}/messages:send`,
       ).pipe(

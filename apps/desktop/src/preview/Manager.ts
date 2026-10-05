@@ -46,7 +46,6 @@ import {
   shell,
   webContents,
 } from "electron";
-import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -648,13 +647,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
-  // Read once per manager. An interrupted read is dropped rather than
-  // replayed, so the next injection reads the bundle again.
-  const playwrightInstallExpressionCache = yield* Cache.make({
-    capacity: 1,
-    lookup: () => playwrightInjectedRuntimeInstallExpression(),
-  });
-  const playwrightInstallExpression = Cache.get(playwrightInstallExpressionCache, undefined);
+  const playwrightInstallExpression = yield* Effect.cached(
+    playwrightInjectedRuntimeInstallExpression(),
+  );
 
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());

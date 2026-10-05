@@ -905,6 +905,33 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect("starts a fresh read instead of joining the resolution already running", () =>
+    Effect.gen(function* () {
+      const releaseStale = yield* Deferred.make<void>();
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Deferred.await(releaseStale).pipe(Effect.as(manualPackageTool))
+            : Effect.succeed(manualPackageTool);
+        }),
+      );
+
+      // An advisory read starts a resolution that is still running when the
+      // user clicks Update; the fresh read must not wait on or reuse it.
+      const advisory = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      const fresh = yield* Effect.forkChild(resolve({ fresh: true }), { startImmediately: true });
+      // The fresh read runs its own resolution, so it finishes while the stale
+      // one is still waiting.
+      expect(resolutions).toBe(2);
+      expect(fresh.pollUnsafe()).toBeDefined();
+      yield* Deferred.succeed(releaseStale, undefined);
+      expect(yield* Fiber.join(fresh)).toEqual(manualPackageTool);
+      yield* Fiber.join(advisory);
+    }),
+  );
+
   it.effect("resolves again after the first read is interrupted", () =>
     Effect.gen(function* () {
       const release = yield* Deferred.make<void>();

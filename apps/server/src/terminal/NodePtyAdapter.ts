@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -74,13 +73,14 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
 
   const helperPath = yield* resolveNodePtySpawnHelperPath;
   if (!helperPath) return;
-
-  if (yield* fs.exists(helperPath)) {
-    // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
-    yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
-  }
-  // Set only once the check has finished, so an interrupted check runs again.
   didEnsureSpawnHelperExecutable = true;
+
+  if (!(yield* fs.exists(helperPath))) {
+    return;
+  }
+
+  // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
+  yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
 /**
@@ -249,20 +249,15 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* () {
       }),
   }).pipe(Effect.orDie);
 
-  // Runs once per adapter. `Cache` drops an interrupted run, so a spawn that is
-  // cancelled mid-check does not fail every later spawn.
-  const spawnHelperCheck = yield* Cache.make({
-    capacity: 1,
-    lookup: () =>
-      ensureNodePtySpawnHelperExecutable().pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(HostProcessPlatform, platform),
-        Effect.provideService(HostProcessArchitecture, architecture),
-        Effect.orElseSucceed(() => undefined),
-      ),
-  });
-  const ensureNodePtySpawnHelperExecutableCached = Cache.get(spawnHelperCheck, undefined);
+  const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
+    ensureNodePtySpawnHelperExecutable().pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(HostProcessArchitecture, architecture),
+      Effect.orElseSucceed(() => undefined),
+    ),
+  );
 
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {

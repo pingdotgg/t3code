@@ -11,11 +11,11 @@
  */
 import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
-import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -259,26 +259,20 @@ const make = Effect.gen(function* () {
   // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
   // when the data dir is outside any work tree. Probed once; detection
-  // failures hide Scratch rather than failing callers. `Cache` drops an
-  // interrupted probe, so the next caller probes again.
-  const scratchProbe = yield* Cache.make({
-    capacity: 1,
-    lookup: () =>
-      gitWorkflow.isRepository(config.baseDir).pipe(
-        Effect.map((isRepository) =>
-          isRepository
-            ? Option.none<string>()
-            : Option.some(path.resolve(config.baseDir, "scratch")),
-        ),
-        // The probe can join another caller's git detection through the VCS
-        // registry's cache and inherit its interrupt. Pass that on, or Scratch
-        // would stay hidden for the process lifetime.
-        Effect.catchCause((cause) =>
-          Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
-        ),
+  // failures hide Scratch rather than failing callers. An interrupted probe
+  // invalidates the cache so the next caller probes again.
+  const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
+    gitWorkflow.isRepository(config.baseDir).pipe(
+      Effect.map((isRepository) =>
+        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
       ),
-  });
-  const scratchRoot = Cache.get(scratchProbe, undefined);
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+      ),
+    ),
+    Duration.infinity,
+  );
+  const scratchRoot = probe.pipe(Effect.onInterrupt(() => invalidate));
 
   const makeScratchFolder = (folder: string) =>
     fileSystem

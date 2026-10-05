@@ -29,7 +29,6 @@ import {
   UsageReadError,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -390,37 +389,34 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Loads the persisted scan cache once per process.
+   * Loads the persisted scan cache exactly once per process.
    *
-   * Concurrent first readers await the same load rather than each seeing a
-   * "loaded" flag set before the read finished and cold scanning against an
-   * empty cache. An interrupted load is dropped, so the next reader retries.
+   * `Effect.cached` makes concurrent first readers await the same load rather
+   * than each seeing a "loaded" flag set before the read finished and cold
+   * scanning against an empty cache.
    */
-  const scanCacheLoad = yield* Cache.make({
-    capacity: 1,
-    lookup: () =>
-      Effect.gen(function* () {
-        const readDocument = (filePath: string) =>
-          fileSystem.readFileString(filePath).pipe(
-            Effect.flatMap((raw) => decodeScanCacheFile(raw)),
-            Effect.catchCause(() => Effect.succeed(null)),
-          );
-        let document = yield* readDocument(scanCachePath);
-        if (document === null) {
-          document = yield* readDocument(legacyScanCachePath);
-          // Write the migrated cache to its own file on the next scan.
-          cacheDirty = document !== null;
-        }
-        if (document === null) return;
-        for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
-        const sources = decodeCachedSources(document);
-        if (Option.isSome(sources)) {
-          for (const [key, source] of Object.entries(sources.value.sources))
-            sourceCache.set(key, source);
-        }
-      }),
-  });
-  const ensureScanCacheLoaded = Cache.get(scanCacheLoad, undefined);
+  const ensureScanCacheLoaded = yield* Effect.cached(
+    Effect.gen(function* () {
+      const readDocument = (filePath: string) =>
+        fileSystem.readFileString(filePath).pipe(
+          Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+      let document = yield* readDocument(scanCachePath);
+      if (document === null) {
+        document = yield* readDocument(legacyScanCachePath);
+        // Write the migrated cache to its own file on the next scan.
+        cacheDirty = document !== null;
+      }
+      if (document === null) return;
+      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      const sources = decodeCachedSources(document);
+      if (Option.isSome(sources)) {
+        for (const [key, source] of Object.entries(sources.value.sources))
+          sourceCache.set(key, source);
+      }
+    }),
+  );
 
   const writeScanCache = makeScanCacheWriter();
   // Scans with different windows can finish together; two writes interleaved

@@ -20,7 +20,6 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { codexModelFamily } from "@t3tools/shared/model";
-import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -351,33 +350,29 @@ export const make = Effect.gen(function* () {
   let lastAttemptMs: number | null = null;
   const refreshSemaphore = yield* Semaphore.make(1);
 
-  // Concurrent first readers await the same disk load rather than racing a
-  // "loaded" flag, and an interrupted load is dropped so the next reader
-  // retries it. Only `refreshed` takes the fetch semaphore; `current` must
-  // never wait behind an in-flight network refresh.
-  const diskCacheLoad = yield* Cache.make({
-    capacity: 1,
-    lookup: () =>
-      Effect.gen(function* () {
-        const fromDisk = yield* fileSystem.readFileString(cachePath).pipe(
-          Effect.flatMap((raw) => decodeManifestCache(raw)),
-          Effect.catchCause(() => Effect.succeed(null)),
-        );
-        if (fromDisk === null) return;
-        // The disk copy is the last-seen remote manifest, so it outranks the
-        // bundle even when stale, unless the bundle's own edit date is newer
-        // than the cached manifest's. Then the release carries data the cache
-        // has not seen and the cache is dropped so the next refresh replaces
-        // it. Comparing edit dates, not fetch time, keeps this independent of
-        // when the cache was written relative to the release.
-        if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
-          return;
-        }
-        manifest = fromDisk.manifest;
-        fetchedAtMs = fromDisk.fetchedAtMs;
-      }),
-  });
-  const ensureDiskCacheLoaded = Cache.get(diskCacheLoad, undefined);
+  // `Effect.cached` makes concurrent first readers await the same disk load
+  // rather than racing a "loaded" flag. Only `refreshed` takes the fetch
+  // semaphore; `current` must never wait behind an in-flight network refresh.
+  const ensureDiskCacheLoaded = yield* Effect.cached(
+    Effect.gen(function* () {
+      const fromDisk = yield* fileSystem.readFileString(cachePath).pipe(
+        Effect.flatMap((raw) => decodeManifestCache(raw)),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (fromDisk === null) return;
+      // The disk copy is the last-seen remote manifest, so it outranks the
+      // bundle even when stale, unless the bundle's own edit date is newer
+      // than the cached manifest's. Then the release carries data the cache
+      // has not seen and the cache is dropped so the next refresh replaces
+      // it. Comparing edit dates, not fetch time, keeps this independent of
+      // when the cache was written relative to the release.
+      if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
+        return;
+      }
+      manifest = fromDisk.manifest;
+      fetchedAtMs = fromDisk.fetchedAtMs;
+    }),
+  );
 
   const refresh = Effect.fn("ModelManifest.refresh")(function* (force = false) {
     yield* ensureDiskCacheLoaded;
