@@ -3,10 +3,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetAccessError,
+  AssetPreviewTypeValidationError,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -20,6 +26,7 @@ import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -44,8 +51,70 @@ vi.mock("node:os", async (importOriginal) => {
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
+// A PNG header is enough for the dimension read: signature, then IHDR width and height.
+const screenshotPng = new Uint8Array(24);
+screenshotPng.set([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+]);
+new DataView(screenshotPng.buffer).setUint32(16, 390);
+new DataView(screenshotPng.buffer).setUint32(20, 844);
+const screenshotItem = {
+  id: TurnItemId.make("tool-screenshot"),
+  type: "dynamic_tool" as const,
+  threadId: ThreadId.make("thread-1"),
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "completed" as const,
+  title: null,
+  toolName: "mcp__t3-code__device_screenshot",
+  input: { deviceId: "phone" },
+  output: {
+    content: [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: Buffer.from(screenshotPng).toString("base64"),
+        },
+      },
+    ],
+  },
+  startedAt: DateTime.makeUnsafe("2026-10-05T00:00:00.000Z"),
+  completedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
+};
+
+const oversizedScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-oversized"),
+  output: {
+    content: [
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "A".repeat(14 * 1024 * 1024) },
+      },
+    ],
+  },
+};
+
 const testLayer = Layer.mergeAll(
   NodeHttpPlatform.layer,
+  Layer.mock(Orchestrator.OrchestratorV2)({
+    getTurnItem: ({ itemId }) =>
+      Effect.succeed(
+        itemId === screenshotItem.id
+          ? screenshotItem
+          : itemId === oversizedScreenshotItem.id
+            ? oversizedScreenshotItem
+            : null,
+      ),
+  }),
   configLayer,
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
@@ -102,6 +171,35 @@ describe("AssetAccess", () => {
       Effect.scoped,
     );
   });
+
+  it.effect("serves an image a tool returned inline from the stored item", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "tool-output-image" as const,
+        threadId: screenshotItem.threadId,
+        itemId: screenshotItem.id,
+        index: 0,
+      };
+      const result = yield* issueAssetUrl({ resource });
+      expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
+        kind: "bytes",
+        mimeType: "image/png",
+        bytes: Buffer.from(screenshotPng),
+      });
+      const missing = yield* issueAssetUrl({ resource: { ...resource, index: 1 } }).pipe(
+        Effect.flip,
+      );
+      expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      // Larger than a provider turn accepts, so it is never decoded.
+      const oversized = yield* issueAssetUrl({
+        resource: { ...resource, itemId: oversizedScreenshotItem.id },
+      }).pipe(Effect.flip);
+      expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
 
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {

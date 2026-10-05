@@ -18,6 +18,7 @@ const watch = (overrides: Partial<ThreadPullRequestWatch> = {}): ThreadPullReque
   headSha: null,
   failedChecks: [],
   passed: false,
+  passedChecks: [],
   remarksThrough: STARTED,
   remarkIds: [],
   conflicting: false,
@@ -97,6 +98,61 @@ describe("evaluatePullRequestWatch", () => {
     // Where nothing is marked required, every check has to pass.
     const plain = detail({ checks: [check("test", "success"), check("bot", "pending")] });
     assert.deepEqual(evaluatePullRequestWatch(watch(), plain, noRemarks).changes, []);
+  });
+
+  it("reports passed again when a required check shows up already passed", () => {
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const tests = detail({
+      checks: [required("Tests", "success"), check("Smoke Tests", "pending")],
+    });
+    const first = evaluatePullRequestWatch(watch(), tests, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+
+    // The gate job was created and finished between two passes, so it was never seen pending.
+    const gated = detail({
+      checks: [
+        required("Tests", "success"),
+        check("Smoke Tests", "success"),
+        required("Smoke Tests Gate", "success"),
+      ],
+    });
+    const second = evaluatePullRequestWatch(first.next, gated, noRemarks);
+    assert.deepEqual(second.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(second.next, gated, noRemarks).changes, []);
+
+    // Seen pending first, the gate is reported once it passes, as before.
+    const pending = detail({
+      checks: [required("Tests", "success"), required("Smoke Tests Gate", "pending")],
+    });
+    const waiting = evaluatePullRequestWatch(first.next, pending, noRemarks);
+    assert.deepEqual(waiting.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(waiting.next, gated, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: true },
+    ]);
+  });
+
+  it("reports passed again when a check shows up already passed where none is required", () => {
+    const first = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("test", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: false }]);
+    const both = detail({ checks: [check("test", "success"), check("lint", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, both, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+  });
+
+  it("does not wake a watch saved before passed checks were recorded", () => {
+    const green = detail({ checks: [{ ...check("test", "success"), required: true }] });
+    const told = watch({ headSha: "aaaaaaaaaa", passed: true });
+    const saved = evaluatePullRequestWatch(told, green, noRemarks);
+    assert.deepEqual(saved.changes, []);
+    assert.deepEqual(saved.next.passedChecks, ["test"]);
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {

@@ -53,6 +53,7 @@ export function evaluatePullRequestWatch(
   // An empty list keeps the last state: a host can answer with one when its check read fails.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
+  let passedChecks = headMoved ? [] : watch.passedChecks;
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
@@ -63,10 +64,16 @@ export function evaluatePullRequestWatch(
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
-    if (passedNow && !passed) {
+    const gateNames = gate.map((check) => check.name);
+    // A watch saved before passedChecks existed takes the current names, so it does not wake.
+    const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
+    // A required job created and finished between two passes is never seen pending.
+    const gateGrew = gateNames.some((name) => !told.includes(name));
+    if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
     }
     passed = passedNow;
+    passedChecks = passedNow ? gateNames : [];
   }
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
@@ -107,6 +114,7 @@ export function evaluatePullRequestWatch(
       headSha,
       failedChecks,
       passed,
+      passedChecks,
       remarksThrough,
       remarkIds,
       conflicting,
@@ -189,7 +197,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. Call unwatch_pull_request when you no longer need updates.",
+      : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",
