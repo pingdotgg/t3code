@@ -228,6 +228,7 @@ const agentSessionImporterProvided = agentSessionImporterLayer.pipe(
       eventSinkProvided,
       idAllocatorLayer,
       providerSessionRuntimeLayer,
+      projectionStoreLayer,
     ),
   ),
 );

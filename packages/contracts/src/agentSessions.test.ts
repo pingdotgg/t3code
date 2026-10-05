@@ -15,6 +15,13 @@ const candidate = {
 } as const;
 
 describe("AgentSessionScanResult", () => {
+  it("decodes Pi as a source alongside existing agents", () => {
+    const result = decodeScanResult({
+      candidates: [{ ...candidate, sources: ["pi", "codex"] }],
+      scannedAt: "2026-10-05T12:00:00.000Z",
+    });
+    expect(result.candidates[0]?.sources).toEqual(["pi", "codex"]);
+  });
   it("decodes candidates from servers that predate the git scan", () => {
     const result = decodeScanResult({
       candidates: [candidate],

@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -172,6 +173,7 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -266,11 +268,22 @@ const make = Effect.gen(function* () {
           }
 
           const driver = ProviderDriverKind.make(thread.source);
-          const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
+          const model =
+            thread.model ??
+            (thread.source === "pi"
+              ? "default"
+              : (DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL));
+          const nativeThreadId = thread.nativeThreadId ?? thread.providerSessionId;
           const providerThreadId = idAllocator.derive.providerThread({
             driver,
-            nativeThreadId: thread.providerSessionId,
+            nativeThreadId,
           });
+          if (thread.source === "pi") {
+            const owner = yield* projections.getProviderThreadOwner({ threadId, providerThreadId });
+            // Pi writes T3's own sessions into the same home. Importing one must
+            // never rebind its provider thread to a second app conversation.
+            if (owner !== null && owner !== threadId) return true;
+          }
           const createdAt = dateTime(thread.createdAt);
           const updatedAt = dateTime(thread.updatedAt);
           const appThread: OrchestrationV2AppThread = {
@@ -318,10 +331,13 @@ const make = Effect.gen(function* () {
             ownerNodeId: null,
             nativeThreadRef: {
               driver,
-              nativeId: thread.providerSessionId,
+              nativeId: nativeThreadId,
               strength: "strong",
             },
-            nativeConversationHeadRef: null,
+            nativeConversationHeadRef:
+              thread.nativeConversationHeadId === undefined
+                ? null
+                : { driver, nativeId: thread.nativeConversationHeadId, strength: "strong" },
             status: "idle",
             firstRunOrdinal: null,
             lastRunOrdinal: null,
@@ -342,9 +358,11 @@ const make = Effect.gen(function* () {
               status: "stopped",
               lastSeenAt: thread.updatedAt,
               resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                thread.source === "pi"
+                  ? { sessionFile: nativeThreadId }
+                  : thread.source === "codex"
+                    ? { threadId: thread.providerSessionId }
+                    : { threadId, resume: thread.providerSessionId },
               runtimePayload: { cwd: project.workspaceRoot },
             },
             { onConflict: "ignore" },
