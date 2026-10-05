@@ -16,6 +16,7 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -305,10 +306,15 @@ export const make = Effect.gen(function* () {
               })),
               Effect.catchCauseIf(
                 (cause) => !Cause.hasInterruptsOnly(cause),
-                () =>
-                  Effect.logWarning("pull request stack lookup failed", {
-                    key,
-                  }).pipe(Effect.as(null)),
+                (cause) =>
+                  rateLimitRetryAt(cause) !== undefined
+                    ? // The sweep records the pause and holds the host's other reads until it ends.
+                      Effect.sync(() => retryStacks.add(key)).pipe(
+                        Effect.andThen(Effect.failCause(cause)),
+                      )
+                    : Effect.logWarning("pull request stack lookup failed", {
+                        key,
+                      }).pipe(Effect.as(null)),
               ),
             );
       if (needsStack) {
@@ -340,32 +346,39 @@ export const make = Effect.gen(function* () {
 
     // Failed host reads by reason: how many, and the first key that failed that way.
     const skips = new Map<string, { count: number; readonly key: string }>();
+    const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
+      syncGroup(key, entries).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+          const retryAt = rateLimitRetryAt(cause);
+          if (retryAt !== undefined) {
+            pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
+          }
+          const reason = skipReason(cause);
+          const skip = skips.get(reason);
+          if (skip === undefined) skips.set(reason, { count: 1, key });
+          else skip.count += 1;
+          return Effect.void;
+        }),
+      );
     yield* Effect.forEach(
       groups,
-      ([key, entries]) =>
-        Effect.suspend(() => {
-          if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-            return Effect.void;
-          }
-          const first = entries[0]!;
-          const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-          // Checked as each read starts, so a pause found earlier in this sweep holds the rest.
-          if ((pausedUntil.get(pauseKey) ?? 0) > nowMs) return Effect.void;
-          return syncGroup(key, entries).pipe(
-            Effect.catchCause((cause) => {
-              if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
-              const retryAt = rateLimitRetryAt(cause);
-              if (retryAt !== undefined) {
-                pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
-              }
-              const reason = skipReason(cause);
-              const skip = skips.get(reason);
-              if (skip === undefined) skips.set(reason, { count: 1, key });
-              else skip.count += 1;
-              return Effect.void;
-            }),
-          );
-        }),
+      ([key, entries]) => {
+        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+          return Effect.void;
+        }
+        const first = entries[0]!;
+        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
+        // Checked against the clock as each read starts, so a pause found earlier in this sweep
+        // holds the rest, and one that ends during the sweep lets the rest through.
+        return Clock.currentTimeMillis.pipe(
+          Effect.flatMap((startedAtMs) =>
+            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
+              ? Effect.void
+              : readGroup(key, entries, pauseKey),
+          ),
+        );
+      },
       // As wide as one batched summary read, so the sweep's reads on a host arrive together and
       // GitHub answers them in one request rather than one `gh pr view` apiece.
       { concurrency: 25, discard: true },

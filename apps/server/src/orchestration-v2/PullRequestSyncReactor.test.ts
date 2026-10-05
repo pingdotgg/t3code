@@ -994,6 +994,51 @@ describe("PullRequestSyncReactor", () => {
     );
   });
 
+  it.effect("pauses the host when only its stack read is rate limited", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const retryAt = Date.parse(NOW) + 3 * 60_000;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(7, null)] })]),
+          summary: (input) => Effect.succeed(makeSummary(input, { state: "open" })),
+          stack: () =>
+            Effect.gen(function* () {
+              if ((yield* Clock.currentTimeMillis) >= retryAt) return null;
+              return yield* new PullRequestOperationError({
+                operation: "stack",
+                detail: "paused",
+                cause: new PullRequestProviderError({
+                  provider: "github",
+                  operation: "getChangeRequestStack",
+                  reason: "rate-limited",
+                  detail: "paused",
+                  retryAt,
+                }),
+              });
+            }),
+        });
+        const reads = Effect.all([
+          Ref.get(fixture.summaryCalls).pipe(Effect.map((calls) => calls.length)),
+          Ref.get(fixture.stackCalls).pipe(Effect.map((calls) => calls.length)),
+        ]);
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          assert.deepStrictEqual(yield* reads, [1, 1]);
+          yield* sweepAgain(fixture, reactor);
+          yield* sweepAgain(fixture, reactor);
+          assert.deepStrictEqual(yield* reads, [1, 1]);
+
+          // At retryAt the pull request is read again, stack included.
+          yield* sweepAgain(fixture, reactor);
+          assert.deepStrictEqual(yield* reads, [2, 2]);
+          assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("reads open links fresh only when a run that ran a merge command ends", () =>
     Effect.scoped(
       Effect.gen(function* () {
