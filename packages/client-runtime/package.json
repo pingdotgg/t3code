@@ -55,10 +55,6 @@
       "types": "./src/markdownLinks.ts",
       "default": "./src/markdownLinks.ts"
     },
-    "./repair-markdown-file-links": {
-      "types": "./src/repairMarkdownFileLinks.ts",
-      "default": "./src/repairMarkdownFileLinks.ts"
-    },
     "./media-reference": {
       "types": "./src/mediaReference.ts",
       "default": "./src/mediaReference.ts"
