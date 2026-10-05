@@ -66,29 +66,28 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const save = (name: string, value: boolean) =>
+    secrets
+      .set(name, encode(value))
+      .pipe(Effect.catch(internalError("Could not persist environment cloud preferences.")));
+
   const update: CloudPreferences["Service"]["update"] = Effect.fn("CloudPreferences.update")(
     function* (input) {
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
         const previous = yield* readHoldWebhooksWhileOffline(secrets);
         yield* pushHoldWebhooksWhileOffline(next);
-        yield* secrets
-          .set(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode(next))
-          .pipe(
-            Effect.tapError(() =>
-              previous === next
-                ? Effect.void
-                : pushHoldWebhooksWhileOffline(previous).pipe(Effect.ignore),
-            ),
-          );
+        yield* save(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, next).pipe(
+          Effect.tapError(() =>
+            previous === next
+              ? Effect.void
+              : pushHoldWebhooksWhileOffline(previous).pipe(Effect.ignore),
+          ),
+        );
       }
-      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode(input.publishAgentActivity));
+      yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       yield* awarenessRelay.requestCatchUp();
     },
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      internalError("Could not persist environment cloud preferences."),
-    ),
   );
 
   return CloudPreferences.of({ update });
