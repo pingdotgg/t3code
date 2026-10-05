@@ -7753,7 +7753,7 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
-        if (!activeRightPanelSurface) return;
+        if (isCloudThread || !activeRightPanelSurface) return;
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
