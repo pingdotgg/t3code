@@ -253,6 +253,7 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
     expect(unary._tag).toBe("EnvironmentAuthorizationError");
     const streamed = yield* runStreamGuarded(WS_METHODS.gitRunStackedAction, {
+      actionId: "test-action",
       cwd: "/repo",
       action: "commit",
     }).pipe(Stream.runDrain, Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
