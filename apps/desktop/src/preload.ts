@@ -6,6 +6,11 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
+import {
+  DesktopSshEnvironmentBootstrapSchema,
+  DesktopSshPortForwardSchema,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
@@ -59,7 +64,7 @@ if (clientPlatform === "darwin") {
   window.addEventListener("resize", syncWindowControlInset);
 }
 
-function unwrapEnsureSshEnvironmentResult(result: unknown) {
+function unwrapSshPasswordPromptResult<T>(result: unknown, decode: (result: unknown) => T) {
   if (
     typeof result === "object" &&
     result !== null &&
@@ -72,7 +77,7 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
         : "SSH authentication cancelled.";
     throw new Error(message);
   }
-  return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
+  return decode(result);
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -142,14 +147,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
   resolveSshHost: (alias) => ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_HOST_CHANNEL, alias),
   ensureSshEnvironment: async (target, options) =>
-    unwrapEnsureSshEnvironmentResult(
+    unwrapSshPasswordPromptResult<Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>>(
       await ipcRenderer.invoke(IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL, {
         target,
         ...(options === undefined ? {} : { options }),
       }),
+      Schema.decodeUnknownSync(DesktopSshEnvironmentBootstrapSchema),
     ),
   disconnectSshEnvironment: (target) =>
     ipcRenderer.invoke(IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL, target),
+  acquireSshPortForward: async (target, remotePort) =>
+    unwrapSshPasswordPromptResult<Awaited<ReturnType<DesktopBridge["acquireSshPortForward"]>>>(
+      await ipcRenderer.invoke(IpcChannels.ACQUIRE_SSH_PORT_FORWARD_CHANNEL, {
+        target,
+        remotePort,
+      }),
+      Schema.decodeUnknownSync(DesktopSshPortForwardSchema),
+    ),
+  releaseSshPortForward: (leaseId) =>
+    ipcRenderer.invoke(IpcChannels.RELEASE_SSH_PORT_FORWARD_CHANNEL, { leaseId }),
   fetchSshEnvironmentDescriptor: (httpBaseUrl) =>
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL, { httpBaseUrl }),
   bootstrapSshBearerSession: (httpBaseUrl, credential) =>

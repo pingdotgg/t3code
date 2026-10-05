@@ -20,6 +20,7 @@ import {
   setTailscaleServeEnabled,
 } from "./methods/serverExposure.ts";
 import {
+  acquireSshPortForward,
   bootstrapSshBearerSession,
   disconnectSshEnvironment,
   discoverSshHosts,
@@ -27,6 +28,7 @@ import {
   fetchSshEnvironmentDescriptor,
   fetchSshSessionState,
   issueSshWebSocketTicket,
+  releaseSshPortForward,
   resolveSshHost,
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
@@ -116,6 +118,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(resolveSshHost);
   yield* ipc.handle(ensureSshEnvironment);
   yield* ipc.handle(disconnectSshEnvironment);
+  yield* ipc.handle(acquireSshPortForward);
+  yield* ipc.handle(releaseSshPortForward);
   yield* ipc.handle(fetchSshEnvironmentDescriptor);
   yield* ipc.handle(bootstrapSshBearerSession);
   yield* ipc.handle(fetchSshSessionState);

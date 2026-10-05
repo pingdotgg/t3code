@@ -448,6 +448,26 @@ export const DesktopSshEnvironmentEnsureResultSchema = Schema.Union([
   DesktopSshPasswordPromptCancelledResultSchema,
 ]);
 
+export const DesktopSshPortForwardSchema = Schema.Struct({
+  leaseId: Schema.String,
+  localPort: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+});
+export type DesktopSshPortForward = typeof DesktopSshPortForwardSchema.Type;
+
+export const DesktopSshPortForwardAcquireInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  remotePort: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+});
+
+export const DesktopSshPortForwardAcquireResultSchema = Schema.Union([
+  DesktopSshPortForwardSchema,
+  DesktopSshPasswordPromptCancelledResultSchema,
+]);
+
+export const DesktopSshPortForwardReleaseInputSchema = Schema.Struct({
+  leaseId: Schema.String,
+});
+
 export const DesktopSshHttpBaseUrlInputSchema = Schema.Struct({
   httpBaseUrl: Schema.String,
 });
@@ -1175,6 +1195,11 @@ export interface DesktopBridge {
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
+  acquireSshPortForward: (
+    target: DesktopSshEnvironmentTarget,
+    remotePort: number,
+  ) => Promise<DesktopSshPortForward>;
+  releaseSshPortForward: (leaseId: string) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
     httpBaseUrl: string,
