@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compactDynamicToolOutput,
+  MAX_TOOL_OUTPUT_IMAGES,
   omitToolOutputImageData,
   toolOutputImages,
   toolOutputIndicatesFailure,
@@ -204,6 +205,11 @@ describe("toolOutputImages", () => {
         { type: "image", source: { type: "url", url: "https://example.com/a.png" } },
       ]),
     ).toEqual([]);
+  });
+
+  it("stops after the first few images", () => {
+    const images = toolOutputImages(Array.from({ length: 10_000 }, () => mcpImage));
+    expect(images).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
   });
 
   it("drops the bytes but keeps each image's position", () => {

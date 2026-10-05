@@ -200,9 +200,22 @@ function outputBlocks(value: unknown): ReadonlyArray<unknown> {
   return [value];
 }
 
-/** The images in a tool output, in order. The order is the `tool-output-image` asset index. */
+/** A tool returns one screenshot or a few frames; more would only flood the timeline. */
+export const MAX_TOOL_OUTPUT_IMAGES = 8;
+
+/**
+ * The first images in a tool output, in order. The order is the
+ * `tool-output-image` asset index, so servers and clients agree on it.
+ */
 export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage> {
-  return outputBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
+  const images: ToolOutputImage[] = [];
+  for (const block of outputBlocks(value)) {
+    const image = readToolOutputImage(block);
+    if (image === null) continue;
+    images.push(image);
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return images;
 }
 
 /**

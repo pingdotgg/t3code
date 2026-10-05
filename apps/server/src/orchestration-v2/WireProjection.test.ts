@@ -23,6 +23,7 @@ import {
   projectDomainEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
+import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -307,6 +308,21 @@ describe("orchestration V2 wire projection", () => {
       { type: "image", mimeType: "image/png" },
     ]);
     expect(JSON.stringify(output).length).toBeLessThan(270_000);
+  });
+
+  it("bounds a tool output made of many images", () => {
+    const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      output: Array.from({ length: 10_000 }, () => image),
+    };
+    const projected = projectTurnItemForDetail(item);
+    const output = projected.type === "dynamic_tool" ? projected.output : null;
+    // The truncated text block plus a fixed number of markers, however many images there are.
+    expect(Array.isArray(output) ? output.length : null).toBe(1 + MAX_TOOL_OUTPUT_IMAGES);
+    expect(Array.isArray(output) ? String(output[0]?.text).length : null).toBeLessThan(263_000);
+    expect(toolOutputImages(output)).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
   });
 
   it("keeps failure evidence without retaining command output", () => {
