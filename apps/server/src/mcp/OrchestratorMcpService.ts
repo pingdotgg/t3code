@@ -996,6 +996,30 @@ const make = Effect.gen(function* () {
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
+  /**
+   * Provider snapshots only re-probe while a client is in the foreground, so an
+   * unattended agent can see a provider as unavailable after it was fixed.
+   * Re-probe the requested instance once before refusing it.
+   */
+  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+    const instanceId =
+      input.target?.providerInstanceId ??
+      (input.target?.driverKind === undefined
+        ? input.parent.thread.modelSelection.instanceId
+        : undefined);
+    const resolved = resolveTarget(input);
+    if (instanceId === undefined) return resolved;
+    return resolved.pipe(
+      Effect.catchIf(
+        (error) => error.code === "provider_unavailable",
+        () =>
+          providerRegistry
+            .refreshInstance(instanceId)
+            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+      ),
+    );
+  };
+
   const resolveTarget = (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1519,7 +1543,7 @@ const make = Effect.gen(function* () {
           );
         }
         const providers = yield* loadProviders;
-        const target = yield* resolveTarget({
+        const target = yield* resolveTargetRechecking({
           parent,
           target: input.target,
           providers,
@@ -1751,7 +1775,7 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTarget({
+              const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
                 providers,
