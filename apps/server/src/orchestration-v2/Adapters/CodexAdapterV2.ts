@@ -489,9 +489,10 @@ export function projectCodexDynamicToolItem(
     item.type === "mcpToolCall"
       ? `${item.server}.${item.tool}`
       : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
-  const title = dynamicToolTitle(toolName, item.arguments);
+  const presentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
+  const title = dynamicToolTitle(toolName, item.arguments) ?? presentation.title;
   const projection: CodexDynamicToolProjection = {
-    ...(item.type === "mcpToolCall" ? mcpToolPresentation(item) : {}),
+    ...presentation,
     toolName,
     ...(title ? { title } : {}),
     input: item.arguments,
@@ -2053,6 +2054,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 Effect.catchTags({
                   CodexAppServerProcessExitedError: () => Effect.succeed({ terminated: true }),
                   CodexAppServerInputStreamEndedError: () => Effect.succeed({ terminated: true }),
+                  // The thread is unloaded, as Codex does a minute after a
+                  // settle or archive unsubscribes it. Unloading kills the
+                  // thread's terminals, so nothing is left to stop.
+                  CodexAppServerRequestError: (error) =>
+                    error.code === -32600 && error.errorMessage.startsWith("thread not found:")
+                      ? Effect.succeed({ terminated: true })
+                      : Effect.fail(error),
                 }),
               );
             const result = yield* decodeCodexBackgroundTerminalTerminateResponse(response);

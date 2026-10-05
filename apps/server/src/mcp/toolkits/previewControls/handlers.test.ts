@@ -35,9 +35,13 @@ it.effect.each([
       const effective = resolveProjectSettings(settings, projectId).settings;
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId: EnvironmentId.make("preview-controls-environment"),
-        threadId,
-        providerSessionId: "preview-controls-provider-session",
-        providerInstanceId: ProviderInstanceId.make("codex"),
+        requestNamespace: "preview-controls-provider-session",
+        thread: {
+          threadId,
+          providerSessionId: "preview-controls-provider-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
         capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
         issuedAt: 0,
       };

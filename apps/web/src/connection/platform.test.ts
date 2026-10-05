@@ -83,6 +83,21 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
+  it.effect("does not consume the credential when adding a route to a different machine", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge(calls),
+        TARGET,
+        EnvironmentId.make("some-other-machine"),
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ reason: "configuration" });
+      expect(calls).toEqual(["ensure", "descriptor"]);
+    }),
+  );
+
   it.effect("does not consume the credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
