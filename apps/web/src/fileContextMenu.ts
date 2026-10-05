@@ -14,6 +14,7 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
+import { useEditorOpening } from "./editorPreferences";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -108,14 +109,17 @@ export function buildFileContextMenuItems(input: {
 }
 
 /**
- * Context-menu actions for files. The environment id is fixed per component
- * (a thread's environment, a file browser's environment), so capabilities
- * resolve once per hook call.
+ * Builds file actions for the component's environment. Explicit editor actions
+ * use the selected local, SSH, or WSL route; default opening and file-manager
+ * reveal retain the environment's shell capabilities.
  */
-/** Builds and dispatches the file context menu for one environment's files. */
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const { availableEditors: editorIds, openEditor } = useEditorOpening(
+    environmentId,
+    serverConfig?.availableEditors ?? [],
+  );
 
   return useMemo(() => {
     const availableEditors = serverConfig?.availableEditors ?? [];
@@ -131,13 +135,14 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
             : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
           : undefined,
       canOpenDefault: availableEditors.includes("file-manager"),
-      editorIds: availableEditors,
+      editorIds,
     };
 
-    const activate = async (
+    /** Validates the file action's capabilities, dispatches it, and reports launch failures. */
+    async function activate(
       action: FileContextMenuAction,
       target: FileContextMenuTarget,
-    ): Promise<void> => {
+    ): Promise<void> {
       const absolutePath = resolveFileContextMenuAbsolutePath(target);
       if (absolutePath === null || environmentId === null) return;
 
@@ -148,10 +153,13 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : (action.slice("editor:".length) as EditorId);
       if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
-      const result = await openInEditor({
-        environmentId,
-        input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
-      });
+      const result =
+        action !== "open" && !reveal
+          ? await openEditor(absolutePath, editor, "file")
+          : await openInEditor({
+              environmentId,
+              input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
+            });
       if (result._tag !== "Failure") return;
       toastManager.add({
         type: "error",
@@ -163,7 +171,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
               : `Could not open in ${EDITOR_LABEL_BY_ID.get(editor) ?? editor}`,
         description: absolutePath,
       });
-    };
+    }
 
     const show = async (
       target: FileContextMenuTarget,
@@ -190,7 +198,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       activate,
       show,
     };
-  }, [environmentId, openInEditor, serverConfig]);
+  }, [environmentId, openInEditor, serverConfig, editorIds, openEditor]);
 }
 
 /** Convenience callback for onContextMenu handlers. */

@@ -172,6 +172,23 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Open an environment in local WSL
+
+On Windows, if an environment runs in WSL on the same device as your browser or
+desktop app, open **Settings → Connections → Editor opening**. Choose **Local
+WSL** for that environment, enter its installed distribution name (for example,
+`Ubuntu`), and save. Opening files or the workspace in VS Code then uses that
+local distribution without requiring an SSH server. VS Code or VS Code Insiders
+must have the WSL extension installed.
+
+VS Code's URL handler cannot represent filenames containing numeric colon
+segments such as `report:1`. Open those files from inside VS Code instead.
+
+This preference is saved only in the current browser or desktop profile. Use it
+only for an environment running on this device; the same distribution name on
+another computer does not refer to the original environment. Choose
+**Automatic** to restore normal editor opening.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create

@@ -332,6 +332,10 @@ interface TerminalLaunchLocation {
   readonly runtimeEnv?: Record<string, string>;
 }
 
+/**
+ * Attaches a terminal canvas to its environment session and manages its lifetime.
+ * Terminal path links use the preferred editor with automatic WSL file/folder detection.
+ */
 export function TerminalViewport({
   advancedTypography,
   threadRef,
@@ -360,7 +364,11 @@ export function TerminalViewport({
     environmentId,
     serverConfig?.availableEditors ?? [],
   );
-  const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  /** Resolves terminal links as files or folders using the current preferred editor route. */
+  function openTerminalTarget(target: string) {
+    return openInPreferredEditor(target, "auto");
+  }
+  const openTerminalPath = useEffectEvent(openTerminalTarget);
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });

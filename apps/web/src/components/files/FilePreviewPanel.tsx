@@ -906,6 +906,10 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+/**
+ * Shows a workspace file, directory, or attachment with the applicable actions.
+ * Editor opening preserves the resolved file or directory kind for the selected route.
+ */
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -1125,6 +1129,8 @@ export default function FilePreviewPanel({
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={absolutePath}
+              targetKind={file.isNotFile ? "directory" : "file"}
+              enableShortcut={false}
               compact
             />
           ) : null}

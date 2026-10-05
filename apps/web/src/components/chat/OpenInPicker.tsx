@@ -1,20 +1,11 @@
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import {
-  buildRemoteOpenUrl,
-  EditorId,
-  type EnvironmentId,
-  type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
-import { usePreferredEditor } from "../../editorPreferences";
+import { useEditorOpening } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
-import {
-  openRemoteEditorUrl,
-  useRemoteCapableEditors,
-  useRemoteOpenHint,
-  useRemoteOpenState,
-} from "../../remoteOpen";
+import { useRemoteOpenHint } from "../../remoteOpen";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
@@ -58,8 +49,7 @@ import {
   WebStormIcon,
 } from "../JetBrainsIcons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { shellEnvironment } from "~/state/shell";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { toastManager } from "../ui/toast";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -199,11 +189,16 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
+/**
+ * Offers editors supported by the selected route and opens the supplied target.
+ * Workspace callers use the directory default; file previews pass their target kind.
+ */
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
   availableEditors,
   openInCwd,
+  targetKind = "directory",
   presentation = "toolbar",
   compact = false,
   enableShortcut = true,
@@ -213,6 +208,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  targetKind?: "file" | "directory";
   presentation?: "toolbar" | "menu";
   compact?: boolean;
   enableShortcut?: boolean;
@@ -221,15 +217,14 @@ export const OpenInPicker = memo(function OpenInPicker({
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
-  const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
-  const remote = useRemoteOpenState(environmentId);
-  const remoteCapableEditors = useRemoteCapableEditors();
+  const {
+    remote,
+    availableEditors: effectiveEditors,
+    preferredEditor,
+    openEditor,
+  } = useEditorOpening(environmentId, availableEditors);
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
-  // Remote mode ignores the server's PATH probe: what matters is what runs on
-  // the viewing machine, which only the desktop app can probe.
-  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
-  const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
     () => resolveOpenInOptions(navigator.platform, effectiveEditors),
     [effectiveEditors],
@@ -237,46 +232,30 @@ export const OpenInPicker = memo(function OpenInPicker({
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
+    /** Launches the selected target and dismisses the SSH setup hint only after acceptance. */
+    async function openInEditor(editorId: EditorId | null) {
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
       if (remote.mode === "remote-unavailable") return;
-      if (remote.mode === "remote-links") {
-        const url = buildRemoteOpenUrl({
-          editor,
-          host: remote.host.host,
-          absolutePath: openInCwd,
+      const result = await openEditor(openInCwd, editor, targetKind);
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to open editor",
+          description: error instanceof Error ? error.message : "Unknown error opening editor.",
         });
-        if (url === undefined) return;
-        // Only record hint-seen/preferred when the shell actually accepted
-        // the URL (an older desktop build can refuse the editor scheme).
-        void openRemoteEditorUrl(url).then((opened) => {
-          if (!opened) return;
-          markRemoteHintSeen();
-          setPreferredEditor(editor);
-        });
-        return;
+      } else if (
+        result._tag === "Success" &&
+        remote.mode === "remote-links" &&
+        remote.host.kind !== "wsl"
+      ) {
+        markRemoteHintSeen();
       }
-      const result = openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor,
-        },
-      });
-      setPreferredEditor(editor);
       return result;
     },
-    [
-      environmentId,
-      markRemoteHintSeen,
-      openInCwd,
-      openInEditorMutation,
-      preferredEditor,
-      remote,
-      setPreferredEditor,
-    ],
+    [markRemoteHintSeen, openInCwd, openEditor, preferredEditor, remote, targetKind],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -286,14 +265,16 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     if (!enableShortcut) return;
-    const handler = (e: globalThis.KeyboardEvent) => {
+    /** Consumes an unhandled favorite-editor shortcut when the picker has a usable target. */
+    function handler(e: globalThis.KeyboardEvent) {
+      if (e.defaultPrevented) return;
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
 
       e.preventDefault();
       void openInEditor(preferredEditor);
-    };
+    }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
@@ -325,7 +306,12 @@ export const OpenInPicker = memo(function OpenInPicker({
               )}
             </MenuItem>
           ))}
-          {remote.mode === "remote-links" && !remoteHintSeen && (
+          {remote.mode === "remote-links" && remote.host.kind === "wsl" && (
+            <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
+              Opens in local WSL: {remote.host.host}
+            </MenuItem>
+          )}
+          {remote.mode === "remote-links" && remote.host.kind !== "wsl" && !remoteHintSeen && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
               Opens over SSH. Needs your key on {environmentLabel}
             </MenuItem>
@@ -340,7 +326,6 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption && (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
-
             disabled={!openInCwd || remote.mode === "remote-unavailable"}
             onClick={() => openInEditor(preferredEditor)}
           >

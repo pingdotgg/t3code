@@ -4,7 +4,7 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import { buildRemoteOpenUrl, buildWslOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
@@ -25,6 +25,51 @@ const TAILSCALE_TARGETS = [
 ] as const;
 
 describe("resolveRemoteOpenState", () => {
+  it("opens a configured local WSL even without an SSH route", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "Uliverse" }),
+        sshAlias: null,
+        remoteOpenTargets: [],
+        isDesktopRenderer: false,
+        isWindowsClient: true,
+        localWslDistro: "Ubuntu",
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "wsl", host: "Ubuntu" } });
+  });
+
+  it("uses an explicit WSL choice ahead of local execution and advertised SSH", () => {
+    for (const isDesktopRenderer of [false, true]) {
+      expect(
+        resolveRemoteOpenState({
+          target: primaryTarget("http://localhost:8000"),
+          sshAlias: "sol",
+          remoteOpenTargets: TAILSCALE_TARGETS,
+          isDesktopRenderer,
+          isWindowsClient: true,
+          localWslDistro: "Ubuntu",
+        }),
+      ).toEqual({ mode: "remote-links", host: { kind: "wsl", host: "Ubuntu" } });
+    }
+  });
+
+  it("restores automatic behavior when WSL is cleared or the viewer is not Windows", () => {
+    for (const override of [
+      { isWindowsClient: true, localWslDistro: null },
+      { isWindowsClient: false, localWslDistro: "Ubuntu" },
+      { isWindowsClient: true, localWslDistro: "../Ubuntu" },
+    ]) {
+      expect(
+        resolveRemoteOpenState({
+          target: new RelayConnectionTarget({ environmentId, label: "Uliverse" }),
+          sshAlias: null,
+          remoteOpenTargets: [],
+          isDesktopRenderer: false,
+          ...override,
+        }),
+      ).toEqual({ mode: "remote-unavailable" });
+    }
+  });
   it("keeps exec behavior for a loopback primary target", () => {
     expect(
       resolveRemoteOpenState({
@@ -115,6 +160,112 @@ describe("resolveRemoteOpenState", () => {
         remoteOpenTargets: undefined,
       }),
     ).toEqual({ mode: "local-exec" });
+  });
+});
+
+describe("buildWslOpenUrl", () => {
+  it("distinguishes a file from a folder and preserves explicit line positions", () => {
+    expect(
+      buildWslOpenUrl({
+        editor: "vscode",
+        distro: "Ubuntu",
+        absolutePath: "/repo/file",
+        isFile: true,
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu/repo/file%3A1");
+    expect(
+      buildWslOpenUrl({
+        editor: "vscode",
+        distro: "Ubuntu",
+        absolutePath: "/repo/file",
+        isFile: true,
+        position: { line: 12, column: 3 },
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu/repo/file%3A12%3A3");
+    expect(
+      buildWslOpenUrl({
+        editor: "vscode",
+        distro: "Ubuntu",
+        absolutePath: "/repo/folder.with.dots",
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu/repo/folder.with.dots");
+  });
+  it("opens a POSIX file in a named distro with reserved characters encoded", () => {
+    expect(
+      buildWslOpenUrl({
+        editor: "vscode",
+        distro: "Ubuntu Dev",
+        absolutePath: "/home/ulima/my repo/a#b?c%.ts",
+        isFile: true,
+        position: { line: 12, column: 3 },
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu%20Dev/home/ulima/my%20repo/a%23b%3Fc%25.ts%3A12%3A3");
+  });
+
+  it.each(["/repo/report:1", "/repo/report:12:3", "/repo/report:12:draft", "/repo/report:"])(
+    "refuses a literal filename that VS Code would rewrite (%s)",
+    (absolutePath) => {
+      expect(
+        buildWslOpenUrl({ editor: "vscode", distro: "Ubuntu", absolutePath, isFile: true }),
+      ).toBeUndefined();
+    },
+  );
+
+  it("preserves nonnumeric colons in literal filenames", () => {
+    expect(
+      buildWslOpenUrl({
+        editor: "vscode",
+        distro: "Ubuntu",
+        absolutePath: "/repo/report:draft",
+        isFile: true,
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu/repo/report%3Adraft%3A1");
+  });
+
+  it("refuses a folder name that the protocol handler would classify as a file", () => {
+    expect(
+      buildWslOpenUrl({ editor: "vscode", distro: "Ubuntu", absolutePath: "/repo/folder:1" }),
+    ).toBeUndefined();
+  });
+
+  it.each([{ line: 0 }, { line: -1 }, { line: 1.5 }, { line: 1, column: 0 }])(
+    "refuses invalid explicit positions ($line, $column)",
+    (position) => {
+      expect(
+        buildWslOpenUrl({
+          editor: "vscode",
+          distro: "Ubuntu",
+          absolutePath: "/repo/file",
+          isFile: true,
+          position,
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  it("supports VS Code Insiders and distro roots", () => {
+    expect(
+      buildWslOpenUrl({ editor: "vscode-insiders", distro: "Ubuntu-24.04", absolutePath: "/" }),
+    ).toBe("vscode-insiders://vscode-remote/wsl+Ubuntu-24.04/");
+  });
+
+  it("does not offer unverified editor forks or malformed WSL targets", () => {
+    expect(
+      buildWslOpenUrl({ editor: "cursor", distro: "Ubuntu", absolutePath: "/tmp/x" }),
+    ).toBeUndefined();
+    for (const distro of [
+      "",
+      "../Ubuntu",
+      "Ubuntu/Other",
+      "Ubuntu+Other",
+      "Ubuntu%2Fother",
+      "Ubuntu\nOther",
+    ]) {
+      expect(buildWslOpenUrl({ editor: "vscode", distro, absolutePath: "/tmp/x" })).toBeUndefined();
+    }
+    for (const absolutePath of ["relative/file", "C:\\repo", ""]) {
+      expect(buildWslOpenUrl({ editor: "vscode", distro: "Ubuntu", absolutePath })).toBeUndefined();
+    }
   });
 });
 

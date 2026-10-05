@@ -17,11 +17,10 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import { useEditorOpening } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { shellEnvironment } from "../../state/shell";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -705,6 +704,10 @@ function DiagnosticsRefreshButton({
   );
 }
 
+/**
+ * Inspects diagnostics for the connected environment selected in Settings.
+ * Its logs-directory action uses that environment's preferred editor route.
+ */
 export function DiagnosticsSettingsPanel() {
   const { environment } = useSettingsScope();
   // The boundary only mounts this page when the selection resolves to one
@@ -715,9 +718,10 @@ export function DiagnosticsSettingsPanel() {
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
-    reportFailure: false,
-  });
+  const { preferredEditor, openEditor: openInEditor } = useEditorOpening(
+    environmentId,
+    availableEditors ?? [],
+  );
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -769,39 +773,32 @@ export function DiagnosticsSettingsPanel() {
     };
   }, [environmentId]);
 
-  const openLogsDirectory = useCallback(() => {
-    const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-    if (!logsDirectoryPath) return;
+  const openLogsDirectory = useCallback(
+    /** Opens the logs directory through the effective route and retains launch errors for display. */
+    function openLogsDirectory() {
+      const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
+      if (!logsDirectoryPath || preferredEditor === null) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-    if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
-    if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
-      return;
-    }
-
-    setIsOpeningLogsDirectory(true);
-    setOpenLogsDirectoryError(null);
-    void (async () => {
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      });
-      setIsOpeningLogsDirectory(false);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : "Unable to open logs folder.",
-        );
+      if (environmentId === null) {
+        setOpenLogsDirectoryError("No environment is selected.");
+        return;
       }
-    })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+
+      setIsOpeningLogsDirectory(true);
+      setOpenLogsDirectoryError(null);
+      void (async () => {
+        const result = await openInEditor(logsDirectoryPath);
+        setIsOpeningLogsDirectory(false);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setOpenLogsDirectoryError(
+            error instanceof Error ? error.message : "Unable to open logs folder.",
+          );
+        }
+      })();
+    },
+    [environmentId, observability?.logsDirectoryPath, openInEditor, preferredEditor],
+  );
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -1041,7 +1038,11 @@ export function DiagnosticsSettingsPanel() {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
+                    disabled={
+                      !observability?.logsDirectoryPath ||
+                      preferredEditor === null ||
+                      isOpeningLogsDirectory
+                    }
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"
                   >

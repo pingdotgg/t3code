@@ -501,12 +501,14 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
-function projectFileFailureContext(
+/** Preserves file failure categories across RPC, including a missing literal target. */
+export function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
     | WorkspacePaths.WorkspacePathOutsideRootError,
 ): {
   readonly failure: ProjectFileFailure;
+  readonly pathNotFound?: boolean;
   readonly resolvedPath?: string;
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
@@ -518,6 +520,12 @@ function projectFileFailureContext(
     case "WorkspaceFileSystemOperationError":
       return {
         failure: "operation_failed",
+        pathNotFound:
+          error.operation === "realpath-target" &&
+          typeof error.cause === "object" &&
+          error.cause !== null &&
+          "code" in error.cause &&
+          error.cause.code === "ENOENT",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,

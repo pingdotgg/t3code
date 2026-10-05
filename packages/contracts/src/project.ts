@@ -446,6 +446,7 @@ type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
   readonly failure: ProjectFileFailure;
+  readonly pathNotFound?: boolean;
   readonly resolvedPath?: string;
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
@@ -459,6 +460,8 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     cwd: Schema.optional(TrimmedNonEmptyString),
     relativePath: Schema.optional(TrimmedNonEmptyString),
     failure: Schema.optional(ProjectFileFailure),
+    /** True only when the requested target was absent during realpath resolution. */
+    pathNotFound: Schema.optional(Schema.Boolean),
     resolvedPath: Schema.optional(TrimmedNonEmptyString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
@@ -467,6 +470,7 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  /** Retains structured file classification while deriving a readable failure message. */
   // @effect-diagnostics-next-line overriddenSchemaConstructor:off
   constructor(props: ProjectFileFailureContext) {
     super({
@@ -524,6 +528,7 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  /** Carries workspace and operation context into a serializable write failure. */
   // @effect-diagnostics-next-line overriddenSchemaConstructor:off
   constructor(props: ProjectFileFailureContext) {
     super({

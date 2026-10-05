@@ -127,11 +127,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useEditorOpening } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
@@ -2419,6 +2415,10 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+/**
+ * Prepares Markdown renderers and actions for the message's environment.
+ * File actions use its editor route; remote WSL opening does not enable shell reveal.
+ */
 function useChatMarkdownState({
   text,
   cwd,
@@ -2465,6 +2465,10 @@ function useChatMarkdownState({
     remoteOpen.state.mode,
     remoteOpen.isResolved,
   );
+  const canOpenInLocalWsl =
+    remoteOpen.isResolved &&
+    remoteOpen.state.mode === "remote-links" &&
+    remoteOpen.state.host.kind === "wsl";
   const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
@@ -2510,10 +2514,19 @@ function useChatMarkdownState({
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
-  const availableEditors = serverConfig?.availableEditors ?? [];
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const { preferredEditor, openEditor } = useEditorOpening(
+    environmentId,
+    serverConfig?.availableEditors ?? [],
+  );
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+
+  const openInPreferredEditor = useCallback(
+    /** Keeps the original Markdown target so WSL can resolve literal paths before positions. */
+    function openInPreferredEditor(targetPath: string) {
+      return openEditor(targetPath, undefined, "auto");
+    },
+    [openEditor],
+  );
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -2743,8 +2756,14 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
   );
+
   const fileLinkChip = useCallback(
-    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
+    /** Builds a file chip with preview, editor, and reveal actions supported by its environment. */
+    function fileLinkChip(
+      fileLinkMeta: MarkdownFileLinkMeta,
+      copyMarkdown: string,
+      mediaSource?: string,
+    ) {
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
@@ -2780,7 +2799,7 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canUseShellActions || canOpenInLocalWsl ? { onOpen: openInPreferredEditor } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2806,6 +2825,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOpenInLocalWsl,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

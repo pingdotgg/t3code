@@ -24,6 +24,33 @@ describe("ElectronShell", () => {
     writeTextMock.mockReset();
   });
 
+  it.effect("opens WSL links only for supported editors and valid distro names", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const accepted = [
+        "vscode://vscode-remote/wsl+Ubuntu/home/user/project",
+        "vscode-insiders://vscode-remote/wsl+Ubuntu%20Dev/",
+      ];
+      for (const url of accepted) assert.equal(yield* electronShell.openExternal(url), true);
+      const rejected = [
+        "cursor://vscode-remote/wsl+Ubuntu/home/user/project",
+        "vscode://vscode-remote/wsl+/tmp",
+        "vscode://vscode-remote/wsl+Ubuntu%2Fother/tmp",
+        "vscode://vscode-remote/wsl+Ubuntu%0Aother/tmp",
+        "vscode://vscode-remote/wsl+Ubuntu%/tmp",
+        "vscode://vscode-remote/wsl+Ubuntu",
+        "vscode://user@vscode-remote/wsl+Ubuntu/tmp",
+        "vscode://extension/attacker",
+      ];
+      for (const url of rejected) assert.equal(yield* electronShell.openExternal(url), false);
+      assert.deepEqual(
+        openExternalMock.mock.calls,
+        accepted.map((url) => [url]),
+      );
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens safe external URLs", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

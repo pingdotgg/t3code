@@ -110,6 +110,62 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+/** Editors with Microsoft's WSL extension support. */
+export const WSL_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = ["vscode", "vscode-insiders"];
+
+export const WslDistroName = TrimmedNonEmptyString.check(Schema.isPattern(/^\w(?:[\w \-.]*\w)?$/));
+/** Checks distro-name syntax without querying installed Windows distributions. */
+export const isWslDistroName = Schema.is(WslDistroName);
+
+/**
+ * Builds a supported editor's deep link to an absolute path in a local WSL distro.
+ * Pass positions separately from the literal path. Files default to line 1;
+ * folders keep the unpositioned path. Returns undefined for invalid inputs or
+ * numeric colon segments that VS Code's goto parser would remove from the path.
+ */
+export function buildWslOpenUrl(input: {
+  readonly editor: EditorId;
+  readonly distro: string;
+  readonly absolutePath: string;
+  readonly isFile?: boolean;
+  readonly position?: { readonly line?: number; readonly column?: number };
+}): string | undefined {
+  if (
+    !WSL_CAPABLE_EDITOR_IDS.includes(input.editor) ||
+    !isWslDistroName(input.distro) ||
+    !input.absolutePath.startsWith("/")
+  ) {
+    return undefined;
+  }
+  // VS Code's goto parser splits every colon, consuming numeric segments even
+  // inside filenames. Extra positions or URL encoding cannot disambiguate them.
+  if (
+    (input.isFile || /:\d+$/.test(input.absolutePath)) &&
+    input.absolutePath
+      .split(":")
+      .slice(1)
+      .some((segment) => !Number.isNaN(Number(segment)))
+  ) {
+    return undefined;
+  }
+  const line = input.position?.line ?? 1;
+  const column = input.position?.column;
+  if (
+    input.isFile &&
+    (!Number.isSafeInteger(line) ||
+      line < 1 ||
+      (column !== undefined && (!Number.isSafeInteger(column) || column < 1)))
+  ) {
+    return undefined;
+  }
+  // An unpositioned protocol path opens a folder, even when it has an extension.
+  const targetPath = input.isFile
+    ? `${input.absolutePath}:${line}${column === undefined ? "" : `:${column}`}`
+    : input.absolutePath;
+  const encodedPath = targetPath.split("/").map(encodeURIComponent).join("/");
+  return `${remoteSchemeForEditor(input.editor)}://vscode-remote/wsl+${encodeURIComponent(input.distro)}${encodedPath}`;
+}
+
 /**
  * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
  * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the

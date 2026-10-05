@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
+  ProjectReadFileError,
   type ServerConfig,
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
@@ -15,16 +16,46 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import {
   hasCompatibleOrchestrationProtocol,
   resolveAvailableEditorsForConfig,
   shouldUseBoundedThreadSnapshot,
   withLateEditorConfig,
+  projectFileFailureContext,
 } from "./ws.ts";
+
+it("preserves missing file targets across RPC without treating permission failures as missing", () => {
+  for (const [code, operation, expected] of [
+    ["ENOENT", "realpath-target", true],
+    ["EACCES", "realpath-target", false],
+    ["ENOENT", "realpath-workspace-root", false],
+  ] as const) {
+    const cause = new WorkspaceFileSystem.WorkspaceFileSystemOperationError({
+      workspaceRoot: "/",
+      relativePath: "/repo/report:1",
+      resolvedPath: "/repo/report:1",
+      operationPath: "/repo/report:1",
+      operation,
+      cause: Object.assign(new Error("Filesystem lookup failed"), { code }),
+    });
+    const error = new ProjectReadFileError({
+      cwd: "/",
+      relativePath: "/repo/report:1",
+      ...projectFileFailureContext(cause),
+      cause,
+    });
+    const wireCodec = Schema.fromJsonString(ProjectReadFileError);
+    const decoded = Schema.decodeSync(wireCodec)(Schema.encodeSync(wireCodec)(error));
+    assert.strictEqual(decoded.failure, "operation_failed");
+    assert.strictEqual(decoded.pathNotFound, expected);
+  }
+});
 
 it("accepts only the current orchestration protocol before websocket RPC setup", () => {
   assert.isTrue(

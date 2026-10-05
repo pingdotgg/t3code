@@ -1,8 +1,7 @@
 /**
- * Remote open-in-editor: when this client is not on the environment's
- * machine, "Open" must hand the OS a `vscode://vscode-remote/ssh-remote+…`
- * deep link (local editor connects over SSH) instead of exec'ing an editor
- * on the environment host.
+ * Editor opening uses a local WSL deep link when explicitly configured on
+ * Windows. Otherwise, remote clients use an SSH deep link instead of executing
+ * an editor on the environment host.
  *
  * Host precedence: a desktop-SSH environment's real `~/.ssh/config` alias
  * beats server-advertised names; among advertised names the tailnet MagicDNS
@@ -11,6 +10,7 @@
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
+  isWslDistroName,
   type EditorId,
   type EnvironmentId,
   type RemoteOpenTarget,
@@ -22,10 +22,12 @@ import { useEffect, useMemo, useState } from "react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { isWindowsPlatform } from "~/lib/utils";
+import { useLocalWslEditor } from "~/localWslEditor";
 import { useEnvironmentPresentation } from "~/state/presentation";
 
 export interface RemoteOpenHost {
-  readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
+  readonly kind: "ssh-alias" | "wsl" | RemoteOpenTarget["kind"];
   readonly host: string;
 }
 
@@ -48,6 +50,7 @@ const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   isResolved: false,
 };
 
+/** Extracts a hostname without treating malformed environment URLs as local endpoints. */
 function parseHostname(url: string): string | null {
   try {
     return new URL(url).hostname;
@@ -56,6 +59,11 @@ function parseHostname(url: string): string | null {
   }
 }
 
+/**
+ * Selects local execution or a client-side editor link. A valid Windows WSL
+ * override wins; Automatic uses local execution, an SSH alias, or the first
+ * advertised host, and disables opening when no remote route is available.
+ */
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
   /** Real ssh alias for desktop-SSH environments; null elsewhere. */
@@ -64,7 +72,17 @@ export function resolveRemoteOpenState(input: {
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
   readonly isDesktopRenderer: boolean;
+  readonly isWindowsClient?: boolean;
+  readonly localWslDistro?: string | null;
 }): RemoteOpenState {
+  if (
+    input.isWindowsClient &&
+    input.localWslDistro !== undefined &&
+    input.localWslDistro !== null &&
+    isWslDistroName(input.localWslDistro)
+  ) {
+    return { mode: "remote-links", host: { kind: "wsl", host: input.localWslDistro } };
+  }
   const { target } = input;
   // No catalog entry: keep today's exec behavior rather than guessing.
   if (target === null) {
@@ -96,8 +114,13 @@ export function resolveRemoteOpenState(input: {
   return REMOTE_UNAVAILABLE;
 }
 
+/**
+ * Combines environment connection details with this device's WSL preference.
+ * isResolved distinguishes missing presentation data from a resolved route.
+ */
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const [localWsl] = useLocalWslEditor(environmentId);
 
   return useMemo(() => {
     if (presentation === null) {
@@ -112,24 +135,27 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
         sshAlias,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        isWindowsClient: isWindowsPlatform(navigator.platform),
+        localWslDistro: localWsl?.distro ?? null,
       }),
       isResolved: true,
     };
-  }, [presentation]);
+  }, [presentation, localWsl]);
 }
 
+/** Returns the environment's effective editor route, including this device's WSL override. */
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
   return useRemoteOpenResolution(environmentId).state;
 }
 
-/**
- * Editors offered in remote-link mode. The desktop app probes the machine the
- * renderer runs on; a browser cannot, so it offers VS Code only.
- */
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
 
+/**
+ * Offers editors installed on the viewing desktop. Browsers cannot probe
+ * installed editors, so they offer VS Code for remote links.
+ */
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
     () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
@@ -177,24 +203,20 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
  */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
-  if (bridge !== undefined) {
-    try {
+  try {
+    if (bridge !== undefined) {
       return await bridge.openExternal(url);
-    } catch {
-      return false;
     }
+    window.location.assign(url);
+    return true;
+  } catch {
+    return false;
   }
-  window.location.assign(url);
-  return true;
 }
 
-/**
- * One-time "you need SSH keys on that machine" hint, shown in the picker menu
- * until the first remote open fires (we cannot observe SSH success from here,
- * so first click is the dismiss signal).
- */
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
 
+/** Remembers an accepted SSH handoff on this device so its setup hint stops appearing. */
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {
   const [seen, setSeen] = useLocalStorage(REMOTE_OPEN_HINT_KEY, false, Schema.Boolean);
   return [seen, () => setSeen(true)] as const;
