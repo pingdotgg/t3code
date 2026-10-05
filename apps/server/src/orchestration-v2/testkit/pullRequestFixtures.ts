@@ -23,6 +23,7 @@ export interface PullRequestTestThread {
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   readonly latestUserMessageAt: string | null;
+  readonly lineage?: OrchestrationV2ThreadShell["lineage"];
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
@@ -47,7 +48,11 @@ export function v2PullRequestThread(thread: PullRequestTestThread): Orchestratio
     createdBy: "user",
     creationSource: "web",
     activeProviderThreadId: null,
-    lineage: { rootThreadId: thread.id, parentThreadId: null, relationshipToParent: null },
+    lineage: thread.lineage ?? {
+      rootThreadId: thread.id,
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
     forkedFrom: null,
     latestRunId: null,
     activeRunId: null,

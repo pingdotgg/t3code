@@ -156,7 +156,8 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     yield* createWatchingThread(parentThreadId, 1);
     yield* send(parentThreadId, "first", "start_immediately");
     const childThreadId = yield* delegate(parentThreadId, "child task");
-    yield* watch(childThreadId, 2);
+    // The parent owns its pull requests; a delegated task cannot watch one.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
     const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
     yield* send(childThreadId, "child follow-up", "queue_after_active");
 
@@ -174,9 +175,6 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     });
     yield* send(parentThreadId, "second", "start_immediately");
     const secondRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
-    const childWatch = (yield* orchestrator.getThreadProjection(childThreadId)).thread
-      .pullRequests?.[0]?.watch;
-    assert.isDefined(childWatch);
 
     const stopCommandId = CommandId.make("stop-parent");
     yield* orchestrator.dispatch({
@@ -208,25 +206,6 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
       watched: [],
     });
     assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
-
-    // A watch read that raced the Stop cannot wake the stopped child.
-    const lateWake = yield* Effect.exit(
-      orchestrator.dispatch({
-        type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("late-watch-wake"),
-        threadId: childThreadId,
-        ...pullRequest(2),
-        startedAt: childWatch!.startedAt,
-        watch: null,
-        wake: {
-          messageId: MessageId.make("message:late-watch-wake"),
-          text: "Checks passed.",
-          notification: { source: { kind: "monitor" }, outcome: "completed", summary: "#2" },
-        },
-      }),
-    );
-    assert.isTrue(Exit.isFailure(lateWake));
-    assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
 
     // A retried effect stops nothing twice.
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
