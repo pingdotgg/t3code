@@ -65,11 +65,7 @@ import {
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
-import {
-  buildHomeProjectScopes,
-  sortHomeProjectScopes,
-  type HomeProjectSortOrder,
-} from "./homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectSortOrder } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
@@ -386,28 +382,11 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const v2ScopeProjects = useMemo(
-    () =>
-      sortHomeProjectScopes({
-        scopes: projectScopes,
-        threads: props.threads,
-        pendingTasks: props.pendingTasks,
-        projectSortOrder: props.projectSortOrder,
-      }),
-    [
-      props.pendingTasks,
-      props.projects,
-      props.projectSortOrder,
-      props.selectedEnvironmentId,
-      props.threads,
-      projectScopes,
-    ],
-  );
   const v2ScopedProjectGroup = useMemo(
     () =>
       v2ProjectScopeKey === null
         ? null
-        : (v2ScopeProjects.find(
+        : (projectScopes.find(
             (scope) =>
               scope.key === v2ProjectScopeKey ||
               scope.projectRefs.some(
@@ -416,12 +395,12 @@ export function HomeScreen(props: HomeScreenProps) {
                   v2ProjectScopeKey,
               ),
           ) ?? null),
-    [v2ProjectScopeKey, v2ScopeProjects],
+    [v2ProjectScopeKey, projectScopes],
   );
   const v2ProjectTitleByProjectKey = useMemo(
     () =>
       new Map(
-        v2ScopeProjects.flatMap((scope) =>
+        projectScopes.flatMap((scope) =>
           scope.projectRefs.map(
             (projectRef) =>
               [
@@ -431,7 +410,7 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
         ),
       ),
-    [v2ScopeProjects],
+    [projectScopes],
   );
   const v2ScopedProjectKeys = useMemo(
     () =>
