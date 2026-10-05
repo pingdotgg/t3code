@@ -138,6 +138,10 @@ through the pages you have visited, like a browser's back and forward buttons.
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
+`sidebar.filterProjects` (`mod+shift+b` by default) opens the sidebar's project
+filter with its search focused. It does not run while the terminal has focus.
+See [Find and reference work](./thread-sidebar.md#find-and-reference-work).
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

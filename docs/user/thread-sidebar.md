@@ -177,10 +177,11 @@ On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
 
-Use **Settings → Keybindings** to find or customize shortcuts for searching files
-and copying a thread reference. A copied reference uses the thread's pull request
-link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
-for custom configuration.
+Use **Settings → Keybindings** to find or customize shortcuts for searching files,
+filtering the thread list by project (`mod+shift+b` by default), and copying
+a thread reference. A copied reference uses the thread's pull request link when
+available, otherwise its thread ID. See [keybindings](./keybindings.md) for custom
+configuration.
 
 ## Inspect agent work
 

@@ -1220,7 +1220,7 @@ describe("plus key parsing", () => {
   });
 });
 
-describe("composer and pull request shortcuts", () => {
+describe("composer, pull request, and sidebar shortcuts", () => {
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>
@@ -1276,6 +1276,7 @@ describe("composer and pull request shortcuts", () => {
     ["l", "composer.previousWorktree"],
     ["c", "thread.copyReference"],
     ["k", "pullRequest.copyNumber"],
+    ["b", "sidebar.filterProjects"],
     ["Enter", "thread.steerQueuedMessage"],
   ] as const;
 
