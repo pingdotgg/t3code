@@ -1,12 +1,10 @@
+import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
 import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
-import type { MediaReference } from "@t3tools/client-runtime/media-reference";
 import {
   AuthFilesystemReadScope,
-  type AssetResource,
   type AuthSessionState,
   type EnvironmentId,
-  type ThreadId,
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
 import * as Option from "effect/Option";
@@ -14,31 +12,13 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
-import { useRefreshAssetUrl } from "../state/assets";
-import { appAtomRegistry } from "../state/atom-registry";
-import { useEnvironmentQuery } from "../state/query";
-import { environmentSession } from "../state/session";
-import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
-import type { FileBackedComposerAttachment } from "./composerImages";
-import { copyTextWithHaptic } from "./copyTextWithHaptic";
-import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
-
-/** Authored source metadata is kept separate from temporary preview/download URLs. */
-export type MediaActionsSource = {
-  readonly reference?: MediaReference;
-  readonly name: string;
-  readonly mimeType: string;
-  /** Anchors the iOS share sheet to the view that opened the menu. */
-  readonly sourceIdentifier?: string;
-} & (
-  | { readonly uri: string }
-  | { readonly attachment: FileBackedComposerAttachment }
-  | {
-      readonly environmentId: EnvironmentId;
-      readonly threadId?: ThreadId;
-      readonly resource: AssetResource;
-    }
-);
+import { useRefreshAssetUrl } from "./assets";
+import { appAtomRegistry } from "./atom-registry";
+import { useEnvironmentQuery } from "./query";
+import { environmentSession } from "./session";
+import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
+import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 
 /** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: Pick<AuthSessionState, "authenticated" | "scopes"> | null) {

@@ -59,7 +59,8 @@ vi.mock("./localAttachmentPreview", () => ({
   loadLocalAttachmentPreview: async () => ({ share: state.shareDraft, dispose: vi.fn() }),
 }));
 
-import { useMediaActions, type MediaActionsSource } from "./mediaActions";
+import { useMediaActions } from "../state/mediaActions";
+import type { MediaActionsSource } from "./mediaActionsSource";
 
 const environmentId = EnvironmentId.make("media-environment");
 const otherEnvironmentId = EnvironmentId.make("other-environment");
