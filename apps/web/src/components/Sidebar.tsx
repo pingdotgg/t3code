@@ -34,6 +34,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { presentWaitingRowStatus } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveSettledThreadTimestamp,
   sortSettledThreads,
@@ -65,6 +66,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BotIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -1292,6 +1294,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
+  const waitingStatus =
+    status === "waiting" ? presentWaitingRowStatus(thread.pendingBackgroundTasks) : null;
   const topStatus =
     status === "working"
       ? {
@@ -1306,8 +1310,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         ? {
             // Waiting is calm background presence (post-settle background
             // roster), not active progress, so the label keeps full strength.
-            label: "Waiting",
-            icon: null,
+            // It names what the task waits on; the Working shelf already says
+            // the task is underway.
+            label: waitingStatus?.label ?? "Waiting",
+            icon: waitingStatus?.kind ?? null,
             className: "text-muted-foreground",
           }
         : status === "approval"
@@ -2069,11 +2075,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "done" ? (
                             <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                          ) : topStatus.icon === "subagent" ? (
+                            <BotIcon aria-hidden className="size-4 shrink-0" />
+                          ) : topStatus.icon === "command" ? (
+                            <TerminalIcon aria-hidden className="size-4 shrink-0" />
+                          ) : topStatus.icon === "monitor" ? (
+                            <EyeIcon aria-hidden className="size-4 shrink-0" />
+                          ) : topStatus.icon === "background_task" ? (
+                            <ClockIcon aria-hidden className="size-4 shrink-0" />
                           ) : null}
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
+                          <span
+                            role="status"
+                            className={cn(waitingStatus !== null && "max-w-40 truncate")}
+                          >
+                            {topStatus.label}
+                          </span>
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
