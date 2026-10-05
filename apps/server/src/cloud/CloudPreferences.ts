@@ -7,6 +7,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -79,6 +80,9 @@ const make = Effect.gen(function* () {
       .set(name, encode(value))
       .pipe(Effect.catch(internalError("Could not persist environment cloud preferences.")));
 
+  // One update at a time, so two requests can't each leave one setting behind.
+  const updateLock = yield* Semaphore.make(1);
+
   const update: CloudPreferences["Service"]["update"] = Effect.fn("CloudPreferences.update")(
     function* (input) {
       // All or nothing: the activity setting is saved first, before the relay
@@ -112,6 +116,7 @@ const make = Effect.gen(function* () {
       }
       yield* awarenessRelay.requestCatchUp();
     },
+    updateLock.withPermits(1),
   );
 
   return CloudPreferences.of({ update });

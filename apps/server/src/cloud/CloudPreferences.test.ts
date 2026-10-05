@@ -1,6 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -25,6 +26,11 @@ const withService = <A, E>(
     readonly failActivityWrite?: boolean;
     readonly relayFails?: boolean;
     readonly failActivityRead?: boolean;
+    /** The first relay call reports itself, then waits for this before answering. */
+    readonly holdFirstRelayCall?: {
+      readonly started: () => void;
+      readonly released: Promise<void>;
+    };
   },
   body: (input: {
     readonly preferences: CloudPreferences.CloudPreferences["Service"];
@@ -44,6 +50,10 @@ const withService = <A, E>(
       (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         const payload = JSON.parse(String(init?.body)) as { holdWebhooksWhileOffline: boolean };
         relayCalls.push(payload.holdWebhooksWhileOffline);
+        if (relayCalls.length === 1 && options.holdFirstRelayCall) {
+          options.holdFirstRelayCall.started();
+          return options.holdFirstRelayCall.released.then(() => Response.json(payload));
+        }
         return options.relayFails
           ? Promise.resolve(new Response("unavailable", { status: 503 }))
           : Promise.resolve(Response.json(payload));
@@ -158,3 +168,36 @@ it.effect("changes nothing when the current activity setting can't be read", () 
     }),
   ),
 );
+
+it.effect("two overlapping updates are applied one after the other", () => {
+  let release!: () => void;
+  let started!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const firstAtRelay = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  return withService({ holdFirstRelayCall: { started, released } }, ({ preferences, stored }) =>
+    Effect.gen(function* () {
+      const first = yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => firstAtRelay);
+      const second = yield* preferences
+        .update({ publishAgentActivity: false, holdWebhooksWhileOffline: false })
+        .pipe(Effect.forkChild);
+      // Give the second update every chance to run; it must wait for the first.
+      yield* Effect.yieldNow;
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "true");
+      release();
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
+      assert.equal(
+        new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
+        "false",
+      );
+    }),
+  );
+});
