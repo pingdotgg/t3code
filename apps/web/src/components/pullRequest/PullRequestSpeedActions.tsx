@@ -1,4 +1,5 @@
-import type { PullRequestAction } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
+import { AuthSourceControlWriteScope, type PullRequestAction } from "@t3tools/contracts";
 import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -37,6 +38,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   sweeping?: boolean;
   onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
 }) {
+  const canWrite = useEnvironmentScope(entry.environmentId, AuthSourceControlWriteScope);
   const resolveProjectDefault = usePullRequestDefaultMergeMethodResolver(
     entry.environmentId,
     entry.projectId,
@@ -90,7 +92,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
                 <Button
                   variant={action === "close" ? "destructive-outline" : "outline"}
                   size="xs"
-                  disabled={busy || (action === "merge" && entry.stack !== undefined)}
+                  disabled={!canWrite || busy || (action === "merge" && entry.stack !== undefined)}
                   aria-label={`${label} #${entry.number}`}
                   onClick={() => void perform(action)}
                   onPointerDown={(event) => {

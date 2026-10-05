@@ -31,7 +31,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 
 import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
@@ -140,7 +140,9 @@ export function usePullRequestActionRunner({
   /** Small surfaces resolve repository settings on the click, not for every visible row. */
   resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
 }) {
-  const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const runAction = useSourceControlCommand(pullRequestEnvironment.runAction, {
+    reportFailure: false,
+  });
   const [actionPending, setActionPending] = useState(false);
   const pendingRef = useRef(false);
 
