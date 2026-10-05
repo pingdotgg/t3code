@@ -76,7 +76,7 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectCwd, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 
 interface EnvironmentOption {
@@ -1260,10 +1260,10 @@ export function AddProjectDestinationScreen(props: {
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
   const { selectedProject } = useNewTaskFlow();
-  const currentProjectCwd = resolveAddProjectCwd(
-    environment?.environmentId ?? null,
-    selectedProject,
-  );
+  const currentProjectCwd =
+    environment && selectedProject?.environmentId === environment.environmentId
+      ? selectedProject.workspaceRoot
+      : null;
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);

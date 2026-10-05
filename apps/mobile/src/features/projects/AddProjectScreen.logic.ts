@@ -24,13 +24,3 @@ export function resolveAddProjectEnvironment<
     ) ?? null
   );
 }
-
-/** Use project-relative paths only when the project belongs to the destination server. */
-export function resolveAddProjectCwd(
-  environmentId: EnvironmentId | null,
-  selectedProject: { readonly environmentId: EnvironmentId; readonly workspaceRoot: string } | null,
-): string | null {
-  return environmentId !== null && selectedProject?.environmentId === environmentId
-    ? selectedProject.workspaceRoot
-    : null;
-}
