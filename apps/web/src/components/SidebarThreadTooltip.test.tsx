@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SidebarThreadSummary } from "../types";
-import { ThreadDetailsTooltip, ThreadDetailsTooltipProvider } from "./SidebarV2ThreadTooltip";
+import { ThreadDetailsTooltip, ThreadDetailsTooltipProvider } from "./SidebarThreadTooltip";
 
 vi.mock("./ui/tooltip", () => ({
   TooltipPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,

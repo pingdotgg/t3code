@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import type {
   SidebarProjectSortOrder,
   SidebarThreadFilter,
@@ -30,6 +31,64 @@ export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 export const SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS = 120;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type ThreadLifecycleSupport = {
+  readonly settlement: boolean;
+  readonly snooze: boolean;
+};
+
+export function resolveThreadLifecycleSupport(
+  descriptors: readonly (ExecutionEnvironmentDescriptor | null | undefined)[],
+): ReadonlyMap<string, ThreadLifecycleSupport> {
+  const byEnvironment = new Map<string, ThreadLifecycleSupport>();
+  for (const descriptor of descriptors) {
+    if (!descriptor) continue;
+    byEnvironment.set(descriptor.environmentId, {
+      settlement: descriptor.capabilities.threadSettlement === true,
+      snooze: descriptor.capabilities.threadSnooze === true,
+    });
+  }
+  return byEnvironment;
+}
+
+/** Drop the repeated relative-time suffix to keep sidebar metadata compact. */
+export function compactSidebarTimeLabel(label: string): string {
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -" ago".length) : label;
+}
+
+function firstValidTimestamp(
+  ...candidates: ReadonlyArray<string | null | undefined>
+): string | null {
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    if (!Number.isNaN(Date.parse(candidate))) return candidate;
+  }
+  return null;
+}
+
+export function resolveWorkingStartedAt(
+  thread: Pick<SidebarThreadSummary, "latestTurn" | "session" | "createdAt">,
+): string | null {
+  const turn = thread.latestTurn;
+  if (turn && turn.completedAt === null) {
+    return firstValidTimestamp(
+      turn.startedAt,
+      turn.requestedAt,
+      thread.session?.updatedAt,
+      thread.createdAt,
+    );
+  }
+  return firstValidTimestamp(thread.session?.updatedAt, thread.createdAt);
+}
+
+export function formatWorkingDurationLabel(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export const SIDEBAR_THREAD_FILTER_LABELS: Record<SidebarThreadFilter, string> = {
   all: "All threads",
   active: "Active threads",
@@ -788,6 +847,44 @@ export interface PartitionedSidebarRows<TRow extends PartitionableSidebarRow> {
   readonly orderedThreadKeys: string[];
   /** Every row key (roots and nested children) inside a settled subtree. */
   readonly settledThreadKeys: ReadonlySet<string>;
+  /** Pinned and active subtrees, kept outside the collapsible Settled group. */
+  readonly activeRows: readonly TRow[];
+  /** Settled subtrees in most-recently-settled order. */
+  readonly settledGroups: readonly (readonly TRow[])[];
+}
+
+export function selectVisibleSettledSidebarRows<TRow extends PartitionableSidebarRow>(input: {
+  readonly activeRows: readonly TRow[];
+  readonly settledGroups: readonly (readonly TRow[])[];
+  readonly visibleCount: number;
+  readonly showAll: boolean;
+  readonly activeThreadKey: string | null;
+}): {
+  readonly activeRows: readonly TRow[];
+  readonly settledRows: readonly TRow[];
+  readonly orderedThreadKeys: readonly string[];
+  readonly remainingCount: number;
+} {
+  let visibleGroups = input.showAll
+    ? [...input.settledGroups]
+    : input.settledGroups.slice(0, input.visibleCount);
+  if (
+    input.activeThreadKey !== null &&
+    !visibleGroups.some((group) => group.some((row) => row.threadKey === input.activeThreadKey))
+  ) {
+    const activeGroup = input.settledGroups.find((group) =>
+      group.some((row) => row.threadKey === input.activeThreadKey),
+    );
+    if (activeGroup) visibleGroups = [...visibleGroups, activeGroup];
+  }
+
+  const settledRows = visibleGroups.flat();
+  return {
+    activeRows: input.activeRows,
+    settledRows,
+    orderedThreadKeys: [...input.activeRows, ...settledRows].map((row) => row.threadKey),
+    remainingCount: Math.max(0, input.settledGroups.length - visibleGroups.length),
+  };
 }
 
 function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
@@ -831,12 +928,12 @@ export function isCollapsedSettledRow(input: {
 
 /**
  * Sinks settled roots to the bottom of their own project list. The whole
- * subtree follows its root, mirroring `classifySidebarV2Shelves`: a block
- * stays active while any row in it — root or descendant — carries a status
+ * subtree follows its root: a block stays active while any row in it — root
+ * or descendant — carries a status
  * pill, since the root's own `canSettle` check cannot see pills like a failed
  * turn or an unseen completion that still need attention. Pinned roots keep
  * their leading position — a pin is an explicit order override the settle
- * must not defeat — but still fade when settled, matching SidebarV2. Settled
+ * must not defeat — but still fade when settled. Settled
  * roots sort most-recently-settled first (`settledAt`, falling back through
  * the same stamps `resolveSettledThreadTimestamp` uses); the sort is stable
  * so ties keep their existing order.
@@ -895,10 +992,13 @@ export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow
 
   const ordered = [...pinnedBlocks, ...activeBlocks, ...settledBlocks];
   const reordered = ordered.flat();
+  const activeRows = [...pinnedBlocks, ...activeBlocks].flat();
   return {
     rowViews: reordered,
     orderedThreadKeys: reordered.map((row) => row.threadKey),
     settledThreadKeys,
+    activeRows,
+    settledGroups: settledBlocks,
   };
 }
 

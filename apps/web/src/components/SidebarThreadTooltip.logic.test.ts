@@ -6,7 +6,7 @@ import type { SidebarThreadSummary } from "../types";
 import {
   buildThreadTooltipActivity,
   selectThreadTooltipChildren,
-} from "./SidebarV2ThreadTooltip.logic";
+} from "./SidebarThreadTooltip.logic";
 
 function thread(id: string, overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
   return {

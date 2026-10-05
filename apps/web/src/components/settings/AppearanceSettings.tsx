@@ -252,28 +252,8 @@ export function AppearanceSettingsPanel() {
 
       <SettingsSection title="Sidebar">
         <SettingsRow
-          title="Inbox sidebar (beta)"
-          description="Use the flat inbox with active, snoozed, and settled thread shelves."
-          resetAction={
-            settings.sidebarV2Enabled !== DEFAULT_UNIFIED_SETTINGS.sidebarV2Enabled ? (
-              <SettingResetButton
-                label="inbox sidebar"
-                onClick={() =>
-                  updateSettings({ sidebarV2Enabled: DEFAULT_UNIFIED_SETTINGS.sidebarV2Enabled })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarV2Enabled}
-              onCheckedChange={(checked) => updateSettings({ sidebarV2Enabled: Boolean(checked) })}
-            />
-          }
-        />
-        <SettingsRow
           title="Settled threads shown"
-          description="How many recent settled threads to show before the Show X more button."
+          description="How many recent settled threads to show per project before the Show X more button."
           resetAction={
             settings.sidebarSettledThreadCount !== DEFAULT_SIDEBAR_SETTLED_THREAD_COUNT ? (
               <SettingResetButton
