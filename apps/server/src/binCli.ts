@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
+import * as NodeNet from "node:net";
 
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
@@ -90,6 +91,10 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 export const cli = makeCli();
 
 export function runCli() {
+  // At least 1 s per address: Node's 250 ms limit drops slow-but-working connects when IPv6 fails fast.
+  NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(
+    Math.max(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout(), 1_000),
+  );
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),
