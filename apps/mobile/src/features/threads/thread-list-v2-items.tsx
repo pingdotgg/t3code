@@ -638,14 +638,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
-  // Cards in live sections can be lifted to reorder, pin, unpin, or settle.
+  // Cards in live sections can be lifted when any drop could apply to them.
   const drag = useThreadListDragTarget({
     itemKey: threadListV2ThreadItemKey(thread),
     thread,
     enabled:
       variant === "card" &&
       !snoozedRow &&
-      (props.reorderSupported === true || props.pinningSupported === true),
+      (props.reorderSupported === true || props.pinningSupported || props.settlementSupported),
   });
 
   // Swipe: the v2 primary action is the lifecycle transition. Un-settling a

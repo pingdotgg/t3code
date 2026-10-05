@@ -12,7 +12,7 @@ import {
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
@@ -25,6 +25,8 @@ import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
+import { HeaderHeightContext } from "@react-navigation/elements";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
@@ -136,6 +138,12 @@ function ThreadNavigationSidebarPane(
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
+  // The native-chrome list scrolls under the header with automatic insets;
+  // keep drag auto-scroll edges on the visible part of the list.
+  const navigationHeaderHeight = useContext(HeaderHeightContext);
+  const nativeDragEdgeInsets = NATIVE_LIQUID_GLASS_SUPPORTED
+    ? { top: navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT, bottom: insets.bottom }
+    : undefined;
   const { fabClearance } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useNavigationThreadShells();
@@ -931,6 +939,7 @@ function ThreadNavigationSidebarPane(
               listRef={listRef}
               items={listItems}
               workingShelfEnabled={workingShelfEnabled}
+              edgeInsets={nativeDragEdgeInsets}
               onMoveThread={moveThread}
             >
               {(dragListProps) => (
