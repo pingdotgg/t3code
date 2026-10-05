@@ -8,7 +8,6 @@ import {
   EnvironmentCloudRelayConfigResult,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
-  type EnvironmentCloudPreferencesRequest,
   EnvironmentHttpConflictError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
@@ -88,8 +87,6 @@ import {
   encodeConfirmedOriginJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
-  readHoldWebhooksWhileOffline,
-  readRelayConnection,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
@@ -1358,22 +1355,6 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
   ),
 );
 
-const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
-  function* (
-    dependencies: CloudHttpDependencies,
-    preferences: CloudPreferences.CloudPreferences["Service"],
-    payload: EnvironmentCloudPreferencesRequest,
-  ) {
-    yield* requireEnvironmentScope(AuthRelayWriteScope);
-    yield* preferences.update(payload);
-    return yield* readCloudLinkState(dependencies);
-  },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
-  ),
-);
-
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
     const cloudMintPublicKey = yield* dependencies.secrets
@@ -1624,8 +1605,19 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("relayConfig", ({ payload }) => cloudRelayConfigHandler(dependencies, payload))
       .handle("linkState", () => cloudLinkStateHandler(dependencies))
       .handle("unlink", () => cloudUnlinkHandler(dependencies))
-      .handle("preferences", ({ payload }) =>
-        cloudPreferencesHandler(dependencies, preferences, payload),
+      .handle(
+        "preferences",
+        Effect.fn("environment.cloud.preferences")(
+          function* ({ payload }) {
+            yield* requireEnvironmentScope(AuthRelayWriteScope);
+            yield* preferences.update(payload);
+            return yield* readCloudLinkState(dependencies);
+          },
+          Effect.catchIf(
+            ServerSecretStore.isSecretStoreError,
+            failEnvironmentCloudInternalError("Could not read environment cloud preferences."),
+          ),
+        ),
       )
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))

@@ -138,34 +138,6 @@ const hookNotFound = () => errorResponse(404, "hook_not_found");
 /** Longer than the inbox holds a request, so a held delivery's proof still verifies. */
 const DELIVERY_PROOF_LIFETIME_SECONDS = 25 * 60 * 60;
 
-const signDeliveryProof = (input: {
-  readonly settings: RelayConfiguration.RelayConfiguration["Service"];
-  readonly environmentId: string;
-  readonly deliveryId: string;
-  readonly receivedAt: string;
-  readonly hookId: string;
-  readonly jti: string;
-}) =>
-  Effect.gen(function* () {
-    const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
-    return yield* signRelayJwt({
-      privateKey: Redacted.value(input.settings.cloudMintPrivateKey),
-      typ: RELAY_HOOK_DELIVERY_TYP,
-      payload: {
-        iss: normalizeRelayIssuer(input.settings.relayIssuer),
-        aud: `t3-env:${input.environmentId}`,
-        sub: input.environmentId,
-        jti: input.jti,
-        iat: now,
-        exp: now + DELIVERY_PROOF_LIFETIME_SECONDS,
-        environmentId: EnvironmentId.make(input.environmentId),
-        deliveryId: input.deliveryId,
-        receivedAt: input.receivedAt,
-        hookId: input.hookId,
-      } satisfies RelayHookDeliveryProofPayload,
-    });
-  }).pipe(Effect.orDie);
-
 /** Methods a webhook can arrive with; HEAD reaches the GET route and is refused. */
 const FORWARDED_METHODS = new Set(["GET", "POST", "PUT", "PATCH"]);
 
@@ -269,6 +241,33 @@ const make = Effect.gen(function* () {
   const inbox = yield* HookInbox.HookInbox;
   const crypto = yield* Crypto.Crypto;
 
+  const signDeliveryProof = (input: {
+    readonly environmentId: string;
+    readonly deliveryId: string;
+    readonly receivedAt: string;
+    readonly hookId: string;
+    readonly jti: string;
+  }) =>
+    Effect.gen(function* () {
+      const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+      return yield* signRelayJwt({
+        privateKey: Redacted.value(settings.cloudMintPrivateKey),
+        typ: RELAY_HOOK_DELIVERY_TYP,
+        payload: {
+          iss: normalizeRelayIssuer(settings.relayIssuer),
+          aud: `t3-env:${input.environmentId}`,
+          sub: input.environmentId,
+          jti: input.jti,
+          iat: now,
+          exp: now + DELIVERY_PROOF_LIFETIME_SECONDS,
+          environmentId: EnvironmentId.make(input.environmentId),
+          deliveryId: input.deliveryId,
+          receivedAt: input.receivedAt,
+          hookId: input.hookId,
+        } satisfies RelayHookDeliveryProofPayload,
+      });
+    }).pipe(Effect.orDie);
+
   const handle = Effect.fn("relay.hooks.forward")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -347,7 +346,6 @@ const make = Effect.gen(function* () {
     // trace context came from the relay. Signed once here and stored with a
     // held request, so the inbox never needs the signing key.
     const proof = yield* signDeliveryProof({
-      settings,
       environmentId: endpoint.environmentId,
       deliveryId,
       receivedAt,

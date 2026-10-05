@@ -44,10 +44,11 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+  const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
 
   const pushHoldWebhooksWhileOffline = Effect.fn("CloudPreferences.pushHoldWebhooksWhileOffline")(
     function* (holdWebhooksWhileOffline: boolean) {
-      const connection = yield* readRelayConnection(secrets);
+      const connection = yield* readRelayConnection.pipe(withSecrets);
       if (connection === null) {
         return yield* new EnvironmentHttpBadRequestError({
           message: "Link this environment to T3 Connect first.",
@@ -82,7 +83,7 @@ const make = Effect.gen(function* () {
       yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
-        const previous = yield* readHoldWebhooksWhileOffline(secrets);
+        const previous = yield* readHoldWebhooksWhileOffline.pipe(withSecrets);
         yield* pushHoldWebhooksWhileOffline(next).pipe(
           Effect.andThen(
             save(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, next).pipe(
