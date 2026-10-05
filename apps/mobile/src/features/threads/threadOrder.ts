@@ -134,6 +134,11 @@ export function computeThreadMoveAvailability(input: {
   // A reorder in flight locks the whole list until its receipt lands.
   if (input.pendingOrder != null) return result;
   const rows = input.ordered;
+  // With no neighbor there is no up/down move, so skip the allThreads indexes.
+  if (rows.length < 2) {
+    for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
+    return result;
+  }
   const orderedIds = rows.map(rowId);
   const indexById = new Map(orderedIds.map((id, index) => [id, index] as const));
   const keysById = new Map(
