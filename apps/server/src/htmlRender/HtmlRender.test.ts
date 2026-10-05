@@ -11,7 +11,7 @@ import {
 import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -84,8 +84,8 @@ describe("HtmlRender", () => {
         ].join(""),
       );
 
-      const pngUri = `data:image/png;base64,${Encoding.encodeBase64(PNG_BYTES)}`;
-      const svgUri = `data:image/svg+xml;base64,${Encoding.encodeBase64("<svg/>")}`;
+      const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
+      const svgUri = `data:image/svg+xml;base64,${Base64.encode("<svg/>")}`;
       expect(prepared).toContain(`<img src="${pngUri}">`);
       expect(prepared).toContain(`url(${svgUri})`);
       expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
@@ -114,7 +114,7 @@ describe("HtmlRender", () => {
 
       const prepared = yield* htmlRender.prepare(`<img src="${svg}">`);
 
-      expect(prepared).toContain(`data:image/svg+xml;base64,${Encoding.encodeBase64(source)}`);
+      expect(prepared).toContain(`data:image/svg+xml;base64,${Base64.encode(source)}`);
     }).pipe(Effect.provide(testLayer)),
   );
 
