@@ -427,6 +427,17 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
+    // Previews have no use for WebRTC, whose ICE servers can make the browser
+    // resolve names outside the proxy. Runs before page scripts in every frame.
+    yield* send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      {
+        source: "delete window.RTCPeerConnection; delete window.webkitRTCPeerConnection;",
+        runImmediately: true,
+      },
+      Ignored,
+      sessionId,
+    );
     // Pauses T3's own origin, to serve the page, and every document, to keep
     // the main frame on it.
     yield* send(

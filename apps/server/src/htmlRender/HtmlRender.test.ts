@@ -326,7 +326,7 @@ describe("HtmlRender", () => {
         const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         // The page's connections go through a proxy that only reaches public
-        // addresses, and WebRTC sends no UDP. Each line below is a way out that
+        // addresses, and WebRTC is gone. Each line below is a way out that
         // Chrome's own Local Network Access does not stop on its own.
         const requests: Array<string> = [];
         const server = yield* Effect.acquireRelease(
@@ -364,8 +364,9 @@ describe("HtmlRender", () => {
               `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
               `<script type="speculationrules">{"prefetch":[{"source":"list","urls":["${origin}/prefetch"]}]}</script>`,
               `<script>fetch("${origin}/").catch(() => {}); new WebSocket("ws${origin.slice(4)}/socket");`,
-              `const peer = new RTCPeerConnection({ iceServers: [{ urls: "${stun}" }] });`,
+              `try { const peer = new RTCPeerConnection({ iceServers: [{ urls: "${stun}" }] });`,
               `peer.createDataChannel("x"); peer.createOffer().then((offer) => peer.setLocalDescription(offer));`,
+              `} catch {}`,
               `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
             ].join(""),
           });

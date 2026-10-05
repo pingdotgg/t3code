@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no SOCKS proxy or address block list.
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 
 import * as Effect from "effect/Effect";
 
@@ -28,6 +29,22 @@ for (const [network, prefix] of [
 }
 
 /**
+ * Whether `address` belongs to a local network or to this machine itself,
+ * including a public address one of its interfaces holds right now.
+ */
+const isLocal = (address: string, family: number) =>
+  LOCAL_ADDRESSES.check(address, family === 6 ? "ipv6" : "ipv4") ||
+  Object.values(NodeOS.networkInterfaces()).some((entries) =>
+    entries?.some((entry) => NodeNet.isIP(entry.address) === family && sameAddress(entry, address)),
+  );
+
+const sameAddress = (entry: NodeOS.NetworkInterfaceInfo, address: string) => {
+  const list = new NodeNet.BlockList();
+  list.addAddress(entry.address, entry.family === "IPv6" ? "ipv6" : "ipv4");
+  return list.check(address, entry.family === "IPv6" ? "ipv6" : "ipv4");
+};
+
+/**
  * The public address to connect to for `host`, or undefined when any address
  * it resolves to is local. The caller connects to the address checked here,
  * so a name that later resolves elsewhere (DNS rebinding) changes nothing.
@@ -37,18 +54,29 @@ const publicAddress = async (host: string) => {
     ? [{ address: host, family: NodeNet.isIP(host) }]
     : await NodeDnsPromises.lookup(host, { all: true, verbatim: true }).catch(() => []);
   if (addresses.length === 0) return undefined;
-  const local = addresses.some(({ address, family }) =>
-    LOCAL_ADDRESSES.check(address, family === 6 ? "ipv6" : "ipv4"),
-  );
+  const local = addresses.some(({ address, family }) => isLocal(address, family));
   return local ? undefined : addresses[0]!.address;
 };
 
 // SOCKS5 (RFC 1928) replies: success, refused by rule, host unreachable, command unsupported.
 const reply = (code: number) => Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
 
+// What a client may send before its tunnel opens; a TLS hello fits easily.
+const MAX_EARLY_BYTES = 64 * 1024;
+
+/**
+ * Answers and closes. The client is never read from again, so anything it
+ * sent after its request is dropped rather than left buffered.
+ */
+const refuse = (client: NodeNet.Socket, code: number) => {
+  client.end(reply(code), () => client.destroy());
+};
+
 /** The CONNECT target in a complete SOCKS5 request, or "short" when more bytes are needed. */
 const readRequest = (data: Buffer) => {
   if (data.length < 5) return "short" as const;
+  // Version 5, reserved byte 0.
+  if (data[0] !== 5 || data[2] !== 0) return undefined;
   const type = data[3];
   const end = type === 1 ? 10 : type === 3 ? 7 + data[4]! : type === 4 ? 22 : -1;
   if (end === -1) return undefined;
@@ -100,20 +128,30 @@ export const publicProxy = Effect.acquireRelease(
           const request = readRequest(data);
           if (request === "short") return;
           client.off("data", onData);
-          client.pause();
           if (request === undefined || request.command !== 1 || request.port === 0) {
-            return void client.end(reply(7));
+            return refuse(client, 7);
           }
+          // Keeps reading while the target resolves, so a client that leaves is
+          // noticed, and holds what it sends early up to a small cap.
+          const early: Array<Buffer> = [request.rest];
+          let earlyBytes = request.rest.length;
+          const holdEarly = (chunk: Buffer) => {
+            earlyBytes += chunk.length;
+            if (earlyBytes > MAX_EARLY_BYTES) return void client.destroy();
+            early.push(chunk);
+          };
+          client.on("data", holdEarly);
           void publicAddress(request.host).then((address) => {
-            if (address === undefined) return void client.end(reply(2));
             if (client.destroyed) return;
+            client.off("data", holdEarly);
+            if (address === undefined) return refuse(client, 2);
+            client.pause();
             const upstream = track(NodeNet.connect(request.port, address));
             upstream.once("connect", () => {
               client.write(reply(0));
-              upstream.write(request.rest);
+              for (const chunk of early) upstream.write(chunk);
               upstream.pipe(client);
               client.pipe(upstream);
-              client.resume();
             });
             upstream.on("close", () => client.destroy());
             client.on("close", () => upstream.destroy());

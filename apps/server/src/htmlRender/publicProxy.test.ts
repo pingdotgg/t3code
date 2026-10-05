@@ -2,15 +2,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 
 import { publicProxy } from "./publicProxy.ts";
 
 /** Sends a SOCKS5 greeting and CONNECT, and resolves with the reply code. */
-const connectThrough = (proxyPort: number, target: Buffer) =>
+const connectThrough = (proxyPort: number, target: Buffer, version = 5) =>
   Effect.callback<{ readonly code: number; readonly socket: NodeNet.Socket }>((resume) => {
     const socket = NodeNet.connect(proxyPort, "127.0.0.1", () => {
       socket.write(Buffer.from([5, 1, 0]));
-      socket.write(Buffer.concat([Buffer.from([5, 1, 0]), target]));
+      socket.write(Buffer.concat([Buffer.from([version, 1, 0]), target]));
     });
     // The proxy may reset a refused connection.
     socket.on("error", () => {});
@@ -28,6 +29,18 @@ const ipv4Target = (address: string, port: number) => {
   target[0] = 1;
   address.split(".").forEach((octet, index) => (target[1 + index] = Number(octet)));
   target.writeUInt16BE(port, 5);
+  return target;
+};
+
+const ipv6Target = (address: string, port: number) => {
+  const target = Buffer.alloc(19);
+  target[0] = 4;
+  const [head = "", tail = ""] = address.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  groups.forEach((group, index) => target.writeUInt16BE(Number.parseInt(group, 16), 1 + index * 2));
+  target.writeUInt16BE(port, 17);
   return target;
 };
 
@@ -57,6 +70,31 @@ describe("publicProxy", () => {
       }
       // Port 0 is not a connection target.
       const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 0));
+      socket.destroy();
+      expect(code).toBe(7);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses every address this machine holds, even a public one", () =>
+    Effect.gen(function* () {
+      const port = yield* publicProxy;
+      const own = Object.values(NodeOS.networkInterfaces())
+        .flatMap((entries) => entries ?? [])
+        .filter((entry) => !entry.internal && !entry.address.startsWith("fe80"));
+      for (const entry of own) {
+        const target =
+          entry.family === "IPv6" ? ipv6Target(entry.address, 80) : ipv4Target(entry.address, 80);
+        const { code, socket } = yield* connectThrough(port, target);
+        socket.destroy();
+        expect(code).toBe(2);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a request with a wrong version byte", () =>
+    Effect.gen(function* () {
+      const port = yield* publicProxy;
+      const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443), 4);
       socket.destroy();
       expect(code).toBe(7);
     }).pipe(Effect.scoped),
