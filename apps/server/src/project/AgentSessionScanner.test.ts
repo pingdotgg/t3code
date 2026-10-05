@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
@@ -8,6 +11,7 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -3193,4 +3197,62 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages[0]?.text).toBe("Keep this prompt");
     expect(thread?.messages.at(-1)?.text).toBe("Assistant update 249");
   });
+});
+
+// Real clock: a parked open() never returns, so only a wall-clock timeout ends a scan.
+describe("scan with a git config whose open() never returns", () => {
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "returns without a remote and leaves the thread pool usable",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-blocked-git-");
+        const gitConfigPath = path.join(workspace, ".git", "config");
+        yield* fileSystem.makeDirectory(path.dirname(gitConfigPath));
+        yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [gitConfigPath]));
+        // Opening a writer wakes every open() still parked on the FIFO.
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              NodeFS.closeSync(
+                NodeFS.openSync(
+                  gitConfigPath,
+                  NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK,
+                ),
+              );
+            } catch {}
+          }),
+        );
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "01", "05", "rollout-a.jsonl"),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-05T10:00:00.000Z"),
+        });
+        const probePath = path.join(claudeHomePath, "probe.txt");
+        yield* fileSystem.writeFileString(probePath, "ok");
+
+        const threadPoolSize = Number(process.env.UV_THREADPOOL_SIZE ?? 4);
+        const scans = [];
+        for (let attempt = 0; attempt <= threadPoolSize; attempt++) {
+          scans.push(
+            yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+              Effect.map((result) => result.candidates.map((candidate) => candidate.git)),
+              Effect.timeoutOption("3 seconds"),
+            ),
+          );
+        }
+        const probe = yield* fileSystem
+          .readFileString(probePath)
+          .pipe(Effect.timeoutOption("3 seconds"));
+
+        expect(probe).toEqual(Option.some("ok"));
+        expect(scans).toEqual(
+          scans.map(() => Option.some([{ remoteKey: null, repository: null }])),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    60_000,
+  );
 });

@@ -57,6 +57,7 @@ import {
   createTranscriptJsonSelector,
   TranscriptJsonLimitError,
 } from "./AgentSessionJson.ts";
+import { makeBoundedFileReader, readSmallRegularFile } from "./boundedFileRead.ts";
 
 /** Chunk size for full transcript reads. */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
@@ -615,6 +616,12 @@ function sameTranscriptIdentity(
   );
 }
 
+// Module scope: the libuv pool these reads occupy is shared by every scanner instance.
+const readGitMetadataFile = makeBoundedFileReader(
+  (filePath) => readSmallRegularFile(filePath, 64 * 1024),
+  "2 seconds",
+);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -706,17 +713,16 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
     if (gitStats.value.type !== "Directory") {
-      const pointer = yield* fileSystem
-        .readFileString(gitPath)
-        .pipe(Effect.orElseSucceed(() => ""));
+      const pointer = Option.getOrElse(yield* readGitMetadataFile(gitPath), () => "");
       const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
       if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
       gitDir = path.resolve(directory, target);
       if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
     }
-    const configText = yield* fileSystem
-      .readFileString(path.join(gitDir, "config"))
-      .pipe(Effect.orElseSucceed(() => ""));
+    const configText = Option.getOrElse(
+      yield* readGitMetadataFile(path.join(gitDir, "config")),
+      () => "",
+    );
     const originUrl = parseOriginUrlFromGitConfig(configText);
     return {
       _tag: "Repository",
