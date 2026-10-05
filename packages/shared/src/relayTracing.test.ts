@@ -7,6 +7,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { vi } from "vite-plus/test";
 
 import {
+  isRelayClientTracingEnabled,
   makeRelayClientTracingLayer,
   RelayClientTracer,
   withRelayClientTracing,
@@ -25,6 +26,71 @@ function collectingTracer(spans: Array<string>): Tracer.Tracer {
     },
   });
 }
+
+describe("isRelayClientTracingEnabled", () => {
+  it.each(["false", "no", "off", "0", "n", " FaLsE "])(
+    "honors telemetry opt-out %s even when the SDK is enabled",
+    (value) => {
+      expect(
+        isRelayClientTracingEnabled({
+          T3CODE_TELEMETRY_ENABLED: value,
+          T3CODE_OTEL_SDK_DISABLED: "false",
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["true", "yes", "on", "1", "y", " TrUe "])(
+    "honors the T3CODE SDK kill switch %s",
+    (value) => {
+      expect(
+        isRelayClientTracingEnabled({
+          T3CODE_TELEMETRY_ENABLED: "true",
+          T3CODE_OTEL_SDK_DISABLED: value,
+          OTEL_SDK_DISABLED: "false",
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["false", "no", "off", "0", "n"])(
+    "lets an explicit T3CODE SDK setting %s override OTEL",
+    (value) => {
+      expect(
+        isRelayClientTracingEnabled({
+          T3CODE_OTEL_SDK_DISABLED: value,
+          OTEL_SDK_DISABLED: "true",
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each([undefined, "", " ", "invalid"])(
+    "falls through an unset or invalid T3CODE SDK setting %s",
+    (value) => {
+      expect(
+        isRelayClientTracingEnabled({
+          T3CODE_OTEL_SDK_DISABLED: value,
+          OTEL_SDK_DISABLED: " TrUe ",
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["true", "yes", "on", "1", "y", undefined, "", "invalid"])(
+    "keeps telemetry enabled for %s unless the SDK is disabled",
+    (value) => {
+      expect(isRelayClientTracingEnabled({ T3CODE_TELEMETRY_ENABLED: value })).toBe(true);
+    },
+  );
+
+  it.each(["false", "yes", "on", "1", "y", "", "invalid"])(
+    "does not interpret non-true OTEL SDK value %s as a kill switch",
+    (value) => {
+      expect(isRelayClientTracingEnabled({ OTEL_SDK_DISABLED: value })).toBe(true);
+    },
+  );
+});
 
 describe("withRelayClientTracing", () => {
   it.effect("uses the product tracer only for relay operations", () =>
@@ -61,6 +127,38 @@ describe("withRelayClientTracing", () => {
       expect(userSpans).toEqual(["relay.operation"]);
     }),
   );
+
+  it.effect("does not export when the tracing layer has no config", () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+    const userSpans: Array<string> = [];
+    const tracingLayer = makeRelayClientTracingLayer(null, {
+      serviceName: "relay-test",
+      runtime: "test",
+      client: "test",
+    }).pipe(
+      Layer.provide(
+        FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
+      ),
+    );
+    const application = Layer.effectDiscard(
+      Effect.succeed("relay-result").pipe(
+        Effect.withSpan("relay.operation"),
+        withRelayClientTracing,
+        Effect.withTracer(collectingTracer(userSpans)),
+        Effect.tap((result) => Effect.sync(() => expect(result).toBe("relay-result"))),
+      ),
+    ).pipe(Layer.provide(tracingLayer));
+
+    return Layer.build(application).pipe(
+      Effect.scoped,
+      Effect.andThen(
+        Effect.sync(() => {
+          expect(fetchFn).not.toHaveBeenCalled();
+          expect(userSpans).toEqual(["relay.operation"]);
+        }),
+      ),
+    );
+  });
 
   it.effect("preserves nested error causes in exported relay spans", () => {
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));

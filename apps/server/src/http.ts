@@ -1,4 +1,5 @@
 import * as Mime from "effect/unstable/http/Mime";
+import { parse, type DefaultTreeAdapterTypes } from "parse5";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -6,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+import { isRelayClientTracingEnabled } from "@t3tools/shared/relayTracing";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -530,6 +532,40 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     }),
   );
 
+const HTML_BOOTSTRAP_PREFIX_BYTES = 65_536n;
+const RELAY_TELEMETRY_OPT_OUT_META = '<meta name="t3code-relay-telemetry-enabled" content="false">';
+
+const injectRelayTelemetryOptOut = (prefix: Uint8Array): Uint8Array => {
+  // Browsers strip a byte order mark before tokenizing, so the doctype must stay right after it.
+  const bom = prefix[0] === 0xef && prefix[1] === 0xbb && prefix[2] === 0xbf ? 3 : 0;
+  // Latin-1 maps one byte to one code unit, so parser offsets are byte offsets and a
+  // multi-byte character split by the prefix boundary cannot shift them.
+  const document = parse(Buffer.from(prefix.subarray(bom)).toString("latin1"), {
+    sourceCodeLocationInfo: true,
+  });
+  const root = document.childNodes.find(
+    (node): node is DefaultTreeAdapterTypes.Element => "tagName" in node && node.tagName === "html",
+  );
+  const head = root?.childNodes.find(
+    (node): node is DefaultTreeAdapterTypes.Element => "tagName" in node && node.tagName === "head",
+  );
+  // Parser locations exclude comments, quoted attributes, and ignored duplicate tags.
+  // Splice the original bytes rather than serializing and rewriting the document.
+  const headOpening = head?.sourceCodeLocation?.startTag;
+  const opening = headOpening ?? root?.sourceCodeLocation?.startTag;
+  const doctype = document.childNodes.find((node) => node.nodeName === "#documentType");
+  const offset = bom + (opening?.endOffset ?? doctype?.sourceCodeLocation?.endOffset ?? 0);
+  // A head opening beyond the prefix is ignored by browsers once this one exists.
+  const bootstrap = headOpening
+    ? RELAY_TELEMETRY_OPT_OUT_META
+    : `<head>${RELAY_TELEMETRY_OPT_OUT_META}</head>`;
+  return Buffer.concat([
+    prefix.subarray(0, offset),
+    Buffer.from(bootstrap),
+    prefix.subarray(offset),
+  ]);
+};
+
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -643,6 +679,27 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
         status: 304,
         headers: { ...headers, Vary: "Accept-Encoding" },
       });
+    }
+
+    if (isHtml && !isRelayClientTracingEnabled(process.env)) {
+      // Resolve the opt-out before renderer modules initialize their tracing layer.
+      // Only the prefix is buffered, so large documents keep the bounded streaming path.
+      const prefixSize =
+        fileInfo.size < HTML_BOOTSTRAP_PREFIX_BYTES ? fileInfo.size : HTML_BOOTSTRAP_PREFIX_BYTES;
+      const prefix = injectRelayTelemetryOptOut(
+        Buffer.concat(yield* Stream.runCollect(streamStaticFile(opened.file, prefixSize))),
+      );
+      return HttpServerResponse.stream(
+        Stream.concat(
+          Stream.make(prefix),
+          streamStaticFile(opened.file, fileInfo.size - prefixSize),
+        ),
+        {
+          headers,
+          contentType: "text/html; charset=utf-8",
+          contentLength: prefix.byteLength + Number(fileInfo.size - prefixSize),
+        },
+      );
     }
 
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;

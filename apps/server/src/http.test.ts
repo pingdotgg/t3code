@@ -18,6 +18,7 @@ import {
   HttpRouter,
   HttpServerResponse,
 } from "effect/unstable/http";
+import { parse, type DefaultTreeAdapterTypes } from "parse5";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
@@ -153,6 +154,11 @@ it.layer(
 
   it.effect("serves changed HTML when deployments preserve its size and timestamp", () =>
     Effect.gen(function* () {
+      // A host opt-out would add the relay telemetry bootstrap to these bodies.
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("T3CODE_TELEMETRY_ENABLED", undefined);
+      vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", undefined);
+      vi.stubEnv("OTEL_SDK_DISABLED", undefined);
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-html-" });
@@ -187,6 +193,119 @@ it.layer(
       expect(head.status).toBe(200);
       expect(head.headers["content-length"]).toBe(String(Buffer.byteLength(nextHtml)));
       expect(yield* head.text).toBe("");
+    }),
+  );
+
+  it.effect("bootstraps relay telemetry opt-out in static HTML before renderer scripts", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-optout-" });
+      const html =
+        '<!doctype html><html><head><script type="module" src="/app.js"></script></head><body>résumé</body></html>';
+      const disabledHtml =
+        '<!doctype html><html><head><meta name="t3code-relay-telemetry-enabled" content="false"><script type="module" src="/app.js"></script></head><body>résumé</body></html>';
+      yield* fs.writeFileString(path.join(staticDir, "index.html"), html);
+      yield* fs.writeFileString(path.join(staticDir, "app.js"), "export const app = true;");
+      const request = yield* makeStaticRequest(staticDir);
+
+      for (const [telemetryEnabled, t3SdkDisabled, otelSdkDisabled, expected] of [
+        ["false", "false", "false", disabledHtml],
+        ["true", "true", "false", disabledHtml],
+        ["true", undefined, "true", disabledHtml],
+        ["true", "false", "true", html],
+        [undefined, undefined, undefined, html],
+      ] as const) {
+        vi.stubEnv("T3CODE_TELEMETRY_ENABLED", telemetryEnabled);
+        vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", t3SdkDisabled);
+        vi.stubEnv("OTEL_SDK_DISABLED", otelSdkDisabled);
+        for (const resource of ["/", "/index.html", "/threads/example"]) {
+          const response = yield* request(resource, {
+            headers: { "accept-encoding": "identity", "if-none-match": "*" },
+          });
+          expect(response.status).toBe(200);
+          expect(yield* response.text).toBe(expected);
+          expect(response.headers["cache-control"]).toBe("no-cache");
+          expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(expected)));
+        }
+        const head = yield* request("/", {
+          method: "HEAD",
+          headers: { "accept-encoding": "identity" },
+        });
+        expect(head.headers["content-length"]).toBe(String(Buffer.byteLength(expected)));
+        expect(yield* head.text).toBe("");
+        const asset = yield* request("/app.js");
+        expect(yield* asset.text).toBe("export const app = true;");
+      }
+    }),
+  );
+
+  it.effect("bootstraps relay telemetry opt-out across HTML parsing edge cases", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-no-head-" });
+      const request = yield* makeStaticRequest(staticDir);
+      const script = '<script type="module" src="/app.js"></script>';
+      const marker = '<meta name="t3code-relay-telemetry-enabled" content="false">';
+      // Splits a multi-byte character across the buffered prefix boundary.
+      const beyondPrefix = `${"a".repeat(65_535)}${"é".repeat(100_000)}`;
+      for (const html of [
+        `<!doctype html><html><body>${script}résumé</body></html>`,
+        `<!DOCTYPE html><HTML lang="en">${script}<body>résumé</body></HTML>`,
+        `<!doctype html>${script}<p>résumé</p>`,
+        `${script}<p>résumé</p>`,
+        `<!doctype html><!-- <head> placeholder --><html><body>${script}résumé</body></html>`,
+        `<!doctype html><html><head data-note="a > b">${script}</head><body>résumé</body></html>`,
+        `<!doctype html><html data-note='a > b'><body>${script}résumé</body></html>`,
+        `<!-- <html><head> -->\n<!doctype html>${script}<p>résumé</p>`,
+        `<!doctype html><html><head><title>&lt;head&gt;</title>${script}</head><body>résumé</body></html>`,
+        `<!doctype html>${script}<html><head></head><body>résumé</body></html>`,
+        `\uFEFF<!doctype html><html><head>${script}</head><body>résumé</body></html>`,
+        `\uFEFF<!doctype html>${script}<p>résumé</p>`,
+        `<!doctype html><html><head>${script}</head><body>résumé${beyondPrefix}</body></html>`,
+        `<!doctype html><html><!--${beyondPrefix}--><head>${script}</head><body>résumé</body></html>`,
+      ]) {
+        yield* fs.writeFileString(path.join(staticDir, "index.html"), html);
+        const response = yield* request("/", {
+          headers: { "accept-encoding": "identity" },
+        });
+        const body = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+          yield* response.arrayBuffer,
+        );
+        expect(response.status).toBe(200);
+        expect(body.replace(`<head>${marker}</head>`, "").replace(marker, "")).toBe(html);
+        expect(body.indexOf(marker)).toBeGreaterThan(-1);
+        expect(body.indexOf(marker)).toBeLessThan(body.indexOf(script));
+        expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(body)));
+        // Browsers strip the byte order mark while decoding; parse5 would treat it as text.
+        const document = parse(body.replace(/^\uFEFF/, ""), { sourceCodeLocationInfo: true });
+        const root = document.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node && node.tagName === "html",
+        );
+        const head = root?.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node && node.tagName === "head",
+        );
+        const meta = head?.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node &&
+            node.tagName === "meta" &&
+            node.attrs.some(
+              (attr) => attr.name === "name" && attr.value === "t3code-relay-telemetry-enabled",
+            ),
+        );
+        // The opt-out must be an actual head element, not comment or attribute text.
+        expect(meta?.attrs.find((attr) => attr.name === "content")?.value).toBe("false");
+        expect(document.mode).toBe(/<!doctype html>/i.test(html) ? "no-quirks" : "quirks");
+        if (/^<!doctype/i.test(html)) {
+          expect(body).toMatch(/^<!doctype html>/i);
+        }
+      }
     }),
   );
 

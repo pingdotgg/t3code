@@ -8,6 +8,35 @@ import * as Tracer from "effect/Tracer";
 import type { HttpClient } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
+// Match Effect's Config.Boolean literals and the T3CODE OTEL flag conventions.
+function parseT3CodeBoolean(value: string | undefined): boolean | undefined {
+  switch (value?.trim().toLowerCase()) {
+    case "true":
+    case "yes":
+    case "on":
+    case "1":
+    case "y":
+      return true;
+    case "false":
+    case "no":
+    case "off":
+    case "0":
+    case "n":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
+export function isRelayClientTracingEnabled(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const sdkDisabled =
+    parseT3CodeBoolean(env.T3CODE_OTEL_SDK_DISABLED) ??
+    env.OTEL_SDK_DISABLED?.trim().toLowerCase() === "true";
+  return parseT3CodeBoolean(env.T3CODE_TELEMETRY_ENABLED) !== false && !sdkDisabled;
+}
+
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
   readonly tracesDataset: string;
