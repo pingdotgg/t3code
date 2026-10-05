@@ -1,4 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react-native";
+
+type LegendListState = ReturnType<LegendListRef["getState"]>;
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as Haptics from "expo-haptics";
 import {
@@ -64,14 +66,16 @@ interface Drag {
   readonly itemKey: string;
   readonly thread: EnvironmentThreadShell;
   readonly section: ThreadDragSection;
-  readonly rows: readonly ThreadDragRow[];
-  readonly offsets: Readonly<Record<string, number>>;
-  readonly sourceOffset: number;
-  readonly sourceHeight: number;
   readonly grabY: number;
-  readonly startAbsoluteY: number;
-  readonly startScroll: number;
+  /** Content Y of the finger is `anchor + absoluteY + scroll`. */
+  readonly anchor: number;
+  readonly minimumScroll: number;
   readonly canDrop: (destination: ThreadDropDestination) => boolean;
+  rows: readonly ThreadDragRow[];
+  offsets: Readonly<Record<string, number>>;
+  geometryVersion: number;
+  sourceOffset: number;
+  sourceHeight: number;
   absoluteY: number;
   scroll: number;
   destination: ThreadDropDestination | null;
@@ -153,6 +157,38 @@ function createDropPolicy(
   };
 }
 
+/** Untransformed list layout; the gap is a transform, so hit testing never sees it. */
+function snapshotRows(
+  state: LegendListState,
+  items: readonly { readonly type: string; readonly key: string }[],
+) {
+  const geometry = completeThreadDragGeometry(
+    items.map((item, index) => state.positionByKey(item.key) ?? state.positionAtIndex(index)),
+    items.map((item) => state.sizes.get(item.key)),
+    ESTIMATED_ROW_HEIGHT,
+  );
+  const rows: ThreadDragRow[] = [];
+  const offsets: Record<string, number> = {};
+  let version = items.length;
+  items.forEach((item, index) => {
+    const { offset, height } = geometry[index]!;
+    offsets[item.key] = offset;
+    version = (version * 31 + offset * 7 + height) % 2_147_483_647;
+    if (!isThreadListV2ListItem(item)) return;
+    rows.push({
+      key: item.key,
+      threadKey:
+        item.type === "v2-thread"
+          ? scopedThreadKey(item.item.thread.environmentId, item.item.thread.id)
+          : null,
+      section: dragSection(item),
+      offset,
+      height,
+    });
+  });
+  return { rows, offsets, version };
+}
+
 /**
  * Hosts press-and-drag arrangement for a thread list. Rows join through
  * `useThreadListDragTarget`; hit testing uses the layout from when the drag
@@ -192,31 +228,41 @@ export function ThreadListDragSurface(props: {
       layout.set(null);
       setPreview(null);
     };
+    // Rows are measured as auto-scroll reveals them, so every retarget reads
+    // LegendList's current layout and the scroll offset it actually applied.
+    const measure = (current: Drag, state: LegendListState) => {
+      current.scroll = state.scroll;
+      const snapshot = snapshotRows(state, latest.current.items);
+      if (snapshot.version === current.geometryVersion) return false;
+      const source = snapshot.rows.find((row) => row.key === current.itemKey);
+      current.rows = snapshot.rows;
+      current.offsets = snapshot.offsets;
+      current.geometryVersion = snapshot.version;
+      if (source !== undefined) {
+        current.sourceOffset = source.offset;
+        current.sourceHeight = source.height;
+      }
+      return true;
+    };
     const retarget = () => {
       const current = drag.current;
-      if (current === null) return;
-      const contentY =
-        current.sourceOffset +
-        current.grabY +
-        current.absoluteY -
-        current.startAbsoluteY +
-        current.scroll -
-        current.startScroll;
+      const list = latest.current.listRef.current;
+      if (current === null || list === null) return;
+      const remeasured = measure(current, list.getState());
       const destination = resolveThreadDrop({
         rows: current.rows,
-        contentY,
+        contentY: current.anchor + current.absoluteY + current.scroll,
         source: {
           threadKey: scopedThreadKey(current.thread.environmentId, current.thread.id),
           section: current.section,
         },
         canDrop: current.canDrop,
       });
-      if (
-        destination?.section === current.destination?.section &&
-        destination?.targetId === current.destination?.targetId &&
-        destination?.placement === current.destination?.placement
-      )
-        return;
+      const retargeted =
+        destination?.section !== current.destination?.section ||
+        destination?.targetId !== current.destination?.targetId ||
+        destination?.placement !== current.destination?.placement;
+      if (!retargeted && !remeasured) return;
       current.destination = destination;
       layout.set({
         sourceKey: current.itemKey,
@@ -225,6 +271,7 @@ export function ThreadListDragSurface(props: {
         insertionOffset: threadDropInsertionOffset(current.rows, destination, current.sourceOffset),
         offsets: current.offsets,
       });
+      if (!retargeted) return;
       setPreview({
         title: current.thread.title,
         height: current.sourceHeight,
@@ -255,18 +302,17 @@ export function ThreadListDragSurface(props: {
               : 0;
         if (speed !== 0) {
           const state = list.getState();
-          const maximum = Math.max(current.startScroll, state.contentLength - state.scrollLength);
+          const maximum = Math.max(state.scroll, state.contentLength - state.scrollLength);
           const scroll = Math.max(
-            // iOS automatic insets rest the list at a negative offset.
-            Math.min(current.startScroll, -insets.top),
-            Math.min(maximum, current.scroll + speed * elapsed * 0.5),
+            current.minimumScroll,
+            Math.min(maximum, state.scroll + speed * elapsed * 0.5),
           );
-          if (scroll !== current.scroll) {
-            current.scroll = scroll;
-            list.scrollToOffset({ offset: scroll, animated: false });
-            retarget();
+          if (Math.abs(scroll - state.scroll) >= 0.5) {
+            // LegendList clamps negative offsets; the native view keeps iOS insets.
+            list.getNativeScrollRef()?.scrollTo({ y: scroll, animated: false });
           }
         }
+        retarget();
         frame.current = requestAnimationFrame(tick);
       };
       frame.current = requestAnimationFrame(tick);
@@ -287,30 +333,8 @@ export function ThreadListDragSurface(props: {
         const list = latest.current.listRef.current;
         if (list === null || drag.current !== null) return;
         const state = list.getState();
-        const rows: ThreadDragRow[] = [];
-        const offsets: Record<string, number> = {};
-        const items = latest.current.items;
-        const geometry = completeThreadDragGeometry(
-          items.map((item, index) => state.positionByKey(item.key) ?? state.positionAtIndex(index)),
-          items.map((item) => state.sizes.get(item.key)),
-          ESTIMATED_ROW_HEIGHT,
-        );
-        items.forEach((item, index) => {
-          const { offset, height } = geometry[index]!;
-          offsets[item.key] = offset;
-          if (!isThreadListV2ListItem(item)) return;
-          rows.push({
-            key: item.key,
-            threadKey:
-              item.type === "v2-thread"
-                ? scopedThreadKey(item.item.thread.environmentId, item.item.thread.id)
-                : null,
-            section: dragSection(item),
-            offset,
-            height,
-          });
-        });
-        const source = rows.find((row) => row.key === itemKey);
+        const snapshot = snapshotRows(state, latest.current.items);
+        const source = snapshot.rows.find((row) => row.key === itemKey);
         if (source === undefined || (source.section !== "pinned" && source.section !== "active"))
           return;
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -318,14 +342,16 @@ export function ThreadListDragSurface(props: {
           itemKey,
           thread,
           section: source.section,
-          rows,
-          offsets,
+          grabY,
+          anchor: source.offset + grabY - absoluteY - state.scroll,
+          // iOS automatic insets rest the list at a negative offset.
+          minimumScroll: Math.min(state.scroll, -(latest.current.edgeInsets?.top ?? 0)),
+          canDrop: createDropPolicy(thread, source.section, latest.current.workingShelfEnabled),
+          rows: snapshot.rows,
+          offsets: snapshot.offsets,
+          geometryVersion: snapshot.version,
           sourceOffset: source.offset,
           sourceHeight: source.height,
-          grabY,
-          startAbsoluteY: absoluteY,
-          startScroll: state.scroll,
-          canDrop: createDropPolicy(thread, source.section, latest.current.workingShelfEnabled),
           absoluteY,
           scroll: state.scroll,
           // Differs from any resolved value so the first retarget publishes.
