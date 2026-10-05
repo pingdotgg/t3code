@@ -227,46 +227,27 @@ describe("Kilo native SDK boundary", () => {
     expect(admissions).toBe(1);
   });
 
-  it("does not answer another session's approval even when its request id is known", async () => {
-    let replies = 0;
-    const client = await withClient((req, res) => {
-      if (req.method === "POST") replies++;
-      json(
-        res,
-        req.url!.startsWith("/permission")
-          ? [
-              {
-                id: "request-one",
-                sessionID: "ses_other",
-                permission: "bash",
-                patterns: ["*"],
-                metadata: {},
-                always: [],
-              },
-            ]
-          : { id: ref.sessionId, directory },
-      );
-    });
-    const error = await run(client.replyPermission(ref, "request-one", "once").pipe(Effect.flip));
-    expect(error.reason).toBe("wrong_owner");
-    expect(replies).toBe(0);
-  });
-
-  it("does not answer another session's question", async () => {
-    let replies = 0;
-    const client = await withClient((req, res) => {
-      if (req.method === "POST") replies++;
-      json(
-        res,
-        req.url!.startsWith("/question")
-          ? [{ id: "question-one", sessionID: "ses_other", questions: [] }]
-          : { id: ref.sessionId, directory },
-      );
-    });
-    const error = await run(client.replyQuestion(ref, "question-one", [["yes"]]).pipe(Effect.flip));
-    expect(error.reason).toBe("wrong_owner");
-    expect(replies).toBe(0);
-  });
+  it.each(["permission", "question"] as const)(
+    "does not answer another session's %s even when its request id is known",
+    async (kind) => {
+      let replies = 0;
+      const client = await withClient((req, res) => {
+        if (req.method === "POST") replies++;
+        json(
+          res,
+          req.url!.startsWith(`/${kind}`)
+            ? [{ id: "request", sessionID: "ses_other" }]
+            : { id: ref.sessionId, directory },
+        );
+      });
+      const reply =
+        kind === "permission"
+          ? client.replyPermission(ref, "request", "once")
+          : client.replyQuestion(ref, "request", [["yes"]]);
+      expect((await run(reply.pipe(Effect.flip))).reason).toBe("wrong_owner");
+      expect(replies).toBe(0);
+    },
+  );
 
   it("filters interleaved events and reports EOF without reconnecting or claiming completion", async () => {
     let subscriptions = 0;
