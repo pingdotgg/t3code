@@ -247,6 +247,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "right-panel-layout",
+    title: "Right panel layout",
+    to: "/settings/appearance",
+    searchTerms: ["tabs columns side by side horizontal scrolling niri paperwm strip surfaces"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

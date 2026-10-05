@@ -595,6 +595,16 @@ describe("ClientSettings panel animations", () => {
   });
 });
 
+describe("ClientSettings right panel layout", () => {
+  it("keeps tabs unless columns are chosen", () => {
+    expect(decodeClientSettings({}).rightPanelLayout).toBe("tabs");
+    expect(decodeClientSettingsPatch({ rightPanelLayout: "columns" })).toEqual({
+      rightPanelLayout: "columns",
+    });
+    expect(() => decodeClientSettingsPatch({ rightPanelLayout: "grid" })).toThrow();
+  });
+});
+
 describe("ClientSettings environment identification", () => {
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");

@@ -284,6 +284,7 @@ import {
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import { RightPanelColumns, type RightPanelColumnView } from "./RightPanelColumns";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -528,6 +529,7 @@ import {
   shouldOpenProactiveTurnDiff,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldRenderPreviewMiniPlayer,
+  surfaceShowsPreviewSource,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -1369,13 +1371,15 @@ interface PersistentThreadTerminalPanelProps {
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
+  autoFocus: boolean;
+  offscreen: boolean;
   keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
-  onSplitTerminal: () => void;
-  onSplitTerminalVertical: () => void;
+  onSplitTerminal: (surfaceId: string) => void;
+  onSplitTerminalVertical: (surfaceId: string) => void;
   onNewTerminal: () => void;
-  onActiveTerminalChange: (terminalId: string) => void;
-  onCloseTerminal: (terminalId: string) => void;
+  onActiveTerminalChange: (surfaceId: string, terminalId: string) => void;
+  onCloseTerminal: (surfaceId: string, terminalId: string) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -1388,6 +1392,8 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   surface,
   launchContext,
   focusRequestId,
+  autoFocus,
+  offscreen,
   keybindings,
   onAddTerminalContext,
   onSplitTerminal,
@@ -1517,15 +1523,17 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       ]}
       activeTerminalGroupId={surface.id}
       focusRequestId={focusRequestId}
-      onSplitTerminal={onSplitTerminal}
-      onSplitTerminalVertical={onSplitTerminalVertical}
+      autoFocus={autoFocus}
+      offscreen={offscreen}
+      onSplitTerminal={() => onSplitTerminal(surface.id)}
+      onSplitTerminalVertical={() => onSplitTerminalVertical(surface.id)}
       onNewTerminal={onNewTerminal}
       splitShortcutLabel={splitShortcutLabel}
       splitVerticalShortcutLabel={splitVerticalShortcutLabel}
       newShortcutLabel={newShortcutLabel}
       closeShortcutLabel={closeShortcutLabel}
-      onActiveTerminalChange={onActiveTerminalChange}
-      onCloseTerminal={onCloseTerminal}
+      onActiveTerminalChange={(terminalId) => onActiveTerminalChange(surface.id, terminalId)}
+      onCloseTerminal={(terminalId) => onCloseTerminal(surface.id, terminalId)}
       onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}
@@ -2358,6 +2366,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelLayout = useClientSettings((settings) => settings.rightPanelLayout);
+  // Bumped on every tab selection, so selecting the current tab still reveals its column.
+  const [rightPanelRevealRequestId, setRightPanelRevealRequestId] = useState(0);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -5922,14 +5933,19 @@ export default function ChatView(props: ChatViewProps) {
     hasTerminalWriteAccess,
   ]);
   const splitPanelTerminal = useCallback(
-    (direction: "horizontal" | "vertical" = "horizontal") => {
+    (direction: "horizontal" | "vertical" = "horizontal", surfaceId?: string) => {
+      // A column's own buttons name their surface; shortcuts split the selected one.
+      const surface =
+        surfaceId === undefined
+          ? activeRightPanelSurface
+          : rightPanelState.surfaces.find((entry) => entry.id === surfaceId);
       if (
         !hasTerminalWriteAccess() ||
         !activeThreadRef ||
         !activeThreadId ||
         !activeProject ||
-        activeRightPanelSurface?.kind !== "terminal" ||
-        activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
+        surface?.kind !== "terminal" ||
+        surface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
       ) {
         return;
       }
@@ -5937,7 +5953,7 @@ export default function ChatView(props: ChatViewProps) {
       const cwd = gitCwd ?? activeProject.workspaceRoot;
       useRightPanelStore
         .getState()
-        .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
+        .splitTerminal(activeThreadRef, surface.id, terminalId, direction);
       setTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
@@ -5963,46 +5979,43 @@ export default function ChatView(props: ChatViewProps) {
       gitCwd,
       openTerminal,
       hasTerminalWriteAccess,
+      rightPanelState.surfaces,
     ],
   );
-  const splitPanelTerminalVertical = useCallback(() => {
-    splitPanelTerminal("vertical");
-  }, [splitPanelTerminal]);
+  const splitColumnTerminal = useCallback(
+    (surfaceId: string) => splitPanelTerminal("horizontal", surfaceId),
+    [splitPanelTerminal],
+  );
+  const splitColumnTerminalVertical = useCallback(
+    (surfaceId: string) => splitPanelTerminal("vertical", surfaceId),
+    [splitPanelTerminal],
+  );
+  // Both take the terminal's own surface: side-by-side columns can report for
+  // a surface that is not the selected one, such as when its session exits.
   const activatePanelTerminal = useCallback(
-    (terminalId: string) => {
-      if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-      useRightPanelStore
-        .getState()
-        .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+    (surfaceId: string, terminalId: string) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().activateTerminal(activeThreadRef, surfaceId, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef],
+    [activeThreadRef],
   );
   const closePanelTerminal = useCallback(
-    (terminalId: string) => {
-      if (
-        !hasTerminalWriteAccess() ||
-        !activeThreadRef ||
-        activeRightPanelSurface?.kind !== "terminal"
-      )
-        return;
+    (surfaceId: string, terminalId: string) => {
+      if (!hasTerminalWriteAccess() || !activeThreadRef) return;
       void closeTerminalMutation({
         environmentId: activeThreadRef.environmentId,
         input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
       });
       storeCloseTerminal(activeThreadRef, terminalId);
-      useRightPanelStore
-        .getState()
-        .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      const panels = useRightPanelStore.getState();
+      const selected =
+        selectActiveRightPanelSurface(panels.byThreadKey, activeThreadRef)?.id === surfaceId;
+      panels.closeTerminal(activeThreadRef, surfaceId, terminalId);
+      // A column in the background must not pull focus when its session ends.
+      if (selected) setTerminalFocusRequestId((value) => value + 1);
     },
-    [
-      hasTerminalWriteAccess,
-      activeRightPanelSurface,
-      activeThreadRef,
-      closeTerminalMutation,
-      storeCloseTerminal,
-    ],
+    [hasTerminalWriteAccess, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
@@ -6021,17 +6034,28 @@ export default function ChatView(props: ChatViewProps) {
       if (!hasTerminalWriteAccess()) return;
       const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
       void confirmTerminalClose([label]).then((confirmed) => {
-        if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-          closePanelTerminal(terminalId);
+        if (
+          confirmed &&
+          readEnvironmentScope(environmentId, AuthTerminalOperateScope) &&
+          activeRightPanelSurface?.kind === "terminal"
+        ) {
+          closePanelTerminal(activeRightPanelSurface.id, terminalId);
         }
       });
     },
-    [hasTerminalWriteAccess, activeTerminalLabelsById, closePanelTerminal, environmentId],
+    [
+      hasTerminalWriteAccess,
+      activeRightPanelSurface,
+      activeTerminalLabelsById,
+      closePanelTerminal,
+      environmentId,
+    ],
   );
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
+      setRightPanelRevealRequestId((value) => value + 1);
       if (surface.kind === "preview" && surface.resourceId) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
@@ -11008,31 +11032,49 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "preview" ? (
+  const renderRightPanelSurface = (
+    surface: RightPanelSurface,
+    { active, visible, unclipped }: RightPanelColumnView,
+  ) => {
+    if (!activeThreadRef) return null;
+    // A source showing in the floating player stays there; one native view has one owner.
+    const floating =
+      previewMiniPlayerVisible &&
+      activePreviewMiniPlayer !== null &&
+      surfaceShowsPreviewSource(activePreviewMiniPlayer.source, surface);
+    return floating ? (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center">
+        <p className="max-w-sm text-sm text-muted-foreground">Showing in the floating player.</p>
+      </div>
+    ) : surface.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
-          tabId={renderedRightPanelSurface.resourceId}
+          tabId={surface.resourceId}
           configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
+          visible={rightPanelOpen && unclipped}
+          shortcutsEnabled={rightPanelOpen && unclipped && active}
           onSendAnnotation={(annotation, image) => {
             void onSend(undefined, "auto", "foreground", { annotation, image });
           }}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "terminal" ? (
+    ) : surface.kind === "terminal" ? (
+      // `visible` follows the panel, not scroll position: a terminal claims focus
+      // when it becomes visible. Scrolled away, `offscreen` only pauses painting.
       <PersistentThreadTerminalPanel
         visible={rightPanelOpen}
         threadRef={activeThreadRef}
-        surface={renderedRightPanelSurface}
+        surface={surface}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
+        autoFocus={active}
+        offscreen={!visible}
         keybindings={keybindings}
         onAddTerminalContext={addTerminalContextToDraft}
-        onSplitTerminal={splitPanelTerminal}
-        onSplitTerminalVertical={splitPanelTerminalVertical}
+        onSplitTerminal={splitColumnTerminal}
+        onSplitTerminalVertical={splitColumnTerminalVertical}
         onNewTerminal={addTerminalSurface}
         onActiveTerminalChange={activatePanelTerminal}
         onCloseTerminal={closePanelTerminal}
@@ -11041,7 +11083,7 @@ export default function ChatView(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
-    ) : renderedRightPanelSurface?.kind === "diff" ? (
+    ) : surface.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
           key={activeThreadKey}
@@ -11050,14 +11092,14 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+    ) : surface.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
+    ) : surface.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
         error="Update this environment's T3 Code server to browse pull requests."
       />
-    ) : renderedRightPanelSurface?.kind === "pull-request" ? (
+    ) : surface.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
       // would be the same action twice. The thread context also drops the checkout button, so it
       // is only right for the thread's own pull request, whose branch is already under the
@@ -11065,10 +11107,8 @@ export default function ChatView(props: ChatViewProps) {
       // checkable out like it is anywhere else.
       <PullRequestDetailPanel
         getShortcutContext={getShortcutContext}
-        shortcutsEnabled={
-          rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
-        }
-        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
+        shortcutsEnabled={rightPanelOpen && active}
+        key={`${surface.host ?? ""}:${surface.repository}#${surface.number}`}
         environmentId={activeThread.environmentId}
         onSelectPullRequest={(reference) => {
           if (activeThreadRef)
@@ -11081,10 +11121,10 @@ export default function ChatView(props: ChatViewProps) {
         }}
         threadRef={activeThreadRef}
         reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
-          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-          repository: renderedRightPanelSurface.repository,
-          number: renderedRightPanelSurface.number,
+          projectId: surface.projectId as ProjectId,
+          ...(surface.host ? { host: surface.host } : {}),
+          repository: surface.repository,
+          number: surface.number,
         }}
         context={pullRequestPanelContext(
           {
@@ -11094,7 +11134,7 @@ export default function ChatView(props: ChatViewProps) {
             branchPullRequest:
               activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
           },
-          renderedRightPanelSurface,
+          surface,
         )}
         composerDraftTarget={composerDraftTarget}
         onBack={
@@ -11103,31 +11143,31 @@ export default function ChatView(props: ChatViewProps) {
             : undefined
         }
       />
-    ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
+    ) : surface.kind === "pull-requests" ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
-    ) : renderedRightPanelSurface?.kind === "device" ? (
+    ) : surface.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
           mode="embedded"
           threadRef={activeThreadRef}
-          key={renderedRightPanelSurface.id}
-          surface={renderedRightPanelSurface}
-          visible={rightPanelOpen}
+          key={surface.id}
+          surface={surface}
+          visible={rightPanelOpen && visible}
+          selected={active}
           onDismissSetup={() => {
-            closeRightPanelSurface(renderedRightPanelSurface);
+            closeRightPanelSurface(surface);
             useRightPanelStore.getState().show(activeThreadRef);
           }}
         />
       </Suspense>
-    ) : (renderedRightPanelSurface?.kind === "files" ||
-        renderedRightPanelSurface?.kind === "file") &&
+    ) : (surface.kind === "files" || surface.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
-        (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
+        (surface.kind === "file" && surface.attachment)) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
           key={`${activeThread.environmentId}:${
-            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? `attachment:${renderedRightPanelSurface.attachment.id}`
+            surface.kind === "file" && surface.attachment
+              ? `attachment:${surface.attachment.id}`
               : activeWorkspaceRoot
           }`}
           environmentId={activeThread.environmentId}
@@ -11137,35 +11177,39 @@ export default function ChatView(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}
-          relativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.relativePath
-              : null
-          }
-          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-            ? { attachment: renderedRightPanelSurface.attachment }
+          relativePath={surface.kind === "file" ? surface.relativePath : null}
+          {...(surface.kind === "file" && surface.attachment
+            ? { attachment: surface.attachment }
             : {})}
-          revealLine={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.revealLine ?? null)
-              : null
-          }
-          revealRequestId={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.revealRequestId
-              : 0
-          }
+          revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
+          revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
           onOpenFile={openFileSurface}
           onPendingChange={handleFilePendingChange}
-          selectedFilePending={
-            renderedRightPanelSurface.kind === "file" &&
-            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
-          }
+          selectedFilePending={surface.kind === "file" && pendingFileSurfaceIds.has(surface.id)}
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : null
-  ) : null;
+    ) : null;
+  };
+  const rightPanelContent = renderedRightPanelSurface
+    ? renderRightPanelSurface(renderedRightPanelSurface, {
+        active: activeRightPanelSurface?.id === renderedRightPanelSurface.id,
+        visible: true,
+        unclipped: true,
+      })
+    : null;
+  const inlineRightPanelBody =
+    rightPanelLayout === "columns" ? (
+      <RightPanelColumns
+        surfaces={renderedRightPanelSurfaces}
+        activeSurfaceId={renderedRightPanelSurface?.id ?? null}
+        revealRequestId={rightPanelRevealRequestId}
+        onActivate={activateRightPanelSurface}
+        renderSurface={renderRightPanelSurface}
+      />
+    ) : (
+      rightPanelContent
+    );
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
     handle: threadPanelPopoverHandle,
@@ -12016,7 +12060,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
         >
-          {rightPanelContent}
+          {inlineRightPanelBody}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (

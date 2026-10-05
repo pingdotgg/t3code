@@ -350,6 +350,8 @@ interface TerminalViewportProps {
   focusRequestId: number;
   autoFocus: boolean;
   visible: boolean;
+  /** Scrolled out of view: stops painting without counting as hidden for focus. */
+  offscreen?: boolean;
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -376,13 +378,16 @@ export function TerminalViewport({
   focusRequestId,
   autoFocus,
   visible,
+  offscreen = false,
   resizeEpoch,
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
-  const visibleRef = useRef(visible);
+  const painting = visible && !offscreen;
+  const visibleRef = useRef(painting);
+  const pendingFocusRef = useRef(false);
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
@@ -526,9 +531,13 @@ export function TerminalViewport({
   }, [resizeSessionGeneration]);
 
   useLayoutEffect(() => {
-    visibleRef.current = visible;
-    terminalRef.current?.setVisible(visible);
-  }, [visible]);
+    visibleRef.current = painting;
+    terminalRef.current?.setVisible(painting);
+    if (painting && pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      terminalRef.current?.focus();
+    }
+  }, [painting]);
 
   useEffect(() => {
     const current = terminalFontRef.current;
@@ -1036,10 +1045,20 @@ export function TerminalViewport({
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
+    pendingFocusRef.current = false;
     if (!autoFocus || !canOperateTerminal || !visible) return;
     // Claim focus when requested, then hand it to the terminal once ready only
     // if the user has not focused something else in the meantime.
     (terminalRef.current ?? containerRef.current)?.focus();
+    if (visibleRef.current) return;
+    // Scrolled out of view, the surface refuses focus until it paints again;
+    // keep the request until then unless the user focuses something else.
+    pendingFocusRef.current = true;
+    const cancel = (event: FocusEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) pendingFocusRef.current = false;
+    };
+    document.addEventListener("focusin", cancel);
+    return () => document.removeEventListener("focusin", cancel);
   }, [autoFocus, canOperateTerminal, focusRequestId, visible]);
 
   useEffect(() => {
@@ -1082,6 +1101,10 @@ interface ThreadTerminalDrawerProps {
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
   focusRequestId: number;
+  /** Off for a panel shown beside others, so it only takes focus once selected. */
+  autoFocus?: boolean;
+  /** A panel column scrolled out of view; pauses painting only. */
+  offscreen?: boolean;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
@@ -1158,6 +1181,8 @@ export default function ThreadTerminalDrawer({
   terminalGroups,
   activeTerminalGroupId,
   focusRequestId,
+  autoFocus = true,
+  offscreen = false,
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
@@ -1677,8 +1702,9 @@ export default function ThreadTerminalDrawer({
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
+                          autoFocus={autoFocus && terminalId === resolvedActiveTerminalId}
                           visible={visible}
+                          offscreen={offscreen}
                           resizeEpoch={resizeEpoch}
                           drawerHeight={drawerHeight}
                           keybindings={keybindings}
@@ -1707,8 +1733,9 @@ export default function ThreadTerminalDrawer({
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
-                  autoFocus
+                  autoFocus={autoFocus}
                   visible={visible}
+                  offscreen={offscreen}
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                   keybindings={keybindings}
