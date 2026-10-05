@@ -191,7 +191,11 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const proxyPort = yield* publicProxy;
+  const proxyPort = yield* publicProxy.pipe(
+    Effect.mapError(
+      (cause) => new HtmlRenderBrowserError({ reason: "the preview proxy could not start", cause }),
+    ),
+  );
   const outgoing = yield* Queue.unbounded<Uint8Array>();
   const child = yield* spawner
     .spawn(

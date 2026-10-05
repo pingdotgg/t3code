@@ -144,6 +144,21 @@ describe("publicProxy", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("fails instead of crashing when it cannot listen", () =>
+    Effect.gen(function* () {
+      const exhausted = Object.assign(new Error("too many open files"), { code: "EMFILE" });
+      const listen = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementationOnce(function (
+        this: NodeNet.Server,
+      ) {
+        process.nextTick(() => this.emit("error", exhausted));
+        return this;
+      });
+      const error = yield* publicProxy.pipe(Effect.flip, Effect.scoped);
+      listen.mockRestore();
+      expect(error).toBe(exhausted);
+    }),
+  );
+
   it.effect("closes every connection when its scope closes", () =>
     Effect.gen(function* () {
       const socket = yield* Effect.scoped(

@@ -144,68 +144,78 @@ const readRequest = (data: Buffer) => {
  * carries bytes only, so HTTP, TLS, and WebSockets pass through unchanged.
  */
 export const publicProxy = Effect.acquireRelease(
-  Effect.callback<{ readonly server: NodeNet.Server; readonly sockets: Set<NodeNet.Socket> }>(
-    (resume) => {
-      const sockets = new Set<NodeNet.Socket>();
-      const track = (socket: NodeNet.Socket) => {
-        sockets.add(socket);
-        socket.on("close", () => sockets.delete(socket));
-        socket.on("error", () => socket.destroy());
-        return socket;
-      };
-      const server = NodeNet.createServer((client) => {
-        track(client);
-        let data = Buffer.alloc(0);
-        let greeted = false;
-        const onData = (chunk: Buffer) => {
-          data = Buffer.concat([data, chunk]);
-          if (!greeted) {
-            if (data.length < 2 || data.length < 2 + data[1]!) return;
-            // Version 5, offering "no authentication".
-            if (data[0] !== 5 || !data.subarray(2, 2 + data[1]!).includes(0)) {
-              return void client.end(Buffer.from([5, 0xff]));
-            }
-            data = data.subarray(2 + data[1]!);
-            greeted = true;
-            client.write(Buffer.from([5, 0]));
+  Effect.callback<
+    { readonly server: NodeNet.Server; readonly sockets: Set<NodeNet.Socket> },
+    Error
+  >((resume) => {
+    const sockets = new Set<NodeNet.Socket>();
+    const track = (socket: NodeNet.Socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => socket.destroy());
+      return socket;
+    };
+    const server = NodeNet.createServer((client) => {
+      track(client);
+      let data = Buffer.alloc(0);
+      let greeted = false;
+      const onData = (chunk: Buffer) => {
+        data = Buffer.concat([data, chunk]);
+        if (!greeted) {
+          if (data.length < 2 || data.length < 2 + data[1]!) return;
+          // Version 5, offering "no authentication".
+          if (data[0] !== 5 || !data.subarray(2, 2 + data[1]!).includes(0)) {
+            return void client.end(Buffer.from([5, 0xff]));
           }
-          const request = readRequest(data);
-          if (request === "short") return;
-          client.off("data", onData);
-          if (request === undefined || request.command !== 1 || request.port === 0) {
-            return refuse(client, 7);
-          }
-          // Keeps reading while the target resolves, so a client that leaves is
-          // noticed, and holds what it sends early up to a small cap.
-          const early: Array<Buffer> = [request.rest];
-          let earlyBytes = request.rest.length;
-          const holdEarly = (chunk: Buffer) => {
-            earlyBytes += chunk.length;
-            if (earlyBytes > MAX_EARLY_BYTES) return void client.destroy();
-            early.push(chunk);
-          };
-          client.on("data", holdEarly);
-          void publicAddress(request.host).then((address) => {
-            if (client.destroyed) return;
-            client.off("data", holdEarly);
-            if (address === undefined) return refuse(client, 2);
-            client.pause();
-            const upstream = track(NodeNet.connect(request.port, address));
-            upstream.once("connect", () => {
-              client.write(reply(0));
-              for (const chunk of early) upstream.write(chunk);
-              upstream.pipe(client);
-              client.pipe(upstream);
-            });
-            upstream.on("close", () => client.destroy());
-            client.on("close", () => upstream.destroy());
-          });
+          data = data.subarray(2 + data[1]!);
+          greeted = true;
+          client.write(Buffer.from([5, 0]));
+        }
+        const request = readRequest(data);
+        if (request === "short") return;
+        client.off("data", onData);
+        if (request === undefined || request.command !== 1 || request.port === 0) {
+          return refuse(client, 7);
+        }
+        // Keeps reading while the target resolves, so a client that leaves is
+        // noticed, and holds what it sends early up to a small cap.
+        const early: Array<Buffer> = [request.rest];
+        let earlyBytes = request.rest.length;
+        const holdEarly = (chunk: Buffer) => {
+          earlyBytes += chunk.length;
+          if (earlyBytes > MAX_EARLY_BYTES) return void client.destroy();
+          early.push(chunk);
         };
-        client.on("data", onData);
-      });
-      server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, sockets })));
-    },
-  ),
+        client.on("data", holdEarly);
+        void publicAddress(request.host).then((address) => {
+          if (client.destroyed) return;
+          client.off("data", holdEarly);
+          if (address === undefined) return refuse(client, 2);
+          client.pause();
+          const upstream = track(NodeNet.connect(request.port, address));
+          upstream.once("connect", () => {
+            client.write(reply(0));
+            for (const chunk of early) upstream.write(chunk);
+            upstream.pipe(client);
+            client.pipe(upstream);
+          });
+          upstream.on("close", () => client.destroy());
+          client.on("close", () => upstream.destroy());
+        });
+      };
+      client.on("data", onData);
+    });
+    // A failure to listen fails this preview; once listening, a server error
+    // must not reach Node as an unhandled event either.
+    let listening = false;
+    server.on("error", (error) => {
+      if (!listening) resume(Effect.fail(error));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      listening = true;
+      resume(Effect.succeed({ server, sockets }));
+    });
+  }),
   ({ server, sockets }) =>
     Effect.callback<void>((resume) => {
       for (const socket of sockets) socket.destroy();
