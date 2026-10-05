@@ -372,6 +372,16 @@ export function summarizeT3ToolCalls(
     case "unlink-pr":
       label = phrase("Unlinked", "unlink", quantity(selected.length, "pull request"));
       break;
+    case "watch-pr":
+      label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
+      break;
+    case "unwatch-pr":
+      label = phrase(
+        "Stopped watching",
+        "stop watching",
+        quantity(selected.length, "pull request"),
+      );
+      break;
     case "list-prs":
       label = phrase(
         "Checked",

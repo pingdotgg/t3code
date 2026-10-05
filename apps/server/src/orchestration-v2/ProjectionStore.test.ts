@@ -959,6 +959,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.strictEqual(older.projection.turnItems[0]?.ordinal, 850);
       assert.strictEqual(older.projection.turnItems.at(-1)?.ordinal, 925);
 
+      // A single item reads back with its full output, scoped to its thread.
+      const itemId = TurnItemId.make("turn-item:bounded-sql-history:925");
+      const stored = yield* projectionStore.getTurnItem({ threadId, itemId });
+      assert.strictEqual(stored?.type === "command_execution" ? stored.output : undefined, "ok");
+      assert.isNull(
+        yield* projectionStore.getTurnItem({ threadId: ThreadId.make("thread:other"), itemId }),
+      );
+
       const sqlPageLimit = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
       const initialSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: sqlPageLimit,
@@ -1376,6 +1384,36 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         interruptSnapshot.projection.visibleTurnItems.some(
           (row) => row.sourceItemId === interruptResultId,
         ),
+      );
+
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = json_set(payload_json, '$.createdBy', 'agent')
+        WHERE thread_id = ${threadId} AND type = 'user_message'
+      `;
+      const agentPromptId = TurnItemId.make("turn-item:bounded-sql-history:interrupt-filler:1281");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'user_message',
+          payload_json = json_set(payload_json,
+            '$.type', 'user_message', '$.inputIntent', 'turn_start',
+            '$.createdBy', 'agent', '$.creationSource', 'provider',
+            '$.messageId', 'message:bounded-sql-history:agent-prompt',
+            '$.text', 'Continue the child task', '$.attachments', json('[]'))
+        WHERE turn_item_id = ${agentPromptId}
+      `;
+      const agentWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+      });
+      assert.lengthOf(
+        agentWindow.projection.visibleTurnItems.filter(
+          (row) => row.item.type !== "run_interrupt_request",
+        ),
+        sqlPageLimit,
+      );
+      assert.isTrue(
+        agentWindow.projection.visibleTurnItems.some((row) => row.sourceItemId === agentPromptId),
       );
     }),
   );
@@ -2276,8 +2314,33 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A restart continuation ran ahead of the held queue and ended before the
+      // resumed failed run: the failure is still the latest executed run.
+      const aheadRunId = RunId.make("run:limit-shell:ran-ahead");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:ran-ahead"),
+        type: "run.created",
+        threadId,
+        runId: aheadRunId,
+        nodeId: NodeId.make("node:limit-shell:ran-ahead"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: aheadRunId,
+          ordinal: original.ordinal + 3,
+          rootNodeId: NodeId.make("node:limit-shell:ran-ahead"),
+          userMessageId: MessageId.make("message:limit-shell:ran-ahead"),
+          status: "completed",
+          startedAt: DateTime.subtract(now, { minutes: 10 }),
+          completedAt: DateTime.subtract(now, { minutes: 5 }),
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
       const sql = yield* SqlClient.SqlClient;
       // The rest of this case treats the failed run as the latest run.
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
       yield* assertSummary("Plan limit reached.", "usage_limit");
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${cancelledRunId}`;
@@ -4372,6 +4435,36 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         released && projectThreadAwarenessV2({ environmentId, project, thread: released });
       assert.equal(state?.phase, "completed");
       assert.equal(state?.updatedAt, DateTime.formatIso(releasedAt));
+
+      // A later provider must not hide this owner's roster from restart recovery.
+      yield* store.apply({
+        id: EventId.make("event:held-completion:monitor-restarted"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: releasedAt,
+        payload: { ...providerThread, updatedAt: releasedAt },
+      });
+      const newerRunId = RunId.make("run:held-completion:new-provider");
+      yield* store.apply({
+        id: EventId.make("event:held-completion:new-provider"),
+        type: "run.created",
+        threadId,
+        runId: newerRunId,
+        occurredAt: releasedAt,
+        payload: {
+          ...(yield* store.getThreadProjection(threadId)).runs[0]!,
+          id: newerRunId,
+          ordinal: 2,
+          providerThreadId: ProviderThreadId.make("provider-thread:held-completion:new-provider"),
+          requestedAt: releasedAt,
+          startedAt: releasedAt,
+          completedAt: releasedAt,
+        },
+      });
+      assert.deepEqual(
+        (yield* store.getRuntimeRecoveryProjection(threadId)).runs.map((run) => run.id),
+        [runId, newerRunId],
+      );
     }),
   );
 });

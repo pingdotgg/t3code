@@ -3,11 +3,35 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
   parseFileUrlHref,
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
+
+describe("isMarkdownFileLinkLabel", () => {
+  it.each([
+    ["validates the input", "/repo/src/example.ts:12", false],
+    ["read src/example.ts", "/repo/src/example.ts:12", false],
+    ["example.ts?why this matters", "/repo/src/example.ts", false],
+    ["example.ts", "/repo/src/example.ts:12", true],
+    ["example.ts:12", "/repo/src/example.ts:12", true],
+    ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
+    ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
+    ["example.ts:12", "/repo/src/example.ts", false],
+    ["src/example.ts:12", "/repo/src/example.ts:12", true],
+    ["./src/example.ts", "/repo/src/example.ts", true],
+    ["/repo/src/example.ts", "/repo/src/example.ts", true],
+    ["src/", "/home/me/project/src/", true],
+    ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
+    ["file name.ts", "file:///repo/file%20name.ts", true],
+    ["", "/repo/src/example.ts", true],
+  ])("classifies %s for %s", (label, href, expected) => {
+    expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
+  });
+});
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([

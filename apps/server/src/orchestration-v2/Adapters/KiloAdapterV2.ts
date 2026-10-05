@@ -428,7 +428,8 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
       yield* connection.exitCode.pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            // The Stop owner publishes terminality only after the entire owned process group is gone.
+            // The Stop owner waits for runtime cleanup before publishing terminality.
+            // Linux verifies observed group members; this is not descendant containment.
             if (!active || active.interrupting) return;
             yield* connection.cleanup;
             yield* finish("failed", "Kilo process exited.");

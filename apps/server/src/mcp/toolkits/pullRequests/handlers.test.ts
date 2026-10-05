@@ -38,9 +38,13 @@ const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
-  threadId: THREAD_ID,
-  providerSessionId: "provider-session-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-1",
+  thread: {
+    threadId: THREAD_ID,
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });
@@ -222,6 +226,58 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("watching an unlinked pull request links it first", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("watch_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/9",
+      });
+      // The harness thread never changes, so the result reports what it still holds.
+      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        {
+          type: "thread.pull-request.watch",
+          number: 9,
+          watching: true,
+          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: null,
+        failedChecks: [],
+        passed: false,
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const merged = makeLink(1, { headBranch: "done" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
+          makeLink(2, { headBranch: "idle" }),
+          makeLink(3, { headBranch: "watched", watch }),
+        ]),
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
+      expect(
+        yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
+      ).toMatchObject({ wasWatching: true });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 3, watching: false },
+      ]);
+    }),
+  );
+
   it.effect("links by repository and number, defaulting the host to the project's", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -396,6 +452,7 @@ describe("pull request toolkit handlers", () => {
         number: 3,
         url: "https://github.com/t3tools/t3code/pull/3",
         source: "agent",
+        watching: false,
         state: "open",
         title: "PR 3",
         headBranch: "feat-c",

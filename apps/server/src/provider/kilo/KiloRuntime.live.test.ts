@@ -95,17 +95,47 @@ describe.skipIf(!binary)("KiloRuntime native lifecycle", () => {
             Number(yield* fs.readFileString(marker)),
             Number(yield* fs.readFileString(explicitMarker)),
           ];
-          const running = (pid: number) =>
+          const observe = (pid: number) =>
             fs.readFileString(`/proc/${pid}/stat`).pipe(
-              Effect.map((stat) => !stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")),
-              Effect.orElseSucceed(() => false),
+              Effect.map((stat) => {
+                const fields = stat
+                  .slice(stat.lastIndexOf(")") + 2)
+                  .trim()
+                  .split(/\s+/);
+                assert.match(fields[19]!, /^\d+$/);
+                return { startTime: fields[19]!, state: fields[0]! };
+              }),
+              Effect.catchTag("PlatformError", (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+              ),
             );
-          for (const pid of descendants) assert.isTrue(yield* running(pid));
-          // Kill only the recorded owned leader while its session is idle. Exit
-          // observation must clean up descendants without an active-turn error.
+          const identities = yield* Effect.forEach(descendants, (pid) =>
+            Effect.gen(function* () {
+              const observed = yield* observe(pid);
+              assert.isDefined(observed);
+              assert.notEqual(observed!.state, "Z");
+              return { pid, startTime: observed!.startTime };
+            }),
+          );
+          // This test proves eventual cleanup of these fixture children, not the
+          // ordering of replacement. The handoff test verifies that separately.
           process.kill(recorded.pgid, "SIGKILL");
           yield* connection.exitCode;
-          for (const pid of descendants) assert.isFalse(yield* running(pid));
+          yield* Effect.forEach(identities, (identity) =>
+            Effect.gen(function* () {
+              for (;;) {
+                const current = yield* observe(identity.pid);
+                if (
+                  current === undefined ||
+                  current.startTime !== identity.startTime ||
+                  current.state === "Z" ||
+                  current.state === "X"
+                )
+                  return;
+                yield* Effect.sleep("10 millis");
+              }
+            }).pipe(Effect.timeout("2 seconds")),
+          );
         }
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: 30000 },

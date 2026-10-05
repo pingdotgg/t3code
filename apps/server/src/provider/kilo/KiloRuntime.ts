@@ -14,6 +14,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
+import * as KiloProcessCleanup from "./KiloProcessCleanup.ts";
 import * as KiloSessionClient from "./KiloSessionClient.ts";
 import * as ServerLedger from "../OpenCodeServerLedger.ts";
 
@@ -104,6 +105,13 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
   const fail = (operation: string, detail: string) => (cause: unknown) =>
     new KiloRuntimeError({ operation, detail, cause });
   const profile = path.resolve(input.profileDirectory);
+  const processCleanup =
+    platform === "linux"
+      ? yield* KiloProcessCleanup.make({
+          profile,
+          stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
+        }).pipe(Effect.mapError(fail("cleanup", "Could not prepare Kilo process cleanup.")))
+      : undefined;
   const ledger = yield* ServerLedger.make({
     stateDir: input.processStateDirectory ?? path.join(profile, "t3-processes"),
   });
@@ -187,7 +195,7 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
         );
         // Forget only after the owned group is stopped, including failed readiness.
         const ledgerScope = yield* Scope.fork(scope);
-        const child = yield* spawner
+        const spawn = spawner
           .spawn(
             ChildProcess.make(command.command, command.args, {
               cwd: directory,
@@ -198,33 +206,62 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
             }),
           )
           .pipe(Effect.mapError(fail("spawn", "Could not start Kilo. Check the binary path.")));
+        const child = yield* (processCleanup ? processCleanup.withStart(spawn) : spawn).pipe(
+          Effect.mapError((cause) =>
+            isRuntimeError(cause)
+              ? cause
+              : fail(
+                  "cleanup",
+                  "Kilo could not start while previous process cleanup is unconfirmed.",
+                )(cause),
+          ),
+        );
         // Only this captured process group is signalled. No process-name matching.
-        const cleanup = yield* Effect.cached(
-          Effect.uninterruptible(
-            platform === "win32"
-              ? child
-                  .kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" })
-                  .pipe(Effect.ignore)
-              : Effect.sync(() => {
-                  try {
-                    signalProcessGroup(Number(child.pid), "SIGTERM");
-                  } catch {
-                    /* already exited */
-                  }
-                }).pipe(
-                  Effect.andThen(
-                    child.exitCode.pipe(Effect.timeoutOption("1 second"), Effect.ignore),
-                  ),
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      try {
-                        signalProcessGroup(Number(child.pid), "SIGKILL");
-                      } catch {
-                        /* already exited */
-                      }
-                    }),
-                  ),
+        const signal = Effect.uninterruptible(
+          platform === "win32"
+            ? child.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }).pipe(Effect.ignore)
+            : Effect.sync(() => {
+                try {
+                  signalProcessGroup(Number(child.pid), "SIGTERM");
+                } catch {
+                  /* already exited */
+                }
+              }).pipe(
+                Effect.andThen(
+                  child.exitCode.pipe(Effect.timeoutOption("1 second"), Effect.ignore),
                 ),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    try {
+                      signalProcessGroup(Number(child.pid), "SIGKILL");
+                    } catch {
+                      /* already exited */
+                    }
+                  }),
+                ),
+              ),
+        );
+        let verified = false;
+        const cleanup = yield* Effect.cached(
+          (processCleanup
+            ? processCleanup.verify(
+                Number(child.pid),
+                signal.pipe(
+                  // Await/reap our own child as well as observing non-child members.
+                  // This wait stays inside the bounded, interruptible verification.
+                  // The Node spawner reports signal termination as an exitCode
+                  // error after the actual exit event. PID observation still follows.
+                  Effect.andThen(child.exitCode.pipe(Effect.ignore)),
+                ),
+              )
+            : signal
+          ).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                verified = true;
+              }),
+            ),
+            Effect.orDie,
           ),
         );
         yield* Effect.addFinalizer(() => cleanup);
@@ -233,7 +270,10 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
           port: 0,
           args: ["serve", "--hostname=127.0.0.1", "--port=0"],
         });
-        yield* Scope.addFinalizer(ledgerScope, forget);
+        yield* Scope.addFinalizer(
+          ledgerScope,
+          Effect.suspend(() => (verified ? forget : Effect.void)),
+        );
         const guard = checkAuth.pipe(Effect.onError(() => cleanup));
         // Observe idle or in-flight account replacement as well as request boundaries.
         // Never read credential files once per SSE event.

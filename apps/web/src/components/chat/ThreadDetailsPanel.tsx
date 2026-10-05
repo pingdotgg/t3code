@@ -126,7 +126,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             headingId="thread-details-workspace-heading"
             title="Workspace"
             separated={false}
-            showHeading={density === "full"}
+            showHeading={false}
           >
             {props.versionMismatch ? (
               <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
@@ -164,7 +164,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {density === "full" ? (
+              {density === "full" && props.gitCwd !== null ? (
                 <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
               ) : null}
 
@@ -198,7 +198,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
               title="Version Control"
-              showHeading={density === "full"}
+              showHeading={false}
               separated={density === "full"}
             >
               <div className="flex flex-col">

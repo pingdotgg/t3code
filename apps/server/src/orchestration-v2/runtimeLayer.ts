@@ -244,6 +244,7 @@ const managedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
 const threadLaunchProvided = threadLaunchServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      providerAdapterRegistryProvided,
       ProjectServiceLayerLive,
       ProjectSetupScriptRunnerLayerLive,
       managedProjectFoldersProvided,
