@@ -267,6 +267,7 @@ export function useNewThreadHandler() {
             workspaceContext = {
               branch: null,
               worktreePath: null,
+              worktreeBranch: null,
               envMode: defaultEnvMode,
               startFromOrigin: resolveNewDraftStartFromOrigin({
                 envMode: defaultEnvMode,

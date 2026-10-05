@@ -94,6 +94,7 @@ export function dashboardEntries(
   threads: readonly ThreadShell[],
   connected: ReadonlySet<string>,
 ): DashboardEntry[] {
+  /** Keep parent and child lookup keys distinct across environments that reuse thread IDs. */
   const key = (thread: ThreadShell) => JSON.stringify([thread.environmentId, thread.id]);
   const indexed = new Map(threads.map((thread) => [key(thread), thread]));
   const byParent = new Map<string, ThreadShell[]>();

@@ -33,6 +33,7 @@ export function staleMarkdownNotes(
 /** Runs after sanitization: authored HTML cannot forge a source marker. */
 export function rehypeMarkdownSourceLines() {
   return (tree: { children?: unknown[] }) => {
+    /** Annotate sanitized elements using parser-owned source positions, never authored marker attributes. */
     function visit(value: unknown) {
       if (!value || typeof value !== "object") return;
       const node = value as {

@@ -318,6 +318,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /** Write within the workspace boundary, serializing service writes and checking expected content on a best-effort basis against external writers. */
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
@@ -340,6 +341,7 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (input.expectedContents !== undefined) {
+      /** Keep the filesystem operation and original cause distinct from a successful comparison that detects a conflict. */
       const readError = (operation: "stat" | "read") => (cause: unknown) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,

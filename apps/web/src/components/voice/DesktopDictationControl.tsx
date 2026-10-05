@@ -197,6 +197,7 @@ export function DesktopDictationControl(props: {
             locale: "en",
             transcribe: async (_uri, { signal: transcribeSignal }) => {
               const operationId = randomUUID();
+              /** Forward cancellation to this transcription operation without cancelling another composer's native work. */
               const cancel = () => {
                 void bridge({ action: "cancel", operationId });
               };
@@ -224,6 +225,7 @@ export function DesktopDictationControl(props: {
       }),
     });
     controller.current = instance;
+    /** Dispose this composer's voice controller and release microphone resources when its window closes. */
     const close = () => {
       instance.dispose();
       void recorder.release();
@@ -265,6 +267,7 @@ export function DesktopDictationControl(props: {
     if (expectedHold && held.current !== expectedHold) return;
     await instance.start();
   }
+  /** Cancel this composer's voice operation and clear temporary voice feedback while preserving its draft. */
   function cancel() {
     controller.current?.cancel();
     setTranscript("");
@@ -305,8 +308,11 @@ export function DesktopDictationControl(props: {
     if (held.current) cancel();
   });
   useEffect(() => {
+    /** Forward keydown events to the current dictation shortcut handler through a removable listener. */
     const down = (event: KeyboardEvent) => onDictationKeyDown(event);
+    /** Forward key releases to the current hold-to-talk handler through a removable listener. */
     const up = (event: KeyboardEvent) => onDictationKeyUp(event);
+    /** Forward focus loss so a held dictation shortcut cannot leave recording active. */
     const blur = () => onDictationBlur();
     window.addEventListener("keydown", down, true);
     window.addEventListener("keyup", up, true);

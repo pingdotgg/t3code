@@ -24,6 +24,7 @@ type MarkdownNode = {
 const safeUrl = (url: string) =>
   !/^\s*(?:javascript|vbscript|data):/i.test(url) &&
   ![...url].some((character) => character.charCodeAt(0) < 32);
+/** Create a rich text leaf with its inherited marks without changing the source text. */
 const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({
   type: "text",
   text: value,
@@ -32,6 +33,7 @@ const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({
 
 /** Convert supported Markdown nodes into editable blocks and reject syntax that cannot be preserved safely. */
 function convert(node: MarkdownNode, marks: NonNullable<JSONContent["marks"]> = []): JSONContent[] {
+  /** Convert child Markdown nodes while retaining the current inline formatting marks. */
   const children = () => (node.children ?? []).flatMap((child) => convert(child, marks));
   switch (node.type) {
     case "text":
@@ -221,7 +223,9 @@ function destination(value: string) {
 /** Serialize an edited block to supported Markdown and reject structures without a safe representation. */
 function serialize(node: JSONContent, inTable = false): string {
   const content = node.content ?? [];
+  /** Serialize nested blocks with paragraph separators and the enclosing table context. */
   const children = () => content.map((child) => serialize(child, inTable)).join("\n\n");
+  /** Serialize inline children without separators, applying table escaping when needed. */
   const inlines = () => content.map((child) => inline(child, inTable)).join("");
   switch (node.type) {
     case "paragraph":

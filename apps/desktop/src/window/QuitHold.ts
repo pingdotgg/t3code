@@ -99,6 +99,7 @@ export function makeQuitShortcutHandler(options: QuitShortcutOptions) {
   };
 
   let disposed = false;
+  /** Consume quit-key events using the configured confirmation mode; ignore events after disposal. */
   const handler = (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => {
     if (disposed) return;
     const key = input.key.toLowerCase();

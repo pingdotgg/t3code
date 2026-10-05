@@ -2651,6 +2651,7 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+/** Build platform packaging options, including native permission declarations and only the runtime resources staged for this artifact. */
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,

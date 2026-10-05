@@ -23,6 +23,7 @@ export function encodeDictationWav(
   );
   const result = new Uint8Array(44 + count * 2);
   const view = new DataView(result.buffer);
+  /** Write fixed RIFF chunk signatures into the bounded WAV output buffer. */
   const ascii = (at: number, text: string) => {
     for (let i = 0; i < text.length; i++) result[at + i] = text.charCodeAt(i);
   };

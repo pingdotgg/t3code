@@ -99,6 +99,7 @@ const make = Effect.gen(function* () {
       ),
       unavailable("read-source"),
     );
+  /** Validate the project-scoped source and persist its credentials only in the environment secret store. */
   const configure = Effect.fn("TaskService.configure")(function* (input: TaskConfigureInput) {
     const project = yield* projects.getById(input.projectId).pipe(unavailable("read-project"));
     if (Option.isNone(project)) return yield* invalid("Select an existing project.");
@@ -140,6 +141,7 @@ const make = Effect.gen(function* () {
       )
       .pipe(unavailable("store-source"));
   });
+  /** Dispatch task actions, persisting work links and journaling external writes to prevent ambiguous retries. */
   const execute = Effect.fn("TaskService.execute")(function* (input: TaskRequest) {
     const project = yield* projects.getById(input.projectId).pipe(unavailable("read-project"));
     if (Option.isNone(project)) return yield* invalid("This project is no longer available.");
@@ -197,6 +199,7 @@ const make = Effect.gen(function* () {
     if (!stored) return yield* invalid("Connect a task source for this project first.");
     const { source, token } = stored;
     let externalWriteStarted = false;
+    /** Send provider requests through the environment transport and track when retries could duplicate a mutation. */
     const request: TaskTransport = Effect.fn("TaskService.request")(function* (
       path,
       body,

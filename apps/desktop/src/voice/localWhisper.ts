@@ -23,6 +23,7 @@ export function validateDictationWav(audio: Uint8Array): void {
   if (audio.byteLength < 46 || audio.byteLength > 16_000 * 2 * 300 + 44)
     throw new Error("Recording must contain 16 kHz mono audio, up to five minutes long.");
   const bytes = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+  /** Decode a WAV header signature for validation without interpreting audio samples. */
   const ascii = (start: number, length: number) =>
     new TextDecoder().decode(audio.slice(start, start + length));
   if (
@@ -59,11 +60,13 @@ export function runWhisperProcess(
     let output = "";
     let failure: Error | null = null;
     let killTimer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
+    /** Terminate only this captured child process, escalating once if it does not close. */
     const stop = () => {
       if (killTimer) return;
       child.kill();
       killTimer = NodeTimers.setTimeout(() => child.kill("SIGKILL"), 1500);
     };
+    /** Record cancellation before terminating the CLI so its close event rejects the operation. */
     const abort = () => {
       failure = new Error("Cancelled");
       stop();
@@ -73,6 +76,7 @@ export function runWhisperProcess(
       stop();
     }, timeoutMs);
     signal.addEventListener("abort", abort, { once: true });
+    /** Bound combined CLI output while continuing to drain both child-process streams. */
     const collect = (data: Buffer) => {
       if (output.length < 64_000) output += data.toString().slice(0, 64_000 - output.length);
     };

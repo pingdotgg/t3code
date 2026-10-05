@@ -13,14 +13,20 @@ export type TaskTransport = (
   method?: string,
 ) => Effect.Effect<unknown, TaskIntegrationError>;
 type Json = Record<string, unknown>;
+/** Read unknown provider records without treating arrays or null as objects. */
 const object = (value: unknown): Json =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Json) : {};
+/** Normalize absent or malformed provider collections to an empty list. */
 const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+/** Normalize provider identifiers and display values without stringifying arbitrary objects. */
 const string = (value: unknown): string =>
   typeof value === "string" || typeof value === "number" ? String(value) : "";
+/** Read nested provider fields safely when any intermediate response object is absent. */
 const at = (value: unknown, ...keys: string[]): unknown =>
   keys.reduce<unknown>((current, key) => object(current)[key], value);
+/** Extract a GraphQL node collection, tolerating missing or inaccessible connections. */
 const nodes = (value: unknown) => array(at(value, "nodes"));
+/** Construct a client-safe validation error from an application-authored message. */
 const invalid = (message: string) => new TaskIntegrationError({ code: "invalid", message });
 const emptyTask = { assignee: "", labels: [], priority: "", comments: [], relationships: [] };
 
@@ -101,6 +107,7 @@ function linearTask(value: unknown): ExternalTask {
       .filter((r) => r.url.startsWith("https://linear.app/")),
   };
 }
+/** Validate provider capabilities and task scope before translating actions and responses through the supplied transport. */
 export const runTaskProvider = Effect.fn("runTaskProvider")(function* (
   source: TaskSource,
   input: TaskRequest,
@@ -240,6 +247,7 @@ export const runTaskProvider = Effect.fn("runTaskProvider")(function* (
       yield* request(`${endpoint}/${id}`, body, "PATCH");
     }
   } else if (source.provider === "linear") {
+    /** Extract Linear GraphQL data while replacing provider error bodies with a fixed, credential-safe message. */
     const gql = (query: string, variables: Json) =>
       request("graphql", { query, variables }).pipe(
         Effect.flatMap((result) =>

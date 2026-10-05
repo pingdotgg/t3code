@@ -73,6 +73,7 @@ export function restoreWorkspaceLayout(
   const allowed = new Set([CONVERSATION_SURFACE, ...surfaces]);
   const used = new Set<string>();
   const ids = new Set<string>();
+  /** Validate one persisted subtree with bounded depth and unique pane and surface identities. */
   function read(candidate: unknown, depth: number): WorkspacePane | null {
     if (depth > 12 || !candidate || typeof candidate !== "object") return null;
     const node = candidate as Record<string, unknown>;
@@ -164,6 +165,7 @@ export function moveWorkspaceSurface(
   const to = groups.find((pane) => pane.id === targetId);
   if (!from || !to || (from === to && (!edge || from.tabs.length < 2)))
     return activateWorkspaceSurface(layout, surface);
+  /** Rebuild the affected pane branches and collapse empty groups while preserving surface resource IDs. */
   function move(node: WorkspacePane): WorkspacePane | null {
     if (node.type === "split") {
       const first = move(node.first);
