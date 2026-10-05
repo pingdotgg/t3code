@@ -747,6 +747,7 @@ export const layer = Layer.effect(
     // sequence means the enable committed post-unarchive.
     const pauseTasksBoundTo = Effect.fn("ScheduledTaskService.pauseTasksBoundTo")(function* (
       threadId: ThreadId,
+      options?: { readonly skipIfMissing?: boolean },
     ) {
       const now = yield* localNow;
       const paused = yield* retryContended(
@@ -754,6 +755,10 @@ export const layer = Layer.effect(
           .withTransaction(
             Effect.gen(function* () {
               const row = yield* boundThreadRow(threadId);
+              // The startup sweep runs before legacy shells are reconciled into
+              // the v2 projection, so a missing row there is not proof the
+              // thread is gone; runTask re-checks once the scheduler activates.
+              if (row === undefined && options?.skipIfMissing === true) return [];
               if (row !== undefined && row.deleted_at === null && row.archived_at === null) {
                 // The subquery is NULL when the thread has no committed archive
                 // event at all, so a healthy enabled task — including a legacy
@@ -1518,9 +1523,21 @@ export const layer = Layer.effect(
     // domain event is the prompt path; the sweep below covers archives and
     // deletes committed while the server was down; the fire-time check in
     // runTask is the final backstop for anything both miss.
+    // Each thread is paused in isolation, so one failed pause neither stops
+    // the reactor nor ends the sweep for the remaining threads.
+    const pauseLogged = (threadId: ThreadId, options?: { readonly skipIfMissing?: boolean }) =>
+      pauseTasksBoundTo(threadId, options).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not pause schedule tasks bound to a thread", {
+            threadId,
+            cause,
+          }),
+        ),
+      );
+
     yield* Stream.runForEach(threadManagement.streamDomainEvents, (event) =>
       event.type === "thread.archived" || event.type === "thread.deleted"
-        ? pauseTasksBoundTo(event.threadId)
+        ? pauseLogged(event.threadId)
         : Effect.void,
     ).pipe(
       Effect.catchCause((cause) =>
@@ -1534,10 +1551,11 @@ export const layer = Layer.effect(
         SELECT DISTINCT thread_id FROM scheduled_tasks
         WHERE enabled = 1 AND thread_id IS NOT NULL
       `;
-      yield* Effect.forEach(bound, (row) => pauseTasksBoundTo(ThreadId.make(row.thread_id)), {
-        concurrency: 1,
-        discard: true,
-      });
+      yield* Effect.forEach(
+        bound,
+        (row) => pauseLogged(ThreadId.make(row.thread_id), { skipIfMissing: true }),
+        { concurrency: 1, discard: true },
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Could not pause schedule tasks bound to archived threads", { cause }),

@@ -2848,6 +2848,47 @@ it.effect("the domain-event reactor pauses tasks on thread archive and delete", 
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("the startup sweep leaves a task alone when its thread shell is not reconciled yet", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    // Legacy shells are imported into the v2 projection after the service is
+    // built, so the sweep can see a bound thread with no v2 row at all.
+    yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+      task_id: "scheduled-task:unreconciled",
+      title: "unreconciled",
+      prompt: "unreconciled prompt",
+      enabled: 1,
+      schedule_json: '{"type":"interval","everyMs":60000}',
+      project_id: archivedBindingProjectId,
+      thread_id: "thread:not-yet-reconciled",
+      workspace_strategy_json: '{"type":"root"}',
+      model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_by: "user",
+      creation_source: "web",
+      created_at: now,
+      updated_at: now,
+      next_run_at: "2027-09-09T12:00:00.000Z",
+      last_run_at: null,
+      last_run_status: "never",
+      last_run_error: null,
+      run_count: 0,
+    })}`;
+    const context = yield* Effect.scoped(
+      Layer.build(ScheduledTaskService.layer.pipe(Layer.provide(boundThreadTestDepsWithoutSqlite))),
+    );
+    const service = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+    const { tasks: all } = yield* service.list();
+    const kept = all.find(
+      (candidate) => candidate.id === ScheduledTaskId.make("scheduled-task:unreconciled"),
+    );
+    assert.isTrue(kept?.enabled);
+    assert.equal(kept?.nextRunAt, "2027-09-09T12:00:00.000Z");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("the startup sweep pauses enabled tasks whose thread was archived while down", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
