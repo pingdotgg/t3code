@@ -1,4 +1,9 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
+import {
+  DEFAULT_SNOOZE_HOURS,
+  type SnoozeEveningHour,
+  type SnoozeMorningHour,
+} from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -211,8 +216,11 @@ export function threadWokeAt(
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
-const EVENING_HOUR = 18;
-const MORNING_HOUR = 9;
+
+export interface SnoozeHours {
+  readonly morningHour: SnoozeMorningHour;
+  readonly eveningHour: SnoozeEveningHour;
+}
 
 export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
 
@@ -250,9 +258,13 @@ function addSnoozeDays(base: Date, days: number): Date {
  * appears while it is meaningfully before evening; after that the calendar
  * choices start at "Tomorrow". Calendar presets that land on the same
  * instant collapse: on Sundays "Tomorrow" and "Next week" are both Monday
- * morning, so only "Tomorrow" is offered.
+ * morning, so only "Tomorrow" is offered. "This evening" wakes at the user's
+ * evening hour; "Tomorrow" and "Next week" wake at their morning hour.
  */
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(
+  now: Date,
+  { morningHour, eveningHour }: SnoozeHours = DEFAULT_SNOOZE_HOURS,
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
   const presets: SnoozePreset[] = [
@@ -270,7 +282,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     },
   ];
 
-  const evening = snoozeAtHour(now, EVENING_HOUR);
+  const evening = snoozeAtHour(now, eveningHour);
   if (evening.getTime() - now.getTime() > HOUR_MS) {
     presets.push({
       id: "evening",
@@ -280,7 +292,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     });
   }
 
-  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), MORNING_HOUR);
+  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), morningHour);
   presets.push({
     id: "tomorrow",
     label: "Tomorrow",
@@ -289,7 +301,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   });
 
   const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), morningHour);
   if (nextWeek.getTime() !== tomorrow.getTime()) {
     presets.push({
       id: "next-week",

@@ -45,6 +45,21 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+/** Local hour that the "Tomorrow" and "Next week" snooze presets wake at. */
+export const SnoozeMorningHour = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 }));
+export type SnoozeMorningHour = typeof SnoozeMorningHour.Type;
+/**
+ * Local hour that the "This evening" snooze preset wakes at. It starts at noon:
+ * an earlier hour is a morning, and midnight is always past or under an hour
+ * away, so "This evening" would never be offered.
+ */
+export const MIN_SNOOZE_EVENING_HOUR = 12;
+export const SnoozeEveningHour = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_SNOOZE_EVENING_HOUR, maximum: 23 }),
+);
+export type SnoozeEveningHour = typeof SnoozeEveningHour.Type;
+export const DEFAULT_SNOOZE_HOURS = { morningHour: 9, eveningHour: 18 } as const;
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -484,6 +499,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  snoozeMorningHour: SnoozeMorningHour.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_HOURS.morningHour)),
+  ),
+  snoozeEveningHour: SnoozeEveningHour.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_HOURS.eveningHour)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
@@ -1812,6 +1833,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  snoozeMorningHour: Schema.optionalKey(SnoozeMorningHour),
+  snoozeEveningHour: Schema.optionalKey(SnoozeEveningHour),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

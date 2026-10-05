@@ -12,6 +12,8 @@ import {
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type TimestampFormat,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -41,6 +43,7 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SNOOZE_EVENING_HOUR,
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
@@ -100,7 +103,7 @@ import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -196,6 +199,57 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const SNOOZE_MORNING_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const SNOOZE_EVENING_HOURS = SNOOZE_MORNING_HOURS.filter((hour) => hour >= MIN_SNOOZE_EVENING_HOUR);
+
+function hourOfDayLabel(hour: number, timestampFormat: TimestampFormat): string {
+  return formatShortTimestamp(new Date(2000, 0, 1, hour).toISOString(), timestampFormat);
+}
+
+function hasChangedSnoozeTimes(
+  settings: Pick<UnifiedSettings, "snoozeMorningHour" | "snoozeEveningHour">,
+): boolean {
+  return (
+    settings.snoozeMorningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour ||
+    settings.snoozeEveningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeEveningHour
+  );
+}
+
+function SnoozeHourSelect(props: {
+  label: string;
+  hours: ReadonlyArray<number>;
+  hour: number;
+  timestampFormat: TimestampFormat;
+  onHourChange: (hour: number) => void;
+}) {
+  return (
+    <Select
+      value={String(props.hour)}
+      onValueChange={(value) => {
+        if (value !== null) props.onHourChange(Number(value));
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        className="w-full sm:w-40"
+        aria-label={`Snooze ${props.label.toLowerCase()} time`}
+      >
+        <SelectValue>
+          <span className="text-muted-foreground">{props.label}</span>{" "}
+          {hourOfDayLabel(props.hour, props.timestampFormat)}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {props.hours.map((hour) => (
+          <SelectItem hideIndicator key={hour} value={String(hour)}>
+            {hourOfDayLabel(hour, props.timestampFormat)}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
@@ -586,6 +640,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
         ? ["Snooze limited threads"]
         : []),
+      ...(hasChangedSnoozeTimes(settings) ? ["Snooze times"] : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -706,6 +761,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
       settings.snoozeLimitedThreads,
+      settings.snoozeMorningHour,
+      settings.snoozeEveningHour,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
@@ -813,6 +870,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
+      snoozeEveningHour: DEFAULT_UNIFIED_SETTINGS.snoozeEveningHour,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2360,6 +2419,41 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Snooze limited threads"
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("snooze-times")}
+          description="When threads snoozed until This evening, Tomorrow, or Next week wake."
+          resetAction={
+            hasChangedSnoozeTimes(settings) ? (
+              <SettingResetButton
+                label="snooze times"
+                onClick={() =>
+                  updateSettings({
+                    snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
+                    snoozeEveningHour: DEFAULT_UNIFIED_SETTINGS.snoozeEveningHour,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <SnoozeHourSelect
+                label="Morning"
+                hours={SNOOZE_MORNING_HOURS}
+                hour={settings.snoozeMorningHour}
+                timestampFormat={settings.timestampFormat}
+                onHourChange={(hour) => updateSettings({ snoozeMorningHour: hour })}
+              />
+              <SnoozeHourSelect
+                label="Evening"
+                hours={SNOOZE_EVENING_HOURS}
+                hour={settings.snoozeEveningHour}
+                timestampFormat={settings.timestampFormat}
+                onHourChange={(hour) => updateSettings({ snoozeEveningHour: hour })}
+              />
+            </div>
           }
         />
 
