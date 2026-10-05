@@ -4456,9 +4456,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
 
       const firstProjection = yield* orchestrator.getThreadProjection(threadId);
       const firstSnoozedAt = firstProjection.thread.snoozedAt;
-      const firstUpdatedAt = firstProjection.thread.updatedAt;
       assert.isNotNull(firstSnoozedAt);
 
+      // Re-snoozing to the same wake time, as after a failure woke the thread
+      // (#14298), restamps snoozedAt so that failure no longer counts as new.
+      yield* TestClock.adjust("1 minute");
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
@@ -4470,8 +4472,9 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
       assert.isDefined(thread);
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
-      assert.deepEqual(thread.snoozedAt, firstSnoozedAt);
-      assert.deepEqual(thread.updatedAt, firstUpdatedAt);
+      assert.isTrue(
+        DateTime.toEpochMillis(thread.snoozedAt!) > DateTime.toEpochMillis(firstSnoozedAt!),
+      );
 
       yield* orchestrator.dispatch({
         type: "message.dispatch",
