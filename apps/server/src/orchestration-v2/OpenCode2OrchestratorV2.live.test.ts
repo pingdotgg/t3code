@@ -57,7 +57,7 @@ import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/Provid
 import * as ProviderEventLoggers from "../provider/Layers/ProviderEventLoggers.ts";
 import * as OpenCode2Client from "../provider/opencode2/OpenCode2Client.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
+import * as ProviderProcessLedger from "../provider/ProviderProcessLedger.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -85,8 +85,8 @@ const SWITCHED_MODEL = "opencode/mimo-v2.6-flash-free";
 /** The OpenCode servers the driver spawned, newest last, so a test can kill one by its own PID. */
 const spawnedPids: Array<number> = [];
 const spawnedServers = Layer.succeed(
-  OpenCodeServerLedger.OpenCodeServerLedger,
-  OpenCodeServerLedger.OpenCodeServerLedger.of({
+  ProviderProcessLedger.ProviderProcessLedger,
+  ProviderProcessLedger.ProviderProcessLedger.of({
     track: ({ pid }) =>
       Effect.sync(() => {
         spawnedPids.push(pid);
@@ -178,7 +178,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       NodeServices.layer,
       FetchHttpClient.layer,
       OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-        Layer.provide(spawnedServers),
+        Layer.provideMerge(spawnedServers),
         Layer.provide(PlatformTestLayer),
       ),
       Layer.succeed(

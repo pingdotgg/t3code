@@ -61,6 +61,7 @@ import {
   ProviderOrchestrationAdapterInfrastructureLive,
 } from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
+import * as ProviderProcessLedger from "../ProviderProcessLedger.ts";
 import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
@@ -68,6 +69,7 @@ type ProviderInstanceRegistryHydrationEnv =
       BuiltInDriversEnv,
       ProviderOrchestrationAdapterInfrastructure | AcpRegistrySupport.AcpRegistryCatalog
     >
+  | ProviderProcessLedger.ProviderProcessLedger
   | Settings.ServerSettingsService;
 
 /**
