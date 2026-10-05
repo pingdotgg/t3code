@@ -83,5 +83,10 @@ The [RPC boundary](../../packages/client-runtime/src/rpc/client.ts) resolves
 requests against the current session at execution time. Durable subscriptions
 follow replacement sessions. After a transport failure they wait for the
 supervisor; an expected domain failure may resubscribe on the same healthy
-session. Reconnection does not automatically replay mutations, whose retry and
+session. Moving to a new session first cancels the old stream, and the RPC
+client writes that cancel to the old socket. A
+[session](../../packages/client-runtime/src/rpc/session.ts) never reopens its
+socket, so its writes finish at once after the transport drops; otherwise each
+cancel would wait out the client's write timeout before the subscription moves.
+Reconnection does not automatically replay mutations, whose retry and
 idempotency rules belong to the operation.

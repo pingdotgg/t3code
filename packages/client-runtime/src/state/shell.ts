@@ -23,7 +23,6 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent, mergeShellSnapshotProjects } from "./shellReducer.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
@@ -51,6 +50,11 @@ function shellStatusForSnapshot(
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
+/**
+ * Builds the per-environment shell state (projects and thread shells). The first
+ * subscription loads the authoritative HTTP snapshot; later ones, including on a
+ * replacement session, resume from the in-memory cursor instead of reloading it.
+ */
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -74,8 +78,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
-  const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  const hasAuthoritativeSnapshot = yield* Ref.make(false);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -206,10 +209,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     yield* SubscriptionRef.set(state, next);
     if (receivedSnapshot) {
-      const session = yield* Ref.get(activeSubscriptionSession);
-      if (session !== null) {
-        yield* Ref.set(lastAuthoritativeSession, session);
-      }
+      yield* Ref.set(hasAuthoritativeSnapshot, true);
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
       yield* Queue.offer(persistence, next.snapshot.value);
@@ -227,7 +227,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        yield* Ref.set(activeSubscriptionSession, session);
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.shellResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -235,13 +234,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
-        let canResume = hasAuthoritativeSnapshot;
+        // Only the disk cache can hold incomplete data, so the first
+        // subscription loads the authoritative HTTP snapshot. After that, every
+        // resubscription, including one on a replacement session, resumes from
+        // the in-memory cursor; the server replays the gap, or sends a snapshot
+        // when the cursor is unusable.
+        let canResume = yield* Ref.get(hasAuthoritativeSnapshot);
         let current = yield* SubscriptionRef.get(state);
-        if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+        if (!canResume || Option.isNone(current.snapshot)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({

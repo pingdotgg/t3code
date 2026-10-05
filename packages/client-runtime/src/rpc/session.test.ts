@@ -368,6 +368,28 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("finishes a pending stream cancel when the transport drops", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const socket = yield* awaitSocket(sockets);
+      const lifecycle = yield* session.client[WS_METHODS.subscribeServerLifecycle]({}).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      // The socket is not open yet, so canceling waits to write its interrupt.
+      const canceling = yield* Effect.forkChild(Fiber.interrupt(lifecycle));
+      yield* Effect.yieldNow;
+      socket.close(1006, "network lost");
+
+      // The session never reopens this socket; the cancel must not wait for it.
+      yield* Fiber.join(canceling);
+      expect(Exit.hasInterrupts(yield* Fiber.await(lifecycle))).toBe(true);
+    }),
+  );
+
   it.effect("replays current config and broadcasts updates to every subscriber", () =>
     Effect.scoped(
       Effect.gen(function* () {

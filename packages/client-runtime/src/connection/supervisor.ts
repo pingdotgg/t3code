@@ -39,6 +39,9 @@ const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // the user is waiting, or the network may be gone.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// Mobile JS resumes shortly before the app reports that it is active, so an
+// overdue retry can start an attempt just before a long-resume wakeup arrives.
+const FRESH_ATTEMPT_WINDOW_MS = 2_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -241,6 +244,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   }`;
   yield* annotateTarget(target);
 
+  const supervisorScope = yield* Scope.Scope;
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -256,6 +260,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // closed or failed before answering, so the follow-up reconnect skips the
   // first backoff rung instead of sleeping.
   const probeUnanswered = yield* Ref.make(false);
+  // Set when a long resume arrives during a fresh attempt, which keeps running:
+  // the user is back, so if that attempt fails, the retry ladder restarts.
+  const resumedDuringAttempt = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
@@ -382,7 +389,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (attemptStartedAt: number) {
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -398,7 +405,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           break;
         case "Wakeup":
           if (next.reason === "application-active-reconnect") {
-            return true;
+            // Only an attempt that started before the suspension can be stuck
+            // on a transport the OS froze. A fresh attempt keeps its progress.
+            // Wall-clock time on purpose: it counts the time in suspension,
+            // which a monotonic clock can leave out while the device sleeps.
+            if ((yield* Clock.currentTimeMillis) - attemptStartedAt >= FRESH_ATTEMPT_WINDOW_MS) {
+              return true;
+            }
+            yield* Ref.set(resumedDuringAttempt, true);
+            break;
           }
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
             yield* logManagedRelayAccountChange;
@@ -533,6 +548,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     ignoreOffline: boolean,
   ) {
     yield* SubscriptionRef.set(prepared, Option.none());
+    const attemptStartedAt = yield* Clock.currentTimeMillis;
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
@@ -542,7 +558,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      waitForEstablishmentInterrupt(attemptStartedAt).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
@@ -713,13 +729,29 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
-      const outcome: AttemptOutcome = yield* Effect.scoped(
-        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
+      // A child scope, so removing the environment still releases this attempt.
+      const attemptScope = yield* Scope.fork(supervisorScope);
+      const outcome: AttemptOutcome = yield* runAttempt(
+        attempt,
+        nextGeneration,
+        latestFailure,
+        pendingRetry,
+        replacing,
+      ).pipe(Scope.provide(attemptScope));
+      // Release the finished attempt without waiting: closing its RPC streams
+      // tells the server over the old socket, which waits for a timeout when
+      // that socket is dead. The next attempt must not wait for that. The
+      // release itself must run to completion, so removing the environment
+      // mid-release waits for it instead of interrupting it and leaking the
+      // socket and its ping loop.
+      yield* Scope.close(attemptScope, Exit.void).pipe(
+        Effect.forkIn(supervisorScope, { uninterruptible: true }),
       );
       replacing = false;
       // Consumed on every iteration so a stale marker can never leak into a
       // later, unrelated failure.
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
+      const resumedWhileFresh = yield* Ref.getAndSet(resumedDuringAttempt, false);
       if (outcome.established) {
         generation = nextGeneration;
         if (outcome.stable) {
@@ -768,6 +800,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
 
+      if (resumedWhileFresh) {
+        resetRetryLadder();
+      }
       failureCount += 1;
       const delayMs = retryDelayMs(failureCount - 1, yield* Random.next);
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({

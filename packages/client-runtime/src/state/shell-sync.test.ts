@@ -332,7 +332,7 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("resubscribes from the in-memory shell cursor when the app becomes active", () =>
+  it.effect("resumes from the in-memory shell cursor on foreground and replacement sessions", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
@@ -440,14 +440,15 @@ describe("environment shell synchronization", () => {
       expect((yield* Ref.get(capturedAfterSequences)).length).toBe(3);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
 
-      // Replacing the session performs another authoritative refresh.
+      // A replacement session resumes from the same cursor without another
+      // HTTP snapshot.
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if ((yield* Ref.get(capturedAfterSequences)).length >= 4) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
-      expect(yield* Ref.get(loaderCalls)).toBe(2);
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 40]);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
     }),
   );
 
