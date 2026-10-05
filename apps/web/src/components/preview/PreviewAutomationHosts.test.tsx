@@ -90,9 +90,9 @@ const snapshot: PreviewSessionSnapshot = {
 };
 const emptyList = { sessions: [], serverEpoch: "test-server", revision: 0 };
 const listAtom = Atom.make(AsyncResult.success(emptyList));
-const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
-  AsyncResult.initial(false),
-);
+const requestsAtom = Atom.make<
+  AsyncResult.AsyncResult<ReadonlyArray<PreviewAutomationStreamEvent>, Error>
+>(AsyncResult.initial(false));
 const requestEvent: PreviewAutomationStreamEvent = {
   type: "request",
   connectionId: "automation-connection",
@@ -164,7 +164,7 @@ describe("PreviewAutomationHosts open", () => {
     mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
 
     await act(async () => {
-      appAtomRegistry.set(requestsAtom, AsyncResult.success(requestEvent));
+      appAtomRegistry.set(requestsAtom, AsyncResult.success([requestEvent]));
       await readStarted.promise;
     });
     expect(mocks.open).not.toHaveBeenCalled();
@@ -195,7 +195,7 @@ describe("PreviewAutomationHosts open", () => {
     mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
 
     await act(async () => {
-      appAtomRegistry.set(requestsAtom, AsyncResult.success(requestEvent));
+      appAtomRegistry.set(requestsAtom, AsyncResult.success([requestEvent]));
       await response.promise;
     });
 
@@ -216,7 +216,7 @@ describe("PreviewAutomationHosts ownership", () => {
     await act(() => {
       appAtomRegistry.set(
         requestsAtom,
-        AsyncResult.success({ type: "connected", connectionId: "automation-connection" }),
+        AsyncResult.success([{ type: "connected", connectionId: "automation-connection" }]),
       );
       applyPreviewServerSnapshot(threadRef, snapshot);
     });
@@ -281,7 +281,7 @@ describe("PreviewAutomationHosts ownership", () => {
     await act(() => {
       appAtomRegistry.set(
         requestsAtom,
-        AsyncResult.success({ type: "connected", connectionId: "reconnected" }),
+        AsyncResult.success([{ type: "connected", connectionId: "reconnected" }]),
       );
     });
     expect(mocks.focus).toHaveBeenLastCalledWith(
@@ -308,14 +308,14 @@ describe("PreviewAutomationHosts ownership", () => {
       await act(() => {
         appAtomRegistry.set(
           requestsAtom,
-          AsyncResult.success({ type: "connected", connectionId: "first" }),
+          AsyncResult.success([{ type: "connected", connectionId: "first" }]),
         );
       });
       if (reconnect) {
         await act(() => {
           appAtomRegistry.set(
             requestsAtom,
-            AsyncResult.success({ type: "connected", connectionId: "second" }),
+            AsyncResult.success([{ type: "connected", connectionId: "second" }]),
           );
         });
       }
@@ -343,15 +343,17 @@ describe("PreviewAutomationHosts ownership", () => {
       applyPreviewServerSnapshot(threadRef, snapshot);
       appAtomRegistry.set(
         requestsAtom,
-        AsyncResult.success({
-          ...requestEvent,
-          request: {
-            ...requestEvent.request,
-            operation: "status",
-            tabId: snapshot.tabId,
-            input: {},
+        AsyncResult.success([
+          {
+            ...requestEvent,
+            request: {
+              ...requestEvent.request,
+              operation: "status",
+              tabId: snapshot.tabId,
+              input: {},
+            },
           },
-        }),
+        ]),
       );
       await response.promise;
     });

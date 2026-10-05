@@ -12,7 +12,11 @@ import {
   serializePreviewAutomationHostError,
 } from "./previewAutomationErrors";
 
-type AutomationStreamResult<E> = AsyncResult.AsyncResult<PreviewAutomationStreamEvent, E>;
+/** The events the host's request stream delivered together, in order. */
+type AutomationStreamResult<E> = AsyncResult.AsyncResult<
+  ReadonlyArray<PreviewAutomationStreamEvent>,
+  E
+>;
 
 export function serializePreviewAutomationError(
   error: unknown,
@@ -45,7 +49,10 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
 
     const consume = (result: AutomationStreamResult<E>) => {
       if (!AsyncResult.isSuccess(result)) return;
-      const event = result.value;
+      for (const event of result.value) consumeEvent(event);
+    };
+
+    const consumeEvent = (event: PreviewAutomationStreamEvent) => {
       if (event.type === "connected") {
         activeConnectionId = event.connectionId;
         connectionExplicitlyAnnounced = true;
@@ -96,12 +103,15 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
       disposed = true;
     });
     const initialRequest = get.once(options.requestsAtom);
-    if (AsyncResult.isSuccess(initialRequest)) {
-      activeConnectionId = initialRequest.value.connectionId;
-      connectionExplicitlyAnnounced = initialRequest.value.type === "connected";
-      if (initialRequest.value.type === "connected") {
-        reportedConnectionId = initialRequest.value.connectionId;
-        get.set(options.connectionAtom, initialRequest.value.connectionId);
+    const initialEvent = AsyncResult.isSuccess(initialRequest)
+      ? initialRequest.value.at(-1)
+      : undefined;
+    if (initialEvent !== undefined) {
+      activeConnectionId = initialEvent.connectionId;
+      connectionExplicitlyAnnounced = initialEvent.type === "connected";
+      if (initialEvent.type === "connected") {
+        reportedConnectionId = initialEvent.connectionId;
+        get.set(options.connectionAtom, initialEvent.connectionId);
       }
     }
     get.subscribe(options.requestsAtom, (result) => {
@@ -110,9 +120,9 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
     });
     queueMicrotask(() => {
       const initialConnectionWasSkipped =
-        AsyncResult.isSuccess(initialRequest) &&
-        initialRequest.value.connectionId === activeConnectionId &&
-        initialRequest.value.connectionId !== reportedConnectionId;
+        initialEvent !== undefined &&
+        initialEvent.connectionId === activeConnectionId &&
+        initialEvent.connectionId !== reportedConnectionId;
       if (!disposed && (requestsVersion === 0 || initialConnectionWasSkipped)) {
         consume(initialRequest);
       }

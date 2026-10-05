@@ -1,4 +1,5 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -52,6 +53,9 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // stream immediately with its owner so stale requests cannot replay when
       // a thread remounts and the server can clear disconnected hosts promptly.
       idleTtlMs: 0,
+      // A stream atom keeps only the last event of each batch it receives, and requests from
+      // several threads arrive together. Each value is the whole batch, so none is dropped.
+      transform: Stream.chunks,
     }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",
