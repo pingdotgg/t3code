@@ -109,7 +109,9 @@ function HandoffEndpoint(props: {
     const agentId = typeof config === "object" && config ? Reflect.get(config, "agentId") : null;
     return {
       driverKind: candidate.driver,
-      ...(typeof agentId === "string" ? { acpRegistryAgentId: agentId.trim() } : {}),
+      ...(typeof agentId === "string" && agentId.trim()
+        ? { acpRegistryAgentId: agentId.trim() }
+        : {}),
     };
   };
   const showBadge =
