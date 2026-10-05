@@ -47,7 +47,9 @@ function AccountAvatar({ account }: { readonly account: LimitAccount }) {
     <ProviderInstanceIcon
       provider={account.driver}
       size={20}
-      displayName={accountName(account)}
+      // Initials from the full email, as on web: two addresses on one domain
+      // would otherwise share a badge.
+      displayName={account.displayName ?? account.email ?? accountName(account)}
       accentColor={account.accentColor}
       showBadge={Boolean(account.displayName ?? account.email)}
     />
