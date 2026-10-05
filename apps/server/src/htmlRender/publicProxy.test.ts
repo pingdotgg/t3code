@@ -92,6 +92,13 @@ describe("publicProxy", () => {
         ipv4Target("10.1.2.3", 80),
         ipv4Target("169.254.169.254", 80),
         domainTarget("localhost", 80),
+        // IPv6 forms that carry a local IPv4 address: NAT64, 6to4, Teredo,
+        // and IPv4-compatible.
+        ipv6Target("64:ff9b::7f00:1", 80),
+        ipv6Target("64:ff9b::a00:1", 80),
+        ipv6Target("2002:7f00:1::1", 80),
+        ipv6Target("2001::1", 80),
+        ipv6Target("::7f00:1", 80),
       ]) {
         const { code, socket } = yield* connectThrough(port, target);
         socket.destroy();
@@ -114,7 +121,11 @@ describe("publicProxy", () => {
       const targets = own.flatMap((entry) =>
         entry.family === "IPv6"
           ? [ipv6Target(entry.address, 80)]
-          : [ipv4Target(entry.address, 80), ipv6Target(`::ffff:${toHexPair(entry.address)}`, 80)],
+          : [
+              ipv4Target(entry.address, 80),
+              ipv6Target(`::ffff:${toHexPair(entry.address)}`, 80),
+              ipv6Target(`64:ff9b::${toHexPair(entry.address)}`, 80),
+            ],
       );
       for (const target of targets) {
         const { code, socket } = yield* connectThrough(port, target);
