@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -95,6 +96,23 @@ function normalizeModels(
   return models;
 }
 
+/**
+ * Client capabilities for setup runtimes (probe, sign-in, session management).
+ * Agents built before ACP standardized `auth.terminal`, such as Mistral Vibe,
+ * only advertise terminal auth methods for the legacy `_meta["terminal-auth"]` flag.
+ */
+export function acpRegistrySetupClientCapabilities(input: {
+  readonly terminalAuth: boolean;
+}): EffectAcpSchema.InitializeRequest["clientCapabilities"] {
+  return {
+    auth: { terminal: input.terminalAuth },
+    elicitation: { url: {} },
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+    ...(input.terminalAuth ? { _meta: { "terminal-auth": true } } : {}),
+  };
+}
+
 /** Agent spawn recipe used to compose runnable terminal-auth command lines. */
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
@@ -107,6 +125,30 @@ function shellDisplayToken(token: string): string {
   return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
+const decodeLegacyTerminalAuth = Schema.decodeUnknownOption(
+  Schema.Struct({
+    command: Schema.NonEmptyString,
+    args: Schema.optional(Schema.Array(Schema.String)),
+  }),
+);
+
+/**
+ * Resolves the process a terminal auth method runs. Standard methods append
+ * their args to the agent's own invocation. Agents answering the legacy
+ * `_meta["terminal-auth"]` capability may name a full command there instead,
+ * which wins: Mistral Vibe installed from PyPI names its Python interpreter and
+ * passes the script path as the first argument.
+ */
+export function acpRegistryTerminalAuthInvocation(
+  method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
+  spawn: AcpRegistryAuthSpawnContext,
+): AcpRegistryAuthSpawnContext {
+  return Option.match(decodeLegacyTerminalAuth(method._meta?.["terminal-auth"]), {
+    onSome: ({ command, args }) => ({ command, args: args ?? [] }),
+    onNone: () => ({ command: spawn.command, args: [...spawn.args, ...(method.args ?? [])] }),
+  });
+}
+
 function terminalAuthCommand(
   method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
   spawn: AcpRegistryAuthSpawnContext,
@@ -114,7 +156,8 @@ function terminalAuthCommand(
   const environmentPrefix = Object.entries(method.env ?? {}).map(
     ([name, value]) => `${name}=${shellDisplayToken(value)}`,
   );
-  const command = [spawn.command, ...spawn.args, ...(method.args ?? [])].map(shellDisplayToken);
+  const invocation = acpRegistryTerminalAuthInvocation(method, spawn);
+  const command = [invocation.command, ...invocation.args].map(shellDisplayToken);
   const displayCommand = [...environmentPrefix, ...command].join(" ");
   return displayCommand.length <= MAX_COMMAND_LINE_LENGTH ? displayCommand : undefined;
 }
@@ -336,12 +379,9 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         AcpSessionRuntime.layer({
           spawn: resolved.spawn,
           cwd: input.cwd,
-          clientCapabilities: {
-            auth: { terminal: Option.isSome(pty) },
-            elicitation: { url: {} },
-            fs: { readTextFile: false, writeTextFile: false },
-            terminal: false,
-          },
+          clientCapabilities: acpRegistrySetupClientCapabilities({
+            terminalAuth: Option.isSome(pty),
+          }),
           clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
           authenticateOnAuthRequired: false,
           onInitialized: (initializeResult) =>
@@ -469,12 +509,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
       AcpSessionRuntime.layer({
         spawn: resolved.spawn,
         cwd: input.cwd,
-        clientCapabilities: {
-          auth: { terminal: false },
-          elicitation: { url: {} },
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-        },
+        clientCapabilities: acpRegistrySetupClientCapabilities({ terminalAuth: false }),
         clientInfo: { name: "t3-code-session-manager", version: "0.0.0" },
         authenticateOnAuthRequired: false,
         ...(input.settings.authMethodId ? { authMethodId: input.settings.authMethodId } : {}),

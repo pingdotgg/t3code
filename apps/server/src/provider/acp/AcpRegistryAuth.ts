@@ -17,7 +17,12 @@ import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
-import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
+import {
+  acpRegistrySetupClientCapabilities,
+  acpRegistryTerminalAuthInvocation,
+  normalizeAcpRegistryAuthMethods,
+  normalizeAcpRegistryWebUrl,
+} from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -63,12 +68,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             spawn,
             cwd: options.cwd,
             authenticateOnAuthRequired: false,
-            clientCapabilities: {
-              auth: { terminal: Option.isSome(pty) },
-              elicitation: { url: {} },
-              fs: { readTextFile: false, writeTextFile: false },
-              terminal: false,
-            },
+            clientCapabilities: acpRegistrySetupClientCapabilities({
+              terminalAuth: Option.isSome(pty),
+            }),
             clientInfo: { name: "t3-code-provider-auth", version: "0.0.0" },
           }).pipe(
             Layer.provide(
@@ -166,10 +168,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       );
     const exited = yield* Deferred.make<number>();
     const output = yield* Queue.sliding<string>(64);
+    const invocation = acpRegistryTerminalAuthInvocation(method, resolved.spawn);
     const process = yield* pty.value
       .spawn({
-        shell: resolved.spawn.command,
-        args: [...resolved.spawn.args, ...(method.args ?? [])],
+        shell: invocation.command,
+        args: [...invocation.args],
         cwd: options.cwd,
         cols: 80,
         rows: 24,
