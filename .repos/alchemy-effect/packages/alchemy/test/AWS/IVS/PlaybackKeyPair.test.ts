@@ -90,5 +90,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertKeyPairGone(replaced.playbackKeyPairArn);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ivs", "live"], timeout: 240_000 },
 );

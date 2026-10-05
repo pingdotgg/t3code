@@ -40,7 +40,7 @@ export const pruneExpiredReplayMarkers = Effect.fn("replayMarkers.pruneExpired")
       name.endsWith(".bin") && REPLAY_MARKER_PREFIXES.some((prefix) => name.startsWith(prefix)),
   );
   // `partition` visits every marker, so one locked file does not stop the sweep.
-  const [failures, removed] = yield* Effect.partition(markers, (name) => {
+  const [removed, failures] = yield* Effect.partition(markers, (name) => {
     const markerPath = path.join(secretsDir, name);
     return fileSystem.stat(markerPath).pipe(
       Effect.flatMap((info) =>

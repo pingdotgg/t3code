@@ -9,7 +9,7 @@
  */
 import type * as Duration from "effect/Duration"
 import * as Layer from "effect/Layer"
-import * as Socket from "effect/unstable/socket/Socket"
+import * as Socket from "effect/socket/Socket"
 
 /**
  * Creates a `Socket` layer connected to the given URL using the browser `WebSocket` constructor.

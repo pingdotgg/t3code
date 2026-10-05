@@ -2,13 +2,13 @@ import * as JsonSchemaGenerator from "@effect/openapi-generator/JsonSchemaGenera
 import { assert, describe, it } from "@effect/vitest"
 
 describe("JsonSchemaGenerator representation", () => {
-  it("preserves patterns from code generation inputs", () => {
+  it("preserves patterns in Unicode mode from code generation inputs", () => {
     const generator = JsonSchemaGenerator.make()
     generator.addSchema("Root", { type: "string", pattern: "^a+$" })
 
     const output = generator.generate("openapi-3.1", {}, false)
 
-    assert.include(output, `Schema.isPattern(new RegExp("^a+$"))`)
+    assert.include(output, `Schema.isPattern(new RegExp("^a+$", "u"))`)
   })
 
   it("emits only reachable definitions", () => {

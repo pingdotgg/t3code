@@ -20,7 +20,7 @@ import { LIVE_OBJECTS } from "../Store/ObjectStore.ts";
  * re-streaming from the start and skipping already-copied rows.
  */
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Base64 } from "effect/encoding";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -104,7 +104,7 @@ export type SnapshotChunk =
 const decodeZData = (
   row: SnapshotObjectRow,
 ): Effect.Effect<Uint8Array, StoreError> => {
-  const decoded = Encoding.decodeBase64(row.zdata ?? "");
+  const decoded = Base64.decode(row.zdata ?? "");
   return Result.isSuccess(decoded)
     ? Effect.succeed(decoded.success)
     : Effect.fail(
@@ -187,7 +187,7 @@ export const snapshotStream = (
             zdata:
               row.zdata === null
                 ? null
-                : Encoding.encodeBase64(new Uint8Array(row.zdata)),
+                : Base64.encode(new Uint8Array(row.zdata)),
             r2_key: row.r2_key,
             pack_id: row.pack_id,
             pack_offset: row.pack_offset,

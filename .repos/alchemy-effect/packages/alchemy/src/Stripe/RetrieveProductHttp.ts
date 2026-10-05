@@ -20,6 +20,7 @@ type ProductInput = string | Product;
  * string, or an Effect resolving to a Product.
  *
  * @layer
+ * @product Product
  * @provides Stripe.RetrieveProduct
  */
 export const RetrieveProductHttp = Layer.effect(

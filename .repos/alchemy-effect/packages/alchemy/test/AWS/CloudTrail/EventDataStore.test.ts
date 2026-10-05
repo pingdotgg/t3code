@@ -26,6 +26,7 @@ test.provider(
       );
       expect(error._tag).toBe("EventDataStoreNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:cloudtrail", "live"] },
 );
 
 // Ungated entitlement probe: CloudTrail Lake stopped accepting NEW
@@ -101,6 +102,7 @@ test.provider(
       // a green run must imply zero leftovers.
       Effect.ensuring(deleteProbeStoreIfExists.pipe(Effect.orDie)),
     ),
+  { tags: ["provider:aws", "provider:aws:cloudtrail", "live"] },
 );
 
 const STORE_NAME = "alchemy-test-cloudtrail-eds";
@@ -219,5 +221,8 @@ test.provider.skipIf(!process.env.AWS_TEST_CLOUDTRAIL_LAKE)(
         );
       expect(["PENDING_DELETION", "GONE"]).toContain(afterDelete);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:cloudtrail", "live"],
+    timeout: 180_000,
+  },
 );

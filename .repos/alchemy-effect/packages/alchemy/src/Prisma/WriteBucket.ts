@@ -99,6 +99,7 @@ export interface WriteBucketClient {
  * ```
  *
  * @binding
+ * @product Bucket
  */
 export const WriteBucket = Binding.Service<WriteBucket>("Prisma.WriteBucket");
 

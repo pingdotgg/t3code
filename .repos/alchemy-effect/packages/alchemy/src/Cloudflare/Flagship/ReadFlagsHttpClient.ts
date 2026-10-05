@@ -1,7 +1,7 @@
 import type * as cf from "@cloudflare/workers-types";
 import * as flagship from "@distilled.cloud/cloudflare/flagship";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { Credentials } from "../Credentials.ts";
 import {

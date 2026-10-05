@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -1187,9 +1187,8 @@ export interface DesktopWslEnvironmentTestStub {
 }
 
 export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
-  const probeDistros = stub.distroListError
-    ? Effect.fail(stub.distroListError)
-    : Effect.succeed(stub.distros ?? []);
+  const probeDistros: Effect.Effect<readonly WslDistro[], DesktopWslDistroListError> =
+    stub.distroListError ? Effect.fail(stub.distroListError) : Effect.succeed(stub.distros ?? []);
   return Layer.succeed(
     DesktopWslEnvironment,
     DesktopWslEnvironment.of({

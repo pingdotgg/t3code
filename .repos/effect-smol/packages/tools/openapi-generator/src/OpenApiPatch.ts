@@ -11,13 +11,13 @@
  */
 
 import * as Effect from "effect/Effect"
+import * as Yaml from "effect/encoding/Yaml"
 import * as FileSystem from "effect/FileSystem"
 import { constFalse, constUndefined } from "effect/Function"
 import * as JsonPatch from "effect/JsonPatch"
 import * as Path from "effect/Path"
 import * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
-import * as Yaml from "effect/unstable/encoding/Yaml"
 
 // =============================================================================
 // Error Types

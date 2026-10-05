@@ -19,7 +19,11 @@ const enabled = !process.env.FAST;
 
 const testOptions = { providers: AWS.providers() };
 const { test, beforeAll, afterAll } = Test.make(testOptions);
-const sharedStack = Core.scratchStack(testOptions, "BetterAuthAurora");
+const sharedStack = Core.scratchStack(
+  testOptions,
+  "BetterAuthAurora",
+  "test/AWS/Aurora.test.ts",
+);
 
 let baseUrl: string;
 
@@ -33,7 +37,9 @@ beforeAll(
     if (!enabled) {
       return;
     }
-    yield* sharedStack.destroy();
+    if (!process.env.NO_DESTROY) {
+      yield* sharedStack.destroy();
+    }
     const { functionUrl } = yield* sharedStack.deploy(
       Effect.gen(function* () {
         return yield* AuroraAuthFunction;
@@ -90,5 +96,14 @@ test.skipIf(!enabled)(
     });
     expect(me.email).toBe(email);
   }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:lambda",
+      "provider:aws:rds",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
