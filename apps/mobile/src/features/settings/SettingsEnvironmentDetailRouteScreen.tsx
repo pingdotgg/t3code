@@ -121,6 +121,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
           onPress: () =>
             void run("server", async () => {
               if (
+                AsyncResult.isFailure(
+                  appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
+                ) ||
                 !canMaintainEnvironment(
                   appAtomRegistry.get(environmentSession.sessionStateValueAtom(environmentId)),
                   connected,
