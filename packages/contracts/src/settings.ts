@@ -98,7 +98,7 @@ export const GlassOpacity = Schema.Int.check(
   }),
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
-const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
+export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;

@@ -664,6 +664,37 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Desktop only: the main window is created transparent when Glass opacity
+   drops below its default (see GlassAppearanceSync), so the page background
+   follows the same mix instead of covering the transparency. Text and controls
+   keep their own colors, which is what keeps the see-through readable. */
+html[data-desktop-translucent-window="true"],
+html[data-desktop-translucent-window="true"] body {
+  /* !important: the shell and injected third-party stylesheets also paint
+     html/body (e.g. theme hooks), and injected <style> tags sort after the
+     bundle, so only importance keeps this winning regardless of order. */
+  background-color: color-mix(
+    in srgb,
+    var(--app-chrome-background) var(--glass-opacity),
+    transparent
+  ) !important;
+}
+
+/* The sidebar and main column paint their own canvas over the page, so the
+   two canvas utilities join the same mix or the window keeps looking solid.
+   Deeper surfaces (cards, popovers, bubbles, muted rows) keep their colors,
+   which is what keeps text readable over the wallpaper. */
+html[data-desktop-translucent-window="true"] .bg-background {
+  background-color: color-mix(
+    in srgb,
+    var(--background) var(--glass-opacity),
+    transparent
+  ) !important;
+}
+html[data-desktop-translucent-window="true"] .bg-sidebar {
+  background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent) !important;
+}
+
 @layer components {
   /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
      expose their final layout immediately, otherwise each animation frame

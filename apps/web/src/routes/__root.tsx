@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { DEFAULT_GLASS_OPACITY, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -275,12 +275,24 @@ function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
 
   useEffect(() => {
-    const style = document.documentElement.style;
+    const root = document.documentElement;
+    const style = root.style;
     style.setProperty("--glass-opacity", `${glassOpacity}%`);
     if (glassOpacity === 100) {
       style.setProperty("--glass-blur", "0px");
     } else {
       style.removeProperty("--glass-blur");
+    }
+    // The desktop main window is created transparent when Glass opacity drops
+    // below its default, so the page background has to turn translucent too or
+    // the window keeps looking opaque. Browsers never have a transparent
+    // window, so this stays scoped to the desktop shell. The window itself is
+    // fixed at launch: flipping the slider updates the page live, and the
+    // see-through frame follows after a restart.
+    if (typeof window.desktopBridge !== "undefined" && glassOpacity < DEFAULT_GLASS_OPACITY) {
+      root.dataset.desktopTranslucentWindow = "true";
+    } else {
+      delete root.dataset.desktopTranslucentWindow;
     }
   }, [glassOpacity]);
 

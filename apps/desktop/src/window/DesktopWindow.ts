@@ -8,7 +8,11 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_GLASS_OPACITY,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -158,6 +162,16 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
 }
 
+// The Glass opacity slider keeps its default look on an opaque window. Pushing
+// it below the default turns the main window itself into glass: Electron
+// renders the frame transparent and the renderer paints the page background
+// translucent, so the desktop shows through while text stays fully opaque.
+// Transparency is fixed at window creation, so this only takes effect after a
+// restart.
+export function shouldUseTransparentMainWindow(glassOpacity: number): boolean {
+  return glassOpacity < DEFAULT_GLASS_OPACITY;
+}
+
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 function windowFitsWithinDisplay(
@@ -279,13 +293,18 @@ function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  options: { readonly skipBackgroundColor?: boolean } = {},
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (window.isDestroyed()) {
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    // A transparent window has no opaque background to repaint. Reapplying one
+    // would permanently undo the see-through frame until the next restart.
+    if (!options.skipBackgroundColor) {
+      window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    }
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -335,6 +354,18 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+
+  // Transparency is fixed when the window is created, so this reads the
+  // persisted preference instead of live settings. An unreadable or missing
+  // file falls back to the opaque default look.
+  const readTransparentMainWindow = clientSettings.get.pipe(
+    Effect.map((persisted) =>
+      shouldUseTransparentMainWindow(
+        Option.getOrElse(persisted, () => DEFAULT_CLIENT_SETTINGS).glassOpacity,
+      ),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -394,6 +425,7 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    const transparentMainWindow = yield* readTransparentMainWindow;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -401,7 +433,11 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      // A transparent window must not get an opaque background color: painting
+      // one would permanently cover the transparency.
+      ...(transparentMainWindow
+        ? { transparent: true }
+        : { backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors) }),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -1023,8 +1059,16 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const transparentMainWindow = yield* readTransparentMainWindow;
+      const mainWindow = yield* currentMainWindow;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+        Effect.suspend(() => {
+          const isTransparentMain =
+            transparentMainWindow && Option.isSome(mainWindow) && window.id === mainWindow.value.id;
+          return syncWindowAppearance(window, shouldUseDarkColors, environment.platform, {
+            skipBackgroundColor: isTransparentMain,
+          });
+        }),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
