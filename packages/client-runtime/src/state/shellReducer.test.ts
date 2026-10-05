@@ -41,6 +41,21 @@ describe("applyShellStreamEvent", () => {
     expect(next.threads[2]).toBe(threads[2]);
   });
 
+  it("keeps the thread list and object when an update changes nothing", () => {
+    const threads = ["a", "b"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) }));
+    const next = applyShellStreamEvent(
+      { ...v2ShellSnapshot, threads },
+      {
+        kind: "thread.updated",
+        sequence: 1,
+        location: "active",
+        thread: { ...threads[1]! },
+      },
+    );
+    expect(next.threads).toBe(threads);
+    expect(next.snapshotSequence).toBe(1);
+  });
+
   it("ignores stale project updates without mutating the snapshot", () => {
     const snapshotWithProject = {
       ...v2ShellSnapshot,

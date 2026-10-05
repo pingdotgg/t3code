@@ -1,8 +1,12 @@
-import type {
-  OrchestrationProjectShell,
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ShellStreamItem,
+import {
+  OrchestrationV2ThreadShell,
+  type OrchestrationProjectShell,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
 
 function upsertById<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
@@ -123,6 +127,15 @@ export function applyShellStreamEvent(
         snapshotSequence: event.sequence,
       };
     case "thread.updated": {
+      // An unchanged shell keeps its object and the list, so subscribers that
+      // compare by reference skip the update. Only the cursor moves.
+      const existing =
+        event.location === "active"
+          ? snapshot.threads.find((thread) => thread.id === event.thread.id)
+          : undefined;
+      if (existing !== undefined && sameThreadShell(existing, event.thread)) {
+        return { ...snapshot, snapshotSequence: event.sequence };
+      }
       const withoutThread = (threads: OrchestrationV2ShellSnapshot["threads"]) =>
         threads.filter((thread) => thread.id !== event.thread.id);
       return {
