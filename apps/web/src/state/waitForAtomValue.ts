@@ -1,4 +1,4 @@
-import type { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import type { Atom, AtomRegistry } from "effect/reactivity";
 
 export async function waitForAtomValue<A>(input: {
   readonly registry: AtomRegistry.AtomRegistry;

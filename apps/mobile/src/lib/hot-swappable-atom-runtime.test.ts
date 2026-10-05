@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { hotSwappableAtomRuntime } from "./hot-swappable-atom-runtime";
 

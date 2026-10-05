@@ -1,4 +1,4 @@
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 

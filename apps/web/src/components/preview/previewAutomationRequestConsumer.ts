@@ -4,7 +4,7 @@ import type {
   PreviewAutomationResponse,
   PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   PreviewAutomationOperationError,

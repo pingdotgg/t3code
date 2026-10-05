@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type * as RpcMessage from "effect/unstable/rpc/RpcMessage";
+import type * as RpcMessage from "effect/rpc/RpcMessage";
 
 import {
   AVAILABLE_CONNECTION_STATE,

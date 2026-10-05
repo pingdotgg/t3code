@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/item-support";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { environmentThreadDetails } from "./threads";
 

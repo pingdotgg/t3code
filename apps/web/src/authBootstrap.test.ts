@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";

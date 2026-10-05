@@ -3,7 +3,7 @@
  * `HttpClient` so the version probe runs against real bytes.
  */
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 interface RecordedResponse {
   readonly status: number;

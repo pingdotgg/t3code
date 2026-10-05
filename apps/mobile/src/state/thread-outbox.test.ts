@@ -13,9 +13,9 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import * as Socket from "effect/unstable/socket/Socket";
+import { AtomRegistry } from "effect/reactivity";
+import * as RpcClientError from "effect/rpc/RpcClientError";
+import * as Socket from "effect/socket/Socket";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const outboxFiles = vi.hoisted(() => new Map<string, string | Error>());

@@ -15,10 +15,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 
 import * as ServerConfig from "../../config.ts";
 import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";

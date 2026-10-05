@@ -11,8 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };

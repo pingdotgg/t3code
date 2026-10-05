@@ -15,10 +15,10 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as HttpClient from "effect/http/HttpClient";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient } from "../rpc/protocol.ts";

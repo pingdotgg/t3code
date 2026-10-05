@@ -13,7 +13,7 @@ import {
 import { AppState, Appearance, Platform, useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { ScopedTheme, ScopedVariables, Uniwind } from "uniwind";
 

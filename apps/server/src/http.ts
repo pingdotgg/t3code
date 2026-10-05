@@ -1,4 +1,4 @@
-import * as Mime from "effect/unstable/http/Mime";
+import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -23,9 +23,9 @@ import {
   HttpServerResponse,
   HttpServerRequest,
   HttpServerRespondable,
-} from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
+} from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
@@ -375,16 +375,18 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 
 // Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
 // before routing, so a route handler cannot skip it. TracerDisabledWhen is one
-// predicate for the whole server and the last layer to provide it wins, so
-// makeRoutesLayer provides this one last. Add paths here instead of providing
-// TracerDisabledWhen again; server.test.ts fails if a later layer replaces it.
-// The query string is ignored, as in routing.
-export const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
+// predicate for the whole server, and HttpRouter.serve builds its routes
+// privately, so it is provided to the served layer, never merged into the
+// routes. Add paths here instead of providing it again. The query string is
+// ignored, as in routing.
+const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   return UNTRACED_REQUEST_PATHS.has(
     queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
   );
 });
+
+export const withUntracedRequests = Layer.provide(untracedRequestsLayer);
 
 export const assetRouteLayer = HttpRouter.add(
   "GET",

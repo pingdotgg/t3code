@@ -131,16 +131,18 @@ export function makeAntigravityAcpAdapterFlavor(
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
-      // process by closing it, and the adapter respawns on the next turn.
-      const scope = yield* Effect.scope;
-      const runtime = yield* options.withProcess(
-        Scope.close(scope, Exit.void),
-        options.makeRuntime({
-          ...input,
-          clientFileSystem: true,
-          additionalDirectories: [options.serverConfig.attachmentsDir],
-        }),
-      );
+      // process by closing a child of it, and the adapter respawns on the next turn.
+      const scope = yield* Scope.fork(yield* Effect.scope);
+      const runtime = yield* options
+        .withProcess(
+          Scope.close(scope, Exit.void),
+          options.makeRuntime({
+            ...input,
+            clientFileSystem: true,
+            additionalDirectories: [options.serverConfig.attachmentsDir],
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, scope));
       return {
         ...runtime,
         start: () =>

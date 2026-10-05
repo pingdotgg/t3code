@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 

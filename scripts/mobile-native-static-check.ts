@@ -9,8 +9,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 interface NativeStaticTool {
   readonly command: string;

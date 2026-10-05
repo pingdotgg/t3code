@@ -1,7 +1,7 @@
 import type { DesktopDiscoveredSshHost } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import { AtomRegistry } from "effect/reactivity";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createDesktopSshHostsStateAtom, filterDiscoveredSshHosts } from "./desktopSshHosts";

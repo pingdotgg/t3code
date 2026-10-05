@@ -3,7 +3,7 @@ import {
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import type {
   OrchestrationV2ThreadShell,
   ProjectId,

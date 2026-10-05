@@ -24,7 +24,7 @@ import * as PubSub from "effect/PubSub";
 import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";

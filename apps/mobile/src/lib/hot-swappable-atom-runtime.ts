@@ -1,5 +1,5 @@
 import * as Layer from "effect/Layer";
-import { Atom, AtomRegistry, Reactivity } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry, Reactivity } from "effect/reactivity";
 
 export interface AcceptingHotModule {
   readonly accept: (callback?: () => void) => void;

@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 import * as CodexInstallation from "./CodexInstallation.ts";
 

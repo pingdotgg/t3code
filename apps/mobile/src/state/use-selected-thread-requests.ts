@@ -19,7 +19,7 @@ import {
   type PendingThreadRequests,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { threadEnvironment } from "../state/threads";
 import { scopedRequestKey } from "../lib/scopedEntities";

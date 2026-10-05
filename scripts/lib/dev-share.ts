@@ -23,7 +23,7 @@ import {
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 
 /**
  * Human-readable gloss for each diagnostic. Deliberately our own words rather

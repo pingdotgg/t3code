@@ -17,9 +17,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 

@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, GlobalFlag } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
+import { Command, GlobalFlag } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";

@@ -21,8 +21,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   ChromiumKeyError,

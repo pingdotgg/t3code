@@ -16,7 +16,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ResetCreditCoordinator from "../provider/Layers/resetCreditCoordinator.ts";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { describe } from "vite-plus/test";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";

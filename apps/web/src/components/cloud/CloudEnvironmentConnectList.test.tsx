@@ -2,7 +2,7 @@ import type { Discovery } from "@t3tools/client-runtime/relay";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

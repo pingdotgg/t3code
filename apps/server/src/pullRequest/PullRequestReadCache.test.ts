@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as TestClock from "effect/testing/TestClock";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 const cacheLayer = (directory: string) =>

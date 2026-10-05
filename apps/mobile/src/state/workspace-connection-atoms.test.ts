@@ -8,7 +8,7 @@ import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/conn
 import type { EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { createWorkspaceConnectionAtoms } from "./workspace-connection-atoms";
 import { projectWorkspaceEnvironment, projectWorkspaceState } from "./workspaceModel";

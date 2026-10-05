@@ -1,7 +1,7 @@
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HttpServerRequest, HttpTraceContext } from "effect/unstable/http";
+import { HttpServerRequest, HttpTraceContext } from "effect/http";
 
 export const traceRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,

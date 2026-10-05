@@ -4,7 +4,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import * as Effect from "effect/Effect";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, AppState, Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

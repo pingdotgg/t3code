@@ -49,7 +49,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1228,11 +1228,11 @@ function legacySafeThreadId(threadId: string): string {
 }
 
 function toSafeThreadId(threadId: string): string {
-  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
+  return `terminal_${Base64Url.encode(threadId)}`;
 }
 
 function toSafeTerminalId(terminalId: string): string {
-  return Encoding.encodeBase64Url(terminalId);
+  return Base64Url.encode(terminalId);
 }
 
 function toSessionKey(threadId: string, terminalId: string): string {

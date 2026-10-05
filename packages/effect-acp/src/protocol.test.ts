@@ -11,7 +11,7 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";

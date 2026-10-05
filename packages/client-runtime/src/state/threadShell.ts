@@ -7,7 +7,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import { presentThreadShell } from "./models.ts";

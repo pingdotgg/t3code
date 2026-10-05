@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
 import * as Effect from "effect/Effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";

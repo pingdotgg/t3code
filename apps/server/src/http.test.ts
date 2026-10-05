@@ -12,12 +12,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpRouter,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import * as Tracer from "effect/Tracer";
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
@@ -33,7 +29,47 @@ import {
   isLoopbackHostname,
   resolveDevRedirectUrl,
   staticAndDevRouteLayer,
+  withUntracedRequests,
 } from "./http.ts";
+
+describe("untraced requests", () => {
+  it.effect("drops the HTTP server span for browser trace exports, query string included", () => {
+    const spanNames: Array<string> = [];
+    return Effect.gen(function* () {
+      const routes = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("POST", "/api/observability/v1/traces", HttpServerResponse.empty());
+          yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+        }),
+      );
+      const services = yield* Layer.build(
+        withUntracedRequests(HttpRouter.serve(routes, { disableListenLog: true })).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+
+      yield* client.post("/api/observability/v1/traces");
+      yield* client.post("/api/observability/v1/traces?x=1");
+      expect(spanNames).toEqual([]);
+
+      yield* client.get("/api/environment");
+      expect(spanNames).toContain("http.server GET");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        Tracer.Tracer,
+        Tracer.make({
+          span: (options) => {
+            if (options.kind === "server") spanNames.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        }),
+      ),
+    );
+  });
+});
 
 describe("browser API CORS", () => {
   it("accepts protocol negotiation with authenticated browser headers", async () => {
@@ -86,15 +122,16 @@ const fileResponseLayer = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.la
 const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (staticDir: string) {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const appLayer = Layer.merge(staticAndDevRouteLayer, httpCompressionLayer).pipe(
-    Layer.provideMerge(ServerConfig.layer({ ...config, staticDir })),
     Layer.provideMerge(NodeHttpPlatform.layer),
-    Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
-    Layer.provideMerge(Layer.succeed(Path.Path, path)),
   );
+  // HttpRouter.serve reuses services from the layers around it before the
+  // app's own, and NodeHttpServer.layerTest brings a real FileSystem, so the
+  // caller's FileSystem and static directory go between the two.
   const services = yield* Layer.build(
     HttpRouter.serve(appLayer, { disableListenLog: true }).pipe(
+      Layer.provideMerge(ServerConfig.layer({ ...config, staticDir })),
+      Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
       Layer.provideMerge(NodeHttpServer.layerTest),
     ),
   );

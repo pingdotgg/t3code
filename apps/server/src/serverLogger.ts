@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
-import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
+import * as OtlpExporter from "effect/observability/OtlpExporter";
+import * as OtlpLogger from "effect/observability/OtlpLogger";
 
 import * as ServerConfig from "./config.ts";
 

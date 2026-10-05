@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,

@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";

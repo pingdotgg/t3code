@@ -1,7 +1,7 @@
 import type { ServerProviderModel } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 export class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
   "ChatGptCatalogError",

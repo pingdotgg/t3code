@@ -5,7 +5,7 @@ import {
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 export type ThreadListProvider = Pick<
   ServerProvider,

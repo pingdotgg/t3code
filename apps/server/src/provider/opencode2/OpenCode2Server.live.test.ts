@@ -19,8 +19,8 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";

@@ -2,7 +2,7 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
 } from "@t3tools/client-runtime/state/assets";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { projectFaviconCache } from "../assets/projectFaviconCache";

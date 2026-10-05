@@ -18,8 +18,8 @@ import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { HttpApiTest } from "effect/unstable/httpapi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { HttpApiTest } from "effect/http-api";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { PrimaryEnvironmentHttpClient } from "../src/environments/primary/httpClient";
 import { __setPrimaryHttpRunnerForTests } from "../src/lib/runtime";

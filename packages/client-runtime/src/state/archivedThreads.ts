@@ -3,7 +3,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;

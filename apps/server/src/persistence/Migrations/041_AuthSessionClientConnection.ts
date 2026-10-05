@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Client-declared surface (web/desktop/mobile) and app version, refreshed on
 // every WebSocket connect so the row tracks the client's current build instead

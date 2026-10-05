@@ -6,7 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import { request } from "../rpc/client.ts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,

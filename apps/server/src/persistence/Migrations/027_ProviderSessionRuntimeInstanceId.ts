@@ -15,7 +15,7 @@
  * multiple instances of the same driver. Keeping that compatibility at the
  * persistence boundary keeps the fallback out of active routing code.
  */
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
 export default Effect.gen(function* () {

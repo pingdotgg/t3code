@@ -1,5 +1,5 @@
 import * as Option from "effect/Option";
-import * as Mime from "effect/unstable/http/Mime";
+import * as Mime from "effect/http/Mime";
 
 const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/avif": ".avif",

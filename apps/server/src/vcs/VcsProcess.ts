@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   type VcsError,

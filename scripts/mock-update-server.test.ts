@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpRouter } from "effect/http";
 
 import { makeMockUpdateRouteLayer } from "./mock-update-server.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";

@@ -3,7 +3,7 @@ import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubA
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";

@@ -1,6 +1,6 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   highlightSourceFile,

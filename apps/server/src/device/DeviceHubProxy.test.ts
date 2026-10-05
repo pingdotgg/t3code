@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./DeviceHubProxy.ts";

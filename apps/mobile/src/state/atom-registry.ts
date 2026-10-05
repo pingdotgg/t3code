@@ -1,4 +1,4 @@
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 
 import {
   disposeOnFoundationReplace,

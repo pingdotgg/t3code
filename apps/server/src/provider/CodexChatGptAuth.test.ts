@@ -12,7 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";

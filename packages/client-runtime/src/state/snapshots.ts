@@ -1,6 +1,6 @@
 import type { EnvironmentId, OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentShellState } from "./shell.ts";
 

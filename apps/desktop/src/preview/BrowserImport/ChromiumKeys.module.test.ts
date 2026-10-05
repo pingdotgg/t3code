@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 vi.mock("@napi-rs/keyring", () => {

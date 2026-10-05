@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
 import {

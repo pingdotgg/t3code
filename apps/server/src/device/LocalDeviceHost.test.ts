@@ -14,8 +14,8 @@ import * as FileSystem from "effect/FileSystem";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";

@@ -1,4 +1,4 @@
-import * as Mime from "effect/unstable/http/Mime";
+import * as Mime from "effect/http/Mime";
 import { githubMediaFileName } from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -10,7 +10,7 @@ import {
   HttpClientRequest,
   HttpServerResponse,
   type HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 

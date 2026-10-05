@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type { HttpClient } from "effect/unstable/http";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import type { HttpClient } from "effect/http";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";

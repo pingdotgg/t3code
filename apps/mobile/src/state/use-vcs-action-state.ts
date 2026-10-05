@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";

@@ -2,7 +2,7 @@ import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";

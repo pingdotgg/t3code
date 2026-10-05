@@ -11,7 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AbsolutePath, Location, Model, Provider } from "@opencode/client/effect";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Filter from "effect/Filter";
@@ -19,8 +19,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeCrypto from "node:crypto";
 import { describe } from "vite-plus/test";
 
@@ -36,7 +36,7 @@ const startServer = Effect.fn("OpenCode2ClientLive.startServer")(function* (bina
   const directory = path.join(root, "work");
   yield* fs.makeDirectory(directory);
   // Non-ASCII on purpose: OpenCode decodes Basic credentials as UTF-8.
-  const password = `${Encoding.encodeBase64Url(NodeCrypto.randomBytes(32))}-pässwörd€`;
+  const password = `${Base64Url.encode(NodeCrypto.randomBytes(32))}-pässwörd€`;
   const child = yield* spawner.spawn(
     ChildProcess.make(binary, ["serve", "--hostname=127.0.0.1", "--port=0"], {
       cwd: directory,
@@ -89,7 +89,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
         });
 
         const info = yield* client.server.info();
-        assert.strictEqual(info.version, "2.0.18");
+        assert.strictEqual(info.version, "2.0.23");
         assert.strictEqual(info.pid, server.pid);
 
         const session = yield* client.session.create({

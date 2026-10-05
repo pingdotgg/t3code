@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "./atomRegistry";
 

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 
 import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";

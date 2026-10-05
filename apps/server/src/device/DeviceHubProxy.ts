@@ -24,8 +24,8 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+} from "effect/http";
+import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";

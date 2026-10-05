@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import {
   CreateThreadsTool,

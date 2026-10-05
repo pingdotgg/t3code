@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";

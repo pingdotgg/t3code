@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import {

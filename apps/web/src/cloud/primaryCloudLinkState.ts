@@ -5,8 +5,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { HttpClient } from "effect/unstable/http";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { HttpClient } from "effect/http";
 import { useCallback, useMemo } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";

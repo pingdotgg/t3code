@@ -8,7 +8,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { Fragment, useMemo } from "react";
 import { Alert, Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/AppText";
