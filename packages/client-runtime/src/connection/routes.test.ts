@@ -15,7 +15,9 @@ import {
   connectionRouteLabel,
   credentialConnectionId,
   insertRoute,
+  entryWithRoutes,
   mergeLearnedRoutes,
+  removedWithRelay,
   routesAfterRemoving,
   upsertRoute,
 } from "./routes.ts";
@@ -198,6 +200,18 @@ describe("learned routes", () => {
     expect(ids(routesAfterRemoving(overLan, "lan"))).toEqual(["relay"]);
     // Removing T3 Connect keeps the paired LAN and what it learned.
     expect(ids(routesAfterRemoving(overLan, "relay"))).toHaveLength(2);
+  });
+
+  it("counts an environment reached only through T3 Connect as removed with it", () => {
+    const learned = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
+      allowInsecure: true,
+    })!;
+    expect(removedWithRelay(relayOnly)).toBe(true);
+    expect(removedWithRelay(entryWithRoutes(relayOnly, learned))).toBe(true);
+    expect(removedWithRelay(entryWithRoutes(relayOnly, [LAN, RELAY]))).toBe(false);
   });
 
   it("keeps GitHub routing trust when a route is learned", () => {

@@ -349,6 +349,14 @@ export function routesAfterRemoving(
   });
 }
 
+/**
+ * Whether removing T3 Connect leaves the environment no route, so signing out
+ * removes it entirely. Routes learned through T3 Connect go with it.
+ */
+export function removedWithRelay(entry: ConnectionCatalogEntry): boolean {
+  return routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID).length === 0;
+}
+
 /** One SSH target, as desktop keys its tunnels: alias, host, user, and port. */
 export function sshTargetKey(target: DesktopSshEnvironmentTarget): string {
   return JSON.stringify([target.alias, target.hostname, target.username, target.port]);
