@@ -2676,10 +2676,27 @@ export default function Sidebar() {
   // carries the intent across the commit and the effect below focuses it.
   const projectScopeSearchInputRef = useRef<HTMLInputElement | null>(null);
   const focusProjectScopeSearchOnOpenRef = useRef(false);
+  // The search input lives in the popup portal, so focusing waits a frame
+  // for it to mount. Shared by the open effect below and the already-open
+  // path: pressing the chord twice pulls focus back to the search field.
+  const focusProjectScopeSearch = useCallback(() => {
+    const frame = requestAnimationFrame(() => {
+      const input =
+        projectScopeSearchInputRef.current ??
+        document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+      input?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const openProjectScopeFilter = useCallback(() => {
     // Without projects the header hides the filter trigger, so there is
     // nothing to open.
     if (projectGroups.length === 0) return;
+    if (projectScopeMenuState.open) {
+      focusProjectScopeSearchOnOpenRef.current = false;
+      focusProjectScopeSearch();
+      return;
+    }
     // The picker lives inside the sidebar, so a collapsed sidebar opens
     // first — on mobile that means the sheet, on desktop the panel.
     if (isMobile) {
@@ -2689,18 +2706,20 @@ export default function Sidebar() {
     }
     focusProjectScopeSearchOnOpenRef.current = true;
     dispatchProjectScopeMenu({ type: "open-changed", open: true });
-  }, [dispatchProjectScopeMenu, isMobile, projectGroups.length, setOpenMobile, setSidebarOpen]);
+  }, [
+    dispatchProjectScopeMenu,
+    focusProjectScopeSearch,
+    isMobile,
+    projectGroups.length,
+    projectScopeMenuState.open,
+    setOpenMobile,
+    setSidebarOpen,
+  ]);
   useEffect(() => {
     if (!projectScopeMenuState.open || !focusProjectScopeSearchOnOpenRef.current) return;
     focusProjectScopeSearchOnOpenRef.current = false;
-    const frame = requestAnimationFrame(() => {
-      const input =
-        projectScopeSearchInputRef.current ??
-        document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
-      input?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [projectScopeMenuState.open]);
+    return focusProjectScopeSearch();
+  }, [focusProjectScopeSearch, projectScopeMenuState.open]);
 
   // Keep a dropped row at its destination while its server applies the
   // lifecycle command and any order-key writes. The next pickup waits for
