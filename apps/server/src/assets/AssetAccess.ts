@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
@@ -215,7 +216,13 @@ const optionOnNotFound = <A, R>(
     }),
   );
 
-/** Decodes one image a tool returned inline; null when the stored item has no such image. */
+// The largest image a provider turn accepts, as base64 (4 characters per 3 bytes).
+const MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH = Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4;
+
+/**
+ * Decodes one image a tool returned inline; null when the stored item has no
+ * such image, or it is larger than a provider turn accepts.
+ */
 const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(function* (input: {
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
@@ -225,7 +232,7 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   const item = yield* orchestrator.getTurnItem(input);
   const image =
     item?.type === "dynamic_tool" ? toolOutputImages(item.output)[input.index] : undefined;
-  return image?.data === undefined
+  return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
 });

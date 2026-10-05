@@ -90,11 +90,30 @@ const screenshotItem = {
   updatedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
 };
 
+const oversizedScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-oversized"),
+  output: {
+    content: [
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "A".repeat(14 * 1024 * 1024) },
+      },
+    ],
+  },
+};
+
 const testLayer = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
-      Effect.succeed(itemId === screenshotItem.id ? screenshotItem : null),
+      Effect.succeed(
+        itemId === screenshotItem.id
+          ? screenshotItem
+          : itemId === oversizedScreenshotItem.id
+            ? oversizedScreenshotItem
+            : null,
+      ),
   }),
   configLayer,
   WorkspacePaths.layer,
@@ -174,6 +193,11 @@ describe("AssetAccess", () => {
         Effect.flip,
       );
       expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      // Larger than a provider turn accepts, so it is never decoded.
+      const oversized = yield* issueAssetUrl({
+        resource: { ...resource, itemId: oversizedScreenshotItem.id },
+      }).pipe(Effect.flip);
+      expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
     }).pipe(Effect.provide(testLayer)),
   );
 
