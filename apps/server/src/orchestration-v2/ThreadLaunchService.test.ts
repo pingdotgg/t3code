@@ -2130,6 +2130,77 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
 });
 
+it.effect("fails preparation completed while archived and accepts a new send after unarchive", () =>
+  Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const allowSetup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.as({ status: "no-script" as const }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const input = launchInput({
+        command: "launch:archive-during-setup",
+        thread: "thread:archive-during-setup",
+        message: "Start",
+      });
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(setupEntered);
+      yield* threads.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive:during-setup"),
+        threadId: launched.threadId,
+      });
+      yield* Deferred.succeed(allowSetup, undefined);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            (stored.commandId === CommandId.make(`${input.commandId}:fail`) ||
+              stored.commandId === CommandId.make(`${input.commandId}:release`)) &&
+            stored.event.type === "run.updated",
+        ),
+        Stream.runHead,
+      );
+      const failed = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(failed.runs[0]?.status, "failed");
+      assert.isEmpty(failed.providerTurns);
+      assert.isEmpty(failed.checkpointScopes);
+      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
+
+      yield* threads.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("unarchive:after-setup"),
+        threadId: launched.threadId,
+      });
+      const next = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("send:after-unarchive"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:after-unarchive"),
+        text: "Try again",
+        attachments: [],
+        mode: "auto",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(next.delivery, "started");
+      assert.equal(next.run.status, "starting");
+      assert.notEqual(next.run.id, failed.runs[0]?.id);
+      assert.isTrue(
+        (yield* outbox.listByCommandId(CommandId.make("send:after-unarchive"))).some(
+          (entry) => entry.request.type === "provider-turn.start",
+        ),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("cancels tracked setup before provider work is released", () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>();
