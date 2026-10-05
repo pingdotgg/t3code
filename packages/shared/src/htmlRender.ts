@@ -328,13 +328,33 @@ function bootstrapMarkup(markup: string): string {
   ].join("");
 }
 
-// Comments and raw-text content are blanked to the same length, so offsets
-// still line up and a tag written inside one is never taken for a real element.
-const blankNonMarkup = (html: string) =>
-  html.replace(
+// Comments, raw text, and template contents are blanked to the same length,
+// so offsets still line up and inert tags cannot receive the bootstrap.
+const blankNonMarkup = (html: string) => {
+  const scan = html.replace(
     /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)\b[\s\S]*?(?:<\/\1\s*>|$)|<plaintext\b[\s\S]*$/gi,
     (match) => " ".repeat(match.length),
   );
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let at = 0;
+  for (const match of scan.matchAll(/<(\/?)template(?:\s[^>]*)?\/?>/gi)) {
+    if (!match[1]) {
+      if (depth++ === 0) start = match.index;
+    } else if (depth > 0 && --depth === 0) {
+      const end = match.index + match[0].length;
+      parts.push(scan.slice(at, start), " ".repeat(end - start));
+      at = end;
+    }
+  }
+  if (depth > 0) {
+    parts.push(scan.slice(at, start), " ".repeat(scan.length - start));
+    at = scan.length;
+  }
+  parts.push(scan.slice(at));
+  return parts.join("");
+};
 
 /**
  * Inserts the theme bootstrap at the start of the document head, so a page's

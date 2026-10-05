@@ -49,6 +49,17 @@ describe("injectHtmlRenderBootstrap", () => {
     },
   );
 
+  it.each([
+    '<template><head><meta name="viewport"></head></template>',
+    '<template><template>inner</template><head><meta name="viewport"></head></template>',
+  ])("keeps the bootstrap outside inert template content: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected.startsWith("<!doctype html><head>")).toBe(true);
+    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf("<template>"));
+    expect(injected).toContain('<meta name="viewport" content="width=device-width');
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
   it("ignores tags written inside comments and scripts", () => {
     const html =
       '<!-- copy <head> and <meta name="viewport"> here --><html><head>' +
