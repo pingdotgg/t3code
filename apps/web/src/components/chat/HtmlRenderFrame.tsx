@@ -65,8 +65,11 @@ export function HtmlRenderFrame(props: {
   const cachedExpiresAt = assetUrl._tag === "Success" ? assetUrl.expiresAt : 0;
   const cacheFailed = assetUrl._tag === "Failure";
   const refresh = useAssetUrlRefresh(props.environmentId, resource);
+  // At most one mint per mount: expiry is server time and the check uses the
+  // client clock, so a skewed clock must not mint again on every update.
+  const minting = useRef(false);
   useEffect(() => {
-    if (src !== null) return;
+    if (src !== null || minting.current) return;
     if (cacheFailed) {
       // oxlint-disable-next-line react/set-state-in-effect -- Mirrors the cached URL's failure.
       setFailed(true);
@@ -77,18 +80,11 @@ export function HtmlRenderFrame(props: {
       setSrc(cachedUrl);
       return;
     }
-    let cancelled = false;
+    minting.current = true;
     void refresh().then(
-      (url) => {
-        if (!cancelled && url !== null) setSrc(url);
-      },
-      () => {
-        if (!cancelled) setFailed(true);
-      },
+      (url) => (url === null ? setFailed(true) : setSrc(url)),
+      () => setFailed(true),
     );
-    return () => {
-      cancelled = true;
-    };
   }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
   return (

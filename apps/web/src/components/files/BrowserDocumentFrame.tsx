@@ -78,8 +78,10 @@ export function HtmlRenderDocument(props: {
   };
   useEffect(postTheme, [theme]);
   // The page cannot open windows itself (an inline page runs unopened, and
-  // desktop sends any window to the browser). It asks for a clicked link, and
-  // only a request right after the reader clicked inside this frame opens.
+  // desktop sends any window to the browser). It asks the client, which opens
+  // the link only while this frame has focus and the reader has just used the
+  // app. A page can take focus by script, so this stops opens on load, not a
+  // page that waits for the reader's next click or key.
   useEffect(() => {
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;

@@ -129,7 +129,7 @@ describe("htmlRenderFrameHeight", () => {
     expect(htmlRenderFrameHeight(measured, 320)).toBe(1290);
   });
 
-  it("never cuts off a page whose breakpoint falls between measured widths", () => {
+  it("takes the taller layout when a breakpoint falls between measured widths", () => {
     // 900px tall below a 600px media query, 450px above it.
     const responsive = readHtmlRenderReference({
       ...reference,
