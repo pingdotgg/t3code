@@ -213,6 +213,11 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(flat)).toBe(true);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}-deadbeef-extra`)).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}-feature`)).toBe(false);
+    expect(
+      flattenTemporaryWorktreeBranchName(
+        `${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`,
+      ),
+    ).toBe(`${WORKTREE_BRANCH_PREFIX}-f4ae4e0e`);
   });
 
   it("rejects non-temporary refName names", () => {

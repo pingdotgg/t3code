@@ -129,7 +129,12 @@ export function buildTemporaryWorktreeBranchName(
  * ref impossible. This moves a temporary name to the flat `t3code-<hex>` sibling.
  */
 export function flattenTemporaryWorktreeBranchName(refName: string): string {
-  return refName.replace(`${WORKTREE_BRANCH_PREFIX}/`, `${WORKTREE_BRANCH_PREFIX}-`);
+  // Keep only the canonical 8-hex token so legacy UUID names stay recognizable.
+  const token = refName
+    .trim()
+    .toLowerCase()
+    .slice(WORKTREE_BRANCH_PREFIX.length + 1, WORKTREE_BRANCH_PREFIX.length + 9);
+  return `${WORKTREE_BRANCH_PREFIX}-${token}`;
 }
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {
