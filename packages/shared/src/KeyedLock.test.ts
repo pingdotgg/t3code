@@ -96,6 +96,14 @@ describe("KeyedLock", () => {
     }),
   );
 
+  it.effect("keeps working after the scope that made it closes", () =>
+    Effect.gen(function* () {
+      // Services built per request hand their lock to work that outlives the build.
+      const lock = yield* Effect.scoped(KeyedLock.make<string>());
+      assert.strictEqual(yield* lock.withLock("key", Effect.succeed("ran")), "ran");
+    }),
+  );
+
   it.effect("runs the effect in the caller's scope", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();
