@@ -44,6 +44,7 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
+import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export class ConnectionResolver extends Context.Service<
@@ -139,7 +140,15 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         actual: profile.environmentId,
       });
     }
-    const credential = yield* credentials.get(target.connectionId).pipe(
+    if (profile.authorization === "t3-connect") {
+      const authorized = yield* remote.authorizeDpop({
+        expectedEnvironmentId: target.environmentId,
+        directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
+      });
+      return { ...authorized, target } satisfies PreparedConnection;
+    }
+    // A learned route borrows the credential of the route it was learned from.
+    const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(credentialMissingError(target.connectionId)),

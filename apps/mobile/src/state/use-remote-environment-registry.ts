@@ -110,10 +110,10 @@ export function useRemoteConnections() {
   }, []);
 
   const onConnectPress = useCallback(
-    async (pairingUrl?: string) => {
+    async (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) => {
       const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
       setPendingConnectionError(null);
-      const result = await controller.connectPairingUrl(nextPairingUrl);
+      const result = await controller.connectPairingUrl(nextPairingUrl, expectedEnvironmentId);
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
         const message =

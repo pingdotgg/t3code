@@ -1,3 +1,4 @@
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ModelSelection,
@@ -36,7 +37,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
-import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
   ProviderAdapterEventStreamError,
@@ -386,9 +386,9 @@ export const layerWithOptions = (
       // cannot drop cleanup for threads only the earlier session served.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
-      const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
+      const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
-      const threadAttachment = yield* makeKeyedSerialExecutor<string>();
+      const threadAttachment = yield* KeyedLock.make<string>();
       const threadAttachmentKey = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
@@ -427,7 +427,7 @@ export const layerWithOptions = (
       };
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
-      const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
+      const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a
        * reservation held; the caller must drop the reservation exactly once.
@@ -468,8 +468,8 @@ export const layerWithOptions = (
                   const resolved = yield* mcpSessionRegistry.resolve(rawToken);
                   if (
                     resolved !== undefined &&
-                    resolved.threadId === threadId &&
-                    resolved.providerInstanceId === providerInstanceId &&
+                    resolved.thread.threadId === threadId &&
+                    resolved.thread.providerInstanceId === providerInstanceId &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
