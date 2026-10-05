@@ -388,16 +388,105 @@ describe("cooperative shell cache encoding", () => {
     }),
   );
 
-  it.effect("still rejects invalid rows after an encoding batch yields", () =>
+  it.effect("preserves optional fields and dates across chunk boundaries and archived rows", () =>
     Effect.gen(function* () {
-      const invalid = {
+      const base = SHELL_SNAPSHOT.threads[0]!;
+      const { titleRegeneration: _, unsettledAt: __, ...withoutOptional } = base;
+      const row = (index: number) =>
+        index % 3 === 0
+          ? { ...withoutOptional, id: ThreadId.make(`row-${index}`) }
+          : {
+              ...base,
+              id: ThreadId.make(`row-${index}`),
+              snoozedUntil: DateTime.add(NOW, { minutes: index }),
+              pinnedAt: index % 2 === 0 ? null : NOW,
+            };
+      const mixed = {
         ...stored,
         snapshot: {
           ...stored.snapshot,
-          threads: [...stored.snapshot.threads, { ...stored.snapshot.threads[0]!, itemCount: -1 }],
+          threads: Array.from({ length: 65 }, (_, index) => row(index)),
+          archivedThreads: Array.from({ length: 33 }, (_, index) => ({
+            ...row(index + 100),
+            archivedAt: DateTime.add(NOW, { hours: index }),
+          })),
         },
       };
-      expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalid))).toBe(true);
+      const actual = yield* encodeStoredShellSnapshot(mixed);
+      expect(actual).toBe(yield* encodeOriginal(mixed));
+      const parsed = JSON.parse(actual);
+      expect(parsed.snapshot.threads).toHaveLength(65);
+      expect(parsed.snapshot.threads[63]).not.toHaveProperty("titleRegeneration");
+      expect(parsed.snapshot.threads[63]).not.toHaveProperty("unsettledAt");
+      expect(parsed.snapshot.threads[64].snoozedUntil).toBe(
+        DateTime.formatIso(DateTime.add(NOW, { minutes: 64 })),
+      );
+      expect(parsed.snapshot.archivedThreads).toHaveLength(33);
+      expect(parsed.snapshot.archivedThreads[32].archivedAt).toBe(
+        DateTime.formatIso(DateTime.add(NOW, { hours: 32 })),
+      );
+    }),
+  );
+
+  it.effect("yields to a host timer between every 32-row chunk", () =>
+    Effect.gen(function* () {
+      const setTimer = vi.spyOn(globalThis, "setTimeout");
+      try {
+        yield* encodeStoredShellSnapshot({
+          ...stored,
+          snapshot: {
+            ...stored.snapshot,
+            threads: Array.from({ length: 65 }, () => stored.snapshot.threads[0]!),
+            archivedThreads: Array.from({ length: 33 }, () => stored.snapshot.archivedThreads[0]!),
+          },
+        });
+        // Five row chunks (3 active + 2 archived): four yields between them, one before the envelope.
+        expect(setTimer).toHaveBeenCalledTimes(5);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    }),
+  );
+
+  it.effect("still rejects invalid active and archived rows after an encoding chunk yields", () =>
+    Effect.gen(function* () {
+      const invalidRow = { ...stored.snapshot.threads[0]!, itemCount: -1 };
+      const invalidActive = {
+        ...stored,
+        snapshot: { ...stored.snapshot, threads: [...stored.snapshot.threads, invalidRow] },
+      };
+      const invalidArchived = {
+        ...stored,
+        snapshot: { ...stored.snapshot, archivedThreads: [invalidRow] },
+      };
+      const invalidEnvelope = { ...stored, snapshot: { ...stored.snapshot, snapshotSequence: -1 } };
+      expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalidActive))).toBe(true);
+      expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalidArchived))).toBe(true);
+      expect(yield* Effect.isFailure(encodeOriginal(invalidEnvelope))).toBe(true);
+      expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalidEnvelope))).toBe(true);
+    }),
+  );
+
+  it.effect("keeps concurrent saves independent", () =>
+    Effect.gen(function* () {
+      const other = {
+        ...stored,
+        environmentId: EnvironmentId.make("environment-2"),
+        snapshot: {
+          ...stored.snapshot,
+          threads: stored.snapshot.threads.slice(0, 40).map((thread) => ({
+            ...thread,
+            title: `Other ${thread.id}`,
+          })),
+          archivedThreads: [],
+        },
+      };
+      const [first, second] = yield* Effect.all(
+        [encodeStoredShellSnapshot(stored), encodeStoredShellSnapshot(other)],
+        { concurrency: "unbounded" },
+      );
+      expect(first).toBe(yield* encodeOriginal(stored));
+      expect(second).toBe(yield* encodeOriginal(other));
     }),
   );
 
