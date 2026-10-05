@@ -36,6 +36,8 @@ const withService = <A, E>(
     readonly threadId?: ThreadId;
     readonly runStatus?: string;
     readonly removeFails?: boolean;
+    /** The agent's wait closes the card just before the answer's record lands. */
+    readonly closedFirst?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -107,7 +109,12 @@ const withService = <A, E>(
         dispatch: (command) =>
           Effect.sync(() => {
             dispatched.push(command);
-            if (command.type === "secret_request.record") secretStatus = command.secretStatus;
+            // Like the orchestrator, a card that is no longer pending keeps its answer.
+            if (options.closedFirst && command.type === "secret_request.record") {
+              secretStatus = "cancelled";
+            } else if (command.type === "secret_request.record" && secretStatus === "pending") {
+              secretStatus = command.secretStatus;
+            }
             return {} as never;
           }),
       }),
@@ -166,6 +173,20 @@ it.effect("two concurrent uses of one ref hand the value out once", () =>
       );
       assert.deepEqual(results.map((result) => result._tag).toSorted(), ["Failure", "Success"]);
     }),
+  ),
+);
+
+it.effect("a save that loses to the card closing deletes the value and says so", () =>
+  withService(
+    ({ service, stored }) =>
+      Effect.gen(function* () {
+        const error = yield* service
+          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
+          .pipe(Effect.flip);
+        assert.equal(error.reason, "agent_stopped");
+        assert.isFalse(valuesOf(stored).some((value) => value.includes("ghp_secret")));
+      }),
+    { closedFirst: true },
   ),
 );
 

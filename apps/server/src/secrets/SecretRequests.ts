@@ -159,6 +159,21 @@ const make = Effect.gen(function* () {
           secretStatus,
         })
         .pipe(Effect.mapError((cause) => fail("record_failed", cause)));
+      if (input.answer.type !== "save") return;
+      // A request is answered once: if the agent's wait closed the card between
+      // the checks above and this record, the record changed nothing. Nobody
+      // will receive the ref, so the value is deleted rather than left to expire.
+      const recorded = yield* threadManagement
+        .getThreadRecords(input.threadId, ["turnItems"], {
+          turnItemTypes: ["secret_request"],
+          messageRoles: [],
+        })
+        .pipe(Effect.mapError((cause) => fail("record_failed", cause)));
+      const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
+      if (card?.type === "secret_request" && card.secretStatus !== "saved") {
+        yield* removeLogged(storeName(refFor(salt, input.threadId, item.id)));
+        return yield* fail("agent_stopped");
+      }
     }).pipe(Effect.withSpan("SecretRequests.answer"));
 
   const savedRef: SecretRequests["Service"]["savedRef"] = (input) =>
