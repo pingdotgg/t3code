@@ -4766,6 +4766,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return title === undefined ? undefined : { title };
         });
 
+        // Claude Code's tool_use_meta gives built-in tools an untitled
+        // presentation, so a resolved recipient name fills in the title.
+        const withAgentMessageTitle = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          toolName: string,
+          toolInput: ClaudeNativeToolInput,
+          presentation: ClaudeToolPresentation | undefined,
+        ) {
+          if (presentation?.title !== undefined) return presentation;
+          const message = yield* agentMessagePresentation(context, toolName, toolInput);
+          return message === undefined ? presentation : { ...presentation, ...message };
+        });
+
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -4774,9 +4787,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly parentToolUseId: string | null;
           readonly presentation?: ClaudeToolPresentation | undefined;
         }) {
-          const presentation =
-            input.presentation ??
-            (yield* agentMessagePresentation(input.context, input.toolName, input.toolInput));
+          const presentation = yield* withAgentMessageTitle(
+            input.context,
+            input.toolName,
+            input.toolInput,
+            input.presentation,
+          );
           const existing = findToolCall(input.context, input.nativeItemId);
           if (existing !== undefined) {
             // The permission callback can start a call before its assistant
@@ -6531,9 +6547,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updatedAt: completedAt,
               // A message sent right after a background launch can start before
               // that subagent is registered; by its result the name resolves.
-              presentation:
-                toolCall.presentation ??
-                (yield* agentMessagePresentation(context, toolCall.toolName, toolCall.input)),
+              presentation: yield* withAgentMessageTitle(
+                context,
+                toolCall.toolName,
+                toolCall.input,
+                toolCall.presentation,
+              ),
             });
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
