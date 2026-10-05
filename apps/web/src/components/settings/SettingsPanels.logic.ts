@@ -114,6 +114,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserDefaultViewport"
   | "browserDefaultZoomFactor"
   | "browserDefaultAppearance"
+  | "browserDefaultHomepage"
   | "browserRecordingFrameRate"
   | "browserRecordingShowKeyPresses"
   | "browserRecordingShowMousePresses"
@@ -154,6 +155,9 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
       ? ["Browser appearance"]
+      : []),
+    ...(settings.browserDefaultHomepage !== DEFAULT_UNIFIED_SETTINGS.browserDefaultHomepage
+      ? ["Browser homepage"]
       : []),
     ...(settings.browserRecordingFrameRate !== DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate
       ? ["Recording frame rate"]

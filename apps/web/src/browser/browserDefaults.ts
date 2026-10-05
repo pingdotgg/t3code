@@ -4,7 +4,8 @@
  * Settings → Integrations → Browser lets the user pick the viewport, zoom, and
  * appearance a preview tab should open at. Those preferences apply to every
  * entry point that opens a tab without stating its own: the user opening a
- * browser panel, and agents calling `preview_open` with no size.
+ * browser panel, and agents calling `preview_open` with no size. The homepage
+ * is narrower: only tabs the user opens by hand start on it.
  *
  * The values live in client settings because the Chromium guest they configure
  * is desktop-local, so this module reads them through the same external store
@@ -15,12 +16,14 @@
  */
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  PREVIEW_URL_MAX_LENGTH,
   resolveBrowserProfiles,
   type BrowserProfile,
   type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
 
 import {
   ensureClientSettingsHydrated,
@@ -37,6 +40,21 @@ export interface BrowserDefaults {
   readonly autoShowFloatingPreview: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
+  /** Normalized URL, or "" for a blank tab. */
+  readonly homepage: string;
+}
+
+/**
+ * The homepage as `preview.open` accepts it, or null when the text is not a
+ * usable HTTP(S) URL. Settings uses it to reject a bad entry before saving.
+ */
+export function normalizeBrowserHomepage(raw: string): string | null {
+  try {
+    const url = normalizePreviewUrl(raw);
+    return url.length <= PREVIEW_URL_MAX_LENGTH ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 const toBrowserDefaults = (settings: {
@@ -46,6 +64,7 @@ const toBrowserDefaults = (settings: {
   readonly browserAutoShowFloatingPreview: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
+  readonly browserDefaultHomepage: string;
 }): BrowserDefaults => {
   const profiles = resolveBrowserProfiles(settings.browserProfiles);
   return {
@@ -65,6 +84,9 @@ const toBrowserDefaults = (settings: {
         (profile) =>
           profile.id === settings.browserDefaultProfileId && profile.kind !== "incognito",
       )?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    // A stored value the server would refuse opens a blank tab instead of
+    // failing every new tab.
+    homepage: normalizeBrowserHomepage(settings.browserDefaultHomepage) ?? "",
   };
 };
 
@@ -117,6 +139,13 @@ export function browserDefaultOpenProfileId(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): string {
   return defaults.profileId;
+}
+
+/** Page a tab opens on when the caller doesn't name one; undefined is a blank tab. */
+export function browserDefaultOpenUrl(
+  defaults: BrowserDefaults = getBrowserDefaults(),
+): string | undefined {
+  return defaults.homepage === "" ? undefined : defaults.homepage;
 }
 
 /**

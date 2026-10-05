@@ -27,6 +27,7 @@ import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   FILL_PREVIEW_VIEWPORT,
+  PREVIEW_URL_MAX_LENGTH,
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
   PREVIEW_VIEWPORT_MIN_DIMENSION,
@@ -42,6 +43,7 @@ import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
+import { normalizeBrowserHomepage } from "~/browser/browserDefaults";
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -378,6 +380,62 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
             </div>
           ) : null}
         </div>
+      }
+    />
+  );
+}
+
+/**
+ * Page hand-opened tabs start on. The field saves on blur or Enter, stores the
+ * normalized URL, and keeps the saved value when the entry is not a usable one.
+ */
+function BrowserHomepageSetting({ disabled }: { readonly disabled: boolean }) {
+  const homepage = useClientSettings((settings) => settings.browserDefaultHomepage);
+  const settingsHydrated = useClientSettingsHydrated();
+  const updateSettings = useUpdatePrimarySettings();
+  const [rejected, setRejected] = useState(false);
+
+  const commit = (next: string) => {
+    const normalized = next.trim() === "" ? "" : normalizeBrowserHomepage(next);
+    setRejected(normalized === null);
+    if (normalized !== null && normalized !== homepage) {
+      updateSettings({ browserDefaultHomepage: normalized });
+    }
+  };
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-default-homepage")}
+      title="Homepage"
+      status={rejected ? "Use HTTP or HTTPS." : null}
+      // Editing again retires the reason for the last rejected entry.
+      onFocus={() => setRejected(false)}
+      resetAction={
+        !disabled && homepage !== "" ? (
+          <SettingResetButton
+            label="browser homepage"
+            onClick={() => {
+              setRejected(false);
+              updateSettings({ browserDefaultHomepage: "" });
+            }}
+          />
+        ) : null
+      }
+      control={
+        <DraftInput
+          size="sm"
+          className="w-full sm:w-72"
+          // Until settings load the field would show, and could overwrite, the
+          // schema default rather than the saved homepage.
+          disabled={disabled || !settingsHydrated}
+          value={homepage}
+          onCommit={commit}
+          placeholder="Blank tab"
+          maxLength={PREVIEW_URL_MAX_LENGTH}
+          inputMode="url"
+          spellCheck={false}
+          aria-label="Browser homepage"
+        />
       }
     />
   );
@@ -1440,6 +1498,7 @@ export function IntegrationsSettingsPanel() {
     <>
       <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
       <BrowserViewportSetting disabled={previewDefaultsDisabled} />
+      <BrowserHomepageSetting disabled={previewDefaultsDisabled} />
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />

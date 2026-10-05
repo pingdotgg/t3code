@@ -67,6 +67,23 @@ describe("openPreviewSession", () => {
     expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
   });
 
+  it("opens the homepage when no URL is given, and an explicit URL instead of it", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      browserDefaultHomepage: "https://example.com/",
+    });
+    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
+    const openPreview = ({ input }: { input: PreviewOpenInput }) => open(input);
+
+    await openPreviewSession({ openPreview, threadRef });
+    await openPreviewSession({ openPreview, threadRef, url: "https://t3.chat/" });
+
+    expect(open.mock.calls.map(([input]) => input.url)).toEqual([
+      "https://example.com/",
+      "https://t3.chat/",
+    ]);
+  });
+
   it("applies the RPC response without waiting for a preview event", async () => {
     const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
 
