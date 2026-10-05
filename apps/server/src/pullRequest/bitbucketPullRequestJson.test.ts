@@ -2,6 +2,7 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildReviewThreads,
   decodeCommentsJson,
   decodeCommitsJson,
   decodeConflictsJson,
@@ -373,5 +374,73 @@ describe("repository permission decoding", () => {
     // An empty page is Bitbucket declining to say, which is an unknown standing rather than a
     // refusal — and an unknown one is granted.
     expect(expectSuccess(decodeRepositoryPermissionJson(page([])))).toBe(true);
+  });
+});
+
+describe("mention display bodies", () => {
+  const token = "@{712020:11111111-2222-4333-8444-555555555555}";
+  const html =
+    '<p><span class="ap-mention" data-atlassian-id="712020:11111111-2222-4333-8444-555555555555">@Alex Smith</span> thanks.</p>';
+  it("preserves editable source in descriptions, comments and inline threads", () => {
+    const body = `${token} thanks.`;
+    const pr = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(pullRequest({ description: body, rendered: { description: { html } } })),
+      ),
+    );
+    expect(pr).toMatchObject({ body, displayBody: "@Alex Smith thanks." });
+    const pageResult = expectSuccess(
+      decodeCommentsJson(
+        page([
+          {
+            id: 1,
+            content: { raw: body, html },
+            created_on: "2026-10-02T00:00:00Z",
+            inline: { path: "src/search.ts", to: 1 },
+          },
+        ]),
+      ),
+    );
+    expect(pageResult.comments[0]).toMatchObject({ body, displayBody: "@Alex Smith thanks." });
+    expect(buildReviewThreads(pageResult.entries)[0]?.comments[0]).toMatchObject({
+      body,
+      displayBody: "@Alex Smith thanks.",
+    });
+  });
+  it("keeps raw descriptions when rendered HTML is missing", () => {
+    const pr = expectSuccess(
+      decodePullRequestJson(JSON.stringify(pullRequest({ description: token }))),
+    );
+    expect(pr.body).toBe(token);
+    expect(pr.displayBody).toBeUndefined();
+  });
+
+  it.each([42, "invalid", { description: 42 }, { description: { html: 42 } }])(
+    "keeps valid pull requests when rendered metadata is malformed: %j",
+    (rendered) => {
+      const input = pullRequest({ description: token, rendered });
+      const pr = expectSuccess(decodePullRequestJson(JSON.stringify(input)));
+      expect(pr.body).toBe(token);
+      expect(pr.displayBody).toBeUndefined();
+      expect(expectSuccess(decodePullRequestPageJson(page([input]))).items).toHaveLength(1);
+    },
+  );
+
+  it("keeps comments and inline threads when optional HTML has the wrong type", () => {
+    const result = expectSuccess(
+      decodeCommentsJson(
+        page([
+          {
+            id: 1,
+            content: { raw: token, html: 42 },
+            created_on: "2026-10-02T00:00:00Z",
+            inline: { path: "src/search.ts", to: 1 },
+          },
+        ]),
+      ),
+    );
+    expect(result.comments[0]).toMatchObject({ body: token });
+    expect(result.comments[0]?.displayBody).toBeUndefined();
+    expect(buildReviewThreads(result.entries)[0]?.comments[0]).toMatchObject({ body: token });
   });
 });

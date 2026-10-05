@@ -183,9 +183,16 @@ export function mergePullRequestThreadComments<T extends { readonly id: string }
 }
 
 export function editPullRequestThreadComment<
-  T extends { readonly id: string; readonly body: string },
+  T extends {
+    readonly id: string;
+    readonly body: string;
+    readonly displayBody?: string | undefined;
+  },
 >(comments: ReadonlyArray<T>, commentId: string, body: string): ReadonlyArray<T> {
-  return comments.map((comment) => (comment.id === commentId ? { ...comment, body } : comment));
+  return comments.map((comment) => {
+    if (comment.id !== commentId) return comment;
+    return { ...comment, body, displayBody: undefined };
+  });
 }
 
 type LegacyLinkedPullRequest = Pick<ThreadLinkedPullRequest, "repository" | "number">;
@@ -672,7 +679,7 @@ export function buildPullRequestTimeline(
       at: comment.createdAt,
       kind: comment.kind === "review" ? ("review" as const) : ("comment" as const),
       title: comment.kind === "review" ? "reviewed" : "commented",
-      body: visibleBody(comment.body),
+      body: visibleBody(comment.displayBody ?? comment.body),
       markdown: true,
       url: comment.url,
       actor: comment.author,

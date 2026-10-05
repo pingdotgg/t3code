@@ -52,6 +52,7 @@ import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
 } from "./pullRequestEditing.logic";
+import { pullRequestMarkdownPreview } from "./pullRequestMarkdown.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
@@ -177,7 +178,7 @@ function CommentBody({
       <PullRequestCommentBody
         key={comment.id}
         className="min-w-0 flex-1"
-        text={comment.body}
+        text={comment.displayBody ?? comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
@@ -234,14 +235,16 @@ function CollapsedComment({
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
             >
-              {body
-                .replace(/<!--[\s\S]*?-->/gu, "")
-                .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
-                .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
-                .replace(/^[\s>#*-]+/gmu, "")
-                .replace(/[*`]/gu, "")
-                .replace(/\s+/g, " ")
-                .trim()}
+              {comment.displayBody === undefined
+                ? body
+                    .replace(/<!--[\s\S]*?-->/gu, "")
+                    .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
+                    .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
+                    .replace(/^[\s>#*-]+/gmu, "")
+                    .replace(/[*`]/gu, "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+                : pullRequestMarkdownPreview(comment.displayBody)}
             </CollapsibleTrigger>
           ) : null}
         </div>
@@ -843,7 +846,11 @@ export function PullRequestSummaryTab({
             <div className="flex items-start gap-1">
               <PullRequestMarkdown
                 className="min-w-0 flex-1"
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                text={
+                  detail.body.trim().length > 0
+                    ? (detail.displayBody ?? detail.body)
+                    : "_No description provided._"
+                }
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}
