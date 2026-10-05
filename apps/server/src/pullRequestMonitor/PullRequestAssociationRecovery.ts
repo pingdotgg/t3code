@@ -22,9 +22,54 @@ import {
 const PULL_REQUEST_URL =
   /(?<=^|[\s(<"'`])https:\/\/[a-zA-Z0-9.-]+(?::\d+)?\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*(?=$|[\s)>"'`\]?#.,])/g;
 const GH_PR_CREATE = /(?:^|[\s;&|(])gh\s+pr\s+create(?=\s|$)/;
+const GH_API_INVOCATION = /(?:^|[\s;&|])gh\s+api\b(?<args>[^;&|]*)/giu;
+const CURL_INVOCATION = /(?:^|[\s;&|])curl\b(?<args>[^;&|]*)/giu;
+const PULL_REQUESTS_ENDPOINT =
+  /(?:^|[\s"'`])(?:https?:\/\/[^/\s"'`]+)?\/?(?:api\/v3\/)?repos\/(?:[\w.-]+|\{[\w.-]+\})\/(?:[\w.-]+|\{[\w.-]+\})\/pulls(?=$|[\s?#"'`])/iu;
+const REQUEST_METHOD = /(?:^|\s)(?:--method|--request|-X)(?:=|\s+)?["']?([a-z]+)/giu;
 
 const pullRequestUrls = (text: string) =>
   Array.from(text.matchAll(PULL_REQUEST_URL), (match) => match[0]);
+
+function explicitRequestMethod(args: string): string | null {
+  const methods = Array.from(args.matchAll(REQUEST_METHOD), (match) =>
+    (match[1] ?? "").toUpperCase(),
+  );
+  return methods.at(-1) ?? null;
+}
+
+function createsPullRequestViaRest(command: string): boolean {
+  for (const match of command.matchAll(GH_API_INVOCATION)) {
+    const args = match.groups?.args ?? "";
+    if (!PULL_REQUESTS_ENDPOINT.test(args)) continue;
+    const method = explicitRequestMethod(args);
+    if (
+      method !== null
+        ? method === "POST"
+        : /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:=|\s)/iu.test(args)
+    ) {
+      return true;
+    }
+  }
+
+  for (const match of command.matchAll(CURL_INVOCATION)) {
+    const args = match.groups?.args ?? "";
+    if (!PULL_REQUESTS_ENDPOINT.test(args)) continue;
+    const method = explicitRequestMethod(args);
+    if (method !== null) {
+      if (method === "POST") return true;
+      continue;
+    }
+    if (
+      !/(?:^|\s)(?:-G|--get)(?=\s|$)/iu.test(args) &&
+      /(?:^|\s)(?:-d|-F|--data(?:-[\w-]+)?|--form(?:-string)?|--json)(?:=|\s)/iu.test(args)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 // A branch match alone is not association intent. Require an unambiguous PR URL
 // reported by the assistant, then independently verify it against the checkout.
@@ -65,10 +110,9 @@ const createdPullRequestUrlsCache = new WeakMap<
 >();
 
 /**
- * PR URLs printed by this thread's own successful `gh pr create` runs, oldest first.
- * Creation provenance comes from what the thread executed, never from how the
- * assistant phrased its report. URLs quoted in the command (e.g. a PR body that
- * references another PR) and echoes of the command itself are not evidence.
+ * PR URLs printed by this thread's own successful PR-creation commands, oldest first.
+ * Creation provenance comes from the executed command, never from how the assistant
+ * phrased its report. URLs quoted in the command or echoed back are not evidence.
  */
 function threadCreatedPullRequestUrls(
   thread: Pick<OrchestrationThread, "activities">,
@@ -82,7 +126,7 @@ function threadCreatedPullRequestUrls(
     if (payload?.itemType !== "command_execution" || payload.status === "failed") continue;
     const commandInput = extractToolCommandInput(asRecord(payload.data));
     const command = Array.isArray(commandInput) ? commandInput.join(" ") : commandInput;
-    if (!command || !GH_PR_CREATE.test(command)) continue;
+    if (!command || (!GH_PR_CREATE.test(command) && !createsPullRequestViaRest(command))) continue;
     const quoted = new Set(pullRequestUrls(command));
     const texts: string[] = [];
     collectStrings([payload.detail, payload.data], texts, 0);
@@ -344,7 +388,10 @@ export const layer = Layer.effectDiscard(
           event.payload.role === "assistant" &&
           !event.payload.streaming
             ? recovery.recoverSafely(event.payload.threadId)
-            : Effect.void,
+            : event.type === "thread.activity-appended" &&
+                threadCreatedPullRequestUrls({ activities: [event.payload.activity] }).length > 0
+              ? recovery.recoverSafely(event.payload.threadId)
+              : Effect.void,
         ),
       ),
     );
