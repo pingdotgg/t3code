@@ -471,7 +471,7 @@ function SubagentTimelineLink(props: {
           )}
         </span>
       </span>
-      <span className="shrink-0 font-mono text-3xs text-muted-foreground/80">
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
       {threadId !== null ? (
