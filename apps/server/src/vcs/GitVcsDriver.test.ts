@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -159,6 +160,229 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
     assert.strictEqual(
       yield* fileSystem.readFileString(path.join(cwd, nested, "private.txt")),
       "nested\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint capture skips untracked files over the size cap", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-size-cap-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.makeDirectory(path.join(cwd, "models"));
+    yield* fileSystem.writeFileString(path.join(cwd, "models", "over [cap].bin"), "x".repeat(1025));
+    yield* fileSystem.writeFileString(path.join(cwd, "at-cap.bin"), "x".repeat(1024));
+    yield* fileSystem.symlink("models/over [cap].bin", path.join(cwd, "link.bin"));
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual(
+      (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+      "at-cap.bin\nfile.txt\nlink.bin\n",
+    );
+    assert.match((yield* git(["ls-tree", checkpointRef, "--", "link.bin"])).stdout, /^120000 /);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+// Marks every untracked listing incomplete, as Git output past the limit or with a non-UTF-8 path is.
+const markUntrackedListings = (
+  liveProcess: VcsProcess.VcsProcess["Service"],
+  incomplete: Partial<VcsProcess.VcsProcessOutput>,
+) =>
+  Effect.provideService(VcsProcess.VcsProcess, {
+    run: (input) =>
+      liveProcess
+        .run(input)
+        .pipe(
+          Effect.map((result) =>
+            input.args.includes("--others") ? { ...result, ...incomplete } : result,
+          ),
+        ),
+  });
+
+it.effect("checkpoint capture keeps an over-cap file staged in the real index", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-size-staged-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "staged.bin"), "x".repeat(1025));
+    yield* git(["add", "staged.bin"]);
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual(
+      (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+      "file.txt\nstaged.bin\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint capture stages everything when the untracked listing is truncated", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    }).pipe(markUntrackedListings(liveProcess, { stdoutTruncated: true }));
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-size-trunc-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "over.bin"), "x".repeat(1025));
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual(
+      (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
+      "file.txt\nover.bin\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect.each([
+  { incomplete: { stdoutTruncated: true }, reason: "truncated" },
+  { incomplete: { stdoutInvalidUtf8: true }, reason: "non-UTF-8" },
+])(
+  "checkpoint restore refuses a $reason untracked listing before changing files",
+  ({ incomplete }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape({
+        checkpointMaxUntrackedFileBytes: 1024,
+      });
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-size-trunc-restore-",
+      });
+      const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "edited\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "over.bin"), "x".repeat(1025));
+      yield* fileSystem.writeFileString(path.join(cwd, "under.txt"), "later\n");
+      const incompleteDriver = yield* GitVcsDriver.makeVcsDriverShape({
+        checkpointMaxUntrackedFileBytes: 1024,
+      }).pipe(markUntrackedListings(liveProcess, incomplete));
+
+      const result = yield* Effect.result(
+        incompleteDriver.checkpoints.restoreCheckpoint({
+          cwd,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "VcsProcessExitError");
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
+      assert.isTrue(yield* fileSystem.exists(path.join(cwd, "over.bin")));
+      assert.isTrue(yield* fileSystem.exists(path.join(cwd, "under.txt")));
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
+  "checkpoint restore keeps untracked files over the size cap in workspace $workspace",
+  ({ workspace }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape({
+        checkpointMaxUntrackedFileBytes: 1024,
+      });
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-size-cap-restore-",
+      });
+      const { checkpointRef } = yield* makeCheckpointFixture(driver, root);
+      const cwd = path.join(root, workspace);
+      const overCap = path.join(cwd, "models", "over [cap].bin");
+      const laterOverCap = path.join(cwd, "models", "later over cap.bin");
+      const laterUnderCap = path.join(cwd, "models", "later.txt");
+      yield* fileSystem.makeDirectory(path.dirname(overCap), { recursive: true });
+      yield* fileSystem.writeFileString(overCap, "x".repeat(1025));
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(laterOverCap, "y".repeat(1025));
+      yield* fileSystem.writeFileString(laterUnderCap, "later\n");
+
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+      );
+
+      assert.strictEqual(yield* fileSystem.readFileString(overCap), "x".repeat(1025));
+      assert.strictEqual(yield* fileSystem.readFileString(laterOverCap), "y".repeat(1025));
+      assert.isFalse(yield* fileSystem.exists(laterUnderCap));
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+// Windows ignores POSIX directory modes and root bypasses them, so neither can deny the lstat.
+it.effect.skipIf(
+  HostProcessPlatform.defaultValue() === "win32" || globalThis.process.getuid?.() === 0,
+)("checkpoint restore refuses a file it cannot classify before changing files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-size-cap-lstat-",
+    });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "edited\n");
+    const locked = path.join(cwd, "locked");
+    yield* fileSystem.makeDirectory(locked);
+    yield* fileSystem.writeFileString(path.join(locked, "big.bin"), "x".repeat(1025));
+    // Readable but not searchable: Git lists the file, lstat fails with EACCES.
+    yield* Effect.acquireRelease(fileSystem.chmod(locked, 0o600), () =>
+      fileSystem.chmod(locked, 0o700).pipe(Effect.orDie),
+    );
+
+    const result = yield* Effect.result(
+      driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "VcsProcessExitError");
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
+    yield* fileSystem.chmod(locked, 0o700);
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(locked, "big.bin")),
+      "x".repeat(1025),
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint restore keeps an over-cap file the restored .gitignore exposes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape({
+      checkpointMaxUntrackedFileBytes: 1024,
+    });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-size-cap-gitignore-",
+    });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "*.log\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "big.bin"), "x".repeat(1025));
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "*.log\nbig.bin\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, ".gitignore")), "*.log\n");
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, "big.bin")),
+      "x".repeat(1025),
     );
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
@@ -311,17 +535,17 @@ it.effect.each([
       const clock = yield* Clock.Clock;
       const privateIndexes = new Set<string>();
       let racedAttempts = 0;
+      let stagingCalls = 0;
       let discoveries = 0;
       let stageError: VcsProcessExitError | undefined;
       const captureProcess = yield* VcsProcess.make.pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.args.includes("--others")) discoveries += 1;
+            if (input.args.includes("add")) stagingCalls += 1;
+            // Every capture lists untracked files before staging; recovery lists them again after.
+            if (input.args.includes("--others") && stagingCalls > 0) discoveries += 1;
             if (input.env?.GIT_INDEX_FILE) privateIndexes.add(input.env.GIT_INDEX_FILE);
-            const initialStage =
-              phase === "add" &&
-              nestedRecovery &&
-              !input.args.some((arg) => arg.startsWith(":(exclude,literal)"));
+            const initialStage = phase === "add" && nestedRecovery && stagingCalls === 1;
             if (!input.args.includes(phase) || initialStage || ++racedAttempts !== 1) {
               return liveRunner.run(input);
             }
@@ -418,12 +642,11 @@ it.effect.each(["discovery", "probe", "retry"] as const)(
               privateIndex = input.env?.GIT_INDEX_FILE;
               stagingAttempts += 1;
             }
+            const discovery = input.args.includes("--others") && stagingAttempts > 0;
             const block =
-              (blockedPhase === "discovery" && input.args.includes("--others")) ||
+              (blockedPhase === "discovery" && discovery) ||
               (blockedPhase === "probe" && input.cwd !== cwd && input.args.includes("rev-parse")) ||
-              (blockedPhase === "retry" &&
-                staging &&
-                input.args.some((arg) => arg.startsWith(":(exclude,literal)")));
+              (blockedPhase === "retry" && staging && stagingAttempts === 2);
             if (block)
               return (
                 blockedPhase === "retry"
@@ -445,7 +668,7 @@ it.effect.each(["discovery", "probe", "retry"] as const)(
               );
             return liveProcess.run(input).pipe(
               Effect.tap(() =>
-                blockedPhase === "probe" && input.args.includes("--others")
+                blockedPhase === "probe" && discovery
                   ? Deferred.succeed(discovered, undefined).pipe(
                       Effect.andThen(Effect.sleep("3 seconds")),
                     )
@@ -496,7 +719,7 @@ it.effect("checkpoint recovery preserves interruption and removes the private in
         run: (input) => {
           if (input.args.includes("add") && input.args.includes("-A"))
             privateIndex = input.env?.GIT_INDEX_FILE;
-          return input.args.includes("--others")
+          return input.args.includes("--others") && privateIndex !== undefined
             ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
             : liveProcess.run(input);
         },
