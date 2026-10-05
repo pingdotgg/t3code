@@ -11,7 +11,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Metrics from "../observability/Metrics.ts";
-import { makeRelayDeliveryVerifier } from "./relayDeliveryProof.ts";
+import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 /** Largest request body a webhook accepts. The relay enforces the same cap. */
@@ -33,7 +33,7 @@ const json = (status: number, body: Record<string, string>, outcome: string) =>
 const handleWebhook =
   (
     scheduledTasks: ScheduledTaskService.ScheduledTaskService["Service"],
-    verifyRelayDelivery: Effect.Success<typeof makeRelayDeliveryVerifier>,
+    relayDeliveryProof: RelayDeliveryProof.RelayDeliveryProof["Service"],
   ) =>
   ({
     params,
@@ -75,7 +75,7 @@ const handleWebhook =
       // The relay's delivery id and receive time count only with its signed
       // proof; the URL can also be called directly. The receive time matters
       // for requests the relay held while we were offline.
-      const relay = yield* verifyRelayDelivery({ headers, hookId: params.hookId });
+      const relay = yield* relayDeliveryProof.verify({ headers, hookId: params.hookId });
       const relayDeliveryId = Option.isSome(relay) ? relay.value.deliveryId : undefined;
       const relayReceivedAt = Option.isSome(relay) ? relay.value.receivedAt : undefined;
 
@@ -136,7 +136,7 @@ export const webhookHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const handler = handleWebhook(
       yield* ScheduledTaskService.ScheduledTaskService,
-      yield* makeRelayDeliveryVerifier,
+      yield* RelayDeliveryProof.RelayDeliveryProof,
     );
     return handlers
       .handleRaw("webhookPost", handler)

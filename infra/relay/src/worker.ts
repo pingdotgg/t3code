@@ -76,6 +76,7 @@ import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts"
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import { HookInboxObject, HookInboxObjectLive } from "./hooks/HookInboxObject.ts";
 
@@ -273,7 +274,11 @@ export const ApiLive = Api.make(
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
       Layer.provideMerge(
-        Layer.merge(EnvironmentPublishSignatures.layer, ManagedEndpointReaper.layer),
+        Layer.mergeAll(
+          EnvironmentPublishSignatures.layer,
+          ManagedEndpointReaper.layer,
+          HeldHooks.layer,
+        ),
       ),
       Layer.provideMerge(
         ManagedEndpointProvider.layerCloudflareBindings(

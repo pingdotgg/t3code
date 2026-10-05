@@ -14,7 +14,9 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -29,11 +31,23 @@ const decodePayload = Schema.decodeUnknownOption(RelayHookDeliveryProofPayload);
 const text = (bytes: Option.Option<Uint8Array>) =>
   Option.map(bytes, (value) => new TextDecoder().decode(value));
 
-/** The relay's own delivery id and receive time, when the request proves it came from the relay. */
-export const makeRelayDeliveryVerifier = Effect.gen(function* () {
+export class RelayDeliveryProof extends Context.Service<
+  RelayDeliveryProof,
+  {
+    /** The relay's own delivery id and receive time, when the request proves it came from the relay. */
+    readonly verify: (input: {
+      readonly headers: Readonly<Record<string, string>>;
+      readonly hookId: string;
+    }) => Effect.Effect<
+      Option.Option<{ readonly deliveryId: string; readonly receivedAt: string }>
+    >;
+  }
+>()("t3/scheduledTasks/RelayDeliveryProof") {}
+
+const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  return (input: { readonly headers: Readonly<Record<string, string>>; readonly hookId: string }) =>
+  const verify: RelayDeliveryProof["Service"]["verify"] = (input) =>
     Effect.gen(function* () {
       const proof = input.headers[RELAY_HOOK_DELIVERY_HEADER];
       const deliveryId = input.headers["x-t3-relay-delivery-id"];
@@ -71,4 +85,7 @@ export const makeRelayDeliveryVerifier = Effect.gen(function* () {
       }
       return Option.some({ deliveryId, receivedAt });
     }).pipe(Effect.orElseSucceed(Option.none), Effect.withSpan("webhook.verifyRelayDelivery"));
+  return RelayDeliveryProof.of({ verify });
 });
+
+export const layer = Layer.effect(RelayDeliveryProof, make);
