@@ -21,11 +21,13 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -35,6 +37,8 @@ import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 /** Shell commands that can merge or close a pull request without a merge notification. */
 const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
+
+const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -112,6 +116,16 @@ function skipReason(cause: Cause.Cause<unknown>): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** When a host read failed because the host is rate limited, the time that pause ends. */
+function rateLimitRetryAt(cause: Cause.Cause<unknown>): number | undefined {
+  let error: unknown = Cause.squash(cause);
+  while (error instanceof Error) {
+    if (isPullRequestProviderError(error) && error.reason === "rate-limited") return error.retryAt;
+    error = error.cause;
+  }
+  return undefined;
+}
+
 function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
@@ -127,7 +141,10 @@ export class PullRequestSyncReactor extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
-    /** Force the next sweep to re-read this pull request, even when its snapshot is terminal. */
+    /**
+     * Force the next sweep to re-read this pull request, even when its snapshot is terminal.
+     * While its host is rate limited, the read waits for the first sweep after the pause.
+     */
     readonly requestSync: (key: ThreadPullRequestKey) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/PullRequestSyncReactor") {}
@@ -146,8 +163,10 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
-  // The reason of the last reported host read failure, so repeats are not logged every sweep.
-  let lastSkipReason: string | undefined;
+  // Rate limit pauses by project and host, since each project reads with its own credential.
+  // A paused host refuses every read without asking it, so the sweep leaves its pull requests
+  // due until the pause ends rather than failing each of them every minute.
+  const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
@@ -319,40 +338,42 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    let attempted = 0;
-    let skipped = 0;
-    let firstSkip: { readonly key: string; readonly reason: string } | undefined;
+    // Failed host reads by reason: how many, and the first key that failed that way.
+    const skips = new Map<string, { count: number; readonly key: string }>();
     yield* Effect.forEach(
       groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-          return Effect.void;
-        }
-        attempted += 1;
-        return syncGroup(key, entries).pipe(
-          Effect.catchCause((cause) => {
-            if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
-            skipped += 1;
-            firstSkip ??= { key, reason: skipReason(cause) };
+      ([key, entries]) =>
+        Effect.suspend(() => {
+          if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
             return Effect.void;
-          }),
-        );
-      },
+          }
+          const first = entries[0]!;
+          const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
+          // Checked as each read starts, so a pause found earlier in this sweep holds the rest.
+          if ((pausedUntil.get(pauseKey) ?? 0) > nowMs) return Effect.void;
+          return syncGroup(key, entries).pipe(
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+              const retryAt = rateLimitRetryAt(cause);
+              if (retryAt !== undefined) {
+                pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
+              }
+              const reason = skipReason(cause);
+              const skip = skips.get(reason);
+              if (skip === undefined) skips.set(reason, { count: 1, key });
+              else skip.count += 1;
+              return Effect.void;
+            }),
+          );
+        }),
       // As wide as one batched summary read, so the sweep's reads on a host arrive together and
       // GitHub answers them in one request rather than one `gh pr view` apiece.
       { concurrency: 25, discard: true },
     );
-    // A rate limit pause or a signed-out CLI fails every due pull request the same way each
-    // minute. Report it once, then again only when the reason changes or a sweep succeeds.
-    if (firstSkip === undefined) {
-      if (attempted > 0) lastSkipReason = undefined;
-    } else if (firstSkip.reason !== lastSkipReason) {
-      lastSkipReason = firstSkip.reason;
-      yield* Effect.logWarning("pull request sync skipped", {
-        count: skipped,
-        key: firstSkip.key,
-        reason: firstSkip.reason,
-      });
+    // A host failure such as a signed-out CLI fails every due pull request the same way, so a
+    // sweep reports one line per reason rather than one per pull request.
+    for (const [reason, { count, key }] of skips) {
+      yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
     }
   });
 

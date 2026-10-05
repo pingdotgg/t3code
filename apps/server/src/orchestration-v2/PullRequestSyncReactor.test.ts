@@ -19,6 +19,7 @@ import {
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -29,6 +30,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
+import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -909,44 +911,79 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("reports a host failure shared by every pull request once until it changes", () => {
+  it.effect("leaves a rate limited host unread until its pause ends", () => {
     const skips: Array<ReadonlyArray<unknown>> = [];
     const logger = Logger.make(({ logLevel, message }) => {
       const parts = Array.isArray(message) ? message : [message];
       if (logLevel === "Warn" && parts[0] === "pull request sync skipped") skips.push(parts);
     });
+    const retryAt = Date.parse(NOW) + 3 * 60_000;
     return Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const hostDown = yield* Ref.make(true);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
             makeThread("first", { pullRequests: [makeLink(7, { state: "open" })] }),
             makeThread("second", { pullRequests: [makeLink(8, { state: "open" })] }),
+            makeThread("third", {
+              pullRequests: [
+                makeLink(
+                  9,
+                  { state: "open" },
+                  { host: "forge.example", url: "https://forge.example/owner/repository/pulls/9" },
+                ),
+              ],
+            }),
           ]),
           summary: (input) =>
-            Ref.get(hostDown).pipe(
-              Effect.flatMap((down) =>
-                down
-                  ? Effect.fail(
-                      new PullRequestOperationError({ operation: "summary", detail: "paused" }),
-                    )
-                  : Effect.succeed(makeSummary(input, { state: "open" })),
-              ),
-            ),
+            Effect.gen(function* () {
+              if (input.host === "github.com" && (yield* Clock.currentTimeMillis) < retryAt) {
+                const paused = new PullRequestProviderError({
+                  provider: "github",
+                  operation: "getChangeRequestSummary",
+                  reason: "rate-limited",
+                  detail: "paused",
+                  retryAt,
+                });
+                return yield* new PullRequestOperationError({
+                  operation: "summary",
+                  detail: "paused",
+                  cause: paused,
+                });
+              }
+              return makeSummary(input, { state: "open" });
+            }),
         });
+        const githubReads = Ref.get(fixture.summaryCalls).pipe(
+          Effect.map((calls) =>
+            calls.filter((call) => call.host === "github.com").map((call) => call.number),
+          ),
+        );
 
         yield* Effect.gen(function* () {
+          // The first refused read pauses the host, so the sweep does not try the other.
           const reactor = yield* startAndSweep(fixture);
-          yield* sweepAgain(fixture, reactor);
+          assert.deepStrictEqual(yield* githubReads, [7]);
           assert.strictEqual(skips.length, 1);
-          assert.deepInclude(skips[0]![1], { count: 2 });
+          assert.deepInclude(skips[0]![1], { count: 1 });
 
-          yield* Ref.set(hostDown, false);
+          // A requested refresh waits for the pause like the sweep does.
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
           yield* sweepAgain(fixture, reactor);
-          yield* Ref.set(hostDown, true);
           yield* sweepAgain(fixture, reactor);
-          assert.strictEqual(skips.length, 2);
+          assert.deepStrictEqual(yield* githubReads, [7]);
+          assert.strictEqual(skips.length, 1);
+          // Other hosts keep their cadence.
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 4);
+
+          yield* sweepAgain(fixture, reactor);
+          assert.sameMembers((yield* githubReads).slice(1), [7, 8]);
         }).pipe(
           // The reactor forks its worker while its layer builds, so the logger must reach it there.
           Effect.provide(
