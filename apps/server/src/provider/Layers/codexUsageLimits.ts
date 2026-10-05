@@ -24,6 +24,12 @@ interface CodexRateLimitWindow {
   readonly windowDurationMins?: number | null;
 }
 
+/** A workspace admin's per-member spend cap, counted in credits. */
+interface CodexSpendControlLimit {
+  readonly remainingPercent: number;
+  readonly resetsAt: number;
+}
+
 /** Structural view of the generated `RateLimitSnapshot`; both messages satisfy it. */
 export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
@@ -31,6 +37,7 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+  readonly individualLimit?: CodexSpendControlLimit | null;
 }
 
 /** Structural view of the read response's `rateLimitResetCredits`. */
@@ -65,7 +72,11 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
 /**
  * `primary` / `secondary` are positions, not durations. Codex usually sends
  * `windowDurationMins`; when it does not, paid plans expose the 5-hour and
- * weekly pair and Free/Go expose one monthly allowance.
+ * weekly pair and Free/Go expose one monthly allowance. Business and
+ * Enterprise workspaces can instead cap each member's monthly credits, which
+ * Codex reports as `individualLimit` with both positions null. Live
+ * notifications send `individualLimit: null` while that cap is still set, so a
+ * null field means "not reported": it adds no row and must not remove one.
  */
 function codexRateLimitsToWindows(
   snapshot: CodexRateLimitSnapshot,
@@ -91,6 +102,17 @@ function codexRateLimitsToWindows(
       label: labelForKind(kind),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
+      ...(resetsAt ? { resetsAt } : {}),
+    });
+  }
+  const individual = snapshot.individualLimit;
+  if (individual && Number.isFinite(individual.remainingPercent)) {
+    const resetsAt = isoFromEpochSeconds(individual.resetsAt);
+    windows.push({
+      id: "individual",
+      kind: "monthly",
+      label: "Monthly",
+      usedPercent: clampPercent(100 - individual.remainingPercent),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
@@ -163,7 +185,9 @@ export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerE
  * Codex sends `account/rateLimits/updated` as a partial view of the snapshot: a
  * field the update omits keeps the value observed earlier in the session, so a
  * later notification that only names the limit it reached must not drop the
- * windows an earlier one carried.
+ * windows an earlier one carried. The notification reports `individualLimit`
+ * as null even while a member cap is set (codex-cli 0.160.0), so null there
+ * means "not reported" and keeps the known cap.
  */
 export function mergeCodexRateLimits(
   previous: CodexRateLimitSnapshot | undefined,
@@ -182,6 +206,7 @@ export function mergeCodexRateLimits(
       : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
+    ...(update.individualLimit != null ? { individualLimit: update.individualLimit } : {}),
   };
 }
 

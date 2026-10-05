@@ -110,6 +110,32 @@ describe("codexRateLimitsToLimits", () => {
       }).windows,
     ).toEqual([]);
   });
+
+  it("shows a workspace member's monthly credit cap when Codex reports no windows", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {
+          limitId: "codex",
+          planType: "business",
+          primary: null,
+          secondary: null,
+          individualLimit: {
+            remainingPercent: 99,
+            resetsAt: 1_793_491_200,
+          },
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "individual",
+        kind: "monthly",
+        label: "Monthly",
+        usedPercent: 1,
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      },
+    ]);
+  });
 });
 
 describe("codexRateLimitsToUpdate", () => {
@@ -247,6 +273,21 @@ describe("codexUsageLimitMessage", () => {
     );
   });
 
+  it("names the monthly credit cap a workspace member exhausted", () => {
+    expect(
+      codexUsageLimitMessage(
+        {
+          limitId: "codex",
+          rateLimitReachedType: "workspace_member_usage_limit_reached",
+          individualLimit: { remainingPercent: 0, resetsAt: atSeconds + 12 * 86_400 },
+        },
+        at,
+      ),
+    ).toBe(
+      "Codex usage limit reached. The monthly limit resets in 12d. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
+    );
+  });
+
   it("names no window when credits run out without one", () => {
     expect(
       codexUsageLimitMessage(
@@ -282,6 +323,19 @@ describe("mergeCodexRateLimits", () => {
       rateLimitReachedType: "rate_limit_reached",
       primary: { usedPercent: 100, resetsAt: 1_800_000_000, windowDurationMins: 300 },
     });
+  });
+
+  it("keeps a member's credit cap so a stop it causes still learns its reset", () => {
+    const merged = mergeCodexRateLimits(
+      { limitId: "codex", individualLimit: { remainingPercent: 0, resetsAt: 1_800_000_000 } },
+      {
+        limitId: "codex",
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+        individualLimit: null,
+      },
+    );
+
+    expect(codexUsageLimitResetAt(merged)).toBe("2027-01-15T08:00:00.000Z");
   });
 
   it("ignores a model-specific snapshot so it cannot replace the main allowance", () => {
