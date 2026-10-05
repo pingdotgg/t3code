@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
+import * as Tracer from "effect/Tracer";
 import * as Option from "effect/Option";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -134,4 +136,47 @@ it.effect("declining stores nothing, and a request is answered once", () =>
       assert.equal(stored.size, 0);
     }),
   ),
+);
+
+it.effect("traces and counts a saved answer without ever recording the value", () =>
+  Effect.gen(function* () {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const counted = Metric.snapshot.pipe(
+      Effect.map((snapshots) => {
+        const found = snapshots.find(
+          (snapshot) =>
+            snapshot.id === "t3_secret_refs_consumed_total" &&
+            snapshot.attributes?.result === "used",
+        );
+        return found?.type === "Counter" ? Number(found.state.count) : 0;
+      }),
+    );
+    const before = yield* counted;
+    yield* withService(({ service }) =>
+      Effect.gen(function* () {
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "ghp_secret" },
+        });
+        const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+        yield* service.consume({ ref, projectId });
+      }),
+    ).pipe(Effect.withTracer(tracer));
+    assert.equal((yield* counted) - before, 1);
+    const recorded = spans.flatMap((span) => [
+      span.name,
+      ...Array.from(span.attributes.values(), String),
+    ]);
+    assert.include(recorded, "SecretRequests.answer");
+    assert.include(recorded, "SecretRequests.consume");
+    assert.isFalse(recorded.some((value) => value.includes("ghp_secret")));
+  }),
 );

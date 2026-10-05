@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const SECRET_REF_PREFIX = "secret-ref:";
@@ -82,6 +83,10 @@ const make = Effect.gen(function* () {
 
   const answer: SecretRequests["Service"]["answer"] = (input) =>
     Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.thread_id": input.threadId,
+        "secret_request.answer": input.answer.type,
+      });
       const records = yield* threadManagement
         .getThreadRecords(input.threadId, ["turnItems"], {
           turnItemTypes: ["secret_request"],
@@ -122,7 +127,7 @@ const make = Effect.gen(function* () {
           secretStatus,
         })
         .pipe(Effect.mapError(() => fail("Saved the secret, but could not update the request.")));
-    });
+    }).pipe(Effect.withSpan("SecretRequests.answer"));
 
   const savedRef: SecretRequests["Service"]["savedRef"] = (input) =>
     store.get(refForRequest(input.threadId, input.turnItemId)).pipe(
@@ -131,6 +136,15 @@ const make = Effect.gen(function* () {
     );
 
   const consume: SecretRequests["Service"]["consume"] = (input) =>
+    consumeRef(input).pipe(
+      Effect.tap(() => Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "used" })),
+      Effect.tapError(() =>
+        Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "rejected" }),
+      ),
+      Effect.withSpan("SecretRequests.consume"),
+    );
+
+  const consumeRef = (input: { readonly ref: SecretRef; readonly projectId: ProjectId }) =>
     Effect.gen(function* () {
       if (!REF_PATTERN.test(input.ref)) return yield* fail("That secretRef is not valid.");
       const stored = yield* store

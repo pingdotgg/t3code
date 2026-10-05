@@ -82,6 +82,7 @@ import {
   type McpThreadInvocationScope,
   requireThreadScope,
 } from "./McpInvocationContext.ts";
+import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -1622,13 +1623,18 @@ const make = Effect.gen(function* () {
           ),
         );
         const status = Option.getOrElse(answered, () => "pending" as const);
+        yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
+        yield* Metrics.increment(Metrics.secretRequestsTotal, {
+          status: status === "pending" ? "timed_out" : status,
+        });
         if (status !== "saved") return { status };
         const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
         return Option.match(secretRef, {
           onNone: () => ({ status }),
           onSome: (ref) => ({ status, secretRef: ref }),
         });
-      }),
+      }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
+
     capabilities: (scope) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
