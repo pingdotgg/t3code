@@ -28,7 +28,8 @@ const fail = (detail: string): never => {
   throw new LevelDbFormatError({ detail });
 };
 
-const textDecoderUtf16 = new TextDecoder("utf-16le");
+// ignoreBOM keeps a leading U+FEFF that is part of the stored string.
+const textDecoderUtf16 = new TextDecoder("utf-16le", { ignoreBOM: true });
 const textDecoderUtf8 = new TextDecoder();
 
 /** True ISO-8859-1. WHATWG's "latin1" label is windows-1252, which remaps 0x80-0x9F. */
@@ -148,8 +149,10 @@ function decompressSnappy(input: Uint8Array): Uint8Array {
 }
 
 /**
- * Splits a LevelDB log (write-ahead log or MANIFEST) into its records. A torn
- * or corrupt record ends the log, the same point LevelDB's own recovery stops.
+ * Splits a LevelDB log (write-ahead log or MANIFEST) into its records. Like
+ * LevelDB's own reader, a corrupt record or zero padding skips the rest of its
+ * block, since a reused log keeps appending after a torn write, and a record
+ * cut off by the end of the file ends the log.
  */
 function readLogRecords(bytes: Uint8Array): Uint8Array[] {
   const records: Uint8Array[] = [];
@@ -164,10 +167,18 @@ function readLogRecords(bytes: Uint8Array): Uint8Array[] {
     const length = bytes[offset + 4]! | (bytes[offset + 5]! << 8);
     const type = bytes[offset + 6]!;
     const end = offset + LOG_HEADER_SIZE + length;
-    // Type 0 is preallocated zero padding: nothing was written past here.
-    if (type === 0 || end > bytes.length || LOG_HEADER_SIZE + length > blockRemaining) break;
+    const fitsBlock = LOG_HEADER_SIZE + length <= blockRemaining;
+    if (fitsBlock && end > bytes.length) break;
     const typeAndPayload = bytes.subarray(offset + 6, end);
-    if (crc32c(typeAndPayload) !== unmaskCrc(readUint32(bytes, offset))) break;
+    if (
+      type === 0 ||
+      !fitsBlock ||
+      crc32c(typeAndPayload) !== unmaskCrc(readUint32(bytes, offset))
+    ) {
+      offset += blockRemaining;
+      pending = null;
+      continue;
+    }
     const payload = typeAndPayload.subarray(1);
     offset = end;
     if (type === 1) {
@@ -391,10 +402,8 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
       cause: new LevelDbFormatError({ detail: "bad CURRENT" }),
     });
   }
-  const live = yield* readFile(current).pipe(
-    Effect.flatMap((bytes) => decode(() => readManifest(bytes))),
-    wrap,
-  );
+  const manifest = yield* readFile(current).pipe(wrap);
+  const live = yield* decode(() => readManifest(manifest)).pipe(wrap);
   const logs = (yield* fs.readDirectory(directory).pipe(wrap))
     .map((name) => /^(\d+)\.log$/.exec(name))
     .filter((match) => match !== null && Number(match[1]) >= live.minimumLogNumber)
@@ -418,6 +427,18 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
     yield* decode(() => {
       for (const batch of readLogRecords(bytes)) readWriteBatch(entries, batch);
     }).pipe(wrap);
+  }
+
+  // A flush while another process has the database open can move entries
+  // from a log we read into a table our MANIFEST copy predates. Fail so the
+  // caller retries rather than import a snapshot missing those entries.
+  const currentAfter = textDecoderUtf8.decode(yield* readFile("CURRENT").pipe(wrap)).trim();
+  const manifestAfter = yield* fs.stat(path.join(directory, current)).pipe(wrap);
+  if (currentAfter !== current || Number(manifestAfter.size) !== manifest.length) {
+    return yield* new ChromiumLocalStorageReadError({
+      directory,
+      cause: new LevelDbFormatError({ detail: "database changed while reading" }),
+    });
   }
 
   const prefix = `_${origin}\u0000`;

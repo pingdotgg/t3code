@@ -35,8 +35,9 @@ exposeClerkBridge({ passkeys: true });
 try {
   const legacyItems: unknown = ipcRenderer.sendSync(IpcChannels.TAKE_LEGACY_LOCAL_STORAGE_CHANNEL);
   if (typeof legacyItems === "object" && legacyItems !== null) {
-    mergeLegacyLocalStorage(window.localStorage, legacyItems as Record<string, string>);
-    void ipcRenderer.invoke(IpcChannels.COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL);
+    if (mergeLegacyLocalStorage(window.localStorage, legacyItems as Record<string, string>)) {
+      void ipcRenderer.invoke(IpcChannels.COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL);
+    }
   }
 } catch {
   // Best effort: the app still starts on the V2 profile's own storage.

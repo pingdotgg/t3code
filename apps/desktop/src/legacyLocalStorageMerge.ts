@@ -12,8 +12,14 @@ interface MergeStorage {
 
 const PROMPT_STASH_KEY = "t3code:prompt-stash:v2";
 const COMPOSER_DRAFTS_KEY = "t3code:composer-drafts:v1";
-/** Identifies one running install to the server; two apps must not share it. */
-const NOT_IMPORTED_KEYS = new Set(["t3.backgroundActivity.clientId"]);
+const NOT_IMPORTED_KEYS = new Set([
+  // Identifies one running install to the server; two apps must not share it.
+  "t3.backgroundActivity.clientId",
+  // Resumes a permission setup V1 left mid-flow; V2 would redirect to it on boot.
+  "t3code:snap-shot-setup-resume:v1",
+]);
+/** Matches MAX_STASH_ENTRIES in apps/web/src/promptStashStore.ts. */
+const MAX_STASH_ENTRIES = 20;
 const DRAFT_RECORD_FIELDS = [
   "draftsByThreadKey",
   "draftThreadsByThreadKey",
@@ -34,7 +40,7 @@ function parseObject(raw: string): JsonObject | null {
   }
 }
 
-/** V2 entries first, then V1 entries V2 does not already have. */
+/** V2 entries first, then V1 entries V2 does not already have, up to the stash cap. */
 function mergePromptStash(current: JsonObject, legacy: JsonObject): JsonObject | null {
   const currentEntries = isObject(current.state) ? current.state.entries : null;
   const legacyEntries = isObject(legacy.state) ? legacy.state.entries : null;
@@ -43,7 +49,10 @@ function mergePromptStash(current: JsonObject, legacy: JsonObject): JsonObject |
   const ids = new Set(currentEntries.map((entry) => (isObject(entry) ? entry.id : undefined)));
   const added = legacyEntries.filter((entry) => isObject(entry) && !ids.has(entry.id));
   const state = isObject(current.state) ? current.state : {};
-  return { ...current, state: { ...state, entries: [...currentEntries, ...added] } };
+  return {
+    ...current,
+    state: { ...state, entries: [...currentEntries, ...added].slice(0, MAX_STASH_ENTRIES) },
+  };
 }
 
 /** Adds V1 drafts for threads V2 has no draft for. Shapes must share a version. */
@@ -77,10 +86,12 @@ function mergeValue(key: string, current: string, legacy: string): string | null
   return merged === null ? null : JSON.stringify(merged);
 }
 
+/** Returns false when a write failed, so the caller can retry on a later launch. */
 export function mergeLegacyLocalStorage(
   storage: MergeStorage,
   legacyItems: Readonly<Record<string, string>>,
-): void {
+): boolean {
+  let complete = true;
   // Stash and drafts first, so a full quota costs layout state rather than prompts.
   const keys = Object.keys(legacyItems).sort(
     (left, right) => Number(isMergedKey(right)) - Number(isMergedKey(left)),
@@ -95,6 +106,8 @@ export function mergeLegacyLocalStorage(
       storage.setItem(key, next);
     } catch {
       // Over quota: skip this key rather than abandon the rest.
+      complete = false;
     }
   }
+  return complete;
 }

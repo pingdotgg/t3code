@@ -16,16 +16,16 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
  * `t3code-v2` profile. The V1 profile is only read, never opened by Chromium,
  * so this works while V1 is still running.
  *
- * `load` runs before the window opens; the preload takes the items, merges
- * them into the new profile, and calls `complete`, which writes a marker so
- * later launches skip the read. A failed read, or a window that never
- * completes, leaves no marker and retries next launch.
+ * `load` runs before the window opens; the preload takes the items once,
+ * merges them into the new profile, and calls `complete`, which writes a
+ * marker so later launches skip the read. A failed read or merge, or a window
+ * that never completes, leaves no marker and retries next launch.
  */
 export class DesktopLegacyLocalStorage extends Context.Service<
   DesktopLegacyLocalStorage,
   {
     readonly load: (userDataPath: string) => Effect.Effect<void>;
-    readonly pending: Effect.Effect<Option.Option<Readonly<Record<string, string>>>>;
+    readonly take: Effect.Effect<Option.Option<Readonly<Record<string, string>>>>;
     readonly complete: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopLegacyLocalStorage") {}
@@ -41,18 +41,30 @@ const make = Effect.gen(function* () {
   const items = yield* Ref.make(Option.none<Readonly<Record<string, string>>>());
   const markerPath = yield* Ref.make(Option.none<string>());
 
+  /** Newest file mtime in a directory; appending to a log leaves the directory's own mtime alone. */
+  const newestFileMtime = (directory: string) =>
+    Effect.gen(function* () {
+      let newest = 0;
+      for (const name of yield* fs.readDirectory(directory)) {
+        const info = yield* fs.stat(path.join(directory, name)).pipe(Effect.option);
+        if (Option.isNone(info)) continue;
+        const mtime = Option.match(info.value.mtime, {
+          onNone: () => 0,
+          onSome: (date) => date.getTime(),
+        });
+        newest = Math.max(newest, mtime);
+      }
+      return newest;
+    }).pipe(Effect.option);
+
   /** The V1 profile whose Local Storage was written most recently, if any. */
   const findV1LocalStorage = Effect.gen(function* () {
     let newest: { readonly directory: string; readonly mtime: number } | null = null;
     for (const name of V1_PROFILE_NAMES) {
       const directory = path.join(environment.appDataDirectory, name, "Local Storage", "leveldb");
-      const info = yield* fs.stat(directory).pipe(Effect.option);
-      if (Option.isNone(info) || info.value.type !== "Directory") continue;
-      const mtime = Option.match(info.value.mtime, {
-        onNone: () => 0,
-        onSome: (date) => date.getTime(),
-      });
-      if (newest === null || mtime > newest.mtime) newest = { directory, mtime };
+      const mtime = yield* newestFileMtime(directory);
+      if (Option.isNone(mtime)) continue;
+      if (newest === null || mtime.value > newest.mtime) newest = { directory, mtime: mtime.value };
     }
     return newest?.directory ?? null;
   });
@@ -96,8 +108,9 @@ const make = Effect.gen(function* () {
 
   return DesktopLegacyLocalStorage.of({
     load,
-    pending: Ref.get(items),
-    complete: Ref.set(items, Option.none()).pipe(Effect.andThen(writeMarker)),
+    // Taking clears the items, so a reload before `complete` cannot merge twice.
+    take: Ref.getAndSet(items, Option.none()),
+    complete: writeMarker,
   });
 });
 

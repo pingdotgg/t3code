@@ -74,14 +74,29 @@ describe("mergeLegacyLocalStorage", () => {
     assert.equal(storage.getItem("t3code:composer-drafts:v1"), current);
   });
 
-  it("keeps importing other keys after one write fails", () => {
+  it("caps the merged stash at the store's entry limit, dropping the oldest V1 entries", () => {
+    const v2Ids = Array.from({ length: 15 }, (_, index) => `v2-${index}`);
+    const v1Ids = Array.from({ length: 10 }, (_, index) => `v1-${index}`);
+    const storage = memoryStorage({ "t3code:prompt-stash:v2": stash(...v2Ids) });
+    mergeLegacyLocalStorage(storage, { "t3code:prompt-stash:v2": stash(...v1Ids) });
+    const ids = JSON.parse(storage.getItem("t3code:prompt-stash:v2")!).state.entries.map(
+      (entry: { id: string }) => entry.id,
+    );
+    assert.deepStrictEqual(ids, [...v2Ids, ...v1Ids.slice(0, 5)]);
+  });
+
+  it("keeps importing other keys after one write fails, and reports the failure", () => {
     const storage = memoryStorage();
     const setItem = storage.setItem;
     storage.setItem = (key, value) => {
       if (key === "t3code:theme") throw new DOMException("full", "QuotaExceededError");
       setItem(key, value);
     };
-    mergeLegacyLocalStorage(storage, { "t3code:theme": "dark", "t3code:last-editor": "zed" });
+    const complete = mergeLegacyLocalStorage(storage, {
+      "t3code:theme": "dark",
+      "t3code:last-editor": "zed",
+    });
     assert.equal(storage.getItem("t3code:last-editor"), "zed");
+    assert.isFalse(complete);
   });
 });

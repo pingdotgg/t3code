@@ -1,3 +1,4 @@
+import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -11,7 +12,7 @@ export const takeLegacyLocalStorage = makeSyncIpcMethod({
   result: Schema.NullOr(Schema.Record(Schema.String, Schema.String)),
   handler: Effect.fn("desktop.ipc.legacyLocalStorage.take")(function* () {
     const legacy = yield* DesktopLegacyLocalStorage.DesktopLegacyLocalStorage;
-    return Option.getOrNull(yield* legacy.pending);
+    return Option.getOrNull(yield* legacy.take);
   }),
 });
 
@@ -19,8 +20,11 @@ export const completeLegacyLocalStorage = makeIpcMethod({
   channel: IpcChannels.COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL,
   payload: Schema.Void,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.legacyLocalStorage.complete")(function* () {
+  handler: Effect.fn("desktop.ipc.legacyLocalStorage.complete")(function* (_, event) {
     const legacy = yield* DesktopLegacyLocalStorage.DesktopLegacyLocalStorage;
+    // Chromium writes localStorage to disk lazily; persist the merge before
+    // the marker stops later launches from retrying it.
+    if (event) Electron.webContents.fromId(event.sender.id)?.session.flushStorageData();
     yield* legacy.complete;
   }),
 });
