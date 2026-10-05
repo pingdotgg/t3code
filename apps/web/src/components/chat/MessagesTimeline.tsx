@@ -1389,7 +1389,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               onManualNavigation();
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
-                animated: true,
+                animated: !prefersReducedMotion,
                 viewOffset: 24,
               });
             }}
