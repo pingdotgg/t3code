@@ -1095,7 +1095,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    for (const { label, sshMessage, expectedReason, expectedText } of [
+    it.effect.each([
       {
         label: "a refused key",
         sshMessage: "git@example.invalid: Permission denied (publickey).",
@@ -1126,8 +1126,9 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         expectedReason: "host_key_unverified" as const,
         expectedText: "(host_key_unverified)",
       },
-    ]) {
-      it.effect(`names ${label} rather than an unreachable remote`, () =>
+    ])(
+      "names $label rather than an unreachable remote",
+      ({ sshMessage, expectedReason, expectedText }) =>
         Effect.gen(function* () {
           const parent = yield* makeTmpDir();
           const pathService = yield* Path.Path;
@@ -1159,8 +1160,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           assert.deepInclude(error, { reason: expectedReason });
           assert.include(error.message, expectedText);
         }),
-      );
-    }
+    );
 
     it.effect("does not read a filesystem permission error as an ssh refusal", () =>
       Effect.gen(function* () {
