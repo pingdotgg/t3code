@@ -2,6 +2,8 @@ import { HStack, ProgressView, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityElement,
   accessibilityLabel,
+  containerBackground,
+  environment,
   fixedSize,
   font,
   foregroundStyle,
@@ -23,21 +25,31 @@ type UsageConfiguration = {
 
 function SubscriptionUsage(
   props: SubscriptionUsageProps,
-  environment: WidgetEnvironment<UsageConfiguration>,
+  widgetEnvironment: WidgetEnvironment<UsageConfiguration>,
 ) {
   "widget";
   // The extension evaluates this function without the app's module scope.
-  const family = environment.widgetFamily;
+  const family = widgetEnvironment.widgetFamily;
   // Gallery snapshots can render an old timeline entry after it has expired.
-  const now = Math.max(environment.date?.getTime() ?? 0, Date.now());
+  const now = Math.max(widgetEnvironment.date?.getTime() ?? 0, Date.now());
   const accessory = family === "accessoryRectangular";
   const compact =
-    family === "systemSmall" || accessory || environment.levelOfDetail === "simplified";
+    family === "systemSmall" || accessory || widgetEnvironment.levelOfDetail === "simplified";
   // Budget short cards for two quotas per provider, including their secondary text.
   const dense = family === "systemSmall" || family === "systemMedium";
   const limit = family === "systemExtraLarge" ? 6 : family === "systemLarge" ? 4 : 2;
   const monochrome =
-    environment.widgetRenderingMode !== "fullColor" || environment.isLuminanceReduced;
+    widgetEnvironment.widgetRenderingMode !== "fullColor" || widgetEnvironment.isLuminanceReduced;
+  // Accessory and tinted widgets inherit the host's legible monochrome styles.
+  const appearance =
+    props.theme?.mode === "system" || !props.theme
+      ? widgetEnvironment.colorScheme === "dark"
+        ? "dark"
+        : "light"
+      : props.theme.mode;
+  const palette = !accessory && !monochrome ? props.theme?.[appearance] : undefined;
+  const primary = palette?.foreground ?? "primary";
+  const secondary = palette?.secondary ?? "secondary";
   const providers = props.providers ?? [
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
     { name: "Claude", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
@@ -45,8 +57,9 @@ function SubscriptionUsage(
   const columns = providers.map((provider) => {
     const stale = provider.windows.length > 0 && now >= provider.expiresAt;
     const period =
-      environment.configuration?.[provider.name === "Claude" ? "claudePeriod" : "codexPeriod"] ??
-      "auto";
+      widgetEnvironment.configuration?.[
+        provider.name === "Claude" ? "claudePeriod" : "codexPeriod"
+      ] ?? "auto";
     const windows = stale
       ? []
       : provider.windows.filter((window) => period === "auto" || window.kind === period);
@@ -60,7 +73,7 @@ function SubscriptionUsage(
       windows.find((window) => window.kind === "weekly"),
     ].filter((window) => window !== undefined);
     const shown =
-      accessory || environment.levelOfDetail === "simplified"
+      accessory || widgetEnvironment.levelOfDetail === "simplified"
         ? tightest
           ? [tightest]
           : []
@@ -102,7 +115,7 @@ function SubscriptionUsage(
               modifiers={[
                 font({ textStyle: "caption", weight: "semibold" }),
                 lineLimit(1),
-                foregroundStyle("primary"),
+                foregroundStyle(primary),
               ]}
             >
               {provider.name}
@@ -114,7 +127,7 @@ function SubscriptionUsage(
                 font({ textStyle: "caption", weight: "semibold" }),
                 lineLimit(1),
                 layoutPriority(1),
-                foregroundStyle("primary"),
+                foregroundStyle(primary),
               ]}
             >
               {tightest
@@ -144,18 +157,14 @@ function SubscriptionUsage(
           modifiers={[
             font({ textStyle: compact ? "caption" : "headline", weight: "bold" }),
             lineLimit(1),
-            foregroundStyle("primary"),
+            foregroundStyle(primary),
           ]}
         >
           {provider.name}
         </Text>
         {!compact || shown.length === 0 ? (
           <Text
-            modifiers={[
-              font({ textStyle: "caption2" }),
-              foregroundStyle("secondary"),
-              lineLimit(1),
-            ]}
+            modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
           >
             {detail === "Subscription remaining" ? " " : detail}
           </Text>
@@ -176,7 +185,7 @@ function SubscriptionUsage(
               <Text
                 modifiers={[
                   font({ textStyle: compact || dense ? "caption2" : "caption" }),
-                  foregroundStyle("secondary"),
+                  foregroundStyle(secondary),
                   lineLimit(1),
                 ]}
               >
@@ -193,10 +202,9 @@ function SubscriptionUsage(
                   layoutPriority(1),
                   foregroundStyle(
                     window.remaining <= 10 && !monochrome
-                      ? environment.colorScheme === "light"
-                        ? "#dc2626"
-                        : "#fca5a5"
-                      : "primary",
+                      ? (palette?.danger ??
+                          (widgetEnvironment.colorScheme === "light" ? "#dc2626" : "#fca5a5"))
+                      : primary,
                   ),
                 ]}
               >
@@ -205,7 +213,7 @@ function SubscriptionUsage(
             </HStack>
             <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
             {!compact ? (
-              <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
+              <Text modifiers={[font({ size: 10 }), foregroundStyle(secondary), lineLimit(1)]}>
                 {window.reset}
               </Text>
             ) : null}
@@ -215,11 +223,7 @@ function SubscriptionUsage(
         !stale &&
         (period === "auto" ? (provider.totalWindows ?? windows.length) : windows.length) > limit ? (
           <Text
-            modifiers={[
-              font({ textStyle: "caption2" }),
-              foregroundStyle("secondary"),
-              lineLimit(1),
-            ]}
+            modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
           >
             {(period === "auto" ? (provider.totalWindows ?? windows.length) : windows.length) -
               limit}{" "}
@@ -233,10 +237,18 @@ function SubscriptionUsage(
     <VStack
       alignment="leading"
       spacing={accessory || dense ? 2 : 6}
-      modifiers={props.url ? [widgetURL(props.url)] : []}
+      modifiers={[
+        ...(props.url ? [widgetURL(props.url)] : []),
+        ...(palette
+          ? [
+              containerBackground(palette.background, "widget"),
+              environment("colorScheme", appearance),
+            ]
+          : []),
+      ]}
     >
       {providers.length === 0 ? (
-        <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle("secondary")]}>
+        <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle(secondary)]}>
           No subscription limits available.
         </Text>
       ) : compact ? (
@@ -251,7 +263,7 @@ function SubscriptionUsage(
       {!accessory ? <Spacer /> : null}
       {!accessory ? (
         <Text
-          modifiers={[font({ textStyle: "caption2" }), foregroundStyle("secondary"), lineLimit(1)]}
+          modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
         >
           {props.checkedAt
             ? `As of ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`

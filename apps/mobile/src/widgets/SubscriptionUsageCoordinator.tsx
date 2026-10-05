@@ -3,6 +3,8 @@ import { Atom } from "effect/unstable/reactivity";
 import * as Linking from "expo-linking";
 import { useEffect } from "react";
 import { Platform } from "react-native";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { createWidgetTheme } from "./widgetTheme";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
@@ -20,16 +22,26 @@ const snapshotAtom = Atom.make((get) =>
 ).pipe(Atom.withEquality((a, b) => JSON.stringify(a) === JSON.stringify(b)));
 
 export function SubscriptionUsageCoordinator() {
+  const {
+    themeMode,
+    themeVariablesByAppearance,
+    isReady: appearanceReady,
+  } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const snapshot = useAtomValue(snapshotAtom);
   useSubscriptionUsage(catalog.isReady);
   useEffect(() => {
-    if (!catalog.isReady) return;
+    if (!catalog.isReady || !appearanceReady) return;
     void Promise.resolve()
-      .then(() => publishSubscriptionUsage(snapshot))
+      .then(() =>
+        publishSubscriptionUsage({
+          ...snapshot,
+          theme: createWidgetTheme(themeMode, themeVariablesByAppearance),
+        }),
+      )
       .catch((error: unknown) => {
         console.warn("Could not update subscription usage widget", error);
       });
-  }, [catalog.isReady, snapshot]);
+  }, [catalog.isReady, appearanceReady, snapshot, themeMode, themeVariablesByAppearance]);
   return null;
 }
