@@ -2,13 +2,6 @@ import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
-export const UltrafastIcon: Icon = (props) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-    <path d="m17 2-10 12h7l-1 8 10-12h-7l1-8Z" opacity="0.4" />
-    <path d="m11 2-10 12h7l-1 8 10-12h-7l1-8Z" />
-  </svg>
-);
-
 export const FinderIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <rect x="2" y="2" width="20" height="20" rx="4" fill="#36A9F5" />
