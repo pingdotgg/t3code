@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a plain local HTTP server stands in for a LAN service.
+// @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeDgram from "node:dgram";
 import * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 
@@ -324,9 +325,9 @@ describe("HtmlRender", () => {
       Effect.gen(function* () {
         const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
-        // Every request from the page goes through a proxy that only reaches
-        // public addresses, including speculation-rules prefetches, which
-        // Chrome's own Local Network Access does not stop.
+        // The page's connections go through a proxy that only reaches public
+        // addresses, and WebRTC sends no UDP. Each line below is a way out that
+        // Chrome's own Local Network Access does not stop on its own.
         const requests: Array<string> = [];
         const server = yield* Effect.acquireRelease(
           Effect.callback<NodeHttp.Server>((resume) => {
@@ -341,20 +342,36 @@ describe("HtmlRender", () => {
               listening.close(() => resume(Effect.void));
             }),
         );
+        const datagrams: Array<string> = [];
+        const udp = yield* Effect.acquireRelease(
+          Effect.callback<NodeDgram.Socket>((resume) => {
+            const socket = NodeDgram.createSocket("udp4");
+            socket.on("message", (message) => datagrams.push(message.toString("hex")));
+            socket.bind(0, "127.0.0.1", () => resume(Effect.succeed(socket)));
+          }),
+          (socket) =>
+            Effect.callback<void>((resume) => {
+              socket.close(() => resume(Effect.void));
+            }),
+        );
         const address = server.address();
         const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+        const stun = `stun:127.0.0.1:${udp.address().port}`;
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;
           yield* htmlRender.preview({
             html: [
               `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
               `<script type="speculationrules">{"prefetch":[{"source":"list","urls":["${origin}/prefetch"]}]}</script>`,
-              `<script>fetch("${origin}/").catch(() => {});`,
+              `<script>fetch("${origin}/").catch(() => {}); new WebSocket("ws${origin.slice(4)}/socket");`,
+              `const peer = new RTCPeerConnection({ iceServers: [{ urls: "${stun}" }] });`,
+              `peer.createDataChannel("x"); peer.createOffer().then((offer) => peer.setLocalDescription(offer));`,
               `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
             ].join(""),
           });
         }).pipe(Effect.provide(htmlRenderLayer(executable)));
         expect(requests).toEqual([]);
+        expect(datagrams).toEqual([]);
       }).pipe(Effect.scoped),
     30_000,
   );

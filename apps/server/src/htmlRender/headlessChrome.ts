@@ -206,9 +206,11 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--hide-scrollbars",
           "--mute-audio",
           "--block-new-web-contents",
-          `--proxy-server=http://127.0.0.1:${proxyPort}`,
+          `--proxy-server=socks5://127.0.0.1:${proxyPort}`,
           // Loopback would otherwise skip the proxy.
           "--proxy-bypass-list=<-loopback>",
+          // WebRTC would otherwise send UDP, which no proxy carries.
+          "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
