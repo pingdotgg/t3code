@@ -242,6 +242,34 @@ layer("CommandOutputHub", (it) => {
     }),
   );
 
+  it.effect("a viewer whose command was evicted for newer ones is resynced, not appended to", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* CommandOutputHub.CommandOutputHub;
+        const threadId = yield* seedThread;
+        yield* writeCommandItem(threadId, { status: "running" });
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "abc" });
+        const frames = yield* subscribeFrames(threadId);
+        let client = applyFrame(EMPTY_TERMINAL_OUTPUT, yield* takeFrame(frames));
+        assert.equal(client.text, "abc");
+        // 64 newer commands push this one's tail out of the hub.
+        for (let index = 0; index < 64; index += 1) {
+          yield* hub.append({
+            threadId,
+            itemId: TurnItemId.make(`turn-item:other-${index}`),
+            chunk: "x",
+          });
+        }
+        yield* TestClock.adjust("1 second");
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\rX" });
+        const next = yield* takeFrame(frames);
+        assert.equal(next.kind, "replace");
+        client = applyFrame(client, next);
+        assert.equal(client.text, "X");
+      }),
+    ),
+  );
+
   it.effect("every viewer of one command reconstructs the same text", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -283,6 +283,8 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
   }
 }
 
+const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
+
 /** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
@@ -295,10 +297,12 @@ function escapeLength(input: string, index: number): number {
     }
     return -1;
   }
-  if (next === "]" || next === "P" || next === "X" || next === "_" || next === "^") {
-    // OSC/DCS/SOS/APC/PM end at BEL or ST (ESC \).
+  if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
+    // OSC/DCS/SOS/APC/PM end at BEL or ST (ESC \). A newline also ends one (and is
+    // kept), so a stray introducer in binary output can't hide everything after it.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\n") return cursor - index;
       if (input[cursor] === ESC) {
         if (cursor + 1 >= input.length) return -1;
         if (input[cursor + 1] === "\\") return cursor - index + 2;
@@ -528,8 +532,14 @@ class Terminal {
         const length = escapeLength(input, index);
         if (length === -1) {
           const fragment = input.slice(index);
-          // A runaway unterminated sequence is noise; drop it instead of waiting forever.
-          return fragment.length <= MAX_PENDING_ESCAPE ? fragment : "";
+          if (fragment.length <= MAX_PENDING_ESCAPE) return fragment;
+          // A long string sequence keeps only its introducer (and a trailing ESC that
+          // may start its ST), so the payload stays hidden until it ends.
+          if (STRING_SEQUENCE_INTRODUCERS.has(fragment[1]!)) {
+            return fragment.slice(0, 2) + (fragment.endsWith(ESC) ? ESC : "");
+          }
+          // Any other runaway sequence is noise; drop it instead of waiting forever.
+          return "";
         }
         this.escape(input.slice(index, index + length));
         index += length - 1;

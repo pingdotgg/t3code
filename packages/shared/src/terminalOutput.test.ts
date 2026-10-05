@@ -96,6 +96,13 @@ describe("appendTerminalOutput", () => {
     expect(state.text.endsWith(".")).toBe(true);
   });
 
+  it("hides a long string sequence's payload however it is split into chunks", () => {
+    const input = `a\u001b]0;${"t".repeat(100)}\u0007b`;
+    expect(feed([input]).text).toBe("ab");
+    expect(feed(["a\u001b]0;", "t".repeat(100), "\u0007b"]).text).toBe("ab");
+    expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
+  });
+
   it("hides an SOS string sequence and its payload", () => {
     expect(normalizeTerminalOutput("a\u001bXhidden \u001b\\b").text).toBe("ab");
   });

@@ -162,6 +162,11 @@ export const make = Effect.gen(function* () {
         while (tails.size > MAX_LIVE_COMMANDS) {
           const oldest = tails.keys().next().value;
           if (oldest === undefined) break;
+          // Its viewers no longer share the hub's state; resync them on the next frame.
+          for (const subscriber of subscribers.get(oldest) ?? []) {
+            subscriber.needsReplace = true;
+            subscriber.pendingAppend = "";
+          }
           tails.delete(oldest);
         }
       }
