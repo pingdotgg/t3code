@@ -289,43 +289,41 @@ it.effect("still requires the prior checkpoint when no start ref exists", () => 
   }).pipe(Effect.provide(layer));
 });
 
-for (const hasStartSnapshot of [false, true]) {
-  it.effect(
-    `uses ${hasStartSnapshot ? "fresh" : "legacy"} baseline for an individual V2 turn`,
-    () => {
-      const projection = makeProjection();
-      const firstRef = checkpointRefForScopeOrdinal({
-        scopeId: firstScopeId,
-        ordinalWithinScope: 1,
-      });
-      const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
-        Effect.succeed("patch"),
+it.effect.each([false, true])(
+  "uses the fresh baseline for an individual V2 turn when it has a start snapshot: %s",
+  (hasStartSnapshot) => {
+    const projection = makeProjection();
+    const firstRef = checkpointRefForScopeOrdinal({
+      scopeId: firstScopeId,
+      ordinalWithinScope: 1,
+    });
+    const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("patch"),
+    );
+    const layer = layerFor({
+      hasStartSnapshot,
+      diffCheckpoints,
+      projection: Effect.succeed({
+        ...projection,
+        checkpoints: [
+          ...projection.checkpoints,
+          {
+            scopeId: firstScopeId,
+            runId: firstRunId,
+            appRunOrdinal: 1,
+            status: "ready",
+            ref: firstRef,
+          },
+        ],
+      }),
+    });
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+      assert.equal(
+        diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+        hasStartSnapshot ? checkpointStartRef(secondRef) : firstRef,
       );
-      const layer = layerFor({
-        hasStartSnapshot,
-        diffCheckpoints,
-        projection: Effect.succeed({
-          ...projection,
-          checkpoints: [
-            ...projection.checkpoints,
-            {
-              scopeId: firstScopeId,
-              runId: firstRunId,
-              appRunOrdinal: 1,
-              status: "ready",
-              ref: firstRef,
-            },
-          ],
-        }),
-      });
-      return Effect.gen(function* () {
-        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-        yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
-        assert.equal(
-          diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
-          hasStartSnapshot ? checkpointStartRef(secondRef) : firstRef,
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
-}
+    }).pipe(Effect.provide(layer));
+  },
+);

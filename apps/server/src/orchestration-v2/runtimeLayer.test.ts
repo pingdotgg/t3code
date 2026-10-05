@@ -4352,8 +4352,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (it) => {
-  for (const scenario of ["pending", "captured", "later-baseline"] as const) {
-    it.effect(`interrupts ${scenario} startup and reclaims only its abandoned baseline`, () =>
+  it.effect.each(["pending", "captured", "later-baseline"] as const)(
+    "interrupts %s startup and reclaims only its abandoned baseline",
+    (scenario) =>
       Effect.gen(function* () {
         const projects = yield* ProjectService.ProjectService;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4493,8 +4494,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
         }
         assert.isFalse(yield* effectWorker.runOnce);
       }).pipe(Effect.scoped),
-    );
-  }
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
