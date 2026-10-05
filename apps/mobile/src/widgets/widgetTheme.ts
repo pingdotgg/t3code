@@ -1,4 +1,9 @@
-import type { MobileThemeMode, MobileThemeVariables } from "../lib/mobileTheme";
+import {
+  flattenThemeColor,
+  themeColorWithAlpha,
+  type MobileThemeMode,
+  type MobileThemeVariables,
+} from "../lib/mobileTheme";
 
 export interface WidgetPalette {
   background: string;
@@ -25,7 +30,11 @@ export function createWidgetTheme(
     foreground: variables["--color-foreground"],
     secondary: variables["--color-foreground-secondary"],
     accent: variables["--color-primary"],
-    track: variables["--color-subtle"],
+    // Surface tokens can coincide; a foreground blend keeps the unfilled track visible.
+    track: flattenThemeColor(
+      themeColorWithAlpha(variables["--color-foreground"], 0.16),
+      variables["--color-card"],
+    ),
     danger: variables["--color-danger-foreground"],
   });
   return { mode, light: palette(palettes.light), dark: palette(palettes.dark) };
