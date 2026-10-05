@@ -25,9 +25,13 @@ vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
 }));
 
-vi.mock("../cloud/linkEnvironment", () => ({
-  linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
-}));
+vi.mock("../cloud/linkEnvironment", async () => {
+  const { TaggedError } = await import("effect/Data");
+  return {
+    CloudEnvironmentLinkError: TaggedError("CloudEnvironmentLinkError"),
+    linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
+  };
+});
 
 vi.mock("./remoteRegistration", () => ({
   updateAgentAwarenessRegistrationPreferences: vi.fn(() => Effect.void),
@@ -108,6 +112,43 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each([false, true])("sets device activity to %s without linking hosts", (enabled) =>
+    Effect.gen(function* () {
+      yield* setLiveActivityUpdatesEnabled({
+        enabled,
+        previousEnabled: !enabled,
+        clerkToken: "clerk-token",
+        connections: [],
+      });
+      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledWith({
+        liveActivitiesEnabled: enabled,
+      });
+      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each([false, true])("restores the device preference when setting %s fails", (enabled) =>
+    Effect.gen(function* () {
+      vi.mocked(updateAgentAwarenessRegistrationPreferences).mockReturnValueOnce(
+        Effect.fail(new Error("device registration failed")),
+      );
+      const exit = yield* Effect.exit(
+        setLiveActivityUpdatesEnabled({
+          enabled,
+          previousEnabled: !enabled,
+          clerkToken: "clerk-token",
+          connections: [],
+        }),
+      );
+      expect(exit._tag).toBe("Failure");
+      expect(vi.mocked(updateAgentAwarenessRegistrationPreferences).mock.calls).toEqual([
+        [{ liveActivitiesEnabled: enabled }],
+        [{ liveActivitiesEnabled: !enabled }],
+      ]);
+      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
     }).pipe(Effect.provide(testLayer)),
   );
 

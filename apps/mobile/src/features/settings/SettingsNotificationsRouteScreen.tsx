@@ -5,7 +5,7 @@ import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, AppState, Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,11 +29,9 @@ import {
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
-import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -87,7 +85,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { savedConnectionsById } = useSavedRemoteConnections();
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
   const liveActivityWriteInFlight = useRef(false);
@@ -98,9 +95,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const canClearLiveActivitiesPreference =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.liveActivitiesEnabled !== false;
-
-  const connections = useMemo(() => Object.values(savedConnectionsById), [savedConnectionsById]);
-  const environmentCount = connections.length;
 
   const refreshNotifications = useCallback(async () => {
     if (Platform.OS !== "ios" && Platform.OS !== "android") {
@@ -218,7 +212,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     );
   }, [navigation]);
 
-  const linkEnvironments = useCallback(async () => {
+  const enableLiveActivities = useCallback(async () => {
     if (!isSignedIn) {
       promptSignIn();
       return;
@@ -274,7 +268,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: tokenResult.value,
-          connections,
+          connections: [],
         }),
       ),
     );
@@ -293,17 +287,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
 
     savePreferences({ liveActivitiesEnabled: true });
-    refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
-    // The environment link can succeed while this device's own registration
-    // (the push-to-start token the relay needs) has not — don't claim Live
-    // Activities are live until the device is actually registered.
+    // A saved preference does not guarantee that device registration succeeded.
     if (getAgentAwarenessRegistrationStatus() === "registered") {
       Alert.alert(
         Platform.OS === "android" ? "Ongoing activity enabled" : "Live Activities enabled",
-        environmentCount > 0
-          ? `${environmentCount} environment${environmentCount === 1 ? "" : "s"} linked for agent activity updates.`
-          : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+        "Agent activity updates are enabled for this device.",
       );
     } else {
       Alert.alert(
@@ -311,15 +300,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         "This device could not be registered with T3 Connect, so activity updates won't appear yet. They'll start once registration succeeds.",
       );
     }
-  }, [
-    connections,
-    environmentCount,
-    getToken,
-    isSignedIn,
-    liveActivitiesPreferenceEnabled,
-    promptSignIn,
-    savePreferences,
-  ]);
+  }, [getToken, isSignedIn, liveActivitiesPreferenceEnabled, promptSignIn, savePreferences]);
 
   const handleDeviceNotificationsChange = useCallback(
     (enabled: boolean) => {
@@ -373,7 +354,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
                   enabled: false,
                   previousEnabled: liveActivitiesPreferenceEnabled,
                   clerkToken: token,
-                  connections,
+                  connections: [],
                 }),
               ),
             );
@@ -385,7 +366,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
               return;
             }
             savePreferences({ liveActivitiesEnabled: false });
-            refreshManagedRelayEnvironments();
             setLiveActivityStatus("disabled");
           } finally {
             liveActivityWriteInFlight.current = false;
@@ -400,15 +380,14 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       }
 
       liveActivityWriteInFlight.current = true;
-      void linkEnvironments().finally(() => {
+      void enableLiveActivities().finally(() => {
         liveActivityWriteInFlight.current = false;
       });
     },
     [
-      connections,
       getToken,
       isSignedIn,
-      linkEnvironments,
+      enableLiveActivities,
       liveActivitiesPreferenceEnabled,
       promptSignIn,
       savePreferences,
