@@ -9,10 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as SshAuth from "./auth.ts";
@@ -21,76 +20,15 @@ import * as SshTunnel from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
-const makeSuccessfulProcess = (stdout: string) => {
-  const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(123),
-    stdout: stdoutStream,
-    stderr: Stream.empty,
-    all: stdoutStream,
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
-    stdin: Sink.drain,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-    unref: Effect.succeed(Effect.void),
-  });
-};
-
-const makeDelayedSuccessfulProcess = (stdout: string, delayMs: number) => {
-  const process = makeSuccessfulProcess(stdout);
-  return {
-    ...process,
-    exitCode: Effect.sleep(Duration.millis(delayMs)).pipe(
-      Effect.as(ChildProcessSpawner.ExitCode(0)),
-    ),
-  };
-};
-
-const makeRunningProcess = (onKill: () => void) => {
-  let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(123),
-    stdout: Stream.empty,
-    stderr: Stream.empty,
-    all: Stream.empty,
-    exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
-      finish = (exitCode) => resume(Effect.succeed(exitCode));
-      return Effect.sync(() => {
-        finish = null;
-      });
-    }),
-    isRunning: Effect.succeed(true),
-    kill: () =>
-      Effect.sync(() => {
-        onKill();
-        finish?.(ChildProcessSpawner.ExitCode(143));
-      }),
-    stdin: Sink.drain,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-    unref: Effect.succeed(Effect.void),
-  });
-};
-
-const testHttpClient = HttpClient.make((request) =>
-  Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
-);
-
-const hangingHttpClient = HttpClient.make(() => Effect.never);
-
-const testNetService = NetService.NetService.of({
-  canListenOnHost: () => Effect.succeed(true),
-  isPortAvailableOnLoopback: () => Effect.succeed(true),
-  hasListenerOnHost: () => Effect.succeed(false),
-  reserveLoopbackPort: () => Effect.succeed(41_773),
-  findAvailablePort: (preferred) => Effect.succeed(preferred),
-});
-
-function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
-  return command._tag === "StandardCommand" ? command.args : [];
-}
+import {
+  commandArgs,
+  hangingHttpClient,
+  makeDelayedSuccessfulProcess,
+  makeRunningProcess,
+  makeSuccessfulProcess,
+  testHttpClient,
+  testNetService,
+} from "./tunnelFixtures.ts";
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 const NODE_SCRIPT = {
