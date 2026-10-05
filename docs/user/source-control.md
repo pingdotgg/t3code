@@ -200,6 +200,10 @@ after 10 wakes in a row that bring only comments, when the server cannot read th
 Unsettle the thread before starting a new watch. To start or stop it yourself, use the row menu in
 the **Linked pull requests** panel.
 
+A watched thread counts as working between wakes, so it stays in the **Working** section and does
+not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
+returns to your inbox.
+
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 

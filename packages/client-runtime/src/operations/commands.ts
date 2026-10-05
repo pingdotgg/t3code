@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
@@ -771,6 +772,11 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   });
 });
 
+/**
+ * Stop for the thread's latest work: interrupts the active run, or the settled run whose
+ * background work still runs. With no run to stop, it ends the thread's pull request
+ * watches, the only background work that has no run.
+ */
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
   input: InterruptThreadTurnInput,
 ) {
@@ -797,6 +803,22 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
       ) {
         runId = latestRun?.id;
       }
+    }
+    if (runId === undefined) {
+      let result = { sequence: 0 };
+      for (const link of visibleThreadPullRequests(projection.thread.pullRequests ?? [])) {
+        if (link.watch === undefined) continue;
+        result = yield* dispatch({
+          type: "thread.pull-request.watch",
+          commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+          threadId: input.threadId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          watching: false,
+        });
+      }
+      return result;
     }
   }
   if (runId === undefined) return { sequence: 0 };
