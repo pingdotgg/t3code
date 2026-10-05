@@ -111,7 +111,7 @@ export function assertTurnInterruptRestartClaudeOutput(
   assert.equal(projection.providerThreads[0]?.status, "idle");
   const commandItem = projection.turnItems.find((item) => item.type === "command_execution");
   assert.isDefined(commandItem);
-  assert.equal(commandItem.status, "failed");
+  assert.equal(commandItem.status, "interrupted");
   assert.include(commandItem.input, "node -e");
 
   const outboundFrames = transcript.entries.flatMap((entry) =>

@@ -82,6 +82,7 @@ import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
 import {
   costTypeSegments,
+  modelShare,
   sortModelsByTokens,
   speedCostSegments,
   tokenTypeSegments,
@@ -718,6 +719,10 @@ export function UsagePage() {
                           breakdownModels.map((model, index) => {
                             const key = `${model.provider}:${model.model}`;
                             const value = metric === "tokens" ? model.totalTokens : model.costUsd;
+                            const share = modelShare(
+                              model,
+                              metric === "tokens" ? "tokens" : "cost",
+                            );
                             return (
                               <tr
                                 key={key}
@@ -758,7 +763,7 @@ export function UsagePage() {
                                   )}
                                 </td>
                                 <td className="hidden py-2.5 pl-6 sm:table-cell">
-                                  {isModelCostUnknown(model) ? "" : formatPercent(model.costShare)}
+                                  {share === null ? "" : formatPercent(share)}
                                 </td>
                                 <td className="py-2.5 pl-6">{formatTokens(model.totalTokens)}</td>
                               </tr>

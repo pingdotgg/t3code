@@ -47,6 +47,7 @@ it.effect.each(
           "before dispatch",
           "after delivery",
           "without native steering",
+          "with interrupting native steering",
           "settled only",
         ] as const
       ).map((timing) => ({
@@ -57,7 +58,10 @@ it.effect.each(
     )
     .filter(
       ({ mailbox, timing }) =>
-        mailbox || (timing !== "without native steering" && timing !== "settled only"),
+        mailbox ||
+        (timing !== "without native steering" &&
+          timing !== "with interrupting native steering" &&
+          timing !== "settled only"),
     ),
 )("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
   Effect.scoped(
@@ -73,6 +77,7 @@ it.effect.each(
         turns: {
           ...CodexProviderCapabilitiesV2.turns,
           supportsActiveSteering: timing !== "without native steering",
+          activeSteeringInterruptsTools: timing === "with interrupting native steering",
         },
       };
       const adapter: ProviderAdapterV2Shape = {
