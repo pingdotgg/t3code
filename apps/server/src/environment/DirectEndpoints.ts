@@ -58,6 +58,15 @@ const isAdvertisableAddress = (address: string): boolean =>
   (isTailscaleIpv4Address(address) || isPrivateNetworkHost(address));
 
 /**
+ * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V, and
+ * macOS's `bridge100`+) have private addresses only this machine reaches. A
+ * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
+ * it stays listed.
+ */
+const VIRTUAL_INTERFACE =
+  /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge1\d\d)/;
+
+/**
  * Plain HTTP endpoints for the private addresses a server bound to `host`
  * accepts. IPv4 only: link-local and temporary IPv6 addresses change too
  * often to be worth saving.
@@ -69,8 +78,8 @@ export function resolveBoundEndpoints(input: {
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const addresses = isWildcardHost(input.host)
-    ? Object.values(input.interfaces)
-        .flatMap((entries) => entries ?? [])
+    ? Object.entries(input.interfaces)
+        .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
         .filter(
           (entry) =>
             !entry.internal && entry.family === "IPv4" && isAdvertisableAddress(entry.address),

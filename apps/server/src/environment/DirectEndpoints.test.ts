@@ -66,6 +66,17 @@ const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   ],
 };
 
+const virtualInterface = (address: string) => [
+  {
+    address,
+    netmask: "255.255.0.0",
+    family: "IPv4" as const,
+    mac: "02:42:ac:11:00:01",
+    internal: false,
+    cidr: `${address}/16`,
+  },
+];
+
 describe("resolveBoundEndpoints", () => {
   it("lists nothing for a loopback-only server", () => {
     expect(resolveBoundEndpoints({ host: undefined, port: 3773, interfaces: INTERFACES })).toEqual(
@@ -80,6 +91,23 @@ describe("resolveBoundEndpoints", () => {
     expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces: INTERFACES })).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+  });
+
+  it("skips container and VM networks, which only this machine reaches", () => {
+    const interfaces = {
+      ...INTERFACES,
+      docker0: virtualInterface("172.17.0.1"),
+      "br-3f2a1b": virtualInterface("172.18.0.1"),
+      virbr0: virtualInterface("192.168.122.1"),
+      "vEthernet (WSL)": virtualInterface("172.24.0.1"),
+      bridge100: virtualInterface("192.168.64.1"),
+      vmbr0: virtualInterface("192.168.1.20"),
+    };
+    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
     ]);
   });
 
