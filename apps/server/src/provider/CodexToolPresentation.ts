@@ -6,23 +6,16 @@ import type {
 } from "@t3tools/contracts";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
+import {
+  mcpToolPresentation as integrationToolPresentation,
+  normalizeMcpHttpUrl as normalizedHttpUrl,
+  normalizeMcpText as normalizedDisplayName,
+} from "./McpToolPresentation.ts";
+
 type CodexLifecycleItem = EffectCodexSchema.V2ItemCompletedNotification["item"];
 
 function asUnknownRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-}
-
-function normalizedHttpUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 4096) return undefined;
-  try {
-    const url = new URL(value);
-    const href = url.href;
-    return (url.protocol === "http:" || url.protocol === "https:") && href.length <= 4096
-      ? href
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function normalizedImageUrl(value: unknown): string | undefined {
@@ -43,12 +36,6 @@ function normalizedAppId(value: unknown): string | undefined {
   return appId.length > 0 && appId.length <= 512 && /^[A-Za-z0-9._-]+$/u.test(appId)
     ? appId
     : undefined;
-}
-
-function normalizedDisplayName(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const displayName = value.trim().replace(/\s+/gu, " ");
-  return displayName && displayName.length <= 160 ? displayName : undefined;
 }
 
 function normalizedSourceKeyPart(value: string): string {
@@ -130,6 +117,7 @@ function themedLogoIcon(
 }
 
 export interface McpToolPresentation {
+  readonly title?: string;
   readonly toolSurface?: "browser" | "computer";
   readonly toolIcon?: ToolActivityIcon;
   readonly toolSource?: ToolActivitySource;
@@ -227,5 +215,13 @@ export function mcpToolPresentation(
     };
   }
 
-  return {};
+  return integrationToolPresentation({
+    serverName: appContext?.connectorId ?? item.server,
+    toolName: item.tool,
+    title: appContext?.actionName,
+    serverDisplayName: appContext?.appName,
+    source: sourceMetadata,
+    iconUrl: sourceLogo?._tag === "themed-logo" ? sourceLogo.logoUrl : undefined,
+    iconUrlDark: sourceLogo?._tag === "themed-logo" ? sourceLogo.logoUrlDark : undefined,
+  });
 }

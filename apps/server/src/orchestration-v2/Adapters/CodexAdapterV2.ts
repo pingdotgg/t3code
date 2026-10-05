@@ -489,9 +489,10 @@ export function projectCodexDynamicToolItem(
     item.type === "mcpToolCall"
       ? `${item.server}.${item.tool}`
       : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
-  const title = dynamicToolTitle(toolName, item.arguments);
+  const presentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
+  const title = dynamicToolTitle(toolName, item.arguments) ?? presentation.title;
   const projection: CodexDynamicToolProjection = {
-    ...(item.type === "mcpToolCall" ? mcpToolPresentation(item) : {}),
+    ...presentation,
     toolName,
     ...(title ? { title } : {}),
     input: item.arguments,
