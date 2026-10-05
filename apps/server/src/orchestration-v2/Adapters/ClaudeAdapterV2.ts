@@ -13,6 +13,7 @@ import {
   forkSession as forkClaudeSession,
   type ForkSessionOptions,
   type ForkSessionResult,
+  getSessionMessages,
   getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
@@ -369,6 +370,14 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * Whether the CLI's session storage holds a conversation for a session id,
+   * so `resume` would find it. A transcript with no user or assistant message
+   * counts as absent, which is also what the CLI's resume reports.
+   */
+  readonly sessionHasMessages: (
+    input: ClaudeAgentSdkSessionLookupInput,
+  ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -388,6 +397,12 @@ export interface ClaudeAgentSdkSubagentLookupInput {
   readonly sessionId: string;
   readonly agentId: string;
   readonly dir: string | null;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}
+
+export interface ClaudeAgentSdkSessionLookupInput {
+  readonly sessionId: string;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -523,6 +538,23 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "subagent.found";
         readonly toolUseId: string | null;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "session.lookup";
+        readonly sessionId: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "session.found";
+        readonly sessionId: string;
+        readonly hasMessages: boolean;
       };
     }
   | {
@@ -795,6 +827,35 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
           return toolUseId;
         },
       ),
+      sessionHasMessages: Effect.fn("ClaudeAgentSdkQueryRunner.sessionHasMessages")(function* (
+        input: ClaudeAgentSdkSessionLookupInput,
+      ) {
+        const protocolLogger = makeClaudeAgentSdkProtocolLogger({
+          nativeEventLogger,
+          threadId: input.threadId,
+          providerSessionId: input.providerSessionId,
+        });
+        const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
+          protocolLogger === undefined ? Effect.void : protocolLogger(event);
+        yield* logProtocolEvent({
+          direction: "outgoing",
+          stage: "decoded",
+          payload: { type: "session.lookup", sessionId: input.sessionId },
+        });
+        // No `dir`: the CLI's resume finds a transcript recorded under any
+        // project directory, so a thread moved to a worktree still resumes.
+        const messages = yield* Effect.tryPromise({
+          try: () => getSessionMessages(input.sessionId, { limit: 1 }),
+          catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
+        });
+        const hasMessages = messages.length > 0;
+        yield* logProtocolEvent({
+          direction: "incoming",
+          stage: "decoded",
+          payload: { type: "session.found", sessionId: input.sessionId, hasMessages },
+        });
+        return hasMessages;
+      }),
       assertComplete: Effect.void,
     });
   }),
@@ -7510,6 +7571,28 @@ export function makeClaudeAdapterV2(
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+              const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              // A native id is recorded before the CLI confirms the session.
+              // Stopping the first turn during CLI startup, or a CLI killed
+              // before it persisted the prompt, leaves an id the CLI has no
+              // conversation for. Resuming it fails on every later turn, so
+              // fail here instead: the turn start then binds a fresh native
+              // session with a history handoff. A live query is the CLI
+              // process itself, so its transcript is not consulted.
+              const live = yield* Ref.get(queryContext);
+              if (live?.nativeThreadId !== nativeThreadId) {
+                const hasMessages = yield* queryRunner.sessionHasMessages({
+                  sessionId: nativeThreadId,
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                });
+                if (!hasMessages) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Claude has no conversation for session ${nativeThreadId}; it was never persisted.`,
+                  });
+                }
+              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,

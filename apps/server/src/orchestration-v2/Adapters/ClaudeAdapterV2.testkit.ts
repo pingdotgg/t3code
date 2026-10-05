@@ -260,6 +260,7 @@ interface ClaudeQueryRunner {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAdapterV2.ClaudeAgentSdkSubagentLookupInput,
   ) => string | null;
+  readonly sessionHasMessages: (input: ClaudeAdapterV2.ClaudeAgentSdkSessionLookupInput) => boolean;
   readonly assertComplete: () => void;
 }
 
@@ -848,6 +849,9 @@ function makeReplayQueryRunner(
         return toolUseId === null || typeof toolUseId === "string";
       }).toolUseId;
     },
+    // Recorded transcripts resume sessions the CLI had persisted, so the
+    // lookup is answered without a frame of its own.
+    sessionHasMessages: () => true,
     assertComplete: () => {
       if (failure !== null) {
         throw failure;
@@ -932,6 +936,7 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    sessionHasMessages: (input) => replay(() => queryRunner.sessionHasMessages(input)),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
