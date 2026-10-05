@@ -169,13 +169,46 @@ export default defineConfig({
       "t3code/no-native-title-tooltip": "error",
       "t3code/no-raw-mcp-registration": "error",
       "t3code/no-test-in-loop": "error",
-      "t3code/no-rpc-permission-bypass": "error",
+      "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
       "t3code/no-unscoped-has": "error",
       "t3code/namespace-node-imports": "error",
       "t3code/prefer-catch-tags": "error",
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
+      },
+      {
+        // Only shared command boundaries install the session-backed permission guard.
+        files: [
+          "packages/client-runtime/src/state/runtime.ts",
+          "packages/client-runtime/src/state/vcsAction.ts",
+        ],
+        rules: {
+          "t3code/no-rpc-permission-bypass": [
+            "error",
+            { allowGuardInstallation: true, allowRawClientAccess: false },
+          ],
+        },
+      },
+      {
+        // These clients are session display metadata and an Expo update adapter.
+        files: [
+          "apps/web/src/components/settings/ConnectionsSettings.tsx",
+          "apps/mobile/src/features/updates/app-updates.ts",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
+      },
+      {
+        // RPC implementation and transport test fixtures need the raw client.
+        files: [
+          "packages/client-runtime/src/rpc/**",
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
       {
         // The one place that reads the host platform to seed the injected references.
         files: ["packages/shared/src/hostProcess.ts"],
