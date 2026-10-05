@@ -204,6 +204,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
     }
   };
   return ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+    getByTunnelName: () => Effect.die("unused getByTunnelName"),
     get: (input) =>
       Effect.sync(() => {
         calls.push({ operation: "get", input });

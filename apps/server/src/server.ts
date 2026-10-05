@@ -119,8 +119,16 @@ import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { webhookHttpApiLayer } from "./scheduledTasks/webhookRoute.ts";
-import { ScheduledTaskWebhookOrigin } from "./scheduledTasks/ScheduledTaskService.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./cloud/config.ts";
+import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import {
+  relayHookBaseUrl,
+  ScheduledTaskWebhookOrigin,
+} from "./scheduledTasks/ScheduledTaskService.ts";
+import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  decodeRuntimeConfig,
+  RELAY_URL_SECRET,
+} from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
@@ -452,24 +460,26 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 // to is configured; otherwise clients show the environment-relative path.
 const ScheduledTaskWebhookOriginLive = Layer.effect(
   ScheduledTaskWebhookOrigin,
-  Effect.map(
-    Effect.all([ServerEnvironment.ServerEnvironment, ServerSecretStore.ServerSecretStore]),
-    ([environment, secrets]) =>
-      // The reference holds an effect so each read sees the current link state.
-      Effect.gen(function* () {
-        const [relayUrl, tunnelConfig] = yield* Effect.all([
-          secrets.get(RELAY_URL_SECRET),
-          secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
-        ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
-        return {
-          environmentId: yield* environment.getEnvironmentId,
-          relayUrl:
-            Option.isSome(relayUrl) && Option.isSome(tunnelConfig)
-              ? new TextDecoder().decode(relayUrl.value) || null
-              : null,
-        };
-      }),
-  ),
+  Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    // The reference holds an effect so each read sees the current link state.
+    return Effect.gen(function* () {
+      const [relayUrl, tunnelConfig] = yield* Effect.all([
+        secrets.get(RELAY_URL_SECRET),
+        secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
+      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
+        return { relayHookBaseUrl: null };
+      }
+      const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
+      return {
+        relayHookBaseUrl: relayHookBaseUrl({
+          relayUrl: new TextDecoder().decode(relayUrl.value),
+          tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
+        }),
+      };
+    });
+  }),
 );
 
 const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
@@ -537,6 +547,8 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 
 const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  // Asks T3 Connect to deliver webhooks it held while this environment was offline.
+  HeldHooksWaker.layer,
   ThreadSettlementWorkerLive,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),

@@ -864,6 +864,21 @@ export const RelayCloudEnvironmentHealthProofPayload = Schema.Struct({
 export type RelayCloudEnvironmentHealthProofPayload =
   typeof RelayCloudEnvironmentHealthProofPayload.Type;
 
+/**
+ * Sent with every webhook the relay forwards, signed with the relay's mint key
+ * (`x-t3-relay-delivery`). The environment trusts the relay's delivery id,
+ * receive time and trace context only when this verifies, since its webhook
+ * URL can also be called directly.
+ */
+export const RelayHookDeliveryProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  deliveryId: TrimmedNonEmptyString,
+  receivedAt: TrimmedNonEmptyString,
+  hookId: TrimmedNonEmptyString,
+});
+export type RelayHookDeliveryProofPayload = typeof RelayHookDeliveryProofPayload.Type;
+
 export const RelayCloudEnvironmentHealthProof = TrimmedNonEmptyString;
 export type RelayCloudEnvironmentHealthProof = typeof RelayCloudEnvironmentHealthProof.Type;
 
@@ -1136,6 +1151,18 @@ const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
   .annotate(OpenApi.Description, "DPoP-authenticated client access to linked environments.")
   .middleware(RelayDpopClientAuth);
 
+export const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
+  holdWebhooksWhileOffline: Schema.Boolean,
+});
+export type RelayEnvironmentLinkPreferencesRequest =
+  typeof RelayEnvironmentLinkPreferencesRequest.Type;
+
+export const RelayWakeHeldHooksResponse = Schema.Struct({
+  /** True when the relay was holding requests and has started delivering them. */
+  pending: Schema.Boolean,
+});
+export type RelayWakeHeldHooksResponse = typeof RelayWakeHeldHooksResponse.Type;
+
 const RelayServerGroup = HttpApiGroup.make("server")
   .add(
     HttpApiEndpoint.post(
@@ -1171,6 +1198,24 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post(
+      "updateLinkPreferences",
+      "/v1/environments/:environmentId/link-preferences",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: RelayEnvironmentLinkPreferencesRequest,
+        success: RelayEnvironmentLinkPreferencesRequest,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
+      params: Schema.Struct({ environmentId: EnvironmentId }),
+      success: RelayWakeHeldHooksResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(
+      OpenApi.Summary,
+      "Deliver webhook requests held while the environment was offline now",
+    ),
   )
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
@@ -1179,14 +1224,16 @@ const RelayServerGroup = HttpApiGroup.make("server")
  * Public, stateless webhook forwarding to an environment's managed tunnel.
  * Unauthenticated: the token in the path is the environment's credential, and
  * the relay only routes and forwards. Raw, so the body reaches the
- * environment byte for byte and signatures still verify there.
+ * environment byte for byte and signatures still verify there. `endpointKey`
+ * names one managed endpoint (its tunnel's hash of user and environment), not
+ * the environment id, which any account can link.
  */
 const RelayHookParams = Schema.Struct({
-  environmentId: Schema.String,
+  endpointKey: Schema.String,
   hookId: Schema.String,
   token: Schema.String,
 });
-const RELAY_HOOK_PATH = "/v1/hooks/:environmentId/:hookId/:token";
+const RELAY_HOOK_PATH = "/v1/hooks/:endpointKey/:hookId/:token";
 const relayHookEndpoint = { params: RelayHookParams } as const;
 const RelayHooksGroup = HttpApiGroup.make("hooks")
   .add(

@@ -69,6 +69,31 @@ describe("renderWebhookPrompt", () => {
     assert.deepEqual(plain.missing, ["body.field"]);
   });
 
+  it("redacts credentials in whole-request placeholders but not named ones", () => {
+    const request: WebhookRequest = {
+      ...githubPullRequest,
+      query: "source=github&access_token=q-secret",
+      headers: {
+        ...githubPullRequest.headers,
+        authorization: "Bearer h-secret",
+        "x-hub-signature-256": "sha256=abc",
+      },
+    };
+    const whole = renderWebhookPrompt("{{request}}|{{headers}}|{{query}}", request).prompt;
+    for (const secret of ["q-secret", "h-secret", "sha256=abc"]) {
+      assert.notInclude(whole, secret);
+    }
+    assert.include(whole, "?source=github&access_token=[redacted]\n");
+    assert.include(whole, "authorization: [redacted]");
+    assert.include(whole, "x-github-event: pull_request");
+
+    const named = renderWebhookPrompt(
+      "{{headers.authorization}} {{query.access_token}}",
+      request,
+    ).prompt;
+    assert.equal(named, "Bearer h-secret q-secret");
+  });
+
   it("does not resolve inherited object properties", () => {
     const rendered = renderWebhookPrompt(
       "{{body.constructor}}{{body.__proto__}}",

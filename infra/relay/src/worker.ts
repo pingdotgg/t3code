@@ -1,4 +1,5 @@
 import * as Alchemy from "alchemy";
+import * as Axiom from "alchemy/Axiom";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
@@ -11,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as Etag from "effect/http/Etag";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -74,6 +76,8 @@ import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts"
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as HookInbox from "./hooks/HookInbox.ts";
+import { HookInboxObject, HookInboxObjectLive } from "./hooks/HookInboxObject.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -190,6 +194,8 @@ export const ApiLive = Api.make(
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
     const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
+    // Keys are endpoint keys or hashes over them, which already differ per
+    // stage, so stages sharing an account cannot collide in these namespaces.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,
       simple: {
@@ -197,6 +203,14 @@ export const ApiLive = Api.make(
         period: HookForwarder.RELAY_HOOK_RATE_LIMIT.periodSeconds,
       },
     });
+    const hookEndpointRateLimit = yield* Cloudflare.RateLimit("HOOK_ENDPOINT_RATE_LIMIT", {
+      namespaceId: 1002,
+      simple: {
+        limit: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.limit,
+        period: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const hookInboxes = yield* HookInboxObject;
 
     //
     // 3. Runtime layers and app construction
@@ -227,6 +241,31 @@ export const ApiLive = Api.make(
         ingestToken: axiomIngestToken,
       }).pipe(Effect.map(makeRelayTraceLayer)),
     );
+
+    // Each managed endpoint's held webhook requests live in its own Durable Object.
+    const inboxCall =
+      <A>(operation: HookInbox.HookInboxError["operation"], endpointKey: string) =>
+      (effect: Effect.Effect<A, never, Alchemy.RuntimeContext>) =>
+        effect.pipe(
+          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          Effect.catchCause((cause) =>
+            Effect.fail(
+              new HookInbox.HookInboxError({
+                operation,
+                endpointKey,
+                cause: Cause.squash(cause),
+              }),
+            ),
+          ),
+        );
+    const hookInboxLayer = Layer.succeed(HookInbox.HookInbox, {
+      hold: ({ endpointKey, baseUrl, hook }) =>
+        hookInboxes.getByName(endpointKey).hold(hook, baseUrl).pipe(inboxCall("hold", endpointKey)),
+      wake: ({ endpointKey, baseUrl }) =>
+        hookInboxes.getByName(endpointKey).wake(baseUrl).pipe(inboxCall("wake", endpointKey)),
+      clear: ({ endpointKey }) =>
+        hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey)),
+    });
 
     const runtimeLayer = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
@@ -269,7 +308,7 @@ export const ApiLive = Api.make(
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
-      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer)),
+      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer, hookInboxLayer)),
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -291,17 +330,25 @@ export const ApiLive = Api.make(
     );
 
     // Fails open: a limiter outage must not drop webhooks the environment would accept.
-    const hookRateLimiterLayer = Layer.succeed(HookForwarder.HookRateLimiter, {
-      allow: (key) =>
-        hookRateLimit.limit({ key }).pipe(
+    const allowWith =
+      (limiter: typeof hookRateLimit) =>
+      (key: string): Effect.Effect<boolean> =>
+        limiter.limit({ key }).pipe(
           Effect.map((result) => result.success),
           Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
           Effect.catch((error) =>
             Effect.logWarning("Hook rate limiter unavailable", { error: error.message }).pipe(
+              // Visible on the forward span, so an outage that disables limits shows up.
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "relay.hook.rate_limiter_failed_open": true }),
+              ),
               Effect.as(true),
             ),
           ),
-        ),
+        );
+    const hookRateLimiterLayer = Layer.succeed(HookForwarder.HookRateLimiter, {
+      allowHook: allowWith(hookRateLimit),
+      allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
     const appLayer = Layer.merge(
@@ -426,6 +473,32 @@ export const ApiLive = Api.make(
         Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
+        Layer.provideMerge(HookInboxObjectLive),
+        // The worker runtime opens its own HTTP span around ours. For webhook
+        // paths it would record the raw URL, token included, and adopt the
+        // sender's traceparent, so only our redacted span covers those.
+        // Registered as telemetry: request-time context is assembled per
+        // event, and only these layers are built into it.
+        Layer.provideMerge(
+          Alchemy.Telemetry.layer(
+            Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) =>
+              HookForwarder.isRelayHookPath(request.url),
+            ),
+          ),
+        ),
+        // Exports spans from events the HTTP tracer does not wrap, notably
+        // HookInboxObject calls and alarms, to the same Axiom dataset.
+        Layer.provideMerge(
+          Layer.unwrap(
+            Effect.map(RelayObservability, (observability) =>
+              Axiom.Telemetry({
+                serviceName: "t3code-relay",
+                token: observability.workerIngestToken,
+                traces: observability.traces,
+              }),
+            ),
+          ),
+        ),
       ),
     ),
   ),

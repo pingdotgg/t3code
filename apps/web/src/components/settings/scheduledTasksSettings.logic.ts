@@ -9,6 +9,7 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
 
 import {
   resolveProjectSettings,
@@ -78,6 +79,8 @@ export interface DraftState {
   readonly signaturePrefix: string;
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
+  /** Minutes as typed; empty runs every held request regardless of age. */
+  readonly maxDeliveryAgeMinutes: string;
 }
 
 /** GitHub's signature settings, the most common sender. */
@@ -87,11 +90,11 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
-/** Prompt a new webhook task starts with: the whole request, which the user can narrow down. */
-export const DEFAULT_WEBHOOK_PROMPT = "Handle this webhook:\n{{request}}";
-
-export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule {
+/** Null when the draft's webhook age limit is invalid; the caller reports it and does not save. */
+export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
+    const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
+    if (maxDeliveryAgeMinutes === undefined) return null;
     const secret = draft.signatureSecret.trim();
     return {
       type: "webhook",
@@ -103,6 +106,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
             ...(secret ? { secret } : {}),
           }
         : null,
+      maxDeliveryAgeMinutes,
     };
   }
   if (draft.scheduleMode === "interval") {
@@ -159,6 +163,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         }
       : { signatureEnabled: false, ...WEBHOOK_SIGNATURE_DEFAULTS }),
     signatureSecret: "",
+    maxDeliveryAgeMinutes:
+      schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
+        ? String(schedule.maxDeliveryAgeMinutes)
+        : "",
   };
 }
 

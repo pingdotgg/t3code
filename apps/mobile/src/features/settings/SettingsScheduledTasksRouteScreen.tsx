@@ -4,7 +4,10 @@ import type {
   ScheduledTask,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
@@ -12,6 +15,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_WEBHOOK_PROMPT,
+  parseMaxDeliveryAge,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   useCallback,
   useEffect,
@@ -59,7 +66,6 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
-  DEFAULT_WEBHOOK_PROMPT,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -132,7 +138,7 @@ function FormField(props: {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
-  readonly keyboardType?: "decimal-pad";
+  readonly keyboardType?: "decimal-pad" | "number-pad";
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
@@ -612,6 +618,16 @@ function TaskForm({
         : draft.schedule,
     );
     if (
+      draft.schedule.mode === "webhook" &&
+      parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
+    ) {
+      Alert.alert(
+        "Invalid age limit",
+        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
@@ -823,7 +839,7 @@ function TaskForm({
             options={[
               { value: "fixed_time", label: "At a time" },
               { value: "interval", label: "Interval" },
-              { value: "webhook", label: "Webhook" },
+              { value: "webhook", label: "On webhook" },
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
@@ -910,13 +926,31 @@ function TaskForm({
             />
           </>
         ) : draft.schedule.mode === "webhook" ? (
-          <WebhookScheduleDetails
-            environmentId={environmentId}
-            task={
-              tasks.data?.tasks.find((task) => task.id === draft.task?.id) ?? draft.task ?? null
-            }
-            signatureConfigured={draft.schedule.signature !== null}
-          />
+          <>
+            <WebhookScheduleDetails
+              environmentId={environmentId}
+              // The live row, so a rotated URL shows up without reopening the form.
+              // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+              task={
+                tasks.data
+                  ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
+                  : draft.task
+              }
+              signatureConfigured={draft.schedule.signature !== null}
+              disabled={saving || environmentUnavailable}
+            />
+            <FormField
+              label="Skip requests older than (minutes)"
+              value={draft.schedule.maxDeliveryAgeMinutes}
+              placeholder="Run every request"
+              keyboardType="number-pad"
+              disabled={saving}
+              borderTop
+              onChange={(maxDeliveryAgeMinutes) =>
+                setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
+              }
+            />
+          </>
         ) : (
           <>
             <FormField
@@ -976,11 +1010,14 @@ function WebhookScheduleDetails({
   environmentId,
   task,
   signatureConfigured,
+  disabled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
   readonly signatureConfigured: boolean;
+  readonly disabled: boolean;
 }) {
+  const [rotating, setRotating] = useState(false);
   const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
     label: "scheduled task rotate webhook token",
     reportFailure: false,
@@ -1023,27 +1060,34 @@ function WebhookScheduleDetails({
           ) : null}
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: disabled || rotating }}
+            disabled={disabled || rotating}
             onPress={() =>
               Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
                 { text: "Cancel", style: "cancel" },
                 {
                   text: "Rotate",
                   style: "destructive",
-                  onPress: () =>
+                  onPress: () => {
+                    setRotating(true);
                     void rotate({ environmentId, input: { id: task.id } }).then((result) => {
+                      setRotating(false);
                       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                         Alert.alert(
                           "Could not rotate URL",
                           String(squashAtomCommandFailure(result)),
                         );
                       }
-                    }),
+                    });
+                  },
                 },
               ])
             }
-            className="min-h-11 justify-center active:opacity-70"
+            className="min-h-11 justify-center active:opacity-70 disabled:opacity-50"
           >
-            <Text className="text-base text-danger-foreground">Rotate URL</Text>
+            <Text className="text-base text-danger-foreground">
+              {rotating ? "Rotating…" : "Rotate URL"}
+            </Text>
           </Pressable>
         </>
       )}

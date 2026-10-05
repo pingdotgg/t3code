@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -126,13 +126,30 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
-    /** Active relay-managed links for an environment, across all users (webhook forwarding). */
+    /**
+     * Active relay-managed links for an environment, narrowed to one user or to
+     * links proven by one environment key. The environment id alone is public
+     * and any account can link it, so callers acting on it must narrow.
+     */
     readonly findActiveManagedForEnvironment: (input: {
       readonly environmentId: string;
+      readonly userId?: string;
+      readonly environmentPublicKey?: string;
     }) => Effect.Effect<
-      ReadonlyArray<RelayLinkedEnvironmentRecord & { readonly userId: string }>,
+      ReadonlyArray<
+        RelayLinkedEnvironmentRecord & {
+          readonly userId: string;
+          readonly holdWebhooksWhileOffline: boolean;
+        }
+      >,
       EnvironmentLinkEnvironmentLookupPersistenceError
     >;
+    /** Sets the webhook-hold opt-in on the active links proven by one environment key. */
+    readonly setHoldWebhooksWhileOffline: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly holdWebhooksWhileOffline: boolean;
+    }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -166,12 +183,24 @@ const make = Effect.gen(function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
       const { request, proof } = input;
       const environmentId = proof.environmentId;
+      // The webhook-hold opt-in belongs to the environment: a new or re-made
+      // link carries it over from the environment's other active links. Only
+      // links proven by the same key count; an environment id is public, so
+      // anyone can link one and switch the opt-in on for their own link.
+      const inheritedHoldWebhooks = sql<boolean>`EXISTS (
+        SELECT 1 FROM ${relayEnvironmentLinks} AS other
+        WHERE other.environment_id = ${environmentId}
+          AND other.environment_public_key = ${proof.environmentPublicKey}
+          AND other.revoked_at IS NULL
+          AND other.hold_webhooks_while_offline
+      )`;
       const { endpoint } = input;
       yield* db
         .insert(relayEnvironmentLinks)
         .values({
           userId: input.userId,
           environmentId,
+          holdWebhooksWhileOffline: inheritedHoldWebhooks,
           environmentLabel: proof.descriptor.label,
           environmentPublicKey: proof.environmentPublicKey,
           endpointHttpBaseUrl: endpoint.httpBaseUrl,
@@ -199,6 +228,7 @@ const make = Effect.gen(function* () {
             createdByDeviceId: request.deviceId ?? null,
             revokedAt: null,
             updatedAt: now,
+            holdWebhooksWhileOffline: inheritedHoldWebhooks,
           },
         })
         .pipe(
@@ -355,6 +385,7 @@ const make = Effect.gen(function* () {
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
           createdAt: relayEnvironmentLinks.createdAt,
+          holdWebhooksWhileOffline: relayEnvironmentLinks.holdWebhooksWhileOffline,
         })
         .from(relayEnvironmentLinks)
         .where(
@@ -363,10 +394,13 @@ const make = Effect.gen(function* () {
             isNull(relayEnvironmentLinks.revokedAt),
             eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
             eq(relayEnvironmentLinks.managedTunnelsEnabled, true),
+            input.userId === undefined ? undefined : eq(relayEnvironmentLinks.userId, input.userId),
+            input.environmentPublicKey === undefined
+              ? undefined
+              : eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
           ),
         )
-        // One row per user who linked this environment; every row is checked
-        // until one has a ready endpoint, so none may be cut off.
+        // At most one row per user who linked this environment.
         .pipe(
           Effect.map((rows) =>
             rows.map((row) => ({
@@ -382,8 +416,34 @@ const make = Effect.gen(function* () {
               },
               environmentPublicKey: row.environmentPublicKey,
               linkedAt: row.createdAt,
+              holdWebhooksWhileOffline: row.holdWebhooksWhileOffline,
             })),
           ),
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    setHoldWebhooksWhileOffline: Effect.fn(
+      "relay.environment_links.set_hold_webhooks_while_offline",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({ holdWebhooksWhileOffline: input.holdWebhooksWhileOffline })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentLinkEnvironmentLookupPersistenceError({

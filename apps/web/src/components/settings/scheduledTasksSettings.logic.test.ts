@@ -181,10 +181,15 @@ describe("webhook scheduled tasks", () => {
     const draft = taskToDraft(webhookTask);
     expect(draft.scheduleMode).toBe("webhook");
     expect(draft.signatureSecret).toBe("");
-    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook", signature });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "webhook",
+      signature,
+      maxDeliveryAgeMinutes: null,
+    });
     expect(scheduleFromDraft({ ...draft, signatureSecret: " new " })).toEqual({
       type: "webhook",
       signature: { ...signature, secret: "new" },
+      maxDeliveryAgeMinutes: null,
     });
   });
 
@@ -192,7 +197,28 @@ describe("webhook scheduled tasks", () => {
     const draft = taskToDraft({ ...webhookTask, schedule: { type: "webhook", signature: null } });
     expect(draft.signatureEnabled).toBe(false);
     expect(draft.signatureHeader).toBe("x-hub-signature-256");
-    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook", signature: null });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "webhook",
+      signature: null,
+      maxDeliveryAgeMinutes: null,
+    });
+  });
+
+  it("round-trips the max age, treats blank as no limit, and rejects an invalid limit", () => {
+    const draft = taskToDraft({
+      ...webhookTask,
+      schedule: { type: "webhook", signature: null, maxDeliveryAgeMinutes: 90 },
+    });
+    expect(draft.maxDeliveryAgeMinutes).toBe("90");
+    expect(scheduleFromDraft(draft)).toMatchObject({ maxDeliveryAgeMinutes: 90 });
+    for (const blank of ["", "  "]) {
+      expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: blank })).toMatchObject({
+        maxDeliveryAgeMinutes: null,
+      });
+    }
+    for (const invalid of ["0", "-5", "1.5", "abc", "1441"]) {
+      expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: invalid })).toBeNull();
+    }
   });
 });
 

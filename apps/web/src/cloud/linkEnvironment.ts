@@ -199,13 +199,15 @@ export function readPrimaryCloudLinkState(input: {
 export function updatePrimaryCloudPreferences(input: {
   readonly target: CloudLinkTarget;
   readonly publishAgentActivity: boolean;
+  readonly holdWebhooksWhileOffline?: boolean;
 }): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> {
   return Effect.gen(function* () {
     const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
+    const { target: _target, ...payload } = input;
     return yield* client.connect
       .preferences({
         headers: {},
-        payload: input,
+        payload,
       })
       .pipe(
         Effect.mapError(environmentApiError("Could not update environment cloud preferences.")),

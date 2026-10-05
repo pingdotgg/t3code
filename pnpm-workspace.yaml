@@ -35,6 +35,7 @@ catalog:
   "@effect/platform-node": 4.0.1
   "@effect/platform-node-shared": 4.0.1
   "@effect/sql-pg": 4.0.1
+  "@effect/sql-sqlite-do": 4.0.1
   "@effect/tsgo": 0.41.0
   "@effect/vitest": 4.0.1
   "@legendapp/list": 3.3.5
@@ -75,6 +76,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node-shared@4.0.1"
   - "@effect/platform-node@4.0.1"
   - "@effect/sql-pg@4.0.1"
+  - "@effect/sql-sqlite-do@4.0.1"
   - "@effect/vitest@4.0.1"
   - alchemy@2.0.0-beta.80
   - effect@4.0.1

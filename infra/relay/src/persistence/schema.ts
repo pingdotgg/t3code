@@ -74,6 +74,8 @@ export const relayEnvironmentLinks = pgTable(
     notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
     liveActivitiesEnabled: boolean("live_activities_enabled").notNull().default(true),
     managedTunnelsEnabled: boolean("managed_tunnels_enabled").notNull().default(false),
+    // Opt-in: hold webhook requests while the environment is offline.
+    holdWebhooksWhileOffline: boolean("hold_webhooks_while_offline").notNull().default(false),
     createdByDeviceId: varchar("created_by_device_id", { length: 191 }),
     revokedAt: varchar("revoked_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),

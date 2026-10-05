@@ -14,6 +14,10 @@
  *
  * Strings and numbers render as text, objects and arrays as JSON. A path with
  * no value renders empty and is reported in `missing`.
+ *
+ * Credential-looking headers and query parameters are redacted wherever the
+ * whole set renders (`{{request}}`, `{{headers}}`, `{{query}}`), as in the
+ * delivery log. Naming one (`{{headers.authorization}}`) gives its raw value.
  */
 
 export interface WebhookRequest {
@@ -29,6 +33,40 @@ export interface WebhookRequest {
 export interface RenderedWebhookPrompt {
   readonly prompt: string;
   readonly missing: ReadonlyArray<string>;
+}
+
+/** Header and query parameter names that commonly carry credentials. */
+const CREDENTIAL_NAME =
+  /^(authorization|proxy-authorization|cookie|set-cookie)$|token|secret|signature|key|password|auth/i;
+const REDACTED = "[redacted]";
+
+export function redactHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [
+      name,
+      CREDENTIAL_NAME.test(name) ? REDACTED : value,
+    ]),
+  );
+}
+
+/** Redacts credential-named values in a raw query string, keeping the rest as sent. */
+export function redactQuery(query: string): string {
+  if (query === "") return query;
+  return query
+    .split("&")
+    .map((part) => {
+      const separator = part.indexOf("=");
+      if (separator === -1) return part;
+      const name = part.slice(0, separator);
+      let decoded = name;
+      try {
+        decoded = decodeURIComponent(name.replaceAll("+", " "));
+      } catch {
+        // A malformed escape is matched as sent.
+      }
+      return CREDENTIAL_NAME.test(decoded) ? `${name}=${REDACTED}` : part;
+    })
+    .join("&");
 }
 
 const PLACEHOLDER = /\{\{\s*([^{}]*?)\s*\}\}/g;
@@ -64,9 +102,12 @@ function stringify(value: unknown): string {
 }
 
 function formatWebhookRequest(request: WebhookRequest): string {
-  const headerLines = Object.entries(request.headers).map(([name, value]) => `${name}: ${value}`);
+  const headerLines = Object.entries(redactHeaders(request.headers)).map(
+    ([name, value]) => `${name}: ${value}`,
+  );
+  const query = redactQuery(request.query);
   return [
-    `${request.method} ${request.path}${request.query ? `?${request.query}` : ""}`,
+    `${request.method} ${request.path}${query ? `?${query}` : ""}`,
     ...headerLines,
     "",
     request.bodyText,
@@ -90,12 +131,13 @@ export function renderWebhookPrompt(
         return segments.length === 0 ? request.bodyText : lookup(parsedBody(), segments);
       case "headers":
         return segments.length === 0
-          ? request.headers
+          ? redactHeaders(request.headers)
           : request.headers[segments.join(".").toLowerCase()];
       case "query": {
-        const params = new URLSearchParams(request.query);
-        if (segments.length === 0) return Object.fromEntries(params);
-        return params.get(segments.join(".")) ?? undefined;
+        if (segments.length === 0) {
+          return Object.fromEntries(new URLSearchParams(redactQuery(request.query)));
+        }
+        return new URLSearchParams(request.query).get(segments.join(".")) ?? undefined;
       }
       default:
         return undefined;

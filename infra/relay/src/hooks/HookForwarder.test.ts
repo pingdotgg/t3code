@@ -1,9 +1,13 @@
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
+import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import { RelayApi } from "@t3tools/contracts/relay";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -18,6 +22,7 @@ import * as Etag from "effect/http/Etag";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -31,6 +36,15 @@ import {
   traceRelayHttpRequestWith,
 } from "../http/Api.ts";
 import * as HookForwarder from "./HookForwarder.ts";
+import { RELAY_HOOK_DELIVERY_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
+import * as HookInbox from "./HookInbox.ts";
+import type { HeldHook } from "./HookInboxStore.ts";
+import { RELAY_HOOK_UPSTREAM_TIMEOUT_MS } from "./upstream.ts";
+
+const mintKeys = NodeCrypto.generateKeyPairSync("ed25519", {
+  privateKeyEncoding: { format: "pem", type: "pkcs8" },
+  publicKeyEncoding: { format: "pem", type: "spki" },
+});
 
 const settings: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.test",
@@ -39,19 +53,20 @@ const settings: RelayConfiguration.RelayConfiguration["Service"] = {
   clerkPublishableKey: "pk_test_test",
   clerkJwtAudience: "t3-code-relay",
   apnsDeliveryJobSigningSecret: Redacted.make("apns-delivery-secret"),
-  cloudMintPrivateKey: Redacted.make("cloud-mint-private-key"),
-  cloudMintPublicKey: "cloud-mint-public-key",
+  cloudMintPrivateKey: Redacted.make(mintKeys.privateKey),
+  cloudMintPublicKey: mintKeys.publicKey,
   managedEndpointBaseDomain: "example.test",
-  managedEndpointNamespace: undefined,
+  managedEndpointNamespace: "dev",
 };
 
 const environmentId = "env-hook";
+const endpointKey = "0123456789abcdef";
 const readyAllocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
   userId: "user_1",
   environmentId,
   hostname: "env.example.test",
   tunnelId: "tunnel-id",
-  tunnelName: "tunnel-name",
+  tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
   dnsRecordId: "dns-record-id",
   readyAt: "2026-05-25T00:00:00.000Z",
   origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
@@ -70,6 +85,7 @@ const managedLink = {
   },
   environmentPublicKey: "public-key",
   linkedAt: "2026-05-25T00:00:00.000Z",
+  holdWebhooksWhileOffline: false,
 };
 
 interface Harness {
@@ -79,11 +95,15 @@ interface Harness {
   readonly links?: ReadonlyArray<typeof managedLink>;
   readonly allocation?: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
   readonly allow?: (key: string) => boolean;
+  readonly allowEndpoint?: (endpointKey: string) => boolean;
+  /** Inbox capacity; hold reports full once this many requests are held. */
+  readonly inboxCapacity?: number;
 }
 
 function makeHarness(options: Harness = {}) {
   const sent: Array<HttpClientRequest.HttpClientRequest> = [];
   const rateLimitKeys: Array<string> = [];
+  const held: Array<HeldHook & { readonly baseUrl: string }> = [];
   const execute =
     options.execute ??
     ((request: HttpClientRequest.HttpClientRequest) =>
@@ -100,12 +120,19 @@ function makeHarness(options: Harness = {}) {
         Layer.mock(EnvironmentLinks.EnvironmentLinks, {
           findActiveManagedForEnvironment: (input) =>
             Effect.succeed(
-              input.environmentId === environmentId ? (options.links ?? [managedLink]) : [],
+              (options.links ?? [managedLink]).filter(
+                (link) =>
+                  link.environmentId === input.environmentId &&
+                  (input.userId === undefined || link.userId === input.userId),
+              ),
             ),
         }),
         Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
-          get: () =>
-            Effect.succeed(options.allocation === undefined ? readyAllocation : options.allocation),
+          getByTunnelName: (tunnelName) => {
+            const allocation =
+              options.allocation === undefined ? readyAllocation : options.allocation;
+            return Effect.succeed(allocation?.tunnelName === tunnelName ? allocation : null);
+          },
         }),
         Layer.succeed(
           HttpClient.HttpClient,
@@ -114,12 +141,23 @@ function makeHarness(options: Harness = {}) {
             return execute(request);
           }),
         ),
+        Layer.mock(HookInbox.HookInbox, {
+          hold: ({ hook, baseUrl }) =>
+            Effect.sync(() => {
+              if (held.length >= (options.inboxCapacity ?? Infinity)) return false;
+              held.push({ ...hook, baseUrl });
+              return true;
+            }),
+        }),
+        EffectNodeCrypto.layer,
         Layer.succeed(HookForwarder.HookRateLimiter, {
-          allow: (key) =>
+          allowHook: (key) =>
             Effect.sync(() => {
               rateLimitKeys.push(key);
               return options.allow ? options.allow(key) : true;
             }),
+          allowEndpoint: (key) =>
+            Effect.sync(() => (options.allowEndpoint ? options.allowEndpoint(key) : true)),
         }),
       ),
     ),
@@ -144,11 +182,11 @@ function makeHarness(options: Harness = {}) {
         ),
       );
     });
-  return { sent, rateLimitKeys, send, httpEffect };
+  return { sent, rateLimitKeys, held, send, httpEffect };
 }
 
 const hookUrl = (path = "hook-1/secret-token", query = "") =>
-  `https://relay.test/v1/hooks/${environmentId}/${path}${query}`;
+  `https://relay.test/v1/hooks/${endpointKey}/${path}${query}`;
 
 const readBody = (response: HttpServerResponse.HttpServerResponse) =>
   Effect.promise(() => HttpServerResponse.toWeb(response).arrayBuffer()).pipe(
@@ -210,6 +248,36 @@ describe("HookForwarder", () => {
     }),
   );
 
+  it.effect("signs each forward for the environment, replacing any copy a sender sent", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* harness.send(
+        new Request(hookUrl("hook-1/tok"), {
+          method: "POST",
+          headers: { "x-t3-relay-delivery": "forged", "x-t3-relay-delivery-id": "forged" },
+          body: "{}",
+        }),
+      );
+      const sent = harness.sent[0]!;
+      const payload = yield* verifyRelayJwt({
+        publicKey: mintKeys.publicKey,
+        token: sent.headers["x-t3-relay-delivery"]!,
+        typ: RELAY_HOOK_DELIVERY_TYP,
+        issuer: settings.relayIssuer,
+        audience: `t3-env:${environmentId}`,
+        nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
+      });
+      // The proof names exactly the delivery the environment receives.
+      expect(payload).toMatchObject({
+        environmentId,
+        hookId: "hook-1",
+        deliveryId: sent.headers["x-t3-relay-delivery-id"],
+        receivedAt: sent.headers["x-t3-relay-received-at"],
+      });
+      expect(sent.headers["x-t3-relay-delivery-id"]).not.toBe("forged");
+    }),
+  );
+
   it.effect("passes upstream status, body and content-type through", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
@@ -229,8 +297,21 @@ describe("HookForwarder", () => {
       expect(response.headers["content-type"]).toBe("application/json");
       expect(response.headers["set-cookie"]).toBeUndefined();
       expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+      // Served from the relay's origin, so it may never render or run there.
+      expect(response.headers["x-content-type-options"]).toBe("nosniff");
+      expect(response.headers["content-security-policy"]).toBe("sandbox; default-src 'none'");
       expect(new TextDecoder().decode(yield* readBody(response))).toBe('{"error":"bad_signature"}');
       expect(harness.sent[0]?.method).toBe("GET");
+    }),
+  );
+
+  it.effect("never forwards or holds HEAD, which can carry no body", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ execute: () => Effect.die("must not be sent") });
+      const response = yield* harness.send(new Request(hookUrl(), { method: "HEAD" }));
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(harness.held).toHaveLength(0);
     }),
   );
 
@@ -284,19 +365,58 @@ describe("HookForwarder", () => {
     }),
   );
 
-  it.effect("returns 404 for unknown environments and unready endpoints", () =>
+  it.effect("returns 404 for unknown endpoints and unready endpoints", () =>
     Effect.gen(function* () {
       const unknown = makeHarness();
-      const response = yield* unknown.send(
-        new Request("https://relay.test/v1/hooks/other-env/hook-1/token", { method: "POST" }),
-      );
-      expect(response.status).toBe(404);
-      expect(yield* readJson(response)).toEqual({ error: "hook_not_found" });
+      for (const key of ["fedcba9876543210", environmentId]) {
+        const response = yield* unknown.send(
+          new Request(`https://relay.test/v1/hooks/${key}/hook-1/token`, { method: "POST" }),
+        );
+        expect(response.status).toBe(404);
+        expect(yield* readJson(response)).toEqual({ error: "hook_not_found" });
+      }
+      expect(unknown.sent).toHaveLength(0);
 
       const unready = makeHarness({ allocation: { ...readyAllocation, readyAt: null } });
       const unreadyResponse = yield* unready.send(new Request(hookUrl(), { method: "POST" }));
       expect(unreadyResponse.status).toBe(404);
       expect(unready.sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect("forwards only to the link that owns the endpoint key", () =>
+    Effect.gen(function* () {
+      // Another account linked the same environment id under its own key; its
+      // link must not receive this endpoint's hooks, whatever order rows come in.
+      const intruder = {
+        ...managedLink,
+        userId: "user_attacker",
+        environmentPublicKey: "attacker-key",
+        endpoint: { ...managedLink.endpoint, httpBaseUrl: "https://attacker.example.test/" },
+      };
+      const harness = makeHarness({ links: [intruder, managedLink] });
+      const response = yield* harness.send(new Request(hookUrl(), { method: "POST", body: "{}" }));
+      expect(response.status).toBe(200);
+      expect(harness.sent.map((request) => new URL(request.url).host)).toEqual([
+        "env.example.test",
+      ]);
+
+      // Without the owner's link, the key resolves to nothing at all.
+      const orphaned = makeHarness({ links: [intruder] });
+      const orphanedResponse = yield* orphaned.send(
+        new Request(hookUrl(), { method: "POST", body: "{}" }),
+      );
+      expect(orphanedResponse.status).toBe(404);
+      expect(orphaned.sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect("returns 429 when the endpoint's overall budget is spent", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ allowEndpoint: () => false });
+      const response = yield* harness.send(new Request(hookUrl(), { method: "POST" }));
+      expect(response.status).toBe(429);
+      expect(harness.sent).toHaveLength(0);
     }),
   );
 
@@ -353,10 +473,29 @@ describe("HookForwarder", () => {
         .send(new Request(hookUrl(), { method: "POST", body: "{}" }))
         .pipe(Effect.forkChild);
       yield* Deferred.await(reachedUpstream);
-      yield* TestClock.adjust(Duration.millis(HookForwarder.RELAY_HOOK_UPSTREAM_TIMEOUT_MS));
+      yield* TestClock.adjust(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS));
       const response = yield* Fiber.join(fiber);
       expect(response.status).toBe(504);
       expect(yield* readJson(response)).toEqual({ error: "environment_timeout" });
+    }),
+  );
+
+  it.effect("holds a timed-out request with the time it arrived", () =>
+    Effect.gen(function* () {
+      const reachedUpstream = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
+        execute: () =>
+          Deferred.succeed(reachedUpstream, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      const arrivedAt = DateTime.formatIso(yield* DateTime.now);
+      const fiber = yield* harness
+        .send(new Request(hookUrl(), { method: "POST", body: "{}" }))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(reachedUpstream);
+      yield* TestClock.adjust(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS));
+      expect((yield* Fiber.join(fiber)).status).toBe(202);
+      expect(harness.held[0]?.receivedAt).toBe(arrivedAt);
     }),
   );
 
@@ -454,9 +593,215 @@ describe("HookForwarder", () => {
       expect(serialized).not.toContain("also-secret");
       expect(serialized).not.toContain("header-secret");
       const server = spans.find((span) => span.kind === "server");
-      expect(server?.attributes.get("url.path")).toBe(
-        `/v1/hooks/${environmentId}/hook-1/<redacted>`,
-      );
+      expect(server?.attributes.get("url.path")).toBe(`/v1/hooks/${endpointKey}/hook-1/<redacted>`);
     }),
   );
+
+  it.effect("records one redacted server span even inside the worker's own HTTP tracer", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const harness = makeHarness();
+      const handler = yield* harness.httpEffect;
+      // As the worker runtime runs it: its own tracer around ours, off for hook
+      // paths. This checks the predicate; whether alchemy applies it per event
+      // is only visible on a deployed worker (see worker.ts).
+      yield* HttpMiddleware.tracer(
+        traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)),
+      ).pipe(
+        Effect.provideService(HttpMiddleware.TracerDisabledWhen, (request) =>
+          HookForwarder.isRelayHookPath(request.url),
+        ),
+        Effect.withTracer(tracer),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request(hookUrl("hook-1/super-secret-token"), {
+              method: "POST",
+              headers: { traceparent: "00-11111111111111111111111111111111-2222222222222222-01" },
+              body: "{}",
+            }),
+          ),
+        ),
+      );
+      yield* Effect.yieldNow;
+      const servers = spans.filter((span) => span.kind === "server");
+      expect(servers).toHaveLength(1);
+      expect(servers[0]?.attributes.get("url.path")).toBe(
+        `/v1/hooks/${endpointKey}/hook-1/<redacted>`,
+      );
+      expect(spans.every((span) => span.traceId !== "11111111111111111111111111111111")).toBe(true);
+    }),
+  );
+
+  it.effect("joins the environment to its trace and records what the environment did", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const respondWith = (outcome: string) =>
+        makeHarness({
+          execute: (request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response('{"deliveryId":"d"}', {
+                  status: 202,
+                  headers: { "x-t3-hook-outcome": outcome },
+                }),
+              ),
+            ),
+        });
+      const forward = (harness: ReturnType<typeof makeHarness>) =>
+        Effect.gen(function* () {
+          const handler = yield* harness.httpEffect;
+          return yield* traceRelayHttpRequestWith(
+            handler,
+            Layer.succeed(Tracer.Tracer, tracer),
+          ).pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(
+                new Request(hookUrl(), {
+                  method: "POST",
+                  // A sender's own trace context never reaches the environment.
+                  headers: {
+                    traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+                    "x-b3-traceid": "33333333333333333333333333333333",
+                  },
+                  body: "{}",
+                }),
+              ),
+            ),
+          );
+        });
+
+      const duplicate = respondWith("duplicate");
+      expect((yield* forward(duplicate)).status).toBe(202);
+      yield* Effect.yieldNow;
+      const forwardSpan = spans.find((span) => span.name === "relay.hooks.forward");
+      expect(forwardSpan?.attributes.get("relay.hook.upstream_outcome")).toBe("duplicate");
+      const sent = duplicate.sent[0]!;
+      expect(sent.headers.traceparent).toContain(forwardSpan!.traceId);
+      expect(sent.headers.traceparent).not.toContain("1111111111");
+      expect(sent.headers["x-b3-traceid"]).toBeUndefined();
+
+      // Only a plain outcome name is recorded.
+      spans.length = 0;
+      yield* forward(respondWith("<script>alert(1)</script>"));
+      yield* Effect.yieldNow;
+      expect(
+        spans
+          .find((span) => span.name === "relay.hooks.forward")
+          ?.attributes.has("relay.hook.upstream_outcome"),
+      ).toBe(false);
+    }),
+  );
+
+  describe("holding requests while the environment is offline", () => {
+    const offline = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause: new Error("offline") }),
+        }),
+      );
+
+    it.effect("holds when cloudflared answers that the local server is down", () =>
+      Effect.gen(function* () {
+        for (const status of [502, 503, 504, 530]) {
+          const harness = makeHarness({
+            links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
+            execute: (request) =>
+              Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status }))),
+          });
+          const response = yield* harness.send(
+            new Request(hookUrl(), { method: "POST", body: "{}" }),
+          );
+          expect(response.status).toBe(202);
+          expect(harness.held).toHaveLength(1);
+        }
+      }),
+    );
+
+    it.effect("stays a plain proxy when the environment has not opted in", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({ execute: offline });
+        const response = yield* harness.send(
+          new Request(hookUrl(), { method: "POST", body: "{}" }),
+        );
+        expect(response.status).toBe(503);
+        expect(harness.held).toHaveLength(0);
+      }),
+    );
+
+    it.effect("holds the exact request and answers 202 once opted in", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          execute: offline,
+          links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
+        });
+        const body = new Uint8Array([0, 255, 10]);
+        const response = yield* harness.send(
+          new Request(hookUrl("%68ook-1/tok%2Fen", "?a=1"), {
+            method: "POST",
+            body,
+            headers: { "x-t3-relay-delivery-id": "forged", "x-sig": "s" },
+          }),
+        );
+        expect(response.status).toBe(202);
+        const [hook] = harness.held;
+        expect(hook?.baseUrl).toBe("https://env.example.test/");
+        expect(hook?.rawToken).toBe("tok%2Fen");
+        expect(hook?.query).toBe("a=1");
+        expect([...(hook?.body ?? [])]).toEqual([0, 255, 10]);
+        expect(hook?.headers["x-sig"]).toBe("s");
+        // Every spelling of the hook id shares one per-hook cap.
+        expect(hook?.hookKey).toBe("hook-1");
+        // The sender cannot choose the delivery id.
+        expect(hook?.headers["x-t3-relay-delivery-id"]).toBeUndefined();
+        expect(hook?.id).not.toBe("forged");
+      }),
+    );
+
+    it.effect("answers 503 inbox_full when the environment's inbox is full", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          execute: offline,
+          links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
+          inboxCapacity: 0,
+        });
+        const response = yield* harness.send(
+          new Request(hookUrl(), { method: "POST", body: "{}" }),
+        );
+        expect(response.status).toBe(503);
+        expect(yield* readJson(response)).toEqual({ error: "inbox_full" });
+      }),
+    );
+
+    it.effect("tags every forward with a relay delivery id", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness();
+        yield* harness.send(
+          new Request(hookUrl(), {
+            method: "POST",
+            body: "{}",
+            headers: { "x-t3-relay-delivery-id": "forged" },
+          }),
+        );
+        const id = harness.sent[0]?.headers["x-t3-relay-delivery-id"];
+        expect(id).toMatch(/^[0-9a-f-]{36}$/);
+      }),
+    );
+  });
 });

@@ -122,6 +122,45 @@ describe("EnvironmentLinks", () => {
     );
   });
 
+  it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    const fakeDb = {
+      insert: () => ({
+        values: (values: Record<string, unknown>) => {
+          inserted.push(values);
+          return { onConflictDoUpdate: () => Effect.void };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      yield* links.upsert({
+        userId: "user-1",
+        request: {
+          notificationsEnabled: false,
+          liveActivitiesEnabled: false,
+          managedTunnelsEnabled: true,
+        } as never,
+        proof: {
+          environmentId: "env-1",
+          environmentPublicKey: "public-key-1",
+          descriptor: { label: "Laptop" },
+        } as never,
+        endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
+      });
+      const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
+      // An environment id is public: another account linking it with its own
+      // key must not switch the opt-in on for this one.
+      expect(query.sql).toContain("environment_public_key");
+      expect(query.params).toEqual(["env-1", "public-key-1"]);
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("revokes only the active link owned by the requesting user", () => {
     const updateValues: Array<Record<string, unknown>> = [];
     const whereConditions: Array<unknown> = [];
