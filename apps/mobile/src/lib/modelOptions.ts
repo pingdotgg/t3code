@@ -9,6 +9,11 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 
 export type ModelOption = {
   readonly key: string;
@@ -19,6 +24,8 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  /** Set when the instance needs the account badge, by the rule the thread rows use. */
+  readonly providerBadge?: { readonly displayName: string; readonly accentColor?: string };
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
@@ -161,6 +168,9 @@ export function buildModelOptions(
   providerInstanceId?: ModelSelection["instanceId"],
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
+  const badgeEntries = (config?.providers ?? []).map((provider) => ({
+    driverKind: provider.driver,
+  }));
 
   for (const provider of config?.providers ?? []) {
     if (
@@ -174,6 +184,16 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const accentColor = normalizeProviderAccentColor(provider.accentColor);
+    const providerBadge = shouldShowInstanceBadge(
+      { driverKind: provider.driver, accentColor },
+      badgeEntries,
+    )
+      ? {
+          displayName: resolveProviderInstanceDisplayName(provider),
+          ...(accentColor ? { accentColor } : {}),
+        }
+      : undefined;
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -187,6 +207,7 @@ export function buildModelOptions(
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
+        ...(providerBadge ? { providerBadge } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,

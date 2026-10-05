@@ -63,7 +63,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ModelOptionProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -659,6 +659,7 @@ export function NewTaskDraftScreen(props: {
 
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
+  const composerSurfaceColor = theme["--color-composer-surface"];
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
 
@@ -1767,10 +1768,10 @@ export function NewTaskDraftScreen(props: {
                         disabled={isComposerInteractionLocked}
                         emphasized
                         renderIcon={(size) => (
-                          <ProviderIcon
-                            iconUrl={flow.selectedModelOption?.providerIconUrl}
-                            provider={flow.selectedModelOption?.providerDriver}
+                          <ModelOptionProviderIcon
+                            option={flow.selectedModelOption}
                             size={size}
+                            surfaceColor={composerSurfaceColor}
                           />
                         )}
                         label={flow.selectedModelOption?.label ?? "Choose model"}

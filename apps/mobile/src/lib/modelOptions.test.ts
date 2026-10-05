@@ -54,6 +54,35 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("badges the account when two instances share a provider or one has an accent", () => {
+    const claude = (instanceId: string, extra: Record<string, unknown> = {}) => ({
+      instanceId,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      ],
+      ...extra,
+    });
+    const badges = (providers: ReadonlyArray<unknown>) =>
+      buildModelOptions({ providers } as unknown as ServerConfig, null).map(
+        (option) => option.providerBadge,
+      );
+
+    expect(badges([claude("claudeAgent")])).toEqual([undefined]);
+    expect(
+      badges([claude("claudeAgent", { displayName: "Work", accentColor: "#eae10c" })]),
+    ).toEqual([{ displayName: "Work", accentColor: "#eae10c" }]);
+    expect(
+      badges([
+        claude("claudeAgent", { displayName: "Personal" }),
+        claude("claude_work", { displayName: "Work" }),
+      ]),
+    ).toEqual([{ displayName: "Personal" }, { displayName: "Work" }]);
+  });
+
   it("carries configured ACP identity into model and provider catalogs", () => {
     const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
     const config = {
