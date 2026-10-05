@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import {
   forkSession,
   query,
@@ -1580,7 +1581,7 @@ async function recordClaudeStreamingQuery(input: {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
-        uuid: ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`),
+        uuid: NodeCrypto.randomUUID(),
       });
       input.entries.push({
         type: "expect_outbound",
