@@ -2818,6 +2818,7 @@ function OpenCommandPaletteDialog(props: {
     parentDirectory: cloneParentDirectory,
     baseDirectory: browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory,
     homeDirectory: cloneHomeDirectoryQuery.data?.parentPath,
+    currentProjectCwd: currentProjectCwdForBrowse,
   });
 
   /** Persist only the browsed environment's preference, leaving this clone's destination intact. */

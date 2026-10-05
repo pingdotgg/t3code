@@ -358,21 +358,24 @@ export function resolveCloneParentDirectory(input: {
   return getBrowseParentPath(resolved.path);
 }
 
-/** Compare a clone parent with the default, expanding tilde paths using the selected server's home. */
+/** Compare a clone parent with the default using the selected environment's home and browse cwd. */
 export function isDefaultCloneParentDirectory(input: {
   readonly parentDirectory: string | null;
   readonly baseDirectory: string | null | undefined;
   readonly homeDirectory: string | null | undefined;
+  readonly currentProjectCwd?: string | null;
 }): boolean {
   if (input.parentDirectory === null) return false;
-  /** Expand aliases using the server's home before comparing separators, case, and trailing slashes. */
+  /** Expand home and project-relative paths before comparing separators, case, and trailing slashes. */
   function normalize(value: string): string {
     const path = value.trim();
     const expanded =
       input.homeDirectory && (path === "~" || path.startsWith("~/") || path.startsWith("~\\"))
         ? resolveProjectPathForDispatch(`./${path.slice(2)}`, input.homeDirectory)
         : path;
-    return normalizeProjectPathForComparison(expanded);
+    return normalizeProjectPathForComparison(
+      resolveProjectPathForDispatch(expanded, input.currentProjectCwd),
+    );
   }
   return (
     normalize(input.parentDirectory) === normalize(getAddProjectInitialQuery(input.baseDirectory))

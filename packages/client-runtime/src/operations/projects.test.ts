@@ -272,6 +272,56 @@ describe("add project shared logic", () => {
     ).toBe(true);
   });
 
+  it("resolves relative defaults and clone parents against the same browse cwd", () => {
+    for (const input of [
+      {
+        parentDirectory: "/work/Code/",
+        baseDirectory: "../Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "/work/current/Code/",
+        baseDirectory: "./Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "../Code/",
+        baseDirectory: "/work/Code",
+        currentProjectCwd: "/work/current",
+      },
+      {
+        parentDirectory: "c:\\users\\remote\\code\\",
+        baseDirectory: "..\\Code",
+        currentProjectCwd: "C:\\Users\\Remote\\current",
+      },
+      {
+        parentDirectory: "\\\\host\\share\\code\\",
+        baseDirectory: "../Code",
+        currentProjectCwd: "\\\\HOST\\Share\\current",
+      },
+    ]) {
+      expect(isDefaultCloneParentDirectory({ ...input, homeDirectory: null })).toBe(true);
+    }
+    expect(
+      isDefaultCloneParentDirectory({
+        parentDirectory: "/work/Code-other/",
+        baseDirectory: "../Code",
+        currentProjectCwd: "/work/current",
+        homeDirectory: "/home/remote",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not guess a project cwd when comparing relative defaults", () => {
+    const input = {
+      parentDirectory: "/work/Code/",
+      baseDirectory: "../Code",
+      homeDirectory: "/home/remote",
+    };
+    expect(isDefaultCloneParentDirectory(input)).toBe(false);
+    expect(isDefaultCloneParentDirectory({ ...input, currentProjectCwd: null })).toBe(false);
+  });
+
   it("keeps different folders distinct and falls back while the server home is unavailable", () => {
     expect(
       isDefaultCloneParentDirectory({
