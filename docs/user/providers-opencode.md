@@ -20,7 +20,7 @@ OpenCode 2 converts the shared OpenCode database to its own format the first tim
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
 started on 1.x continue on 2.x.
 
-Plan mode uses OpenCode's `plan` agent.
+Plan mode uses OpenCode's `plan` agent. T3 Code asks it to present the final plan in a plan block, so you get the plan card and can implement it from there.
 
 ## Local or external server
 

@@ -19,6 +19,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
@@ -65,6 +66,10 @@ import {
   summarizeNativeProtocolPayload,
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import {
+  PROPOSED_PLAN_BLOCK_INSTRUCTIONS,
+  splitProposedPlanBlock,
+} from "../../provider/ProposedPlanBlock.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
@@ -152,7 +157,7 @@ const OpenCodeProviderCapabilitiesV2 = {
     streamsAssistantText: true,
     streamsReasoning: true,
     streamsToolOutput: true,
-    streamsPlanText: false,
+    streamsPlanText: true,
     emitsMessageCompleted: true,
   },
   tools: {
@@ -175,7 +180,7 @@ const OpenCodeProviderCapabilitiesV2 = {
   planning: {
     emitsPlanUpdated: true,
     emitsTodoList: true,
-    emitsProposedPlan: false,
+    emitsProposedPlan: true,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
   },
@@ -295,6 +300,7 @@ interface ActiveOpenCodeTurn {
   interrupted: boolean;
   finalized: boolean;
   planId: PlanId | null;
+  readonly proposedPlanIdsByPart: Map<string, PlanId>;
   admissionGeneration: number;
   admissionReconciliationGeneration: number | null;
   admissionPending: boolean;
@@ -393,6 +399,7 @@ interface OpenCodeThreadState {
   parentSubagent: OpenCodeSubagentContext | null;
   nextChildTurnOrdinal: number;
   nextAdmissionGeneration: number;
+  latestProposedPlan: OrchestrationV2PlanArtifact | null;
 }
 
 interface OpenCodeRequestOwner {
@@ -1196,6 +1203,104 @@ export function makeOpenCodeAdapterV2(
           });
         };
 
+        const emitProposedPlan = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          input: {
+            readonly part: { readonly id: string };
+            readonly markdown: string;
+            readonly completed: boolean;
+            readonly startedAt: DateTime.Utc;
+            readonly emittedAt: DateTime.Utc;
+          },
+        ) {
+          const nativeItemId = `${input.part.id}:proposed_plan`;
+          let planId = turn.proposedPlanIdsByPart.get(nativeItemId);
+          if (planId === undefined) {
+            planId = yield* idAllocator.allocate.plan({
+              threadId: turn.threadId,
+              ...(turn.runId === null ? {} : { runId: turn.runId }),
+              driver: OPENCODE_PROVIDER,
+            });
+            turn.proposedPlanIdsByPart.set(nativeItemId, planId);
+          }
+          const nodeId = idAllocator.derive.nodeFromProviderItem({
+            driver: OPENCODE_PROVIDER,
+            nativeItemId,
+          });
+          const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+            driver: OPENCODE_PROVIDER,
+            nativeItemId,
+          });
+          const status = input.completed ? "completed" : "running";
+          const completedAt = input.completed ? input.emittedAt : null;
+          const nativeItemRef = providerRef(nativeItemId, "weak");
+          const plan: OrchestrationV2PlanArtifact = {
+            id: planId,
+            threadId: turn.threadId,
+            runId: turn.runId,
+            nodeId,
+            kind: "proposed_plan",
+            status: "active",
+            markdown: input.markdown,
+          };
+          const previous = state.latestProposedPlan;
+          if (previous !== null && previous.id !== plan.id && previous.status !== "completed") {
+            yield* emitProviderEvent({
+              type: "plan.updated",
+              driver: OPENCODE_PROVIDER,
+              plan: { ...previous, status: "superseded" },
+            });
+          }
+          state.latestProposedPlan = plan;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: OPENCODE_PROVIDER,
+            node: {
+              id: nodeId,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              parentNodeId: turn.rootNodeId,
+              rootNodeId: turn.rootNodeId,
+              kind: "plan",
+              status,
+              countsForRun: false,
+              providerThreadId: state.providerThread.id,
+              providerTurnId: turn.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: input.startedAt,
+              completedAt,
+            },
+          });
+          yield* emitProviderEvent({ type: "plan.updated", driver: OPENCODE_PROVIDER, plan });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: OPENCODE_PROVIDER,
+            turnItem: {
+              id: turnItemId,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              nodeId,
+              providerThreadId: state.providerThread.id,
+              providerTurnId: turn.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal: itemOrdinal(turn, nativeItemId),
+              status,
+              title: null,
+              startedAt: input.startedAt,
+              completedAt,
+              updatedAt: input.emittedAt,
+              type: "proposed_plan",
+              planId,
+              markdown: input.markdown,
+              streaming: !input.completed,
+            },
+          });
+        });
+
         const emitTextPart = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -1204,6 +1309,7 @@ export function makeOpenCodeAdapterV2(
         ) {
           if (part.type === "text" && (part.ignored === true || part.synthetic === true)) return;
           if (part.text.length === 0) return;
+          const split = part.type === "text" ? splitProposedPlanBlock(part.text) : null;
           const emittedAt = yield* DateTime.now;
           const isCompleted = forceCompleted || part.time?.end !== undefined;
           const startedAt = dateTimeFromEpoch(part.time?.start, emittedAt);
@@ -1217,6 +1323,16 @@ export function makeOpenCodeAdapterV2(
             driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
+          if (split !== null && split.plan !== null) {
+            yield* emitProposedPlan(state, turn, {
+              part,
+              markdown: split.plan,
+              completed: split.planComplete || isCompleted,
+              startedAt,
+              emittedAt,
+            });
+          }
+          if (split !== null && split.prose.length === 0) return;
           const ordinal = itemOrdinal(turn, part.id);
           yield* emitProviderEvent({
             type: "node.updated",
@@ -1252,7 +1368,7 @@ export function makeOpenCodeAdapterV2(
               runId: turn.runId,
               nodeId,
               role: "assistant",
-              text: part.text,
+              text: split?.prose ?? part.text,
               attachments: [],
               streaming: !isCompleted,
               createdAt: startedAt,
@@ -1284,7 +1400,7 @@ export function makeOpenCodeAdapterV2(
                 updatedAt: emittedAt,
                 type: "assistant_message",
                 messageId,
-                text: part.text,
+                text: split?.prose ?? part.text,
                 streaming: !isCompleted,
               },
             });
@@ -1436,6 +1552,7 @@ export function makeOpenCodeAdapterV2(
               parentSubagent: context,
               nextChildTurnOrdinal: 1,
               nextAdmissionGeneration: 1,
+              latestProposedPlan: null,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -2272,6 +2389,7 @@ export function makeOpenCodeAdapterV2(
             interrupted: false,
             finalized: false,
             planId: null,
+            proposedPlanIdsByPart: new Map(),
             admissionGeneration: 0,
             admissionReconciliationGeneration: null,
             admissionPending: false,
@@ -2841,6 +2959,7 @@ export function makeOpenCodeAdapterV2(
             parentSubagent: subagentsByChildSessionId.get(nativeSession.id) ?? null,
             nextChildTurnOrdinal: 1,
             nextAdmissionGeneration: 1,
+            latestProposedPlan: null,
           };
           threads.set(nativeSession.id, state);
           return state;
@@ -3206,6 +3325,7 @@ export function makeOpenCodeAdapterV2(
                 interrupted: false,
                 finalized: false,
                 planId: null,
+                proposedPlanIdsByPart: new Map(),
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,
                 admissionPending: !isCompaction,
@@ -3256,18 +3376,19 @@ export function makeOpenCodeAdapterV2(
                 );
                 return;
               }
+              const agent =
+                getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
+                (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
               const systemPrompt = [
                 orchestrationSystemPrompt,
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
                 }),
+                agent === "plan" ? PROPOSED_PLAN_BLOCK_INSTRUCTIONS : "",
               ]
                 .filter(Boolean)
                 .join("\n\n");
-              const agent =
-                getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
-                (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
               const variant = getModelSelectionStringOptionValue(
                 turnInput.modelSelection,
                 "variant",
