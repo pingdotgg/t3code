@@ -78,11 +78,21 @@ function sgr(pen: string): string {
   return pen === "" ? `${ESC}[0m` : `${ESC}[0;${pen}m`;
 }
 
+// Lengths of lines already measured. Lines are never mutated once a feed ends.
+const lineLengths = new WeakMap<Line, number>();
+
 function lineLength(line: Line): number {
+  const cached = lineLengths.get(line);
+  if (cached !== undefined) return cached;
   let length = 0;
   for (const run of line) length += run.text.length;
+  lineLengths.set(line, length);
   return length;
 }
+
+// Past this many style changes, a line's oldest runs lose their style. Rendering
+// already caps spans, and it keeps per-write work bounded on colour-per-character output.
+const MAX_LINE_RUNS = 2_048;
 
 /** Runs covering columns [start, end) of `line`. */
 function sliceLine(line: Line, start: number, end: number): Array<Run> {
@@ -110,6 +120,23 @@ function pushRun(runs: Array<Run>, run: Run): void {
   } else {
     runs.push(run);
   }
+}
+
+/** Drops the first `count` columns of a line this feed owns, in place. */
+function trimLineStart(runs: Array<Run>, count: number): void {
+  let dropped = 0;
+  let remaining = count;
+  while (remaining > 0 && dropped < runs.length) {
+    const run = runs[dropped]!;
+    if (run.text.length <= remaining) {
+      remaining -= run.text.length;
+      dropped += 1;
+    } else {
+      runs[dropped] = { pen: run.pen, text: run.text.slice(remaining) };
+      remaining = 0;
+    }
+  }
+  if (dropped > 0) runs.splice(0, dropped);
 }
 
 /** `line` with `text` written over it from `col`, as a terminal overwrites. */
@@ -314,8 +341,12 @@ class Terminal {
   saved: { row: number; col: number } | null;
   /** Output was discarded on purpose (scrollback cleared or window over budget). */
   dropped = false;
+  readonly maxChars: number;
+  /** Lines created during this feed, which it may extend in place. */
+  private readonly owned = new WeakSet<Line>();
 
-  constructor(screen: TerminalScreen) {
+  constructor(screen: TerminalScreen, maxChars: number) {
+    this.maxChars = maxChars;
     this.settled = screen.settled;
     this.lines = screen.lines.slice();
     this.row = screen.row;
@@ -325,8 +356,46 @@ class Terminal {
   }
 
   write(text: string): void {
-    this.lines[this.row] = writeLine(this.lines[this.row]!, this.col, text, this.pen);
+    let line = this.lines[this.row]!;
+    const length = lineLength(line);
+    if (this.col === length && this.owned.has(line)) {
+      // Printing at the end of a line this feed already copied: extend it in place.
+      pushRun(line as Array<Run>, { pen: this.pen, text });
+      lineLengths.set(line, length + text.length);
+    } else {
+      line = writeLine(line, this.col, text, this.pen);
+      this.owned.add(line);
+    }
     this.col += text.length;
+    if (line.length > MAX_LINE_RUNS) {
+      // Fold all but the newest runs into one plain run, so trimming below eats it cheaply.
+      const keep = line.length - MAX_LINE_RUNS / 8;
+      const plain = line
+        .slice(0, keep)
+        .map((run) => run.text)
+        .join("");
+      line = [{ pen: "", text: plain }, ...line.slice(keep)];
+      this.owned.add(line);
+    }
+    // A line keeps only its last `maxChars` columns, trimmed on every write so the
+    // result never depends on how the output was split into chunks.
+    let current = lineLength(line);
+    if (current > this.maxChars) {
+      const removed = current - this.maxChars;
+      if (!this.owned.has(line)) {
+        line = line.slice();
+        this.owned.add(line);
+      }
+      trimLineStart(line as Array<Run>, removed);
+      current = this.maxChars;
+      this.dropped = true;
+      this.col = Math.max(0, this.col - removed);
+      if (this.saved !== null && this.saved.row === this.row) {
+        this.saved = { ...this.saved, col: Math.max(0, this.saved.col - removed) };
+      }
+    }
+    lineLengths.set(line, current);
+    this.lines[this.row] = line;
   }
 
   newline(): void {
@@ -334,9 +403,18 @@ class Terminal {
     this.col = 0;
     if (this.row === this.lines.length) this.lines.push([]);
     while (this.lines.length > LIVE_LINES) {
-      this.settled += `${serializeLine(this.lines.shift()!)}\n`;
+      this.settle(this.lines.shift()!);
       this.row -= 1;
       if (this.saved !== null) this.saved = { ...this.saved, row: Math.max(0, this.saved.row - 1) };
+    }
+  }
+
+  /** Fixes a line that left the window, keeping scrollback near the tail size as it grows. */
+  settle(line: Line): void {
+    this.settled += `${serializeLine(line)}\n`;
+    if (this.settled.length > 2 * this.maxChars) {
+      this.settled = terminalOutputTail(this.settled, this.maxChars).text;
+      this.dropped = true;
     }
   }
 
@@ -510,27 +588,15 @@ export function appendTerminalOutput(
 ): TerminalOutputState {
   const input = state.pending + chunk;
   if (input.length === 0) return state;
-  const terminal = new Terminal(state.screen);
+  const terminal = new Terminal(state.screen, maxChars);
   const pending = terminal.feed(input);
   let truncated = state.truncated;
-  // A line longer than the whole tail only ever shows its end.
-  terminal.lines = terminal.lines.map((line, row) => {
-    const length = lineLength(line);
-    if (length <= maxChars) return line;
-    truncated = true;
-    const removed = length - maxChars;
-    if (row === terminal.row) terminal.col = Math.max(0, terminal.col - removed);
-    if (terminal.saved !== null && terminal.saved.row === row) {
-      terminal.saved = { ...terminal.saved, col: Math.max(0, terminal.saved.col - removed) };
-    }
-    return sliceLine(line, length - maxChars, length);
-  });
   // The window as a whole stays within the tail too: oldest lines scroll out early.
   let windowChars = terminal.lines.reduce((total, line) => total + lineLength(line), 0);
   while (windowChars > maxChars && terminal.row > 0) {
     const line = terminal.lines.shift()!;
     windowChars -= lineLength(line);
-    terminal.settled += `${serializeLine(line)}\n`;
+    terminal.settle(line);
     terminal.row -= 1;
     if (terminal.saved !== null) {
       terminal.saved = { ...terminal.saved, row: Math.max(0, terminal.saved.row - 1) };

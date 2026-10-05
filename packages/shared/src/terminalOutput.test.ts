@@ -138,6 +138,37 @@ describe("appendTerminalOutput edge cases from review", () => {
   });
 });
 
+describe("appendTerminalOutput under adversarial output", () => {
+  it("gives the same result however the output is split into chunks", () => {
+    const input = "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n";
+    const whole = feed([input], 3).text;
+    for (let cut = 1; cut < input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)], 3).text).toBe(whole);
+    }
+    expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
+  });
+
+  it("handles a colour change on every character in linear time", () => {
+    const chunk = Array.from({ length: 200_000 }, (_, index) =>
+      index % 2 === 0 ? "\u001b[31mx" : "\u001b[32my",
+    ).join("");
+    const started = performance.now();
+    const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, chunk);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(terminalOutputPlainText(state.text).length).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  it("keeps scrollback bounded while a single huge chunk scrolls", () => {
+    const state = appendTerminalOutput(
+      EMPTY_TERMINAL_OUTPUT,
+      "line of log output\n".repeat(200_000),
+      4_096,
+    );
+    expect(state.screen.settled.length).toBeLessThanOrEqual(2 * 4_096);
+    expect(state.truncated).toBe(true);
+  });
+});
+
 describe("terminalOutputResumeText", () => {
   it("lets a viewer that starts from it apply later chunks exactly as the source does", () => {
     // Mid-redraw: cursor two lines up, a colour on, and half an escape pending.
