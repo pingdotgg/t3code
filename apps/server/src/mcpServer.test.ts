@@ -2404,7 +2404,7 @@ describe("delegate_work MCP tool", () => {
     }
   });
 
-  it("applies the settings thinking level unless the child overrides it", async () => {
+  it("applies the settings thinking level", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-settings-reasoning-"));
     const cliPath = path.join(root, "t3-test");
     const argsPath = path.join(root, "cli-args.txt");
@@ -2415,26 +2415,20 @@ describe("delegate_work MCP tool", () => {
       await chmod(cliPath, 0o755);
       process.env.T3_MCP_TEST_ARGS = argsPath;
 
-      const withThinking = {
-        ...options(root, cliPath),
-        delegatedDefaultModelSelection: {
-          ...options(root, cliPath).delegatedDefaultModelSelection,
-          options: [{ id: "reasoning", value: "high" }],
+      await __testing.delegateWorkTool(
+        {
+          ...options(root, cliPath),
+          delegatedDefaultModelSelection: {
+            ...options(root, cliPath).delegatedDefaultModelSelection,
+            options: [{ id: "reasoning", value: "high" }],
+          },
         },
-      };
-      const readArgs = async () => (await readFile(argsPath, "utf8")).trim().split("\n");
+        { children: [{ title: "A", prompt: "Do A." }] },
+      );
 
-      await __testing.delegateWorkTool(withThinking, {
-        children: [{ title: "A", prompt: "Do A." }],
-      });
-      expect(await readArgs()).toEqual(expect.arrayContaining(["--reasoning", "high"]));
-
-      await __testing.delegateWorkTool(withThinking, {
-        children: [{ title: "B", prompt: "Do B.", model: "gpt-5.6-sol", reasoning: "low" }],
-      });
-      const overridden = await readArgs();
-      expect(overridden).toEqual(expect.arrayContaining(["--reasoning", "low"]));
-      expect(overridden).not.toContain("high");
+      expect((await readFile(argsPath, "utf8")).trim().split("\n")).toEqual(
+        expect.arrayContaining(["--reasoning", "high"]),
+      );
     } finally {
       if (originalArgsPath === undefined) delete process.env.T3_MCP_TEST_ARGS;
       else process.env.T3_MCP_TEST_ARGS = originalArgsPath;

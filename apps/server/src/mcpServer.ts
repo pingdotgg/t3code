@@ -1552,9 +1552,6 @@ async function createNestedThreadToolImpl(
     "gpt-6-luna";
   const effectiveReasoning =
     reasoning ??
-    // Settings thinking level. Reads only the canonical `reasoning` option id
-    // that `chat new --reasoning` writes back; a provider whose effort
-    // descriptor uses a different id needs the settings picker to normalize it.
     getModelSelectionStringOptionValue(options.delegatedDefaultModelSelection, "reasoning");
 
   const childPrompt =

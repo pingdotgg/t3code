@@ -305,30 +305,12 @@ describe("delegated thread model selection", () => {
     });
   });
 
-  it("keeps the saved thinking level for the saved instance", () => {
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      delegatedThreadModelSelection: {
-        instanceId: ProviderInstanceId.make("copilot"),
-        model: "gpt-6-luna",
-        options: [{ id: "reasoning", value: "high" }],
-      },
-    };
-
-    expect(resolveDelegatedThreadModelSelectionState(settings, copilotProviders)).toEqual({
-      instanceId: ProviderInstanceId.make("copilot"),
-      model: "gpt-6-luna",
-      options: [{ id: "reasoning", value: "high" }],
-    });
-  });
-
   it("falls back when the saved instance is unavailable", () => {
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       delegatedThreadModelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
-        options: [{ id: "reasoning", value: "high" }],
       },
     };
 

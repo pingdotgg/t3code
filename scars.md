@@ -8,6 +8,7 @@ Keep this file small and load the detailed scar only for the subsystem being cha
 - Keep destructive, external, merge, approval, and credentialed operations behind explicit authorization and recoverable boundaries.
 - Preserve isolated state, workspace ownership, provider lifecycle, and ambiguous-outcome recovery.
 - Validate the acceptance criteria and relevant behavior, report blockers plainly, and do not treat an unrelated passing command as proof.
+- Ship the smallest diff that makes the behavior true: no restating comments, no tests for pass-through wiring a real-client pass already covers, one check per non-trivial branch.
 
 ## Subsystem index
 
