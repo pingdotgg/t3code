@@ -823,12 +823,60 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
     );
     assert.equal(
       CodexAdapterV2.projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
-      undefined,
+      "js",
     );
     assert.equal(
       CodexAdapterV2.projectCodexDynamicToolItem({ ...call, server: "github" }).title,
-      undefined,
+      "js",
     );
+  });
+
+  it.each(["inProgress", "completed", "failed"] as const)(
+    "presents ordinary MCP calls when %s",
+    (status) => {
+      const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "mcpToolCall",
+        id: "weather-call",
+        server: "weather",
+        tool: "get_weather",
+        status,
+        arguments: { city: "Berlin" },
+      });
+      assert.equal(projection.title, "get weather");
+      assert.deepEqual(projection.toolSource, {
+        key: "mcp:weather",
+        name: "weather",
+        kind: "integration",
+      });
+      assert.deepEqual(projection.input, { city: "Berlin" });
+    },
+  );
+
+  it("uses Codex connector names without reading a display title from arguments", () => {
+    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+      type: "mcpToolCall",
+      id: "connector-call",
+      server: "_apps",
+      tool: "connector_get_weather",
+      status: "completed",
+      arguments: { title: "Argument, not display metadata" },
+      appContext: {
+        connectorId: "weather-app",
+        appName: "Weather",
+        actionName: "Check weather",
+      },
+      result: {
+        content: [],
+        _meta: { source: { logoUrl: "https://example.com/weather.png" } },
+      },
+    });
+    assert.equal(projection.title, "Check weather");
+    assert.equal(projection.toolSource?.name, "Weather");
+    assert.deepEqual(projection.toolIcon, {
+      _tag: "themed-logo",
+      logoUrl: "https://example.com/weather.png",
+    });
+    assert.deepEqual(projection.toolSource?.icon, projection.toolIcon);
   });
 
   it("preserves native browser and app icons alongside MCP tool output", () => {
