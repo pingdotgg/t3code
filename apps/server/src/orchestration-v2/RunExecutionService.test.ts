@@ -3456,6 +3456,57 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+it.effect("closes the run's open tool calls when its provider stream is lost", () =>
+  Effect.gen(function* () {
+    const key = "lost-stream-open-tools";
+    const toolItemId = TurnItemId.make(`turn-item:${key}`);
+    const finishedItemId = TurnItemId.make(`turn-item:${key}:finished`);
+    const commandItemId = TurnItemId.make(`turn-item:${key}:command`);
+    const imageData = "iVBORw0KGgo".repeat(16);
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable([
+            backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1, finishedItemId),
+            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 2, finishedItemId),
+            toolCallNodeEvent(ids, "running"),
+            withToolOutput(
+              withToolCallNode(ids, backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3)),
+              { source: { type: "base64", media_type: "image/png", data: imageData } },
+            ),
+            backgroundTurnItemEvent(ids, "command_execution", "running", 4, commandItemId),
+          ]),
+          // A provider switch releases the session, which fails its event stream.
+          Stream.fail(
+            new ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              cause: "Provider session released: provider_switch.",
+            }),
+          ),
+        ),
+    });
+    assert.deepEqual(observed, [
+      `node:${toolItemId}:node:interrupted`,
+      "run:failed",
+      "pull-requests-refreshed",
+    ]);
+    assert.deepEqual(
+      written.map((item) => [item.type, item.type === "error" ? null : item.id, item.status]),
+      [
+        ["dynamic_tool", toolItemId, "interrupted"],
+        ["command_execution", commandItemId, "interrupted"],
+        ["error", null, "failed"],
+      ],
+    );
+    // Closed as the ingestor stored it: without the unserved image bytes.
+    const closedTool = written.find((item) => item.id === toolItemId);
+    assert.isFalse(JSON.stringify(closedTool).includes(imageData));
+  }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -3532,6 +3583,12 @@ function captureRootRunTermination(input: {
         for (const event of events) {
           if (event.type === "turn-item.updated") {
             yield* captureTurnItem(event.payload);
+          }
+          if (event.type === "node.updated" && event.payload.kind === "tool_call") {
+            yield* Ref.update(observed, (current) => [
+              ...current,
+              `node:${event.payload.id}:${event.payload.status}`,
+            ]);
           }
           if (event.type === "run.updated") {
             yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
@@ -3771,6 +3828,40 @@ function backgroundTurnItemEvent(
       status,
     },
   } as ProviderAdapterV2Event;
+}
+
+function toolCallNodeEvent(
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+): ProviderAdapterV2Event {
+  return {
+    type: "node.updated",
+    driver,
+    node: {
+      id: NodeId.make(`${ids.itemId}:node`),
+      threadId: ids.threadId,
+      runId: ids.runId,
+      kind: "tool_call",
+      status,
+    },
+  } as ProviderAdapterV2Event;
+}
+
+function withToolCallNode(
+  ids: BackgroundScenarioIds,
+  event: ProviderAdapterV2Event,
+): ProviderAdapterV2Event {
+  if (event.type !== "turn_item.updated") {
+    return event;
+  }
+  return { ...event, turnItem: { ...event.turnItem, nodeId: NodeId.make(`${ids.itemId}:node`) } };
+}
+
+function withToolOutput(event: ProviderAdapterV2Event, output: unknown): ProviderAdapterV2Event {
+  if (event.type !== "turn_item.updated") {
+    return event;
+  }
+  return { ...event, turnItem: { ...event.turnItem, output } } as ProviderAdapterV2Event;
 }
 
 function backgroundTurnItemEventForRun(
