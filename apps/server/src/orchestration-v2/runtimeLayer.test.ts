@@ -65,6 +65,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -2502,6 +2503,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            AnalyticsService.AnalyticsService.layerTest,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.die("host unreachable"),
               activity: () => Effect.die("host unreachable"),
@@ -2581,6 +2583,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
+              AnalyticsService.AnalyticsService.layerTest,
               Layer.mock(PullRequestService.PullRequestService)({
                 detail: () =>
                   Effect.suspend(() => {
@@ -2667,6 +2670,105 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           ]);
         }
       }),
+  );
+
+  it.effect("reports how long an ended watch was quiet", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-ended");
+      const projectId = ProjectId.make("pr-watch-ended-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch ended",
+        workspaceRoot: "/workspace/watch-ended",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-ended-create"),
+        threadId,
+        projectId,
+        title: "Watch ended",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 11 };
+      const watching = (on: boolean, id: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-ended-${id}`),
+          threadId,
+          ...key,
+          watching: on,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/11", source: "agent" },
+        });
+      yield* watching(true, "start");
+
+      let headSha = "aaaaaaa";
+      const events: Array<{ readonly event: string; readonly properties: unknown }> = [];
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(
+              AnalyticsService.AnalyticsService,
+              AnalyticsService.AnalyticsService.of({
+                record: (event, properties) =>
+                  Effect.sync(() => events.push({ event, properties })),
+                flush: Effect.void,
+              }),
+            ),
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Effect.sync(() => ({
+                  ...watchedPullRequestDetail({ projectId, number: key.number, at: "2026-10-02" }),
+                  headSha,
+                  checks: [],
+                })),
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+            }),
+          ),
+        ),
+      );
+
+      // The first read learns the head. A push 3 hours later, then 5 quiet hours.
+      yield* reactor.sweep;
+      yield* TestClock.adjust("3 hours");
+      headSha = "bbbbbbb";
+      yield* reactor.sweep;
+      yield* TestClock.adjust("5 hours");
+      yield* reactor.sweep;
+      yield* watching(false, "stop");
+      yield* reactor.sweep;
+
+      assert.deepEqual(events, [
+        {
+          event: "pull_request.watch.ended",
+          properties: {
+            reason: "stopped",
+            minutes: 480,
+            quietMinutes: 300,
+            longestQuietMinutes: 300,
+            wakes: 0,
+            reads: 3,
+            partial: false,
+          },
+        },
+      ]);
+    }),
   );
 
   it.effect.each([
@@ -2758,6 +2860,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            AnalyticsService.AnalyticsService.layerTest,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.succeed(detail),
               activity: () =>
