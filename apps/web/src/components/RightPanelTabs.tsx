@@ -1187,6 +1187,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         render={
                           <button
                             type="button"
+                            data-right-panel-tab={surface.id}
                             onDoubleClick={() => {
                               if (surface.kind === "device" && props.onRenameDevice)
                                 setRenamingDevice(surface.id);

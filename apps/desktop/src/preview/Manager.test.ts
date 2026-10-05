@@ -443,6 +443,7 @@ const makeFaviconWebContents = (options?: {
   const webContents = {
     id: options?.id ?? 42,
     isDestroyed: () => destroyed,
+    isFocused: vi.fn(() => false),
     getType: () => "webview",
     getURL: () => currentUrl,
     getTitle: () => "Preview",
@@ -615,6 +616,65 @@ describe("PreviewManager", () => {
         expect(sendInputEvent).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect(
+    "forwards shortcuts from the focused guest when global focus points to another tab",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeFaviconWebContents();
+          const hidden = makeFaviconWebContents({ id: 43 });
+          const focused = vi.fn(() => false);
+          Object.assign(preview.webContents, { isFocused: focused });
+          fromId.mockReturnValue(preview.webContents);
+          getFocusedWebContents.mockReturnValue(hidden.webContents);
+          const received = yield* Deferred.make<void>();
+          const send = vi.fn(() => Deferred.doneUnsafe(received, Exit.void));
+          const hostWebContents = { isDestroyed: () => false, send };
+          Object.assign(preview.webContents, { hostWebContents });
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: hostWebContents,
+          } as never);
+          yield* manager.createTab("tab_forwarded_keys");
+          yield* manager.registerWebview("tab_forwarded_keys", 42);
+          yield* manager.setForwardedShortcuts(
+            [{ key: "l", metaKey: true, ctrlKey: false, shiftKey: false, altKey: false }],
+            ["tab_forwarded_keys"],
+          );
+          const beforeInput = preview.listeners.get("before-input-event")!;
+          const preventDefault = vi.fn();
+          const input = {
+            type: "keyDown",
+            key: "l",
+            code: "KeyL",
+            meta: true,
+            control: false,
+            shift: false,
+            alt: false,
+            isAutoRepeat: false,
+          };
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).not.toHaveBeenCalled();
+          expect(send).not.toHaveBeenCalled();
+
+          focused.mockReturnValue(true);
+          beforeInput({ preventDefault } as never, input as never);
+          yield* Deferred.await(received);
+          expect(preventDefault).toHaveBeenCalledOnce();
+          expect(send).toHaveBeenCalledWith("desktop:preview-shortcut", {
+            key: "l",
+            code: "KeyL",
+            metaKey: true,
+            ctrlKey: false,
+            shiftKey: false,
+            altKey: false,
+            repeat: false,
+          });
+        }),
+      ),
   );
 
   effectIt.effect("preserves focused browser editing in tabs and sign-in popups", () =>

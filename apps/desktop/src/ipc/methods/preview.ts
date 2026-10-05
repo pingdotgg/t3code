@@ -16,6 +16,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetForwardedShortcutsInputSchema,
   BrowserImportResult,
   BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
@@ -173,6 +174,18 @@ export const setAudioMuted = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
+export const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL,
+  payload: DesktopPreviewSetForwardedShortcutsInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setForwardedShortcuts")(function* ({
+    shortcuts,
+    tabIds,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setForwardedShortcuts(shortcuts, tabIds);
   }),
 });
 export const openDevTools = tabMethod(
@@ -496,6 +509,7 @@ export const methods = [
   hardReload,
   setColorScheme,
   setAudioMuted,
+  setForwardedShortcuts,
   openDevTools,
   clearCookies,
   clearCache,

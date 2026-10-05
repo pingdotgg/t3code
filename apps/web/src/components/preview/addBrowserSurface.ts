@@ -8,8 +8,12 @@ import type { BrowserSettingsReadError, OpenPreviewMutation } from "~/browser/op
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { openPreviewSession } from "./openPreviewSession";
+import { requestPreviewUrlFocus } from "./previewActionBus";
 
-/** Creates a new browser tab. Reopening an existing tab is a separate UI action. */
+/**
+ * Creates a new browser tab with its address bar focused, like a browser's new
+ * tab. Reopening an existing tab is a separate UI action.
+ */
 export async function addBrowserSurface<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly openPreview: OpenPreviewMutation<E>;
@@ -22,6 +26,7 @@ export async function addBrowserSurface<E>(input: {
     ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
   });
   return mapAtomCommandResult(result, (snapshot) => {
+    requestPreviewUrlFocus(snapshot.tabId);
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
 }

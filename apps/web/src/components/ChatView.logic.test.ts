@@ -1807,8 +1807,14 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("BODY"))).toBe(true);
   });
 
-  it("refocuses away from a plain button, such as a pull request tab", () => {
+  it("refocuses away from a plain button outside the panel", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON"))).toBe(true);
+  });
+
+  it.each(["BUTTON", "DIV"])("preserves a focused panel %s after switching tabs", (tagName) => {
+    expect(
+      shouldRefocusComposerOnWindowFocus(element(tagName, { within: "data-preview-panel-mode" })),
+    ).toBe(false);
   });
 
   it("leaves other text fields alone", () => {

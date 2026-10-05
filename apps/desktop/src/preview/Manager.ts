@@ -15,6 +15,7 @@ import type {
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
+  DesktopPreviewForwardedShortcut,
   DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
@@ -66,8 +67,12 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+  PREVIEW_SHORTCUT_CHANNEL,
+} from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import { forwardedShortcutEvent } from "./ForwardedShortcuts.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
@@ -694,6 +699,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const agentDrivenWebContents = new WeakSet<Electron.WebContents>();
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
+  // Read synchronously from before-input-event, so it lives outside a Ref.
+  let forwarding: {
+    readonly shortcuts: ReadonlyArray<DesktopPreviewForwardedShortcut>;
+    readonly tabIds: ReadonlySet<string>;
+  } = { shortcuts: [], tabIds: new Set() };
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -2036,6 +2046,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);
+      // The app's browser-window shortcuts belong to the app while a person
+      // has a panel tab's page focused; the floating player and native editing
+      // keep their keys. Agent input never has real focus. getFocusedWebContents()
+      // can return a hidden guest after switching tabs, so ask this guest.
+      const shortcut =
+        forwarding.tabIds.has(tabId) &&
+        wc.isFocused() &&
+        !isPreviewEditingShortcut(input, hostPlatform)
+          ? forwardedShortcutEvent(input, forwarding.shortcuts, hostPlatform)
+          : null;
+      if (shortcut) {
+        event.preventDefault();
+        runFork(
+          attempt({ operation: "shortcut.forward", tabId, webContentsId: wc.id }, () => {
+            const host = currentMainWindow?.webContents;
+            if (host && !host.isDestroyed()) host.send(PREVIEW_SHORTCUT_CHANNEL, shortcut);
+          }).pipe(Effect.ignore),
+        );
+        return;
+      }
+      // Reload stays native so it also works in the floating player.
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
         runFork(
@@ -2043,7 +2074,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.reload(),
           ).pipe(Effect.ignore),
         );
-        return;
       }
     };
     yield* Scope.addFinalizer(
@@ -4722,6 +4752,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAudioMuted,
     setColorScheme,
+    setForwardedShortcuts: (
+      shortcuts: ReadonlyArray<DesktopPreviewForwardedShortcut>,
+      tabIds: ReadonlyArray<string>,
+    ) =>
+      Effect.sync(() => {
+        forwarding = { shortcuts, tabIds: new Set(tabIds) };
+      }),
     setMainWindow,
     startRecording,
     closePictureInPicture,
@@ -5135,6 +5172,11 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       input: PreviewAutomationWaitForInput,
     ) => Effect.Effect<void, PreviewManagerError>;
+    /** Chords to take from focused pages, and the tabs whose pages give them up. */
+    readonly setForwardedShortcuts: (
+      shortcuts: ReadonlyArray<DesktopPreviewForwardedShortcut>,
+      tabIds: ReadonlyArray<string>,
+    ) => Effect.Effect<void>;
     readonly subscribeStateChanges: (listener: Listener) => Effect.Effect<void, never, Scope.Scope>;
     readonly subscribePointerEvents: (
       listener: PointerEventListener,
@@ -5235,6 +5277,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     automationScroll: operations.automationScroll,
     automationEvaluate: operations.automationEvaluate,
     automationWaitFor: operations.automationWaitFor,
+    setForwardedShortcuts: operations.setForwardedShortcuts,
     subscribeStateChanges: operations.subscribeStateChanges,
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeRecordingFrames: operations.subscribeRecordingFrames,

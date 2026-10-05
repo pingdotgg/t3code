@@ -3,8 +3,7 @@
  * preview panel (URL bar, chrome buttons, or — once detected via Electron
  * `<webview>` focus events — the embedded page).
  *
- * Used by the global keybinding handler to gate `preview.refresh` and
- * `preview.focusUrl` to only fire while the preview owns focus.
+ * Used by keybinding handlers for commands that require panel focus.
  */
 export function isPreviewFocused(): boolean {
   const activeElement = document.activeElement;
