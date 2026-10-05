@@ -4501,6 +4501,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
             headSha: null,
             failedChecks: [],
             passed: false,
+            passedChecks: [],
             remarksThrough: DateTime.formatIso(at),
             remarkIds: [],
             conflicting: false,
