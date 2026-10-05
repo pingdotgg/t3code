@@ -2744,14 +2744,16 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         ),
       );
 
-      // The first read learns the head. A push 3 hours later, then 5 quiet hours.
+      // The first read learns the head. A push 6 hours later, then 2 quiet hours.
       yield* reactor.sweep;
-      yield* TestClock.adjust("3 hours");
+      yield* TestClock.adjust("6 hours");
       headSha = "bbbbbbb";
       yield* reactor.sweep;
-      yield* TestClock.adjust("5 hours");
+      yield* TestClock.adjust("2 hours");
       yield* reactor.sweep;
       yield* watching(false, "stop");
+      // The end is reported once.
+      yield* reactor.sweep;
       yield* reactor.sweep;
 
       assert.deepEqual(events, [
@@ -2760,8 +2762,8 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           properties: {
             reason: "stopped",
             minutes: 480,
-            quietMinutes: 300,
-            longestQuietMinutes: 300,
+            quietMinutes: 120,
+            longestQuietMinutes: 360,
             wakes: 0,
             reads: 3,
             partial: false,

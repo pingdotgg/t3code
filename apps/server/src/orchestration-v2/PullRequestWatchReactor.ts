@@ -108,10 +108,13 @@ type WatchEndReason =
 /**
  * What one watch did while this server ran, reported once when it ends so we can see how long
  * watches stay quiet. Kept in memory: a watch older than the server process only has partial
- * numbers, and one that ends while the server is down is not reported.
+ * numbers, and one that ends while the server is down, or starts and ends between two passes,
+ * is not reported.
  */
 interface WatchLife {
   readonly startedAt: number;
+  /** The head commit the last successful read saw. */
+  readonly headSha: string | null;
   /** When a pass last saw the head commit move, or the start. */
   readonly pushedAt: number;
   /** Longest time between pushes, not counting the time since the last one. */
@@ -196,14 +199,22 @@ export const make = Effect.gen(function* () {
     const existing = lives.get(lifeKey(target));
     if (existing !== undefined) return existing;
     const startedAt = Date.parse(target.watch.startedAt);
-    const life = { startedAt, pushedAt: startedAt, longestQuietMs: 0, wakes: 0, reads: 0 };
+    const life: WatchLife = {
+      startedAt,
+      headSha: target.watch.headSha,
+      pushedAt: startedAt,
+      longestQuietMs: 0,
+      wakes: 0,
+      reads: 0,
+    };
     lives.set(lifeKey(target), life);
     return life;
   };
-  const note = (target: WatchTarget, change: (life: WatchLife) => WatchLife) =>
-    Effect.sync(() => lives.set(lifeKey(target), change(lifeOf(target))));
   const woke = (target: WatchTarget) =>
-    note(target, (life) => ({ ...life, wakes: life.wakes + 1 }));
+    Effect.sync(() => {
+      const life = lifeOf(target);
+      lives.set(lifeKey(target), { ...life, wakes: life.wakes + 1 });
+    });
 
   const reportEnd = (key: string, life: WatchLife, reason: WatchEndReason) =>
     Effect.gen(function* () {
@@ -414,6 +425,20 @@ export const make = Effect.gen(function* () {
     }
     readFailures.delete(group.key);
     const [detail, activity] = read.value;
+    const headSha = detail.headSha ?? null;
+    for (const target of group.targets) {
+      const life = lifeOf(target);
+      // The first read only learns the head, so it is not a push.
+      const pushed = life.headSha !== null && headSha !== life.headSha;
+      lives.set(lifeKey(target), {
+        ...life,
+        headSha,
+        reads: life.reads + 1,
+        ...(pushed
+          ? { pushedAt: now, longestQuietMs: Math.max(life.longestQuietMs, now - life.pushedAt) }
+          : {}),
+      });
+    }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
       return yield* eachTarget(group, (target) =>
@@ -437,39 +462,23 @@ export const make = Effect.gen(function* () {
     });
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks);
-      // The first read only learns the head, so it is not a push.
-      const pushed = target.watch.headSha !== null && report.next.headSha !== target.watch.headSha;
-      const noted = note(target, (life) => ({
-        ...life,
-        reads: life.reads + 1,
-        ...(pushed
-          ? { pushedAt: now, longestQuietMs: Math.max(life.longestQuietMs, now - life.pushedAt) }
-          : {}),
-      }));
       if (report.changes.length > 0) {
-        return noted.pipe(
-          Effect.andThen(
-            record(
-              target,
-              report.exhausted ? null : report.next,
-              pullRequestWatchMessage({
-                number: target.link.number,
-                url: target.link.url,
-                baseBranch: detail.baseBranch,
-                headSha: report.next.headSha,
-                report,
-              }),
-            ),
-          ),
+        return record(
+          target,
+          report.exhausted ? null : report.next,
+          pullRequestWatchMessage({
+            number: target.link.number,
+            url: target.link.url,
+            baseBranch: detail.baseBranch,
+            headSha: report.next.headSha,
+            report,
+          }),
+        ).pipe(
           Effect.tap(() => woke(target)),
           Effect.tap(() => (report.exhausted ? ended(target, "comment-limit") : Effect.void)),
         );
       }
-      return noted.pipe(
-        Effect.andThen(
-          watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next),
-        ),
-      );
+      return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
     });
   });
 
