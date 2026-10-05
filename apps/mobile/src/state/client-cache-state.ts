@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";

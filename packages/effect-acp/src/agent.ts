@@ -5,9 +5,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Stdio from "effect/Stdio";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcMessage from "effect/unstable/rpc/RpcMessage";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcMessage from "effect/rpc/RpcMessage";
+import * as RpcServer from "effect/rpc/RpcServer";
 
 import * as AcpSchema from "./schema.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";

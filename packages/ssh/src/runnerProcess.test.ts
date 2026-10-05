@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeNet from "node:net";
 
 import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";

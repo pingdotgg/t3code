@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";

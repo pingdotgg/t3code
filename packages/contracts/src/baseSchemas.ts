@@ -271,8 +271,8 @@ const knownTags = (
 /**
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
-const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+const makeEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) => {
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand));
 };
 
 export const ThreadId = makeEntityId("ThreadId");

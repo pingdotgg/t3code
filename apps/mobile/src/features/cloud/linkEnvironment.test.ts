@@ -6,7 +6,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import * as MobileStorage from "../../persistence/mobile-storage";
 
