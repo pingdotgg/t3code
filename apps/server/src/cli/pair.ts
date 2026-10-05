@@ -336,6 +336,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     desktopBootstrapToken: undefined,
     desktopTelemetryFd: undefined,
     desktopTelemetryControlFd: undefined,
+    desktopLifetimeFd: undefined,
     resourceMonitorPath: undefined,
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
