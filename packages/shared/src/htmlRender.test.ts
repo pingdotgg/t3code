@@ -6,6 +6,7 @@ import {
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
+  readHtmlRenderLinkMessage,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
@@ -44,6 +45,18 @@ describe("injectHtmlRenderBootstrap", () => {
       injected.indexOf("<html><head>"),
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
+  });
+});
+
+describe("readHtmlRenderLinkMessage", () => {
+  it("accepts only http(s) links in a render's link message", () => {
+    const link = (url: unknown) => ({ type: "t3-html-render-link", url });
+    expect(readHtmlRenderLinkMessage(link("https://example.com/a"))).toBe("https://example.com/a");
+    expect(readHtmlRenderLinkMessage(link("javascript:alert(1)"))).toBeUndefined();
+    expect(readHtmlRenderLinkMessage(link("file:///etc/passwd"))).toBeUndefined();
+    expect(
+      readHtmlRenderLinkMessage({ type: "other", url: "https://example.com" }),
+    ).toBeUndefined();
   });
 });
 

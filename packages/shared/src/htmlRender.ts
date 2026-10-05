@@ -249,6 +249,18 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
 ].join(" ");
 
 const HTML_RENDER_THEME_MESSAGE_TYPE = "t3-html-render-theme";
+const HTML_RENDER_LINK_MESSAGE_TYPE = "t3-html-render-link";
+
+/** The http(s) URL a framed render asks its client to open, if `data` is that message. */
+export function readHtmlRenderLinkMessage(data: unknown): string | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { type, url } = data as Record<string, unknown>;
+  return type === HTML_RENDER_LINK_MESSAGE_TYPE &&
+    typeof url === "string" &&
+    /^https?:\/\//i.test(url)
+    ? url
+    : undefined;
+}
 
 const THEME_FRAGMENT_KEY = "t3-theme";
 
@@ -279,9 +291,10 @@ function rootRule(theme: HtmlRenderTheme): string {
 // first paint is already themed. It rewrites its own <style> element rather
 // than setting inline properties, so a page's later `:root` rules still win,
 // then drops the fragment so a page's own hash routing never sees it. A link
-// the reader clicks to another page opens in a new window, which clients send
-// to the browser, rather than replacing the page inside the thread.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});document.addEventListener("click",function(e){var l=e.isTrusted&&e.target&&e.target.closest?e.target.closest("a[href]"):null;if(l&&/^https?:$/.test(l.protocol)&&l.href.split("#")[0]!==location.href.split("#")[0]){l.target="_blank";l.rel="noopener";}},true);})();`;
+// the reader clicks to another page never replaces the page inside the thread:
+// a framed page asks its client to open it, and a top-level page (mobile)
+// opens it as a new window, which the client sends to the browser.
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});document.addEventListener("click",function(e){var l=e.isTrusted&&e.target&&e.target.closest?e.target.closest("a[href]"):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),location.href);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({type:${JSON.stringify(HTML_RENDER_LINK_MESSAGE_TYPE)},url:u.href},"*");}else{l.target="_blank";l.rel="noopener";}},true);})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");

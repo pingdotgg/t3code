@@ -8,12 +8,15 @@ import {
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { useAssetUrlRefresh } from "~/assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import type { ChatFileAttachment } from "~/types";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+// A frame may load its URL a little after mounting.
+const MIN_URL_LIFE_MS = 5 * 60_000;
 
 /**
  * An agent's HTML render inline in the thread: the page itself on the thread's
@@ -52,16 +55,29 @@ export function HtmlRenderFrame(props: {
     }),
     [attachmentId, fileName],
   );
-  // A fresh signed URL on mount: a cached one may have expired while the
-  // thread was closed, and a frame cannot report the failed load. The page
-  // keeps that URL for its lifetime, so it is minted once.
-  const refresh = useAssetUrlRefresh(props.environmentId, resource);
+  // A cached URL with life left is reused, so the browser's cache serves the
+  // page again; one near expiry is minted afresh, since a frame cannot report a
+  // failed load. The page keeps its first URL for its lifetime.
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const assetUrl = useAssetUrlState(src === null ? props.environmentId : null, resource);
+  const cachedUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
+  const cachedExpiresAt = assetUrl._tag === "Success" ? assetUrl.expiresAt : 0;
+  const cacheFailed = assetUrl._tag === "Failure";
+  const refresh = useAssetUrlRefresh(props.environmentId, resource);
   useEffect(() => {
     if (src !== null) return;
+    if (cacheFailed) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Mirrors the cached URL's failure.
+      setFailed(true);
+      return;
+    }
+    if (cachedUrl === null) return;
+    if (cachedExpiresAt - Date.now() > MIN_URL_LIFE_MS) {
+      setSrc(cachedUrl);
+      return;
+    }
     let cancelled = false;
-    // Null means the connection is not ready yet; the effect runs again when it is.
     void refresh().then(
       (url) => {
         if (!cancelled && url !== null) setSrc(url);
@@ -73,7 +89,7 @@ export function HtmlRenderFrame(props: {
     return () => {
       cancelled = true;
     };
-  }, [refresh, src]);
+  }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>

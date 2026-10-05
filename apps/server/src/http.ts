@@ -55,10 +55,9 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 // HTML previews are agent output, not the app. The sandbox gives the document an
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
 // out of reach. Relative sibling assets still load through their signed URLs.
-// Popups may leave the sandbox, so a link opened in a new window works like any
-// other site; the frame's own sandbox attribute decides whether that applies.
-const HTML_CONTENT_SECURITY_POLICY =
-  "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals";
+// No modals: agent HTML can open without a click (inline renders, and mobile
+// loads it as the top document), and must not raise blocking dialogs.
+const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups";
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.

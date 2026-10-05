@@ -1,4 +1,8 @@
-import { htmlRenderThemeFragment, htmlRenderThemeMessage } from "@t3tools/shared/htmlRender";
+import {
+  htmlRenderThemeFragment,
+  htmlRenderThemeMessage,
+  readHtmlRenderLinkMessage,
+} from "@t3tools/shared/htmlRender";
 import { useEffect, useRef, useState } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
@@ -49,7 +53,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       className={className}
-      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+      sandbox="allow-scripts allow-forms allow-popups"
     />
   );
 }
@@ -73,15 +77,34 @@ export function HtmlRenderDocument(props: {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
   useEffect(postTheme, [theme]);
+  // The page cannot open windows itself (an inline page runs unopened, and
+  // desktop sends any window to the browser). It asks for a clicked link, and
+  // only a request right after the reader clicked inside this frame opens.
+  useEffect(() => {
+    const openLink = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      const url = readHtmlRenderLinkMessage(event.data);
+      if (
+        url === undefined ||
+        frame === null ||
+        event.source !== frame.contentWindow ||
+        document.activeElement !== frame ||
+        navigator.userActivation?.isActive === false
+      ) {
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    };
+    window.addEventListener("message", openLink);
+    return () => window.removeEventListener("message", openLink);
+  }, []);
   return (
     <iframe
       ref={frameRef}
       src={src}
       title={props.title}
-      // Never allow-same-origin: the opaque origin keeps the page out of the app's
-      // session. Links the reader opens leave the sandbox so sites work normally;
-      // no modals, since an inline page runs without being opened.
-      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+      // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
+      sandbox="allow-scripts allow-forms"
       loading="lazy"
       onLoad={() => {
         setLoaded(true);
