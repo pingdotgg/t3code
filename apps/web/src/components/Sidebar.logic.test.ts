@@ -15,7 +15,6 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
-  formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   getSidebarForkParentThreadId,
@@ -1186,20 +1185,6 @@ describe("resolveWorkingStartedAt", () => {
 
   it("returns null with neither a running run nor a runtime", () => {
     expect(resolveWorkingStartedAt({ latestRun: null, runtime: null })).toBeNull();
-  });
-});
-
-describe("formatWorkingDurationLabel", () => {
-  it("formats seconds, minutes, and hours", () => {
-    expect(formatWorkingDurationLabel(0)).toBe("0s");
-    expect(formatWorkingDurationLabel(42_000)).toBe("42s");
-    expect(formatWorkingDurationLabel(5 * 60_000)).toBe("5m");
-    expect(formatWorkingDurationLabel(90 * 60_000)).toBe("1h 30m");
-  });
-
-  it("clamps negative and non-finite elapsed values to zero", () => {
-    expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
-    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
   });
 });
 

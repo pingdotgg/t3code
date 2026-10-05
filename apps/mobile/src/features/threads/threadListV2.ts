@@ -6,6 +6,7 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
   snoozeWakeLabel,
+  threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -182,6 +183,23 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/**
+ * The web sidebar's Woke marker: a snoozed thread came back and the user has
+ * not re-engaged since. A visit after the wake (reading a completion-triggered
+ * wake) clears it; a timer wake survives a visit and clears on Dismiss Woke,
+ * settle, pin, snooze, or a new message, all of which move the watermark or
+ * drop the snooze. Servers without visited tracking (field absent) never
+ * report Woke, since nothing could clear it. An unparseable visit counts as
+ * never-visited so corrupt data cannot eat the wake signal.
+ */
+export function threadIsWoke(thread: EnvironmentThreadShell, options: { readonly now: string }) {
+  if (thread.settledOverride === "settled" || thread.lastVisitedAt === undefined) return false;
+  const wokeAtMs = Date.parse(threadWokeAt(thread, options) ?? "");
+  if (Number.isNaN(wokeAtMs)) return false;
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt ?? "");
+  return Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs;
+}
+
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
 ): ThreadListV2Status {
@@ -273,6 +291,11 @@ export interface ThreadListV2Item {
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
+  /** Card back from a snooze and not yet re-engaged (see threadIsWoke); slim
+      rows are still snoozed or settled, so never woke. Resolved against the
+      layout's second-precise clock: the minute clock would hide a wake for
+      up to a minute after the row leaves the snoozed shelf. */
+  readonly woke: boolean;
   readonly isLast: boolean;
 }
 
@@ -411,6 +434,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
+        previous.item.woke === item.item.woke &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -463,7 +487,9 @@ function resolveThreadListV2ItemTimeLabel(
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" || threadHasUnseenCompletion(thread))
+    (resolveThreadListV2Status(thread) !== "ready" ||
+      item.woke ||
+      threadHasUnseenCompletion(thread))
   )
     return "";
   const settledTimestamp =
@@ -774,6 +800,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: true,
+      woke: threadIsWoke(thread, { now }),
       isLast: false,
     });
   }
@@ -783,6 +810,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      woke: threadIsWoke(thread, { now }),
       isLast: false,
     });
   }
@@ -793,6 +821,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      woke: threadIsWoke(thread, { now }),
       isLast: false,
     });
   }
@@ -803,6 +832,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: true,
       pinned: false,
+      woke: false,
       isLast: false,
     });
   }
@@ -813,6 +843,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: false,
       pinned: false,
+      woke: false,
       isLast: false,
     });
   }

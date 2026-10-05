@@ -23,6 +23,7 @@ import IconArrowUpRightCircle from "@tabler/icons-react-native/IconArrowUpRightC
 import IconArrowsLeftRight from "@tabler/icons-react-native/IconArrowsLeftRight";
 import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
+import IconBellOff from "@tabler/icons-react-native/IconBellOff";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
@@ -139,6 +140,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   archivebox: IconArchive,
   "archivebox.fill": IconArchive,
   "bell.badge": IconBellRinging,
+  "bell.slash": IconBellOff,
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
   brain: IconBrain,
