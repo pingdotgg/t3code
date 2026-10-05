@@ -3,5 +3,5 @@
   "private": true,
   "type": "module",
   "scripts": { "build": "next build" },
-  "dependencies": { "next": "16.2.10", "react": "19.3.0", "react-dom": "19.3.0" }
+  "dependencies": { "next": "16.3.6", "react": "19.3.0", "react-dom": "19.3.0" }
 }
