@@ -17,147 +17,159 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create and delete basic allow policy", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete basic allow policy",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const policy = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Policy("BasicAllowPolicy", {
-          decision: "allow",
-          include: [{ emailDomain: { domain: "example.com" } }],
-        });
-      }),
-    );
+      const policy = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Policy("BasicAllowPolicy", {
+            decision: "allow",
+            include: [{ emailDomain: { domain: "example.com" } }],
+          });
+        }),
+      );
 
-    expect(policy.policyId).toBeDefined();
-    expect(policy.decision).toEqual("allow");
-    expect(policy.accountId).toEqual(accountId);
+      expect(policy.policyId).toBeDefined();
+      expect(policy.decision).toEqual("allow");
+      expect(policy.accountId).toEqual(accountId);
 
-    const actual = yield* zeroTrust.getAccessPolicy({
-      accountId,
-      policyId: policy.policyId,
-    });
-    expect(actual.id).toEqual(policy.policyId);
-    expect(actual.decision).toEqual("allow");
-    expect(actual.include?.length).toEqual(1);
+      const actual = yield* zeroTrust.getAccessPolicy({
+        accountId,
+        policyId: policy.policyId,
+      });
+      expect(actual.id).toEqual(policy.policyId);
+      expect(actual.decision).toEqual("allow");
+      expect(actual.include?.length).toEqual(1);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const afterDestroy = yield* zeroTrust
-      .getAccessPolicy({ accountId, policyId: policy.policyId })
-      .pipe(Effect.catch(() => Effect.succeed(undefined)));
-    expect(afterDestroy).toBeUndefined();
-  }).pipe(logLevel),
+      const afterDestroy = yield* zeroTrust
+        .getAccessPolicy({ accountId, policyId: policy.policyId })
+        .pipe(Effect.catch(() => Effect.succeed(undefined)));
+      expect(afterDestroy).toBeUndefined();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("update mutates includes without replacing", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "update mutates includes without replacing",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Policy("UpdatePolicy", {
-          decision: "allow",
-          include: [{ emailDomain: { domain: "example.com" } }],
-          adopt: true,
-        });
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Policy("UpdatePolicy", {
+            decision: "allow",
+            include: [{ emailDomain: { domain: "example.com" } }],
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(initial.policyId).toBeDefined();
+      expect(initial.policyId).toBeDefined();
 
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Policy("UpdatePolicy", {
-          decision: "allow",
-          include: [
-            { emailDomain: { domain: "example.com" } },
-            { emailDomain: { domain: "test.example.com" } },
-          ],
-          adopt: true,
-        });
-      }),
-    );
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Policy("UpdatePolicy", {
+            decision: "allow",
+            include: [
+              { emailDomain: { domain: "example.com" } },
+              { emailDomain: { domain: "test.example.com" } },
+            ],
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(updated.policyId).toEqual(initial.policyId);
+      expect(updated.policyId).toEqual(initial.policyId);
 
-    const actual = yield* zeroTrust.getAccessPolicy({
-      accountId,
-      policyId: updated.policyId,
-    });
-    expect(actual.include?.length).toEqual(2);
+      const actual = yield* zeroTrust.getAccessPolicy({
+        accountId,
+        policyId: updated.policyId,
+      });
+      expect(actual.include?.length).toEqual(2);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("adopts an out-of-band reusable policy", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const name = "alchemy-access-policy-adopt-test";
+test.provider(
+  "adopts an out-of-band reusable policy",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const name = "alchemy-access-policy-adopt-test";
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Pre-create the policy out of band so adoption has something to find.
-    const preExisting = yield* zeroTrust.createAccessPolicy({
-      accountId,
-      name,
-      decision: "allow",
-      include: [{ emailDomain: { domain: "example.com" } }],
-    });
-    expect(preExisting.id).toBeDefined();
+      // Pre-create the policy out of band so adoption has something to find.
+      const preExisting = yield* zeroTrust.createAccessPolicy({
+        accountId,
+        name,
+        decision: "allow",
+        include: [{ emailDomain: { domain: "example.com" } }],
+      });
+      expect(preExisting.id).toBeDefined();
 
-    const adopted = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Policy("AdoptPolicy", {
-          name,
-          decision: "allow",
-          include: [{ emailDomain: { domain: "example.com" } }],
-          adopt: true,
-        });
-      }),
-    );
+      const adopted = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Policy("AdoptPolicy", {
+            name,
+            decision: "allow",
+            include: [{ emailDomain: { domain: "example.com" } }],
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(adopted.policyId).toEqual(preExisting.id);
-    expect(adopted.accountId).toEqual(accountId);
+      expect(adopted.policyId).toEqual(preExisting.id);
+      expect(adopted.accountId).toEqual(accountId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const afterDestroy = yield* zeroTrust
-      .getAccessPolicy({ accountId, policyId: preExisting.id! })
-      .pipe(Effect.catch(() => Effect.succeed(undefined)));
-    expect(afterDestroy).toBeUndefined();
-  }).pipe(logLevel),
+      const afterDestroy = yield* zeroTrust
+        .getAccessPolicy({ accountId, policyId: preExisting.id! })
+        .pipe(Effect.catch(() => Effect.succeed(undefined)));
+      expect(afterDestroy).toBeUndefined();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("list enumerates the deployed reusable policy", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed reusable policy",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const policy = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Policy("ListPolicy", {
-          decision: "allow",
-          include: [{ emailDomain: { domain: "example.com" } }],
-        });
-      }),
-    );
+      const policy = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Policy("ListPolicy", {
+            decision: "allow",
+            include: [{ emailDomain: { domain: "example.com" } }],
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Access.Policy);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Access.Policy);
+      const all = yield* provider.list();
 
-    const match = all.find((p) => p.policyId === policy.policyId);
-    expect(match).toBeDefined();
-    expect(match?.accountId).toEqual(accountId);
-    expect(match?.decision).toEqual("allow");
+      const match = all.find((p) => p.policyId === policy.policyId);
+      expect(match).toBeDefined();
+      expect(match?.accountId).toEqual(accountId);
+      expect(match?.decision).toEqual("allow");
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );

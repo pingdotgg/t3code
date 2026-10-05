@@ -148,6 +148,12 @@ const checkZarazEventTypes = () => {
 
 void checkZarazEventTypes;
 
-test("Zaraz event contracts are type-only", () => {
-  expect(Config.events<{}>()).toEqual({});
-});
+test(
+  "Zaraz event contracts are type-only",
+  () => {
+    expect(Config.events<{}>()).toEqual({});
+  },
+  {
+    tags: ["unit", "provider:cloudflare", "provider:cloudflare:zaraz", "local"],
+  },
+);

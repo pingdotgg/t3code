@@ -4,8 +4,8 @@
  * answer with GitHub-shaped JSON they build themselves and declare no
  * success schema.
  */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 /** `GET /user`: the credential probe `gh` makes; answer it from your own user record. */
 export const GitHubUser = HttpApiEndpoint.get("user", "/user", {});

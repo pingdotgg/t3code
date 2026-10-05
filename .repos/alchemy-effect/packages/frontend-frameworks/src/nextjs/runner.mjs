@@ -17,6 +17,7 @@
 //   { appDir, configPath, compatibilityDate, skipNextBuild, minify, debug,
 //     buildCommand }
 import { createRequire } from "node:module";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -24,8 +25,7 @@ const runnerConfig = JSON.parse(process.argv[2] ?? "{}");
 const appDir = path.resolve(runnerConfig.appDir ?? process.cwd());
 process.chdir(appDir); // upstream reads process.cwd() at module scope
 
-// Resolve @opennextjs/cloudflare from the *app's* dependency tree (the app
-// provides it — its open-next.config.ts imports it, so it must be there).
+// Resolve the framework integration from the application's dependency tree.
 const require = createRequire(path.join(appDir, "package.json"));
 // The exports map doesn't expose "./package.json"; resolve the "." entry
 // (dist/api/index.js) and walk up to the package root.
@@ -47,44 +47,53 @@ const { ensureCloudflareConfig } = await importCf(
 );
 const { build } = await importCf("dist/cli/build/build.js");
 
-// --- compileConfig equivalent (utils.ts) without the TTY/prompt coupling ---
-const configPath = path.resolve(
-  appDir,
-  runnerConfig.configPath ?? "open-next.config.ts",
-);
+const configPath = runnerConfig.configPath ?? runnerConfig.generatedConfigPath;
+if (runnerConfig.generatedConfigPath) {
+  const resolveOverride = (name) =>
+    JSON.stringify(require.resolve(`@opennextjs/cloudflare/overrides/${name}`));
+  const writable = runnerConfig.cache === "kv";
+  fs.writeFileSync(
+    configPath,
+    `
+import { defineCloudflareConfig } from ${JSON.stringify(cfApiIndex)};
+import incrementalCache from ${resolveOverride(writable ? "incremental-cache/kv-incremental-cache" : "incremental-cache/static-assets-incremental-cache")};
+${writable ? `import queue from ${resolveOverride("queue/do-queue")};\nimport tagCache from ${resolveOverride("tag-cache/kv-next-tag-cache")};` : ""}
+export default defineCloudflareConfig({ incrementalCache${writable ? ", queue, tagCache" : ""} });
+`,
+  );
+}
 const { config, buildDir } = await compileOpenNextConfig(configPath, {
   compileEdge: true,
 });
 ensureCloudflareConfig(config);
+config.buildCommand =
+  runnerConfig.buildCommand ?? config.buildCommand ?? "npx next build";
 
-// The app's package.json `build` script is `e2e build` (which would recurse
-// back into this runner) — run `next build` directly unless the app's
-// open-next.config.ts overrides the command itself.
-config.buildCommand ??= runnerConfig.buildCommand ?? "npx next build";
-
-// --- getNormalizedOptions equivalent (utils.ts) ---
 const openNextDistDir = path.dirname(
   cfRequire.resolve("@opennextjs/aws/index.js"),
 );
 const options = normalizeOptions(config, openNextDistDir, buildDir);
 logger.setLevel(runnerConfig.debug ? "debug" : "info");
 
-// --- the minimal in-memory stand-in for wrangler's Unstable_Config ---
-// The build pipeline reads exactly two fields (build.ts staleness warning;
-// compile-init.ts __ASSETS_RUN_WORKER_FIRST__ define).
+// Only these two Wrangler fields are read by the OpenNext build pipeline.
 const wranglerConfig = {
   compatibility_date: runnerConfig.compatibilityDate,
   assets: { run_worker_first: true },
 };
-
 const projectOptions = {
   sourceDir: appDir,
   skipNextBuild: !!runnerConfig.skipNextBuild,
   skipWranglerConfigCheck: true,
   minify: !!runnerConfig.minify,
 };
-
 await build(options, config, projectOptions, wranglerConfig, false);
 console.log(
   "[@alchemy.run/frontend-frameworks/nextjs] OpenNext build finished OK",
+);
+fs.writeFileSync(
+  runnerConfig.outputPath,
+  JSON.stringify({
+    openNextDirectory: options.outputDir,
+    appBuildOutputPath: options.appBuildOutputPath,
+  }),
 );

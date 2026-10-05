@@ -1,6 +1,6 @@
 import type { ReadBucketClient } from "@/Cloudflare/R2/ReadBucket.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared read-side routes exercised by both the binding and HTTP fixtures so

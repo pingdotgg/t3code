@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { exec } from "alchemy/Util/exec";
 import { sha256 } from "alchemy/Util/sha256";
 import { packTar, unpackTar, type TarHeader } from "modern-tar";
@@ -139,6 +139,73 @@ export interface WorkspacePackage {
   readonly absDir: string;
   readonly group: string;
 }
+
+/** Shared inputs that invalidate every configured package. */
+export const REBUILD_ALL_PATHS = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "tsconfig.json",
+  "tsconfig.base.json",
+  "turbo.json",
+  ".github/workflows/pkg.yml",
+  ".github/workflows/pr-package.yml",
+];
+
+/** Select dependents first, then dependencies, without pulling in unrelated siblings. */
+export const selectPackages = (
+  packages: ReadonlyArray<WorkspacePackage>,
+  dependencies: ReadonlyMap<string, ReadonlySet<string>>,
+  changedFiles: ReadonlyArray<string>,
+  rebuildAllPaths: ReadonlyArray<string> = [],
+) => {
+  if (
+    changedFiles.some((file) =>
+      [...REBUILD_ALL_PATHS, ...rebuildAllPaths].some((pattern) =>
+        pattern.endsWith("/**")
+          ? file === pattern.slice(0, -3) ||
+            file.startsWith(pattern.slice(0, -2))
+          : file === pattern,
+      ),
+    )
+  )
+    return [...packages];
+
+  const selected = new Set(
+    packages
+      .filter((pkg) =>
+        changedFiles.some(
+          (file) =>
+            file === pkg.dir ||
+            file.startsWith(`${pkg.dir}/`) ||
+            pkg.dir.startsWith(`${file}/`),
+        ),
+      )
+      .map((pkg) => pkg.name),
+  );
+  // A changed gitlink selects the packages nested inside that submodule.
+  let size: number;
+  do {
+    size = selected.size;
+    for (const [name, deps] of dependencies) {
+      if ([...deps].some((dep) => selected.has(dep))) selected.add(name);
+    }
+  } while (selected.size !== size);
+  const pending = [...selected];
+  for (const name of pending) {
+    for (const dep of dependencies.get(name) ?? []) {
+      if (!selected.has(dep)) {
+        selected.add(dep);
+        pending.push(dep);
+      }
+    }
+  }
+  return packages.filter((pkg) => selected.has(pkg.name));
+};
 
 /**
  * Expand one level of `{a,b,c}` alternatives into plain patterns, so
@@ -418,18 +485,21 @@ export const packPackage = Effect.fn("packPackage")(function* (options: {
 const PullRequestEvent = Schema.fromJsonString(
   Schema.Struct({
     pull_request: Schema.optionalKey(
-      Schema.Struct({ head: Schema.Struct({ sha: Schema.String }) }),
+      Schema.Struct({
+        head: Schema.Struct({ sha: Schema.String }),
+        base: Schema.Struct({ sha: Schema.String }),
+      }),
     ),
   }),
 );
 
 /**
- * The pull request head commit when running under a GitHub Actions
- * `pull_request` event, read from the event payload. `undefined` elsewhere.
+ * Pull request metadata from the GitHub Actions event payload.
+ * `undefined` outside pull request events.
  * On that event the default checkout is a synthetic merge commit, which the
  * registry would reject because it does not match the run's head.
  */
-const pullRequestHead = Effect.gen(function* () {
+const pullRequest = Effect.gen(function* () {
   const event = yield* Config.option(Config.String("GITHUB_EVENT_NAME"));
   const eventPath = yield* Config.option(Config.String("GITHUB_EVENT_PATH"));
   if (
@@ -442,7 +512,7 @@ const pullRequestHead = Effect.gen(function* () {
   const payload = yield* fs
     .readFileString(eventPath.value)
     .pipe(Effect.flatMap(Schema.decodeUnknownEffect(PullRequestEvent)));
-  return payload.pull_request?.head.sha;
+  return payload.pull_request;
 });
 
 export interface PackOptions {
@@ -450,6 +520,9 @@ export interface PackOptions {
   readonly groups: ReadonlyArray<Group>;
   readonly registry: string;
   readonly out: string;
+  readonly since?: string;
+  readonly all?: boolean;
+  readonly rebuildAllPaths?: ReadonlyArray<string>;
 }
 
 /**
@@ -470,7 +543,8 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
 
   const root = yield* toplevel(options.cwd);
   const head = yield* gitHead(root);
-  const prHead = yield* pullRequestHead;
+  const pr = yield* pullRequest;
+  const prHead = pr?.head.sha;
   if (prHead !== undefined && prHead !== head) {
     return yield* new WorkspaceError({
       message:
@@ -478,11 +552,7 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
         "Check out github.event.pull_request.head.sha before packing so tarballs are addressed by a commit that exists on the pull request.",
     });
   }
-  const packages = yield* discover(options.cwd, options.groups);
-  if (packages.length === 0) {
-    yield* Console.log("No publishable packages matched.");
-    return undefined;
-  }
+  let packages = yield* discover(options.cwd, options.groups);
 
   // Dependencies between packed packages are rewritten to the dependency's
   // immutable tarball URL, so a package is packed only after everything it
@@ -504,6 +574,38 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
           Object.keys(manifest[section] ?? {}),
         ).filter((name) => name !== pkg.name && byName.has(name)),
       ),
+    );
+  }
+  const since = options.all ? undefined : (options.since ?? pr?.base.sha);
+  if (since !== undefined) {
+    // Disable rename detection so moves affect both the old and new packages.
+    const changed = (yield* git(root, [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      since,
+      head,
+      "--",
+    ]))
+      .split("\0")
+      .filter(Boolean);
+    const selected = selectPackages(
+      packages.map((pkg) => ({
+        ...pkg,
+        dir: path.relative(root, pkg.absDir).split(path.sep).join("/"),
+      })),
+      dependencies,
+      changed,
+      options.rebuildAllPaths,
+    );
+    const names = new Set(selected.map((pkg) => pkg.name));
+    packages = packages.filter((pkg) => names.has(pkg.name));
+    for (const name of dependencies.keys()) {
+      if (!names.has(name)) dependencies.delete(name);
+    }
+    yield* Console.log(
+      `Selected ${packages.length} package(s) changed since ${since}, including dependents and dependencies.`,
     );
   }
   const levels = yield* dependencyLevels(dependencies);
@@ -594,9 +696,13 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
   const artifact = manifestArtifactName(yield* sha256(manifestText));
   const stepOutput = yield* Config.option(Config.String("GITHUB_OUTPUT"));
   if (Option.isSome(stepOutput)) {
-    yield* fs.writeFileString(stepOutput.value, `artifact-name=${artifact}\n`, {
-      flag: "a",
-    });
+    yield* fs.writeFileString(
+      stepOutput.value,
+      `artifact-name=${artifact}\npackage-count=${entries.length}\n`,
+      {
+        flag: "a",
+      },
+    );
   }
   yield* Console.log(`Manifest artifact name: ${artifact}`);
   return manifest;

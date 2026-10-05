@@ -166,121 +166,134 @@ test.provider(
 
       yield* expectGone(accountId, GATEWAY_ID, initial.route.routeId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"] },
 );
 
-test.provider("replaces route when the gateway changes", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "replaces route when the gateway changes",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const gatewayA = yield* Cloudflare.AI.Gateway("RouteGatewayA", {
-          id: GATEWAY_ID,
-        });
-        yield* Cloudflare.AI.Gateway("RouteGatewayB", {
-          id: GATEWAY_ID_B,
-        });
-        const route = yield* Cloudflare.AI.GatewayDynamicRouting(
-          "ReplaceRoute",
-          {
-            gatewayId: gatewayA.gatewayId,
-            name: "alchemy-test-route-replace",
-            elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
-          },
-        );
-        return { route };
-      }),
-    );
-    expect(initial.route.gatewayId).toEqual(GATEWAY_ID);
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const gatewayA = yield* Cloudflare.AI.Gateway("RouteGatewayA", {
+            id: GATEWAY_ID,
+          });
+          yield* Cloudflare.AI.Gateway("RouteGatewayB", {
+            id: GATEWAY_ID_B,
+          });
+          const route = yield* Cloudflare.AI.GatewayDynamicRouting(
+            "ReplaceRoute",
+            {
+              gatewayId: gatewayA.gatewayId,
+              name: "alchemy-test-route-replace",
+              elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
+            },
+          );
+          return { route };
+        }),
+      );
+      expect(initial.route.gatewayId).toEqual(GATEWAY_ID);
 
-    // Moving the route to another gateway is a replacement: new id, new
-    // parent, and the old route is removed from gateway A.
-    const moved = yield* stack.deploy(
-      Effect.gen(function* () {
-        yield* Cloudflare.AI.Gateway("RouteGatewayA", {
-          id: GATEWAY_ID,
-        });
-        const gatewayB = yield* Cloudflare.AI.Gateway("RouteGatewayB", {
-          id: GATEWAY_ID_B,
-        });
-        const route = yield* Cloudflare.AI.GatewayDynamicRouting(
-          "ReplaceRoute",
-          {
-            gatewayId: gatewayB.gatewayId,
-            name: "alchemy-test-route-replace",
-            elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
-          },
-        );
-        return { route };
-      }),
-    );
+      // Moving the route to another gateway is a replacement: new id, new
+      // parent, and the old route is removed from gateway A.
+      const moved = yield* stack.deploy(
+        Effect.gen(function* () {
+          yield* Cloudflare.AI.Gateway("RouteGatewayA", {
+            id: GATEWAY_ID,
+          });
+          const gatewayB = yield* Cloudflare.AI.Gateway("RouteGatewayB", {
+            id: GATEWAY_ID_B,
+          });
+          const route = yield* Cloudflare.AI.GatewayDynamicRouting(
+            "ReplaceRoute",
+            {
+              gatewayId: gatewayB.gatewayId,
+              name: "alchemy-test-route-replace",
+              elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
+            },
+          );
+          return { route };
+        }),
+      );
 
-    expect(moved.route.gatewayId).toEqual(GATEWAY_ID_B);
-    expect(moved.route.routeId).not.toEqual(initial.route.routeId);
+      expect(moved.route.gatewayId).toEqual(GATEWAY_ID_B);
+      expect(moved.route.routeId).not.toEqual(initial.route.routeId);
 
-    // The replaced route is gone from gateway A.
-    yield* expectGone(accountId, GATEWAY_ID, initial.route.routeId);
+      // The replaced route is gone from gateway A.
+      yield* expectGone(accountId, GATEWAY_ID, initial.route.routeId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, GATEWAY_ID_B, moved.route.routeId);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, GATEWAY_ID_B, moved.route.routeId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"] },
 );
 
-test.provider("recreates a route after out-of-band delete", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "recreates a route after out-of-band delete",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const gateway = yield* Cloudflare.AI.Gateway("HealRouteGateway", {
-          id: GATEWAY_ID,
-        });
-        const route = yield* Cloudflare.AI.GatewayDynamicRouting("HealRoute", {
-          gatewayId: gateway.gatewayId,
-          name: "alchemy-test-route-heal",
-          elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
-        });
-        return { route };
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const gateway = yield* Cloudflare.AI.Gateway("HealRouteGateway", {
+            id: GATEWAY_ID,
+          });
+          const route = yield* Cloudflare.AI.GatewayDynamicRouting(
+            "HealRoute",
+            {
+              gatewayId: gateway.gatewayId,
+              name: "alchemy-test-route-heal",
+              elements: graph("@cf/meta/llama-3.1-8b-instruct", 1),
+            },
+          );
+          return { route };
+        }),
+      );
 
-    // Delete the route out-of-band. A redeploy with identical props is a
-    // planner no-op, so change a prop to force reconcile — it must observe
-    // the route as missing and recreate it instead of failing on a 404.
-    yield* aiGateway.deleteDynamicRouting({
-      accountId,
-      gatewayId: GATEWAY_ID,
-      id: initial.route.routeId,
-    });
+      // Delete the route out-of-band. A redeploy with identical props is a
+      // planner no-op, so change a prop to force reconcile — it must observe
+      // the route as missing and recreate it instead of failing on a 404.
+      yield* aiGateway.deleteDynamicRouting({
+        accountId,
+        gatewayId: GATEWAY_ID,
+        id: initial.route.routeId,
+      });
 
-    const healed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const gateway = yield* Cloudflare.AI.Gateway("HealRouteGateway", {
-          id: GATEWAY_ID,
-        });
-        const route = yield* Cloudflare.AI.GatewayDynamicRouting("HealRoute", {
-          gatewayId: gateway.gatewayId,
-          name: "alchemy-test-route-heal",
-          elements: graph("@cf/meta/llama-3.1-8b-instruct", 3),
-        });
-        return { route };
-      }),
-    );
+      const healed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const gateway = yield* Cloudflare.AI.Gateway("HealRouteGateway", {
+            id: GATEWAY_ID,
+          });
+          const route = yield* Cloudflare.AI.GatewayDynamicRouting(
+            "HealRoute",
+            {
+              gatewayId: gateway.gatewayId,
+              name: "alchemy-test-route-heal",
+              elements: graph("@cf/meta/llama-3.1-8b-instruct", 3),
+            },
+          );
+          return { route };
+        }),
+      );
 
-    expect(healed.route.routeId).not.toEqual(initial.route.routeId);
-    expect(healed.route.elements).toEqual(
-      graph("@cf/meta/llama-3.1-8b-instruct", 3),
-    );
+      expect(healed.route.routeId).not.toEqual(initial.route.routeId);
+      expect(healed.route.elements).toEqual(
+        graph("@cf/meta/llama-3.1-8b-instruct", 3),
+      );
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, GATEWAY_ID, healed.route.routeId);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, GATEWAY_ID, healed.route.routeId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"] },
 );
 
 // Canonical `list()` test (parent fan-out): routes are scoped under a gateway
@@ -344,5 +357,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"],
+    timeout: 180_000,
+  },
 );

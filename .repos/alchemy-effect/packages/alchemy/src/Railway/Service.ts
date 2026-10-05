@@ -1,4 +1,4 @@
-import type * as railway from "@distilled.cloud/railway";
+import type { Builder, RestartPolicyType } from "@distilled.cloud/railway";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import {
@@ -21,9 +21,6 @@ import {
 } from "./hosted.ts";
 import { serveRailwayRpc } from "./rpc-server.ts";
 import { mintRpcToken } from "./rpc-token.ts";
-
-type Builder = railway.Scalars["Builder"];
-type RestartPolicyType = railway.Scalars["RestartPolicyType"];
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -77,8 +74,11 @@ export interface ServiceProps extends PlatformProps {
    */
   image?: string;
   /**
-   * Region for the service instance (`us-west2`, `us-east4`, …). If
-   * omitted, Railway picks the default. Updates in place.
+   * Region the service runs in (`us-west2`, `europe-west4-drams3a`, …).
+   * Railway places replicas with `deploy.multiRegionConfig`. Omit this
+   * and the current placement is left alone (the workspace default on
+   * first create). Updating it moves the replicas in place and keeps
+   * the current replica count.
    */
   region?: string;
   /**
@@ -264,7 +264,10 @@ export type Service = Resource<
     cronSchedule: string | undefined;
     /** Observed root directory. */
     rootDirectory: string | undefined;
-    /** Observed region, if Railway reported one. */
+    /**
+     * Region the service is placed in. Set when
+     * `deploy.multiRegionConfig` has replicas in exactly one region.
+     */
     region: string | undefined;
     /** Port published on the generated service domain. */
     port: number | undefined;
@@ -422,7 +425,8 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  * ```
  *
  * ### Pin a region
- * Omit `region` to use Railway's default. Updating it is in place.
+ * Omit `region` to leave placement alone. On first create that is the
+ * workspace default. Updating `region` moves the replicas in place.
  *
  * **Example:** Region
  * ```typescript
@@ -562,6 +566,7 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  * ```
  *
  * @resource
+ * @product Service
  */
 export const Service: Platform<
   Service,

@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwaySdk } from "@distilled.cloud/railway";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
@@ -27,24 +28,27 @@ const asVariableMap = (value: unknown): Record<string, string> => {
   return out;
 };
 
+const queryVariables = Query.fn(
+  (projectId: string, environmentId: string, serviceId?: string) =>
+    RailwaySdk.variables({
+      projectId,
+      environmentId,
+      ...(serviceId !== undefined ? { serviceId } : {}),
+      unrendered: true,
+    }),
+);
+
 const readVariables = (
   projectId: string,
   environmentId: string,
   serviceId?: string,
 ) =>
-  railway
-    .variables({
-      projectId,
-      environmentId,
-      ...(serviceId !== undefined ? { serviceId } : {}),
-      unrendered: true,
-    })
-    .pipe(
-      Effect.map(asVariableMap),
-      railway.catchTags(["RailwayNotFound"], () =>
-        Effect.succeed({} as Record<string, string>),
-      ),
-    );
+  queryVariables(projectId, environmentId, serviceId).pipe(
+    Effect.map(asVariableMap),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed({} as Record<string, string>),
+    ),
+  );
 
 const waitUntilVariableGone = (
   projectId: string,
@@ -156,5 +160,15 @@ test.provider(
       );
       expect(variableGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:postgres",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:variable",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

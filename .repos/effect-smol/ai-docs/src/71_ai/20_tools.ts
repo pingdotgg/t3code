@@ -6,8 +6,8 @@
  */
 import { OpenAiClient, OpenAiLanguageModel, OpenAiTool } from "@effect/ai-openai"
 import { Config, Context, Effect, Layer, Schema } from "effect"
-import { AiError, LanguageModel, Tool, Toolkit } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 
 // ---------------------------------------------------------------------------
 // 1. Defining tools

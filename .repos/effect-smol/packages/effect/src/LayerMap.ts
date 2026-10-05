@@ -10,7 +10,7 @@
  * @since 3.14.0
  */
 import * as Context from "./Context.ts"
-import type * as Duration from "./Duration.ts"
+import * as Duration from "./Duration.ts"
 import * as Effect from "./Effect.ts"
 import { identity } from "./Function.ts"
 import { getStackTraceLimit, setStackTraceLimit } from "./internal/stackTraceLimit.ts"
@@ -161,6 +161,10 @@ export const make: <
   lookup: (key: K) => L,
   options?: {
     readonly idleTimeToLive?: IdleTimeToLiveInput<K> | undefined
+    /**
+     * Preloaded entries are retained only for their idle TTL. Keys whose idle
+     * TTL is zero are not preloaded (including when no TTL is specified).
+     */
     readonly preloadKeys?: PreloadKeys
   } | undefined
 ) => Effect.Effect<
@@ -187,7 +191,9 @@ export const make: <
 
   if (options?.preloadKeys) {
     for (const key of options.preloadKeys) {
-      yield* Effect.scoped(RcMap.get(rcMap, key))
+      if (!Duration.isZero(rcMap.idleTimeToLive(key))) {
+        yield* Effect.scoped(RcMap.get(rcMap, key))
+      }
     }
   }
 
@@ -260,6 +266,10 @@ export const fromRecord = <
   layers: Layers,
   options?: {
     readonly idleTimeToLive?: IdleTimeToLiveInput<keyof Layers> | undefined
+    /**
+     * Preloaded entries are retained only for their idle TTL. Keys whose idle
+     * TTL is zero are not preloaded (including when no TTL is specified).
+     */
     readonly preload?: Preload | undefined
   } | undefined
 ): Effect.Effect<
@@ -403,6 +413,10 @@ export const Service = <Self>() =>
       readonly lookup: (key: any) => Layer.Layer<any, any, any>
       readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>> | undefined
       readonly idleTimeToLive?: IdleTimeToLiveInput<any> | undefined
+      /**
+       * Preloaded entries are retained only for their idle TTL. Keys whose idle
+       * TTL is zero are not preloaded (including when no TTL is specified).
+       */
       readonly preloadKeys?:
         | Iterable<Options extends { readonly lookup: (key: infer K) => any } ? K : never>
         | undefined
@@ -411,6 +425,10 @@ export const Service = <Self>() =>
       readonly layers: Record<string, Layer.Layer<any, any, any>>
       readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>> | undefined
       readonly idleTimeToLive?: IdleTimeToLiveInput<any> | undefined
+      /**
+       * Preloaded entries are retained only for their idle TTL. Keys whose idle
+       * TTL is zero are not preloaded (including when no TTL is specified).
+       */
       readonly preload?: boolean | undefined
     }, Options>
 >(

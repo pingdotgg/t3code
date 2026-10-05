@@ -24,6 +24,7 @@ export interface RetrieveTaxRateRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Tax
  */
 export interface RetrieveTaxRate extends Binding.Service<
   RetrieveTaxRate,

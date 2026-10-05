@@ -26,6 +26,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:aiops", "live"] },
 );
 
 const findGroup = (arn: string) =>
@@ -184,5 +185,8 @@ test.provider.skipIf(!process.env.AWS_TEST_AIOPS)(
       yield* stack.destroy();
       yield* assertGroupDeleted(replaced.arn);
     }),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:aws", "provider:aws:aiops", "provider:aws:iam", "live"],
+    timeout: 600_000,
+  },
 );

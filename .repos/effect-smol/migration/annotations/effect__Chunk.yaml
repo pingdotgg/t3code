@@ -7,15 +7,23 @@
 "effect/Chunk#modifyOption":
   replacement: "Chunk.modify"
   note: "The Option suffix was dropped; an out-of-bounds index still returns Option.none."
+"effect/Chunk#partition":
+  include: true
+  replacement: "Chunk.partition"
+  note: "Return Result.succeed(value) for a match and Result.fail(value) otherwise; Filter.fromPredicate adapts predicates that only inspect the value. The tuple is now [passes, fails], the reverse of v3 [excluded, satisfying]."
 "effect/Chunk#partitionMap":
   replacement: "Chunk.partition"
-  note: "Pass a Result-returning mapper instead of Either; the output remains [failures, successes]."
+  note: "Pass a Result-returning mapper instead of Either. The tuple is [passes, fails], the reverse of v3 [failures, successes]."
 "effect/Chunk#removeOption":
   replacement: "Chunk.remove"
   note: "The closest API now returns the unchanged Chunk out of bounds; use Chunk.get before Chunk.remove to preserve the old Option result."
 "effect/Chunk#replaceOption":
   replacement: "Chunk.replace"
   note: "The Option suffix was dropped; an out-of-bounds index still returns Option.none."
+"effect/Chunk#separate":
+  include: true
+  replacement: "Chunk.separate"
+  note: "The tuple is now [successes, failures], the reverse of v3 [failures, successes]."
 "effect/Chunk#TypeId":
   replacement: "none"
   note: "The v4 Chunk brand key is private; no public Chunk.TypeId type or value is exported."

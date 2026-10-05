@@ -1,0 +1,13 @@
+{
+  "name": "service-binding-nuxt",
+  "private": true,
+  "type": "module",
+  "dependencies": {},
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@types/node": "catalog:node24",
+    "nitropack": "catalog:",
+    "nuxt": "catalog:",
+    "typescript": "catalog:"
+  }
+}

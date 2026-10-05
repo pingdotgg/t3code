@@ -36,11 +36,41 @@ import {
   type ExtraFile,
 } from "../Util/extraFiles.ts";
 import { sha256, sha256Object } from "../Util/sha256.ts";
-import type { DiskSpec, ServiceBinding } from "./MountVolume.ts";
+import type { BoundTarget, DiskSpec, ServiceBinding } from "./MountVolume.ts";
+import { safeHttpEffect } from "../Http.ts";
+import { rpcMethodsOf, serveFlyRpc } from "./rpc.ts";
 
 export type FlyHostRuntimeContext = HostRuntimeContext;
 
-export const createFlyHostRuntimeContext = createContainerRuntimeContext;
+/**
+ * Container runtime context for Fly hosts. It also serves the program's RPC
+ * methods to bound callers (see {@link serveFlyRpc}) and boots the HTTP
+ * server for a program that exposes methods but no `fetch`.
+ */
+export const createFlyHostRuntimeContext =
+  (type: string) =>
+  (id: string): HostRuntimeContext => {
+    const base = createContainerRuntimeContext(type)(id);
+    const serveBase = base.serve;
+    const serve: HostRuntimeContext["serve"] = (handler, options) => {
+      const shape = options?.shape;
+      const methods = rpcMethodsOf(shape);
+      // `safeHttpEffect` also resolves a `fetch` given as an Effect that
+      // builds the handler.
+      const wrapped = serveFlyRpc(methods, safeHttpEffect(handler));
+      const boots =
+        shape === undefined ||
+        shape.fetch !== undefined ||
+        Object.keys(methods).length > 0;
+      return serveBase(
+        wrapped,
+        boots
+          ? { shape: { ...shape, fetch: shape?.fetch ?? wrapped } }
+          : options,
+      ) as Effect.Effect<void, never, any>;
+    };
+    return Object.assign(base, { serve });
+  };
 
 export const FLY_REGISTRY = "registry.fly.io";
 export const DEFAULT_BASE_IMAGE = "node:26-slim";
@@ -123,27 +153,11 @@ const { ${handler}: entrypoint } = await import(${JSON.stringify(importPath)});
 await bootstrap(entrypoint);
 `;
 
-/** Flatten a binding/env leaf into a machine env string. Unwraps Redacted. */
+/** Unwrap env inputs while preserving serialized RuntimeContext markers. */
 export const plainEnvValue = (value: unknown): string | undefined => {
   if (value === undefined || value === null) return undefined;
   if (Redacted.isRedacted(value)) return plainEnvValue(Redacted.value(value));
   if (typeof value === "string") {
-    if (value.startsWith("{")) {
-      try {
-        const parsed: unknown = JSON.parse(value);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          (parsed as { _tag?: unknown })._tag === "Redacted" &&
-          typeof (parsed as { value?: unknown }).value === "string"
-        ) {
-          const inner = (parsed as { value: string }).value;
-          return inner.length > 0 ? inner : undefined;
-        }
-      } catch {
-        // plain string that happens to start with `{`
-      }
-    }
     return value.length > 0 ? value : undefined;
   }
   if (typeof value === "number" || typeof value === "boolean") {
@@ -191,9 +205,16 @@ export const collectBindingState = (
   const mounts: DiskSpec[] = [];
   const seen = new Set<string>();
   const redis: { name: string; id?: string }[] = [];
-  const buckets: { name: string; id?: string }[] = [];
+  const buckets: {
+    name: string;
+    id?: string;
+    values?: Record<string, string>;
+  }[] = [];
   const postgres: { clusterId: string; variableName?: string }[] = [];
+  const targets: BoundTarget[] = [];
   for (const binding of active) {
+    const target = binding?.data?.target;
+    if (target !== undefined) targets.push(target);
     for (const mount of binding?.data?.mounts ?? []) {
       if (seen.has(mount.path)) continue;
       seen.add(mount.path);
@@ -213,34 +234,35 @@ export const collectBindingState = (
           name?: unknown;
           id?: unknown;
           addOnId?: unknown;
+          bucketName?: unknown;
           accessKeyId?: unknown;
           secretAccessKey?: unknown;
           endpoint?: unknown;
           region?: unknown;
-          bucketName?: unknown;
         }
       | undefined;
     const bucketName = coerceBindingName(bucket?.name);
     const bucketId =
       coerceBindingName(bucket?.id) ?? coerceBindingName(bucket?.addOnId);
     if (bucketName !== undefined || bucketId !== undefined) {
+      // The bound Bucket's attributes carry the create-time Tigris
+      // credentials, which Fly's add-on lookup often returns empty.
+      const values: Record<string, string> = {};
+      for (const [key, value] of [
+        ["BUCKET_NAME", bucket?.bucketName],
+        ["AWS_ACCESS_KEY_ID", bucket?.accessKeyId],
+        ["AWS_SECRET_ACCESS_KEY", bucket?.secretAccessKey],
+        ["AWS_ENDPOINT_URL_S3", bucket?.endpoint],
+        ["AWS_REGION", bucket?.region],
+      ] as const) {
+        const plain = plainEnvValue(value);
+        if (plain !== undefined) values[key] = plain;
+      }
       buckets.push({
         name: bucketName ?? "",
         id: bucketId,
+        values,
       });
-    }
-    if (bucket !== undefined) {
-      Object.assign(
-        env,
-        toEnvRecord({
-          AWS_ACCESS_KEY_ID: bucket.accessKeyId,
-          AWS_SECRET_ACCESS_KEY: bucket.secretAccessKey,
-          AWS_ENDPOINT_URL_S3: bucket.endpoint,
-          AWS_ENDPOINT_URL: bucket.endpoint,
-          AWS_REGION: bucket.region,
-          BUCKET_NAME: bucket.bucketName ?? bucket.name,
-        }),
-      );
     }
     const pg = binding?.data?.postgres;
     const clusterId = coerceBindingName(pg?.clusterId);
@@ -254,12 +276,18 @@ export const collectBindingState = (
       });
     }
   }
-  return { env, mounts, redis, buckets, postgres };
+  return { env, mounts, redis, buckets, postgres, targets };
 };
 
+/**
+ * HTTP 80 → HTTPS redirect plus HTTPS 443 for public Services. Private
+ * (Flycast-only) Services publish plain HTTP on 80: Fly issues no
+ * certificate for `.flycast`, so a redirect to HTTPS would break callers.
+ */
 export const defaultHttpServices = (
   port: number,
   count = 1,
+  isPublic = true,
 ): FlyMachineService[] => [
   {
     protocol: "tcp",
@@ -267,10 +295,12 @@ export const defaultHttpServices = (
     autostart: true,
     autostop: "off",
     min_machines_running: count,
-    ports: [
-      { port: 80, handlers: ["http"], force_https: true },
-      { port: 443, handlers: ["tls", "http"] },
-    ],
+    ports: isPublic
+      ? [
+          { port: 80, handlers: ["http"], force_https: true },
+          { port: 443, handlers: ["tls", "http"] },
+        ]
+      : [{ port: 80, handlers: ["http"] }],
     // Wait until the process is listening before the proxy sends traffic.
     // Without this, fly.dev hangs (status 0) while Node is still booting.
     checks: [

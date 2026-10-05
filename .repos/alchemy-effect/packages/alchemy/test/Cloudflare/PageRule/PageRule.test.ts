@@ -92,45 +92,55 @@ const purgeRules = (zoneId: string, targets: ReadonlyArray<string>) =>
     ),
   );
 
-test.provider("create, verify out-of-band, and destroy a page rule", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "create, verify out-of-band, and destroy a page rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules(zoneId, [TARGET_DEFAULT]);
+      yield* stack.destroy();
+      yield* purgeRules(zoneId, [TARGET_DEFAULT]);
 
-    const rule = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.PageRule.PageRule("DefaultRule", {
-          zoneId,
-          target: TARGET_DEFAULT,
-          actions: [
-            { id: "cache_level", value: "cache_everything" },
-            { id: "edge_cache_ttl", value: 7200 },
-          ],
-        }).pipe(adopt(true));
-      }),
-    );
+      const rule = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.PageRule.PageRule("DefaultRule", {
+            zoneId,
+            target: TARGET_DEFAULT,
+            actions: [
+              { id: "cache_level", value: "cache_everything" },
+              { id: "edge_cache_ttl", value: 7200 },
+            ],
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(rule.pageRuleId).toBeDefined();
-    expect(rule.zoneId).toEqual(zoneId);
-    expect(rule.target).toEqual(TARGET_DEFAULT);
-    // Alchemy defaults differ from the raw API: status active, priority 1.
-    expect(rule.status).toEqual("active");
-    expect(rule.priority).toEqual(1);
+      expect(rule.pageRuleId).toBeDefined();
+      expect(rule.zoneId).toEqual(zoneId);
+      expect(rule.target).toEqual(TARGET_DEFAULT);
+      // Alchemy defaults differ from the raw API: status active, priority 1.
+      expect(rule.status).toEqual("active");
+      expect(rule.priority).toEqual(1);
 
-    const live = yield* getRule(zoneId, rule.pageRuleId);
-    expect(live.id).toEqual(rule.pageRuleId);
-    expect(targetOf(live)).toEqual(TARGET_DEFAULT);
-    expect(live.status).toEqual("active");
-    const actionIds = live.actions.map((a) => a.id).sort();
-    expect(actionIds).toEqual(["cache_level", "edge_cache_ttl"]);
+      const live = yield* getRule(zoneId, rule.pageRuleId);
+      expect(live.id).toEqual(rule.pageRuleId);
+      expect(targetOf(live)).toEqual(TARGET_DEFAULT);
+      expect(live.status).toEqual("active");
+      const actionIds = live.actions.map((a) => a.id).sort();
+      expect(actionIds).toEqual(["cache_level", "edge_cache_ttl"]);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gone = yield* findRule(zoneId, TARGET_DEFAULT);
-    expect(gone).toBeUndefined();
-  }).pipe(logLevel),
+      const gone = yield* findRule(zoneId, TARGET_DEFAULT);
+      expect(gone).toBeUndefined();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pagerule",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider(
@@ -207,6 +217,14 @@ test.provider(
       const gone = yield* findRule(zoneId, TARGET_UPDATE_MOVED);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pagerule",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider(
@@ -278,42 +296,62 @@ test.provider(
       const gone = yield* findRule(zoneId, TARGET_ADOPT);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pagerule",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): `list()` enumerates
 // every zone via `listAllZones` and lists each zone's Page Rules, hydrating
 // each into the same `Attributes` shape `read` returns. Deploy a rule with a
 // deterministic target, then assert it appears in the exhaustive result.
-test.provider("list enumerates the deployed page rule", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates the deployed page rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules(zoneId, [TARGET_LIST]);
+      yield* stack.destroy();
+      yield* purgeRules(zoneId, [TARGET_LIST]);
 
-    const rule = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.PageRule.PageRule("ListRule", {
-          zoneId,
-          target: TARGET_LIST,
-          actions: [{ id: "cache_level", value: "cache_everything" }],
-        }).pipe(adopt(true));
-      }),
-    );
+      const rule = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.PageRule.PageRule("ListRule", {
+            zoneId,
+            target: TARGET_LIST,
+            actions: [{ id: "cache_level", value: "cache_everything" }],
+          }).pipe(adopt(true));
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.PageRule.PageRule);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.PageRule.PageRule,
+      );
+      const all = yield* provider.list();
 
-    expect(all.some((r) => r.pageRuleId === rule.pageRuleId)).toBe(true);
-    const found = all.find((r) => r.pageRuleId === rule.pageRuleId);
-    expect(found?.zoneId).toEqual(zoneId);
-    expect(found?.target).toEqual(TARGET_LIST);
+      expect(all.some((r) => r.pageRuleId === rule.pageRuleId)).toBe(true);
+      const found = all.find((r) => r.pageRuleId === rule.pageRuleId);
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.target).toEqual(TARGET_LIST);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gone = yield* findRule(zoneId, TARGET_LIST);
-    expect(gone).toBeUndefined();
-  }).pipe(logLevel),
+      const gone = yield* findRule(zoneId, TARGET_LIST);
+      expect(gone).toBeUndefined();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pagerule",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 /**

@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 test.provider(
@@ -36,6 +37,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 test.provider(
@@ -50,6 +52,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 // Probes for the scaling-group / volume binding operations: prove the typed
@@ -66,6 +69,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 test.provider(
@@ -80,6 +84,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 // Deletion is verified as INITIATED (irreversible) or fully gone.
@@ -183,5 +188,8 @@ test.provider.skipIf(!process.env.AWS_TEST_FINSPACE)(
       yield* assertKxEnvironmentDeleting(environmentId);
     }),
   // kdb environment create (tens of minutes) + database + delete, one test.
-  { timeout: 3_000_000 },
+  {
+    tags: ["provider:aws", "provider:aws:finspace", "provider:aws:kms", "live"],
+    timeout: 3_000_000,
+  },
 );

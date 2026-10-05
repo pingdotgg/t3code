@@ -50,6 +50,9 @@ jobs:
         with:
           deno-version: v2.9.4
       - run: pnpm check
+        env:
+          # Leave memory headroom for the runner by collecting the Go heap earlier.
+          GOMEMLIMIT: 4GiB
       - run: deno check .
       - run: pnpm test-types --target '>=5.9'
 

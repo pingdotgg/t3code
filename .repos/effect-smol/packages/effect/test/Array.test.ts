@@ -878,8 +878,8 @@ describe("Array", () => {
   it("separate", () => {
     deepStrictEqual(Arr.separate([]), [[], []])
     deepStrictEqual(Arr.separate([Result.succeed(1), Result.fail("e"), Result.fail(2), Result.succeed(2)]), [
-      ["e", 2],
-      [1, 2]
+      [1, 2],
+      ["e", 2]
     ])
   })
 
@@ -910,15 +910,15 @@ describe("Array", () => {
 
   it("partition (identity)", () => {
     deepStrictEqual(Arr.partition([], identity), [[], []])
-    deepStrictEqual(Arr.partition([Result.succeed(1), Result.fail("a"), Result.succeed(2)], identity), [["a"], [1, 2]])
+    deepStrictEqual(Arr.partition([Result.succeed(1), Result.fail("a"), Result.succeed(2)], identity), [[1, 2], ["a"]])
   })
 
   it("partition - transformed outputs", () => {
     deepStrictEqual(Arr.partition([], (n) => n > 2 ? Result.succeed(n) : Result.fail(n)), [[], []])
-    deepStrictEqual(Arr.partition([1, 3], (n) => n > 2 ? Result.succeed(n) : Result.fail(n)), [[1], [3]])
+    deepStrictEqual(Arr.partition([1, 3], (n) => n > 2 ? Result.succeed(n) : Result.fail(n)), [[3], [1]])
 
     deepStrictEqual(Arr.partition([], (n, i) => n + i > 2 ? Result.succeed(n) : Result.fail(n)), [[], []])
-    deepStrictEqual(Arr.partition([1, 2], (n, i) => n + i > 2 ? Result.succeed(n) : Result.fail(n)), [[1], [2]])
+    deepStrictEqual(Arr.partition([1, 2], (n, i) => n + i > 2 ? Result.succeed(n) : Result.fail(n)), [[2], [1]])
   })
 
   it("reduce", () => {
@@ -1400,21 +1400,21 @@ describe("Array", () => {
     const f: (n: number, i: number) => Result.Result<number, string> = (n, i) =>
       n > 0 ? Result.succeed(n + i) : Result.fail(`negative: ${n}:${i}`)
     deepStrictEqual(Arr.partition([], f), [[], []])
-    deepStrictEqual(Arr.partition([1, -2, 3, -4], f), [["negative: -2:1", "negative: -4:3"], [1, 5]])
-    deepStrictEqual(pipe([5, 10], Arr.partition(f)), [[], [5, 11]])
-    deepStrictEqual(pipe([-1, -2], Arr.partition(f)), [["negative: -1:0", "negative: -2:1"], []])
-    deepStrictEqual(pipe(new Set([1, -2, 3, -4]), Arr.partition(f)), [["negative: -2:1", "negative: -4:3"], [
-      1,
-      5
-    ]])
-    deepStrictEqual(pipe([1, -2, 3][Symbol.iterator](), Arr.partition(f)), [["negative: -2:1"], [1, 5]])
+    deepStrictEqual(Arr.partition([1, -2, 3, -4], f), [[1, 5], ["negative: -2:1", "negative: -4:3"]])
+    deepStrictEqual(pipe([5, 10], Arr.partition(f)), [[5, 11], []])
+    deepStrictEqual(pipe([-1, -2], Arr.partition(f)), [[], ["negative: -1:0", "negative: -2:1"]])
+    deepStrictEqual(
+      pipe(new Set([1, -2, 3, -4]), Arr.partition(f)),
+      [[1, 5], ["negative: -2:1", "negative: -4:3"]]
+    )
+    deepStrictEqual(pipe([1, -2, 3][Symbol.iterator](), Arr.partition(f)), [[1, 5], ["negative: -2:1"]])
   })
 
   it("partition with typed pass/fail outputs", () => {
     const items: Array<string | number> = [1, "a", 2, "b"]
     deepStrictEqual(
       Arr.partition(items, (x) => typeof x === "number" ? Result.succeed(x) : Result.fail(x)),
-      [["a", "b"], [1, 2]]
+      [[1, 2], ["a", "b"]]
     )
   })
 

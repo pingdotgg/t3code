@@ -7,10 +7,10 @@ import type { Path } from "effect/Path";
 import { defaultTeardown, type Teardown } from "effect/Runtime";
 import type { Stdio } from "effect/Stdio";
 import type { Terminal } from "effect/Terminal";
-import type { HttpServer } from "effect/unstable/http/HttpServer";
-import type { ServeError } from "effect/unstable/http/HttpServerError";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import type { WebSocketConstructor } from "effect/unstable/socket/Socket";
+import type { HttpServer } from "effect/http/HttpServer";
+import type { ServeError } from "effect/http/HttpServerError";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import type { WebSocketConstructor } from "effect/socket/Socket";
 import { disableCrossSpawnChdir } from "./Node.ts";
 
 const isBun = typeof Bun !== "undefined";

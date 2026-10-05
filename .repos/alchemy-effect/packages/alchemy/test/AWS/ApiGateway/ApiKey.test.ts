@@ -8,24 +8,27 @@ import { assertApiKeyDeleted } from "./assertions.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-test.provider.skipIf(!!process.env.FAST)("create and delete API key", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider.skipIf(!!process.env.FAST)(
+  "create and delete API key",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const key = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* AWS.ApiGateway.ApiKey("AgApiKey", {
-          generateDistinctId: true,
-          enabled: true,
-        });
-      }),
-    );
+      const key = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* AWS.ApiGateway.ApiKey("AgApiKey", {
+            generateDistinctId: true,
+            enabled: true,
+          });
+        }),
+      );
 
-    expect(key.id).toBeDefined();
+      expect(key.id).toBeDefined();
 
-    yield* stack.destroy();
-    yield* assertApiKeyDeleted(key.id);
-  }),
+      yield* stack.destroy();
+      yield* assertApiKeyDeleted(key.id);
+    }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );
 
 test.provider.skipIf(!!process.env.FAST)(
@@ -50,6 +53,7 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* stack.destroy();
       yield* assertApiKeyDeleted(key.id);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );
 
 test.provider.skipIf(!!process.env.FAST)(
@@ -75,4 +79,5 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* stack.destroy();
       yield* assertApiKeyDeleted(key.id);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );

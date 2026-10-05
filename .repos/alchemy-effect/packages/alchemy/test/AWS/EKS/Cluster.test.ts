@@ -14,20 +14,23 @@ const { test } = Test.make({ providers: AWS.providers() });
 // well-formed array of full Cluster Attributes. This proves the enumeration
 // wiring (listClusters -> describeCluster) compiles and runs live without
 // paying the ~10-minute control-plane create.
-test.provider("list returns a well-formed array of clusters", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list returns a well-formed array of clusters",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(Cluster);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cluster);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const cluster of all) {
-      expect(typeof cluster.clusterArn).toBe("string");
-      expect(typeof cluster.clusterName).toBe("string");
-      expect(typeof cluster.roleArn).toBe("string");
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const cluster of all) {
+        expect(typeof cluster.clusterArn).toBe("string");
+        expect(typeof cluster.clusterName).toBe("string");
+        expect(typeof cluster.roleArn).toBe("string");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:eks", "live"] },
 );
 
 // Full deploy test: an EKS control plane takes ~10+ minutes to provision, far
@@ -68,5 +71,5 @@ test.provider.skipIf(
 
       yield* stack.destroy();
     }),
-  { timeout: 1_800_000 },
+  { tags: ["provider:aws", "provider:aws:eks", "live"], timeout: 1_800_000 },
 );

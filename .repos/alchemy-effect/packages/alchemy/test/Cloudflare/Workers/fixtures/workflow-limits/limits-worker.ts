@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import LimitsWorkflow from "./limits-workflow.ts";
 
 export default class LimitsWorkflowWorker extends Cloudflare.Worker<LimitsWorkflowWorker>()(

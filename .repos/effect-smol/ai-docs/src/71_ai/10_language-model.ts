@@ -7,8 +7,8 @@
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { Config, Context, Effect, ExecutionPlan, Layer, Schema, Stream } from "effect"
-import { AiError, LanguageModel, Model, type Response } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { AiError, LanguageModel, Model, type Response } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 import { LaunchPlan } from "./fixtures/domain/LaunchPlan.ts"
 
 // You can use Config to create ai clients

@@ -100,7 +100,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertGroupDeleted(group.groupName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:xray", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -137,5 +137,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertGroupDeleted("alchemy-test-group-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:xray", "live"], timeout: 120_000 },
 );

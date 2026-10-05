@@ -47,6 +47,7 @@ export interface DecryptResult {
  * ```
  *
  * @binding
+ * @product Secret Key
  */
 export interface Decrypt extends Binding.Service<
   Decrypt,

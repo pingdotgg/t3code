@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { RuntimeContext } from "@/RuntimeContext.ts";
 import { makeMemoryBlobStore } from "./harness/store.ts";
 
-describe("multipart parts", () => {
+describe("multipart parts", { tags: ["unit", "local"] }, () => {
   test("orderedParts sorts by part number regardless of settle order", () => {
     // The push pipeline's hasher isolates upload parts concurrently and the
     // small tail settles before earlier parts do.

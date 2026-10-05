@@ -302,7 +302,7 @@ Use it when your Effect programs need testable current time, safe parsing, stabl
 
 Effect has built-in support for structured logging, distributed tracing, and
 metrics. For exporting telemetry, use the lightweight Otlp modules from
-`effect/unstable/observability` in new projects, or use
+`effect/observability` in new projects, or use
 `@effect/opentelemetry` NodeSdk when integrating with an existing OpenTelemetry
 setup.
 
@@ -344,7 +344,7 @@ if (Predicate.isObject(thing)) {
 
 ## Working with SQL databases
 
-Use the `effect/unstable/sql` modules together with a driver package such as
+Use the `effect/sql` modules together with a driver package such as
 `@effect/sql-sqlite-node` to access SQL databases. Define domain models with
 `Model.Class` to derive schemas for the database and JSON boundaries, run
 migrations, and write type-safe queries.
@@ -372,13 +372,13 @@ Build http clients with the `HttpClient` module.
 
 ## Working with child processes
 
-Use the `effect/unstable/process` modules to define child processes and run them with `ChildProcessSpawner`.
+Use the `effect/process` modules to define child processes and run them with `ChildProcessSpawner`.
 
 - **[Working with child processes](./ai-docs/src/60_child-process/10_working-with-child-processes.ts)**: This example shows how to collect process output, compose pipelines, and stream long-running command output.
 
 ## Building CLI applications
 
-Use the "effect/unstable/cli" modules to build CLI applications. These modules
+Use the "effect/cli" modules to build CLI applications. These modules
 provide utilities for parsing command-line arguments, handling user input, and
 managing the flow of a CLI application.
 

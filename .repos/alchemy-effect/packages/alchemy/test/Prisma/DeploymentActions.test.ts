@@ -55,46 +55,53 @@ const clientBackedApi = (client: any) =>
     return unhandled(request);
   });
 
-describe("Prisma deployment actions", () => {
-  it.effect("does not hide a start conflict for an unuploaded version", () => {
-    const error = conflict("start");
-    const client = {
-      startDeployment: () => Effect.fail(error),
-      getDeployment: () => Effect.succeed(version("new")),
-    } as unknown as PrismaManagementClient;
+describe(
+  "Prisma deployment actions",
+  { tags: ["unit", "provider:prisma", "provider:prisma:deployment", "local"] },
+  () => {
+    it.effect(
+      "does not hide a start conflict for an unuploaded version",
+      () => {
+        const error = conflict("start");
+        const client = {
+          startDeployment: () => Effect.fail(error),
+          getDeployment: () => Effect.succeed(version("new")),
+        } as unknown as PrismaManagementClient;
 
-    return Effect.gen(function* () {
-      const observed = yield* startDeploymentIdempotent("deployment-1").pipe(
-        Effect.flip,
-      );
-      // Over the wire the injected conflict decodes into the typed error.
-      expect(observed._tag).toBe("Conflict");
-      expect(observed.message).toBe("state conflict");
-    }).pipe(Effect.provide(clientBackedApi(client).layer));
-  });
-
-  it.effect("accepts a start conflict only after observing progress", () => {
-    const client = {
-      startDeployment: () => Effect.fail(conflict("start")),
-      getDeployment: () => Effect.succeed(version("provisioning")),
-    } as unknown as PrismaManagementClient;
-
-    return startDeploymentIdempotent("deployment-1").pipe(
-      Effect.provide(clientBackedApi(client).layer),
+        return Effect.gen(function* () {
+          const observed = yield* startDeploymentIdempotent(
+            "deployment-1",
+          ).pipe(Effect.flip);
+          // Over the wire the injected conflict decodes into the typed error.
+          expect(observed._tag).toBe("Conflict");
+          expect(observed.message).toBe("state conflict");
+        }).pipe(Effect.provide(clientBackedApi(client).layer));
+      },
     );
-  });
 
-  it.effect(
-    "accepts a stop conflict while teardown is already progressing",
-    () => {
+    it.effect("accepts a start conflict only after observing progress", () => {
       const client = {
-        stopDeployment: () => Effect.fail(conflict("stop")),
-        getDeployment: () => Effect.succeed(version("stopping")),
+        startDeployment: () => Effect.fail(conflict("start")),
+        getDeployment: () => Effect.succeed(version("provisioning")),
       } as unknown as PrismaManagementClient;
 
-      return stopDeploymentIdempotent("deployment-1").pipe(
+      return startDeploymentIdempotent("deployment-1").pipe(
         Effect.provide(clientBackedApi(client).layer),
       );
-    },
-  );
-});
+    });
+
+    it.effect(
+      "accepts a stop conflict while teardown is already progressing",
+      () => {
+        const client = {
+          stopDeployment: () => Effect.fail(conflict("stop")),
+          getDeployment: () => Effect.succeed(version("stopping")),
+        } as unknown as PrismaManagementClient;
+
+        return stopDeploymentIdempotent("deployment-1").pipe(
+          Effect.provide(clientBackedApi(client).layer),
+        );
+      },
+    );
+  },
+);

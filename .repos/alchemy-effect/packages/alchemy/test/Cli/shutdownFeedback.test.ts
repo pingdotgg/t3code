@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { fileURLToPath } from "node:url";
 
 const FIXTURE = fileURLToPath(
@@ -70,7 +70,7 @@ const waitForStderr = (read: () => string, text: string) =>
     ),
   );
 
-describe("shutdown feedback", () => {
+describe("shutdown feedback", { tags: ["unit", "local"] }, () => {
   it.live(
     "a slow shutdown prints one delayed status line",
     () =>

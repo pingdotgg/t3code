@@ -81,5 +81,8 @@ test.provider(
       const afterDestroy = yield* observedDefinitions;
       expect(afterDestroy).toHaveLength(0);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:applicationsignals", "live"],
+    timeout: 120_000,
+  },
 );

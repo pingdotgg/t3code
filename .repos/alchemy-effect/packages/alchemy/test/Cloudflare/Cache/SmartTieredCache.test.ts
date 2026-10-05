@@ -60,112 +60,123 @@ const setBaseline = (zoneId: string, value: "on" | "off") =>
 // Both cases mutate the same zone-level Smart Tiered Cache singleton with
 // opposite baselines; run them serially so they don't corrupt each other's
 // captured `initialValue` under the global concurrent test config.
-describe.sequential("SmartTieredCache", () => {
-  test.provider(
-    "enables Smart Tiered Cache and restores the original value on destroy",
-    (stack) =>
+describe.sequential(
+  "SmartTieredCache",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:cache",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "enables Smart Tiered Cache and restores the original value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Known baseline: Smart Tiered Cache defaults to "off".
+          yield* setBaseline(zoneId, "off");
+
+          const setting = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
+                zoneId,
+              });
+            }),
+          );
+
+          expect(setting.zoneId).toEqual(zoneId);
+          expect(setting.value).toEqual("on");
+          // The pre-management value was captured for restore-on-destroy.
+          expect(setting.initialValue).toEqual("off");
+          expect(setting.editable).toEqual(true);
+
+          // Out-of-band verification via the distilled API.
+          const live = yield* getSmartTieredCache(zoneId);
+          expect(live.value).toEqual("on");
+
+          yield* stack.destroy();
+
+          // Destroy restored the value the setting had before we managed it.
+          const restored = yield* getSmartTieredCache(zoneId);
+          expect(restored.value).toEqual("off");
+        }).pipe(logLevel),
+    );
+
+    test.provider(
+      "updates the setting in place and keeps the captured initial value",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Known baseline: start from "on" so initialValue !== first desired
+          // value and the restore path is observable.
+          yield* setBaseline(zoneId, "on");
+
+          const initial = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
+                zoneId,
+                enabled: false,
+              });
+            }),
+          );
+
+          expect(initial.value).toEqual("off");
+          expect(initial.initialValue).toEqual("on");
+
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
+                zoneId,
+                enabled: true,
+              });
+            }),
+          );
+
+          // Same singleton patched in place; the original value survives the
+          // update so destroy still restores the pre-management state.
+          expect(updated.value).toEqual("on");
+          expect(updated.initialValue).toEqual("on");
+
+          const live = yield* getSmartTieredCache(zoneId);
+          expect(live.value).toEqual("on");
+
+          yield* stack.destroy();
+
+          const restored = yield* getSmartTieredCache(zoneId);
+          expect(restored.value).toEqual("on");
+
+          // Leave the zone at its Cloudflare default ("off") for other suites.
+          yield* setBaseline(zoneId, "off");
+        }).pipe(logLevel),
+    );
+
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for this per-zone setting, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider("list enumerates the setting across all zones", (stack) =>
       Effect.gen(function* () {
         const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        // Known baseline: Smart Tiered Cache defaults to "off".
-        yield* setBaseline(zoneId, "off");
-
-        const setting = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
-              zoneId,
-            });
-          }),
+        const provider = yield* Provider.findProvider(
+          Cloudflare.Cache.SmartTieredCache,
         );
+        const all = yield* provider.list();
 
-        expect(setting.zoneId).toEqual(zoneId);
-        expect(setting.value).toEqual("on");
-        // The pre-management value was captured for restore-on-destroy.
-        expect(setting.initialValue).toEqual("off");
-        expect(setting.editable).toEqual(true);
+        expect(all.length).toBeGreaterThan(0);
+        expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
 
-        // Out-of-band verification via the distilled API.
-        const live = yield* getSmartTieredCache(zoneId);
-        expect(live.value).toEqual("on");
-
+        // `stack` is unused here (the singleton always exists on every zone),
+        // but keep the destroy bookends so the harness state stays clean.
         yield* stack.destroy();
-
-        // Destroy restored the value the setting had before we managed it.
-        const restored = yield* getSmartTieredCache(zoneId);
-        expect(restored.value).toEqual("off");
       }).pipe(logLevel),
-  );
-
-  test.provider(
-    "updates the setting in place and keeps the captured initial value",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        // Known baseline: start from "on" so initialValue !== first desired
-        // value and the restore path is observable.
-        yield* setBaseline(zoneId, "on");
-
-        const initial = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
-              zoneId,
-              enabled: false,
-            });
-          }),
-        );
-
-        expect(initial.value).toEqual("off");
-        expect(initial.initialValue).toEqual("on");
-
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
-              zoneId,
-              enabled: true,
-            });
-          }),
-        );
-
-        // Same singleton patched in place; the original value survives the
-        // update so destroy still restores the pre-management state.
-        expect(updated.value).toEqual("on");
-        expect(updated.initialValue).toEqual("on");
-
-        const live = yield* getSmartTieredCache(zoneId);
-        expect(live.value).toEqual("on");
-
-        yield* stack.destroy();
-
-        const restored = yield* getSmartTieredCache(zoneId);
-        expect(restored.value).toEqual("on");
-
-        // Leave the zone at its Cloudflare default ("off") for other suites.
-        yield* setBaseline(zoneId, "off");
-      }).pipe(logLevel),
-  );
-
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for this per-zone setting, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider("list enumerates the setting across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
-
-      const provider = yield* Provider.findProvider(
-        Cloudflare.Cache.SmartTieredCache,
-      );
-      const all = yield* provider.list();
-
-      expect(all.length).toBeGreaterThan(0);
-      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
-
-      // `stack` is unused here (the singleton always exists on every zone),
-      // but keep the destroy bookends so the harness state stays clean.
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+    );
+  },
+);

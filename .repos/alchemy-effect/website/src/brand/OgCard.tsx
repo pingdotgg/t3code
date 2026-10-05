@@ -55,9 +55,74 @@ export interface OgCardProps {
 const W = 1200;
 const H = 630;
 
+/**
+ * Sri Yantra geometry for the card backgrounds, echoing the landing page's
+ * hero rings and section patterns: concentric rings, a lotus of 16 petals,
+ * and nine interlocking triangles (four apex-up, five apex-down) around a
+ * bindu. Returned as an SVG data URL so Takumi can draw it as an <img>.
+ */
+function yantraField(stroke: string, opacity: number): string {
+  const c = 500;
+  const circle = (r: number) => `<circle cx="${c}" cy="${c}" r="${r}"/>`;
+  const tri = (r: number, down: boolean, dy: number) => {
+    const pts = [0, 1, 2]
+      .map((k) => {
+        const a = (((down ? 90 : -90) + 120 * k) * Math.PI) / 180;
+        return `${(c + r * Math.cos(a)).toFixed(1)},${(c + dy + r * Math.sin(a)).toFixed(1)}`;
+      })
+      .join(" ");
+    return `<polygon points="${pts}"/>`;
+  };
+  const petals = Array.from({ length: 16 }, (_, k) => {
+    const a = (2 * Math.PI * k) / 16;
+    const h = (Math.PI / 16) * 0.6;
+    const p = (r: number, t: number) =>
+      `${(c + r * Math.cos(t)).toFixed(1)},${(c + r * Math.sin(t)).toFixed(1)}`;
+    return `<path d="M${p(330, a - h)} Q${p(395, a - h * 1.1)} ${p(420, a)} Q${p(395, a + h * 1.1)} ${p(330, a + h)}"/>`;
+  }).join("");
+  const r = 250;
+  const shapes = [
+    ...[90, 170, 330, 425, 470, 495].map(circle),
+    petals,
+    tri(r, false, -0.1 * r),
+    tri(r * 0.8, false, -0.02 * r),
+    tri(r * 0.6, false, 0.06 * r),
+    tri(r * 0.4, false, 0.12 * r),
+    tri(r, true, 0.1 * r),
+    tri(r * 0.84, true, 0.03 * r),
+    tri(r * 0.68, true, -0.04 * r),
+    tri(r * 0.5, true, -0.1 * r),
+    tri(r * 0.32, true, -0.02 * r),
+    `<circle cx="${c}" cy="${c}" r="5" fill="${stroke}"/>`,
+  ].join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" opacity="${opacity}">${shapes}</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+/** The geometry, large and bleeding off the card's right edge. */
+function Field({
+  stroke,
+  opacity,
+  right = -250,
+}: {
+  stroke: string;
+  opacity: number;
+  right?: number;
+}) {
+  return (
+    <img
+      src={yantraField(stroke, opacity)}
+      width={820}
+      height={820}
+      style={{ position: "absolute", right, top: -95, display: "flex" }}
+    />
+  );
+}
+
 export function OgCard(props: OgCardProps): any {
   const kind = props.kind ?? "doc";
   if (kind === "blog") return BlogCard(props);
+  if (kind === "marketing") return MarketingCard(props);
   return DocCard(props);
 }
 
@@ -82,6 +147,7 @@ function DocCard({ title, description, eyebrow, kind }: OgCardProps) {
         position: "relative",
       }}
     >
+      <Field stroke={COLORS.accentDeep} opacity={0.16} />
       <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
         <img
           src={yantraSvg({
@@ -174,6 +240,100 @@ function DocCard({ title, description, eyebrow, kind }: OgCardProps) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Marketing variant — the dark hero: mark, headline, subtitle, and the
+// yantra rings glowing behind it.
+// ────────────────────────────────────────────────────────────────────────────
+
+function MarketingCard({ title, description, eyebrow }: OgCardProps) {
+  return (
+    <div
+      style={{
+        width: W,
+        height: H,
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: COLORS.darkBg,
+        padding: "60px 72px",
+        fontFamily: "'Source Serif 4'",
+        color: COLORS.darkFg1,
+        position: "relative",
+      }}
+    >
+      <Field stroke={COLORS.darkAccent} opacity={0.3} right={-360} />
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <img
+          src={yantraSvg({ size: 96, theme: "dark", output: "url" })}
+          width={60}
+          height={60}
+          style={{ display: "flex" }}
+        />
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 18,
+            letterSpacing: 3,
+            color: COLORS.darkAccent,
+          }}
+        >
+          {(eyebrow ?? defaultEyebrow("marketing")).toUpperCase()}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          marginTop: 48,
+          maxWidth: 820,
+          fontVariationSettings: "'opsz' 60",
+          fontWeight: 500,
+          fontSize: 96,
+          lineHeight: 1.02,
+          letterSpacing: -2,
+        }}
+      >
+        {title}
+      </div>
+      {description ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 26,
+            maxWidth: 740,
+            fontSize: 28,
+            lineHeight: 1.4,
+            color: COLORS.darkFg2,
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexGrow: 1 }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          borderTop: `1px solid ${COLORS.darkHairline}`,
+          paddingTop: 22,
+        }}
+      >
+        <div style={{ fontStyle: "italic", fontSize: 32 }}>alchemy</div>
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 20,
+            letterSpacing: 2,
+            color: COLORS.darkAccent,
+          }}
+        >
+          alchemy.run
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Blog variant — dark, dense, Bun-inspired release card.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -189,8 +349,10 @@ function BlogCard({ title, description, date }: OgCardProps): any {
         padding: "72px 80px",
         fontFamily: "'Source Serif 4'",
         color: COLORS.darkFg1,
+        position: "relative",
       }}
     >
+      <Field stroke={COLORS.darkAccent} opacity={0.12} />
       <div
         style={{
           display: "flex",
@@ -301,7 +463,7 @@ function formatDate(iso: string | undefined): string {
 function defaultEyebrow(kind: OgCardKind): string {
   switch (kind) {
     case "marketing":
-      return "alchemy · zero to production";
+      return "infrastructure as effects";
     case "blog":
       return "blog · alchemy.run";
     case "doc":

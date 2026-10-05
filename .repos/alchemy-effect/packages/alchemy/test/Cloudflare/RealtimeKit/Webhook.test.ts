@@ -157,7 +157,10 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, v1.appId, v1.webhookId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );
 
 // `list()` fans out over every RealtimeKit app in the account and flattens
@@ -208,5 +211,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );

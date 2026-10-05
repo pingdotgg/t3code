@@ -1,8 +1,15 @@
 export * from "./App.ts";
 export * from "./AuthProvider.ts";
+export * from "./BindService.ts";
 export * from "./Bucket.ts";
 export * from "./Catalog.ts";
 export * from "./DeleteObject.ts";
+export type {
+  MachineDeploy,
+  MachineShutdown,
+  MachineCheck,
+} from "./Deployment.ts";
+export { InvalidDeployment } from "./Deployment.ts";
 export * from "./DeleteObjectHttp.ts";
 export * from "./Certificate.ts";
 export * from "./Checkpoint.ts";
@@ -30,6 +37,7 @@ export * from "./ListSecretsHttp.ts";
 export * from "./Machine.ts";
 export * from "./Metadata.ts";
 export * from "./MountVolume.ts";
+export { ServicePortConflict } from "./ports.ts";
 export * from "./Postgres.ts";
 export * from "./ConnectPostgres.ts";
 export * from "./ConnectPostgresHttp.ts";
@@ -41,6 +49,7 @@ export * from "./ReadRedisHttp.ts";
 export * from "./ReadWriteRedis.ts";
 export * from "./ReadWriteRedisHttp.ts";
 export * from "./Redis.ts";
+export type { Region } from "./Region.ts";
 export * from "./WriteRedis.ts";
 export * from "./WriteRedisHttp.ts";
 export * from "./Secret.ts";
@@ -53,5 +62,7 @@ export * from "./Verify.ts";
 export * from "./VerifyHttp.ts";
 export * from "./VolumeSnapshot.ts";
 export * as Website from "./Website/index.ts";
+export * from "./WriteCertificates.ts";
+export * from "./WriteCertificatesHttp.ts";
 export * from "./WriteSecret.ts";
 export * from "./WriteSecretHttp.ts";

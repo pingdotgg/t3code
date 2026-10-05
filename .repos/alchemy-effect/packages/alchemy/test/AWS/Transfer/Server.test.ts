@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:transfer", "live"] },
 );
 
 const describeServer = (serverId: string) =>
@@ -120,5 +121,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertServerGone(server.serverId);
     }),
-  { timeout: 900_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iam", "provider:aws:transfer", "live"],
+    timeout: 900_000,
+  },
 );

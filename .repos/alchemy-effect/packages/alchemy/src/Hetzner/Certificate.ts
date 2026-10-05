@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import type { GetCertificateResponseCertificate } from "@distilled.cloud/hetzner/certificates";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -171,6 +171,7 @@ export type Certificate = Resource<
  * ```
  *
  * @resource
+ * @product Certificate
  */
 export const Certificate = Resource<Certificate>("Hetzner.Certificate");
 
@@ -246,13 +247,13 @@ const normalizePem = (pem: string | undefined): string =>
   (pem ?? "").replace(/\r\n/g, "\n").trim();
 
 const getById = (id: number) =>
-  Services.certificates.getCertificate({ id }).pipe(
+  Hetzner.certificates.getCertificate({ id }).pipe(
     Effect.map(({ certificate }) => certificate),
     Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
   );
 
 const findByName = (name: string) =>
-  Services.certificates
+  Hetzner.certificates
     .listCertificates({ name, per_page: 50 })
     .pipe(
       Effect.map(({ certificates }) =>
@@ -261,7 +262,7 @@ const findByName = (name: string) =>
     );
 
 const findByLabels = (labels: Record<string, string>) =>
-  Services.certificates
+  Hetzner.certificates
     .listCertificates({
       label_selector: labelSelector(labels),
       per_page: 50,
@@ -286,12 +287,12 @@ const observe = Effect.fn(function* (input: {
 });
 
 const deleteById = (id: number) =>
-  Services.certificates
+  Hetzner.certificates
     .deleteCertificate({ id })
     .pipe(Effect.catchTag("NotFound", () => Effect.void));
 
 const waitForManagedIssuance = (id: number) =>
-  Services.certificates.getCertificate({ id }).pipe(
+  Hetzner.certificates.getCertificate({ id }).pipe(
     Effect.flatMap(({ certificate }) =>
       Effect.gen(function* () {
         const issuance = certificate.status?.issuance;
@@ -341,7 +342,7 @@ const ensureCreated = Effect.fn(function* ({
 }) {
   const created =
     news.type === "managed"
-      ? yield* Services.certificates
+      ? yield* Hetzner.certificates
           .createCertificate({
             name,
             type: "managed",
@@ -349,7 +350,7 @@ const ensureCreated = Effect.fn(function* ({
             labels: desiredLabels,
           })
           .pipe(Effect.catchTag("Conflict", () => Effect.succeed(undefined)))
-      : yield* Services.certificates
+      : yield* Hetzner.certificates
           .createCertificate({
             name,
             type: "uploaded",
@@ -442,7 +443,7 @@ export const CertificateProvider = () =>
     }),
 
     list: () =>
-      Services.certificates.listCertificates
+      Hetzner.certificates.listCertificates
         .items({ label_selector: alchemyStackSelector, per_page: 50 })
         .pipe(
           Stream.runCollect,
@@ -500,7 +501,7 @@ export const CertificateProvider = () =>
       const nameChanged = current.name !== name;
       const labelsChanged = upsert.length > 0 || removed.length > 0;
       if (nameChanged || labelsChanged) {
-        const updated = yield* Services.certificates.updateCertificate({
+        const updated = yield* Hetzner.certificates.updateCertificate({
           id: current.id,
           name: nameChanged ? name : undefined,
           labels: labelsChanged ? desiredLabels : undefined,

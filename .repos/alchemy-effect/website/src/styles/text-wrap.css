@@ -1,0 +1,29 @@
+/* ============================================================
+   Line balancing for titles and subtitles, shared by the docs
+   (global.css) and marketing (marketing.css) layouts.
+
+   Native `text-wrap: balance` evens out line lengths so headings
+   never strand a single word on their last line. Browsers only
+   balance blocks of up to ~6 lines (Chromium) / 10 (Firefox) and
+   fall back to normal wrapping beyond that, which is what we want
+   for longer ledes. Unsupported browsers ignore the property.
+   ============================================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.alc-hero__title,
+.alc-hero__subtitle,
+.alc-mode__lede,
+.page-hero__title,
+.alc-card__title,
+.product-card__title,
+.alc-cloud-card__title,
+.alc-provider-directory__title,
+.alc-auth__title,
+.hero .tagline {
+  text-wrap: balance;
+}

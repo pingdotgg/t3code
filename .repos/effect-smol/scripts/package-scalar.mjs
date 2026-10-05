@@ -11,4 +11,4 @@ const source = `/* oxlint-disable no-undef */
 export const javascript = ${JSON.stringify(`${jsBundle}`)}
 `
 
-await Fs.writeFile("packages/effect/src/unstable/httpapi/internal/httpApiScalar.ts", source)
+await Fs.writeFile("packages/effect/src/http-api/internal/httpApiScalar.ts", source)

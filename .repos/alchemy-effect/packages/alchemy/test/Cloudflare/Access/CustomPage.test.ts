@@ -59,7 +59,10 @@ test.provider.skipIf(entitled)(
         );
       expect(direct).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -133,7 +136,10 @@ test.provider.skipIf(!entitled)(
         );
       expect(afterDestroy?.uid ?? undefined).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 // The custom-pages list endpoint is available on every account (it returns
@@ -177,5 +183,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );

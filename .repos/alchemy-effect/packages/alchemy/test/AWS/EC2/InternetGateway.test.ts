@@ -14,25 +14,28 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("list enumerates the deployed InternetGateway", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed InternetGateway",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* InternetGateway("ListInternetGateway", {});
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* InternetGateway("ListInternetGateway", {});
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(InternetGateway);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(InternetGateway);
+      const all = yield* provider.list();
 
-    expect(
-      all.some((x) => x.internetGatewayId === deployed.internetGatewayId),
-    ).toBe(true);
+      expect(
+        all.some((x) => x.internetGatewayId === deployed.internetGatewayId),
+      ).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertInternetGatewayGone(deployed.internetGatewayId);
-  }).pipe(logLevel),
+      yield* assertInternetGatewayGone(deployed.internetGatewayId);
+    }).pipe(logLevel),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"] },
 );

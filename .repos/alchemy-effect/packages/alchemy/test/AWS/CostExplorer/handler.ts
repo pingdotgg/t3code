@@ -4,8 +4,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -389,7 +389,9 @@ export default CostExplorerTestFunction.make(
         }
 
         if (request.method === "GET" && pathname === "/anomalies") {
-          const Start = yield* monthStart(-2);
+          // GetAnomalies only accepts a start date within the last 90 days;
+          // two months back exceeds that at some month ends.
+          const Start = yield* monthStart(-1);
           const result = yield* getAnomalies({
             DateInterval: { StartDate: Start },
           });

@@ -32,10 +32,45 @@ export type ByteSize = Brand.Branded<bigint, typeof TypeId>
 /**
  * Values accepted by byte-size decoding operations.
  *
+ * **Details**
+ *
+ * String inputs require a non-negative decimal integer without leading zeros,
+ * followed by a canonical unit symbol or lowercase unit name, optionally
+ * separated by one space. Numeric inputs are validated at runtime.
+ *
+ * @see {@link fromString} for external strings and fractional quantities
+ * @see {@link fromStringUnsafe} for throwing string validation
  * @category models
  * @since 4.0.0
  */
-export type Input = ByteSize | bigint | number | string
+export type Input = ByteSize | bigint | number | `${IntegerQuantity}${"" | " "}${InputUnit}`
+
+// Combining these constraints excludes signs, radix prefixes, leading zeros,
+// fractions, and exponent notation without limiting the number of digits.
+type IntegerQuantity = "0" | (`${bigint}` & `${"1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"}${string}`)
+
+type InputUnit =
+  | Unit
+  | `${
+    | ""
+    | "kilo"
+    | "mega"
+    | "giga"
+    | "tera"
+    | "peta"
+    | "exa"
+    | "zetta"
+    | "yotta"
+    | "ronna"
+    | "quetta"
+    | "kibi"
+    | "mebi"
+    | "gibi"
+    | "tebi"
+    | "pebi"
+    | "exbi"
+    | "zebi"
+    | "yobi"}byte${"" | "s"}`
 
 /**
  * Canonical decimal byte unit symbols.
@@ -172,7 +207,21 @@ const fromQuantity = (quantity: number | bigint, unit: UnitInfo): ByteSize => {
   return make(BigInt(value))
 }
 
-const parse = (input: string): ByteSize => {
+/**
+ * Parses a byte-size string and throws for invalid syntax, unsupported units,
+ * or quantities that do not represent non-negative integral bytes.
+ *
+ * **Details**
+ *
+ * Accepts decimal fractions, canonical SI and IEC symbols, lowercase unit
+ * names, and whitespace around the quantity and unit. Parsing uses exact
+ * bigint arithmetic, including above the safe integer range.
+ *
+ * @see {@link fromString} for non-throwing validation
+ * @category constructors
+ * @since 4.0.0
+ */
+export const fromStringUnsafe = (input: string): ByteSize => {
   const match = /^\s*(\d+)(?:\.(\d+))?\s*([A-Za-z]+)\s*$/.exec(input)
   if (match === null) return invalid(`unsupported syntax ${JSON.stringify(input)}`)
   const unit = unitsByName.get(match[3])
@@ -185,6 +234,21 @@ const parse = (input: string): ByteSize => {
   }
   return make(numerator / scale)
 }
+
+/**
+ * Parses a byte-size string, returning `None` for invalid syntax, unsupported
+ * units, or quantities that do not represent non-negative integral bytes.
+ *
+ * **Details**
+ *
+ * Accepts external strings and fractional quantities using the same syntax
+ * as `fromStringUnsafe`.
+ *
+ * @see {@link fromStringUnsafe} for throwing validation
+ * @category constructors
+ * @since 4.0.0
+ */
+export const fromString: (input: string) => Option.Option<ByteSize> = Option.liftThrowable(fromStringUnsafe)
 
 /**
  * Decodes a trusted input into a byte size and throws for invalid input.
@@ -200,7 +264,7 @@ export const fromInputUnsafe = (input: Input): ByteSize => {
     case "number":
       return fromNumber(input)
     case "string":
-      return parse(input)
+      return fromStringUnsafe(input)
   }
   return invalid(`unsupported input ${input}`)
 }

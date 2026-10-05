@@ -85,6 +85,7 @@ export type ApplePayDomain = Resource<
  * ```
  *
  * @resource
+ * @product Payment Methods
  */
 export const ApplePayDomain = Resource<ApplePayDomain>("Stripe.ApplePayDomain");
 

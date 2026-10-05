@@ -90,7 +90,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertChannelDeleted(channel.channelName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:kinesisvideo", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -124,5 +127,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertChannelDeleted(second.channelName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:kinesisvideo", "live"],
+    timeout: 240_000,
+  },
 );

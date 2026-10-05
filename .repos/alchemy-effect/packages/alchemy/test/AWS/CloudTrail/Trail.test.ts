@@ -25,6 +25,7 @@ test.provider(
       );
       expect(error._tag).toBe("TrailNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:cloudtrail", "live"] },
 );
 
 const TRAIL_NAME = "alchemy-test-cloudtrail-trail";
@@ -205,5 +206,13 @@ test.provider(
       );
       expect(gone._tag).toBe("TrailNotFoundException");
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudtrail",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

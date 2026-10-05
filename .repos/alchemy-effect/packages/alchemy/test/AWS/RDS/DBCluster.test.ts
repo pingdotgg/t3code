@@ -33,44 +33,56 @@ const base: DBClusterProps = {
   engine: "aurora-postgresql",
 };
 
-test.provider("diff: backup retention is an in-place update", () =>
-  Effect.gen(function* () {
-    const result = yield* callDiff(
-      { ...base, backupRetentionPeriod: "1 day" },
-      { ...base, backupRetentionPeriod: "7 days" },
-    );
-    expect(result).toBeUndefined();
-  }),
+test.provider(
+  "diff: backup retention is an in-place update",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* callDiff(
+        { ...base, backupRetentionPeriod: "1 day" },
+        { ...base, backupRetentionPeriod: "7 days" },
+      );
+      expect(result).toBeUndefined();
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
-test.provider("diff: changing databaseName forces replacement", () =>
-  Effect.gen(function* () {
-    const result = yield* callDiff(
-      { ...base, databaseName: "app" },
-      { ...base, databaseName: "other" },
-    );
-    expect(result).toEqual({ action: "replace" });
-  }),
+test.provider(
+  "diff: changing databaseName forces replacement",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* callDiff(
+        { ...base, databaseName: "app" },
+        { ...base, databaseName: "other" },
+      );
+      expect(result).toEqual({ action: "replace" });
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
-test.provider("diff: changing kmsKeyId forces replacement", () =>
-  Effect.gen(function* () {
-    const result = yield* callDiff(
-      { ...base, kmsKeyId: "key-a" },
-      { ...base, kmsKeyId: "key-b" },
-    );
-    expect(result).toEqual({ action: "replace" });
-  }),
+test.provider(
+  "diff: changing kmsKeyId forces replacement",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* callDiff(
+        { ...base, kmsKeyId: "key-a" },
+        { ...base, kmsKeyId: "key-b" },
+      );
+      expect(result).toEqual({ action: "replace" });
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
-test.provider("diff: changing engineMode forces replacement", () =>
-  Effect.gen(function* () {
-    const result = yield* callDiff(
-      { ...base, engineMode: "provisioned" },
-      { ...base, engineMode: "serverless" },
-    );
-    expect(result).toEqual({ action: "replace" });
-  }),
+test.provider(
+  "diff: changing engineMode forces replacement",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* callDiff(
+        { ...base, engineMode: "provisioned" },
+        { ...base, engineMode: "serverless" },
+      );
+      expect(result).toEqual({ action: "replace" });
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
 // Render a deploy failure (whatever engine wrapper it arrives in) to a string
@@ -155,7 +167,7 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:rds", "live"], timeout: 120_000 },
 );
 
 // Read-only `list()` test (no deploy). An Aurora DB cluster takes MANY minutes
@@ -165,20 +177,23 @@ test.provider(
 // `DBCluster["Attributes"]` shape, call it, and assert it returns a well-typed
 // array (likely empty in a clean test account). This proves the paginated
 // `describeDBClusters` -> Attributes mapping compiles and runs.
-test.provider("list returns a typed DBCluster Attributes array", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(DBCluster);
-    const all = yield* provider.list();
+test.provider(
+  "list returns a typed DBCluster Attributes array",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(DBCluster);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const cluster of all) {
-      expect(typeof cluster.dbClusterIdentifier).toBe("string");
-      expect(typeof cluster.dbClusterArn).toBe("string");
-      expect(typeof cluster.engine).toBe("string");
-      expect(typeof cluster.tags).toBe("object");
-      expect(Array.isArray(cluster.vpcSecurityGroupIds)).toBe(true);
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const cluster of all) {
+        expect(typeof cluster.dbClusterIdentifier).toBe("string");
+        expect(typeof cluster.dbClusterArn).toBe("string");
+        expect(typeof cluster.engine).toBe("string");
+        expect(typeof cluster.tags).toBe("object");
+        expect(Array.isArray(cluster.vpcSecurityGroupIds)).toBe(true);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
 // Full deploy-based `list()` test, gated behind AWS_TEST_RDS_DBCLUSTER=1.
@@ -216,7 +231,7 @@ test.provider.skipIf(!process.env.AWS_TEST_RDS_DBCLUSTER)(
 
       yield* stack.destroy();
     }),
-  { timeout: 1_800_000 },
+  { tags: ["provider:aws", "provider:aws:rds", "live"], timeout: 1_800_000 },
 );
 
 // Full cluster lifecycle gated behind RDS_TEST_LIFECYCLE=1. Creates a
@@ -319,5 +334,8 @@ test.provider.skipIf(!process.env.RDS_TEST_LIFECYCLE)(
 
       yield* stack.destroy();
     }),
-  { timeout: 2_400_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:rds", "live"],
+    timeout: 2_400_000,
+  },
 );

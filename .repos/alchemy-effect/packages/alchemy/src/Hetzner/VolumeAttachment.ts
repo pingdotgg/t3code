@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import type { GetVolumeResponseVolume } from "@distilled.cloud/hetzner/volumes";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -114,6 +114,7 @@ export type VolumeAttachment = Resource<
  * ```
  *
  * @resource
+ * @product Volume
  */
 export const VolumeAttachment = Resource<VolumeAttachment>(
   "Hetzner.VolumeAttachment",
@@ -170,7 +171,7 @@ const serverIdOf = (value: unknown): number | undefined => {
 };
 
 const getById = (id: number) =>
-  Services.volumes.getVolume({ id }).pipe(
+  Hetzner.volumes.getVolume({ id }).pipe(
     Effect.map(({ volume }) => volume),
     Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
   );
@@ -226,7 +227,7 @@ const waitUntilServer = (volumeId: number, serverId: number | null) =>
   );
 
 const detach = (volumeId: number) =>
-  Services.volumeActions.detachVolume({ id: volumeId }).pipe(
+  Hetzner.volumeActions.detachVolume({ id: volumeId }).pipe(
     Effect.tap(({ action }) =>
       waitForAction(action).pipe(
         // Volume detach can outlive the action poll under load; observe
@@ -238,7 +239,7 @@ const detach = (volumeId: number) =>
   );
 
 const attach = (volumeId: number, serverId: number, automount: boolean) =>
-  Services.volumeActions
+  Hetzner.volumeActions
     .attachVolume({
       id: volumeId,
       server: serverId,
@@ -263,7 +264,7 @@ export const VolumeAttachmentProvider = () =>
     stables: ["volumeId", "serverId", "linuxDevice"],
     nuke: { dependsOn: ["Hetzner.Volume", "Hetzner.Server"] },
     list: Effect.fn(function* () {
-      const items = yield* Services.volumes.listVolumes
+      const items = yield* Hetzner.volumes.listVolumes
         .items({ label_selector: alchemyStackSelector, per_page: 50 })
         .pipe(
           Stream.runCollect,

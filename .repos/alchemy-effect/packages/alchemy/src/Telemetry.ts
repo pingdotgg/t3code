@@ -1,6 +1,6 @@
 /**
  * OpenTelemetry export for deployed Functions/Workers, built on Effect's
- * OTLP exporters (`effect/unstable/observability`) and configured through
+ * OTLP exporters (`effect/observability`) and configured through
  * alchemy's binding infrastructure — exporters are Layers, and their
  * configuration (endpoints, tokens) is wired from resource Outputs like any
  * other binding.

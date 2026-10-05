@@ -72,6 +72,7 @@ export interface CheckpointClient {
  * :::
  *
  * @binding
+ * @product Sprite
  */
 export interface Checkpoint extends Binding.Service<
   Checkpoint,

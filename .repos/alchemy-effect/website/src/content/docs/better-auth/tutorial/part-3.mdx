@@ -1,0 +1,167 @@
+---
+title: "Part 3: Build sign-in"
+description: Add a same-origin browser client with sign-up, sign-in, session lookup, and sign-out.
+sidebar:
+  order: 3
+---
+
+Continue from [Part 2](/better-auth/tutorial/part-2). Serve a small browser client from the same Worker so cookies work without cross-origin configuration.
+
+## Create the client
+
+```typescript
+// src/client.ts
+import { createAuthClient } from "better-auth/client";
+
+export const authClient = createAuthClient();
+```
+
+The client uses the current origin and the default `/api/auth` path. It contains no database credentials or signing secret.
+
+## Add a form
+
+```html
+<!-- public/index.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auth tutorial</title>
+  </head>
+  <body>
+    <h1>Auth tutorial</h1>
+    <form id="auth-form">
+      <label>Name <input name="name" autocomplete="name" /></label>
+      <label>Email <input name="email" type="email" autocomplete="email" required /></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" minlength="8" required /></label>
+      <button type="submit">Sign in</button>
+      <button id="sign-up" type="button">Create account</button>
+    </form>
+    <button id="session" type="button">Read session</button>
+    <button id="sign-out" type="button">Sign out</button>
+    <p id="status" role="status"></p>
+    <script type="module" src="/ui.js"></script>
+  </body>
+</html>
+```
+
+Create the `public` directory before saving this file. Keep this page public so signed-out users can reach it.
+
+## Read the form
+
+```typescript
+// src/ui.ts
+import { authClient } from "./client.ts";
+
+const form = document.querySelector<HTMLFormElement>("#auth-form")!;
+const status = document.querySelector<HTMLParagraphElement>("#status")!;
+const show = (message: string) => { status.textContent = message; };
+
+const credentials = () => {
+  const fields = new FormData(form);
+  return {
+    name: String(fields.get("name") ?? ""),
+    email: String(fields.get("email") ?? ""),
+    password: String(fields.get("password") ?? ""),
+  };
+};
+```
+
+Use text content for status messages rather than inserting server responses as HTML.
+
+## Create an account
+
+```typescript
+// Append to src/ui.ts
+const signUp = async () => {
+  if (!form.reportValidity()) return;
+  const input = credentials();
+  if (!input.name.trim()) return show("Enter a name to create an account.");
+  const { data, error } = await authClient.signUp.email(input);
+  show(error ? error.message ?? "Sign-up failed" : `Created ${data.user.email}`);
+};
+
+document.querySelector("#sign-up")!.addEventListener("click", () => {
+  void signUp().catch(() => show("Unable to reach the server."));
+});
+```
+
+The server creates the user and sets the session cookie. Later, the [email/password guide](/better-auth/sign-in-providers/email-password) adds email verification and password reset.
+
+## Sign in
+
+```typescript
+// Append to src/ui.ts
+const signIn = async () => {
+  const { email, password } = credentials();
+  const { data, error } = await authClient.signIn.email({ email, password });
+  show(error ? error.message ?? "Sign-in failed" : `Signed in as ${data.user.email}`);
+};
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void signIn().catch(() => show("Unable to reach the server."));
+});
+```
+
+A failed sign-in stays on the form and displays the error.
+
+## Read the session
+
+```typescript
+// Append to src/ui.ts
+const readSession = async () => {
+  const { data, error } = await authClient.getSession();
+  show(error ? error.message ?? "Session lookup failed"
+    : data ? `Signed in as ${data.user.email}` : "Signed out");
+};
+
+document.querySelector("#session")!.addEventListener("click", () => {
+  void readSession().catch(() => show("Unable to reach the server."));
+});
+```
+
+The browser sends its session cookie automatically. The server remains authoritative about whether the user is signed in.
+
+## Sign out
+
+```typescript
+// Append to src/ui.ts
+const signOut = async () => {
+  const { error } = await authClient.signOut();
+  show(error ? error.message ?? "Sign-out failed" : "Signed out");
+};
+
+document.querySelector("#sign-out")!.addEventListener("click", () => {
+  void signOut().catch(() => show("Unable to reach the server."));
+});
+```
+
+Sign-out revokes the session and clears its cookie.
+
+## Build the browser code
+
+```sh
+bun build ./src/ui.ts --target browser --outdir ./public
+```
+
+Run this again whenever the browser source changes. Only browser code belongs in this bundle; never import the server's Auth service here.
+
+## Serve the assets
+
+```diff lang="typescript"
+ // src/worker.ts
+   {
+     main: import.meta.url,
++    assets: "./public",
+     compatibility: { flags: ["nodejs_compat"] },
+```
+
+Cloudflare serves matching static files and forwards API requests to the Worker. The form and authentication endpoints share an origin.
+
+## Try the flow
+
+Open the URL printed by Alchemy, create an account, and read the session. Sign out, try an incorrect password, then sign in with the correct password.
+
+Continue to [Part 4: Protect API endpoints](/better-auth/tutorial/part-4).

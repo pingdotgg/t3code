@@ -1,0 +1,92 @@
+---
+title: Next.js
+description: Build Next.js for a Neon Function Fetch entry and use next dev locally.
+sidebar:
+  order: 3
+---
+
+`Neon.Website.Nextjs` runs `next build` and adapts Next's Node custom-server
+handler to a Node 24 Fetch entry. The Function ZIP includes `.next`, public assets,
+configuration, and traced runtime dependencies. This is not OpenNext, a container,
+a listening Bun server, or an S3/CloudFront deployment.
+
+## Prepare the app
+
+Use an existing Next.js app or the
+[runnable Next.js example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-nextjs).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep `next.config.*`; no OpenNext config or adapter is required. The integration
+uses installed package versions. Native runtime dependencies must be compatible
+with the deployed Linux runtime, not merely your development machine.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonNextjs",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Nextjs("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+Next handles application routes and server rendering; the Fetch wrapper serves
+static files from the packaged output. Server-side `env` values are process
+environment; `NEXT_PUBLIC_*` values are build-time public configuration, not secrets.
+
+## Develop and attempt deployment
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run each separately, with `destroy` for cleanup. Native dev runs `next dev` and
+returns its local URL without creating an implicit Project or Function. Append
+`.pipe(Alchemy.remote())` to the Website Effect to use live deployment during dev;
+this does not bypass artifact or runtime limitations.
+
+The omitted scope creates an Ohio Project only on live deploy. Supply either
+`project` or `branch` to select an existing backend; choose Ohio for combined
+storage use. See [scope and credentials](/neon/frontend/vite#scope-and-credentials).
+
+:::caution[Production verification remains open]
+The final artifact passes isolated Linux ARM64/glibc Node 24 checks for assets,
+HEAD, streaming, and Sharp WebP optimization. Desktop/mobile production-artifact
+browser checks pass counters, greeting fetches, server actions, refresh persistence,
+and redirect-link navigation. The source-generated Fetch bridge preserves the request
+protocol, hostname, and port without rewriting redirect responses. Next itself
+normalizes loopback IP hostnames to `localhost`. Initial live Neon deployment and
+desktop/mobile interactions now pass after removing an unnecessary duplicate native
+library from the artifact. Updates can still serve the previous artifact after Neon
+accepts a new deployment, so complete lifecycle acceptance remains open.
+:::
+
+There is no provisioned ISR/revalidation cache, image-optimization service, or CDN.
+Do not assume Next's local cache persists across Function instances. Live Function
+updates have also served old code/env despite new deployment metadata. Custom
+domains require separate DNS/HTTPS verification. Read the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+
+## Reference
+
+- [Nextjs API](/providers/neon/website/nextjs)
+- [Runnable Next.js example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-nextjs)

@@ -101,7 +101,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:elbv2", "live"], timeout: 120_000 },
 );
 
 // Full mTLS-verify lifecycle: upload a CA bundle to a stack-owned bucket,
@@ -163,5 +163,8 @@ test.provider(
         );
       expect(after).toBe(0);
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:aws", "provider:aws:elbv2", "provider:aws:s3", "live"],
+    timeout: 600_000,
+  },
 );

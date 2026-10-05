@@ -119,6 +119,7 @@ export type Customer = Resource<
  * ```
  *
  * @resource
+ * @product Customer
  */
 export const Customer = Resource<Customer>("Stripe.Customer");
 

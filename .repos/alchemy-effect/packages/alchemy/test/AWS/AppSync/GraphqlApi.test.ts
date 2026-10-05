@@ -135,7 +135,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertApiDeleted(out.apiId);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:appsync", "live"], timeout: 240_000 },
 );
 
 test.provider(
@@ -202,7 +202,16 @@ test.provider(
       yield* stack.destroy();
       yield* assertApiDeleted(out.apiId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:appsync",
+      "provider:aws:cognito",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // ApiCache instances bill hourly and take ~10-20 minutes to provision —
@@ -235,5 +244,5 @@ test.provider.skipIf(!process.env.AWS_TEST_APPSYNC_CACHE)(
       yield* stack.destroy();
       yield* assertApiDeleted(out.apiId);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:appsync", "live"], timeout: 240_000 },
 );

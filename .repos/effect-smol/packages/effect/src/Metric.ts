@@ -1660,7 +1660,8 @@ abstract class Metric$<in Input, out State> implements Metric<Input, State> {
   declare readonly Input: Contravariant<Input>
   declare readonly State: Covariant<State>
 
-  readonly #metadata = new WeakMap<MetricRegistry, Metric.Metadata<Input, State>>()
+  #extraAttributes: Metric.AttributeSet | undefined
+  #key = ""
 
   readonly id: string
   readonly description: string | undefined
@@ -1692,37 +1693,26 @@ abstract class Metric$<in Input, out State> implements Metric<Input, State> {
 
   hook(context: Context.Context<never>): Metric.Hooks<Input, State> {
     const extraAttributes = Context.get(context, CurrentMetricAttributes)
-    if (Object.keys(extraAttributes).length > 0) {
-      return this.getOrCreate(context, mergeAttributes(this.attributes, extraAttributes)).hooks
+    if (extraAttributes !== this.#extraAttributes) {
+      this.#extraAttributes = extraAttributes
+      this.#key = makeKey(this, mergeAttributes(this.attributes, extraAttributes))
     }
+    // The registry owns the series, so it is looked up on every update.
     const registry = Context.get(context, MetricRegistry)
-    let metadata = this.#metadata.get(registry)
+    let metadata = registry.get(this.#key)
     if (Predicate.isUndefined(metadata)) {
-      metadata = this.getOrCreate(context, this.attributes)
-      this.#metadata.set(registry, metadata)
+      metadata = {
+        id: this.id,
+        type: this.type,
+        description: this.description,
+        attributes: Object.keys(extraAttributes).length > 0
+          ? mergeAttributes(this.attributes, extraAttributes)
+          : this.attributes,
+        hooks: this.createHooks()
+      }
+      registry.set(this.#key, metadata)
     }
     return metadata.hooks
-  }
-
-  getOrCreate(
-    context: Context.Context<never>,
-    attributes: Metric.Attributes | undefined
-  ): Metric.Metadata<Input, State> {
-    const key = makeKey(this, attributes)
-    const registry = Context.get(context, MetricRegistry)
-    if (registry.has(key)) {
-      return registry.get(key)!
-    }
-    const hooks = this.createHooks()
-    const meta: Metric.Metadata<Input, State> = {
-      id: this.id,
-      type: this.type,
-      description: this.description,
-      attributes: attributesToRecord(attributes),
-      hooks
-    }
-    registry.set(key, meta)
-    return meta
   }
 
   pipe() {
@@ -2883,13 +2873,15 @@ export const withAttributes: {
 >(2, <Input, State>(
   self: Metric<Input, State>,
   attributes: Metric.Attributes
-): Metric<Input, State> =>
-  new MetricTransform(
+): Metric<Input, State> => {
+  const attributed = addAttributesToContext(attributes)
+  return new MetricTransform(
     self,
-    (context) => self.valueUnsafe(addAttributesToContext(context, attributes)),
-    (input, context) => self.updateUnsafe(input, addAttributesToContext(context, attributes)),
-    (input, context) => self.modifyUnsafe(input, addAttributesToContext(context, attributes))
-  ))
+    (context) => self.valueUnsafe(attributed(context)),
+    (input, context) => self.updateUnsafe(input, attributed(context)),
+    (input, context) => self.modifyUnsafe(input, attributed(context))
+  )
+})
 
 // Metric Snapshots
 
@@ -3476,16 +3468,11 @@ export const disableRuntimeMetrics: <A, E, R>(self: Effect<A, E, R>) => Effect<A
 
 function makeKey<Input, State>(
   metric: Metric<Input, State>,
-  attributes: Metric.Attributes | undefined
-) {
-  let key = `${metric.type}:${metric.id}`
-  if (Predicate.isNotUndefined(metric.description)) {
-    key += `:${metric.description}`
-  }
-  if (Predicate.isNotUndefined(attributes)) {
-    key += `:${serializeAttributes(attributes)}`
-  }
-  return key
+  attributes: Metric.AttributeSet
+): string {
+  // Tuple encoding keeps ids, descriptions and attributes unambiguous.
+  const entries = Object.entries(attributes).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  return JSON.stringify([metric.type, metric.id, metric.description, entries])
 }
 
 function makeHooks<Input, State>(
@@ -3494,12 +3481,6 @@ function makeHooks<Input, State>(
   modify?: (input: Input, context: Context.Context<never>) => void
 ): Metric.Hooks<Input, State> {
   return { get, update, modify: modify ?? update }
-}
-
-function serializeAttributes(attributes: Metric.Attributes): string {
-  const entries = Array.isArray(attributes) ? [...attributes] : Object.entries(attributes)
-  entries.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
-  return JSON.stringify(entries)
 }
 
 function mergeAttributes(
@@ -3520,10 +3501,17 @@ function attributesToRecord(attributes?: Metric.Attributes): Metric.AttributeSet
 }
 
 function addAttributesToContext(
-  context: Context.Context<never>,
   attributes: Metric.Attributes
-): Context.Context<never> {
-  const current = Context.get(context, CurrentMetricAttributes)
-  const updated = mergeAttributes(current, attributes)
-  return Context.add(context, CurrentMetricAttributes, updated)
+): (context: Context.Context<never>) => Context.Context<never> {
+  // Merge once per contextual attribute set, so the wrapped metric can reuse its cached series key.
+  let current: Metric.AttributeSet | undefined
+  let merged: Metric.AttributeSet = {}
+  return (context) => {
+    const extraAttributes = Context.get(context, CurrentMetricAttributes)
+    if (extraAttributes !== current) {
+      current = extraAttributes
+      merged = mergeAttributes(extraAttributes, attributes)
+    }
+    return Context.add(context, CurrentMetricAttributes, merged)
+  }
 }

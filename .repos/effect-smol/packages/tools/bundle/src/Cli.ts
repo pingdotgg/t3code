@@ -19,14 +19,14 @@
  *
  * @since 4.0.0
  */
+import * as Argument from "effect/cli/Argument"
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
+import * as Prompt from "effect/cli/Prompt"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
 import * as Path from "effect/Path"
-import * as Argument from "effect/unstable/cli/Argument"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
-import * as Prompt from "effect/unstable/cli/Prompt"
 import { Fixtures } from "./Fixtures.ts"
 import { Reporter } from "./Reporter.ts"
 

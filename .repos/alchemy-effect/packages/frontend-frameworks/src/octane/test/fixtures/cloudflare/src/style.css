@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+main {
+  padding: 24px;
+  color: rgb(12, 34, 56);
+}
+button {
+  padding: 12px;
+}

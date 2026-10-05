@@ -7,8 +7,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import SchedulerTestFunctionLive, { SchedulerTestFunction } from "./handler";
 
 const testOptions = { providers: AWS.providers() };
@@ -159,163 +159,131 @@ const waitUntilScheduleGone = (name: string) =>
     }),
   );
 
-describe("Scheduler Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "Scheduler test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
-      yield* purgeTestSchedules;
+describe(
+  "Scheduler Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:scheduler",
+      "provider:aws:sqs",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "Scheduler test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
+        yield* purgeTestSchedules;
 
-      yield* Effect.logInfo("Scheduler test setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* SchedulerTestFunction;
-        }).pipe(Effect.provide(SchedulerTestFunctionLive)),
-      );
+        yield* Effect.logInfo("Scheduler test setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* SchedulerTestFunction;
+          }).pipe(Effect.provide(SchedulerTestFunctionLive)),
+        );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-      const readinessUrl = `${baseUrl}/info`;
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+        const readinessUrl = `${baseUrl}/info`;
 
-      yield* Effect.logInfo(
-        `Scheduler test setup: probing readiness at ${readinessUrl}`,
-      );
-      const info = yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? (response.json as Effect.Effect<{
-                sinkQueueUrl?: string;
-                cronQueueUrl?: string;
-              }>)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.flatMap((body) =>
-          body.sinkQueueUrl && body.cronQueueUrl
-            ? Effect.succeed(
-                body as { sinkQueueUrl: string; cronQueueUrl: string },
-              )
-            : Effect.fail(new Error("Function returned empty queue urls")),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `Scheduler test setup: fixture not ready yet (${String(error)})`,
+        yield* Effect.logInfo(
+          `Scheduler test setup: probing readiness at ${readinessUrl}`,
+        );
+        const info = yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? (response.json as Effect.Effect<{
+                  sinkQueueUrl?: string;
+                  cronQueueUrl?: string;
+                }>)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      );
-      sinkQueueUrl = info.sinkQueueUrl;
-      cronQueueUrl = info.cronQueueUrl;
-    }),
-    { timeout: 240_000 },
-  );
-
-  afterAll(
-    Effect.gen(function* () {
-      // NO_DESTROY=1 keeps the deployment (and its log group) around while
-      // iterating locally — standard escape hatch, default is full cleanup.
-      if (process.env.NO_DESTROY) return;
-      // Leak guard: no runtime-minted schedules may outlive the suite.
-      yield* purgeTestSchedules;
-      yield* sharedStack.destroy();
-    }),
-    { timeout: 120_000 },
-  );
-
-  describe("CreateSchedule", () => {
-    test.provider(
-      "mints a one-shot at() schedule whose target fires (iam:PassRole end-to-end)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const name = `${SCHEDULE_PREFIX}oneshot`;
-
-          const created = (yield* send(
-            HttpClientRequest.post(
-              `${baseUrl}/schedules/${name}?delaySeconds=15`,
+          Effect.flatMap((body) =>
+            body.sinkQueueUrl && body.cronQueueUrl
+              ? Effect.succeed(
+                  body as { sinkQueueUrl: string; cronQueueUrl: string },
+                )
+              : Effect.fail(new Error("Function returned empty queue urls")),
+          ),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Scheduler test setup: fixture not ready yet (${String(error)})`,
             ),
-          ).pipe(Effect.flatMap((r) => r.json))) as {
-            scheduleArn: string;
-            expression: string;
-          };
-
-          expect(created.scheduleArn).toContain(`:schedule/default/${name}`);
-          expect(created.expression).toMatch(/^at\(/);
-
-          // Out-of-band: the schedule exists with the one-shot config the
-          // fixture requested.
-          const observed = yield* scheduler.getSchedule({ Name: name });
-          expect(observed.Name).toBe(name);
-          expect(observed.ActionAfterCompletion).toBe("DELETE");
-          expect(observed.Target?.RoleArn).toBeTruthy();
-
-          // The schedule fires ~15s after creation; the execution role (which
-          // the binding contributed iam:PassRole for) delivers the marker into
-          // the sink queue. Bounded: ~15s delay + poll ≤ ~75s.
-          const message = yield* receiveMatching(
-            sinkQueueUrl,
-            (body) => body.marker === name,
-          );
-          expect(message.marker).toBe(name);
-
-          // ActionAfterCompletion=DELETE reaps the fired one-shot: typed
-          // wait-until-gone doubles as the no-leak proof.
-          yield* waitUntilScheduleGone(name);
-        }),
-      { timeout: 150_000 },
-    );
-  });
-
-  describe("GetSchedule", () => {
-    test.provider("reads a pending schedule through the binding", (_stack) =>
-      Effect.gen(function* () {
-        const name = `${SCHEDULE_PREFIX}get`;
-
-        yield* send(
-          HttpClientRequest.post(
-            `${baseUrl}/schedules/${name}?delaySeconds=900`,
           ),
+          Effect.retry({ schedule: readinessPolicy }),
         );
-
-        const found = (yield* send(
-          HttpClientRequest.get(`${baseUrl}/schedules/${name}`),
-        ).pipe(Effect.flatMap((r) => r.json))) as {
-          arn: string;
-          name: string;
-          state: string;
-          expression: string;
-        };
-
-        expect(found.name).toBe(name);
-        expect(found.state).toBe("ENABLED");
-        expect(found.expression).toMatch(/^at\(/);
-
-        // cleanup via the DeleteSchedule binding route
-        const deleted = yield* send(
-          HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
-        );
-        expect(deleted.status).toBe(200);
+        sinkQueueUrl = info.sinkQueueUrl;
+        cronQueueUrl = info.cronQueueUrl;
       }),
+      { timeout: 240_000 },
     );
 
-    test.provider("surfaces the typed not-found as a 404", (_stack) =>
+    afterAll(
       Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(
-            `${baseUrl}/schedules/${SCHEDULE_PREFIX}missing`,
-          ),
-        );
-        expect(response.status).toBe(404);
+        // NO_DESTROY=1 keeps the deployment (and its log group) around while
+        // iterating locally — standard escape hatch, default is full cleanup.
+        if (process.env.NO_DESTROY) return;
+        // Leak guard: no runtime-minted schedules may outlive the suite.
+        yield* purgeTestSchedules;
+        yield* sharedStack.destroy();
       }),
+      { timeout: 120_000 },
     );
-  });
 
-  describe("UpdateSchedule", () => {
-    test.provider(
-      "reschedules a pending schedule (full PUT + iam:PassRole)",
-      (_stack) =>
+    describe("CreateSchedule", () => {
+      test.provider(
+        "mints a one-shot at() schedule whose target fires (iam:PassRole end-to-end)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const name = `${SCHEDULE_PREFIX}oneshot`;
+
+            const created = (yield* send(
+              HttpClientRequest.post(
+                `${baseUrl}/schedules/${name}?delaySeconds=15`,
+              ),
+            ).pipe(Effect.flatMap((r) => r.json))) as {
+              scheduleArn: string;
+              expression: string;
+            };
+
+            expect(created.scheduleArn).toContain(`:schedule/default/${name}`);
+            expect(created.expression).toMatch(/^at\(/);
+
+            // Out-of-band: the schedule exists with the one-shot config the
+            // fixture requested.
+            const observed = yield* scheduler.getSchedule({ Name: name });
+            expect(observed.Name).toBe(name);
+            expect(observed.ActionAfterCompletion).toBe("DELETE");
+            expect(observed.Target?.RoleArn).toBeTruthy();
+
+            // The schedule fires ~15s after creation; the execution role (which
+            // the binding contributed iam:PassRole for) delivers the marker into
+            // the sink queue. Bounded: ~15s delay + poll ≤ ~75s.
+            const message = yield* receiveMatching(
+              sinkQueueUrl,
+              (body) => body.marker === name,
+            );
+            expect(message.marker).toBe(name);
+
+            // ActionAfterCompletion=DELETE reaps the fired one-shot: typed
+            // wait-until-gone doubles as the no-leak proof.
+            yield* waitUntilScheduleGone(name);
+          }),
+        { timeout: 150_000 },
+      );
+    });
+
+    describe("GetSchedule", () => {
+      test.provider("reads a pending schedule through the binding", (_stack) =>
         Effect.gen(function* () {
-          const name = `${SCHEDULE_PREFIX}upd`;
+          const name = `${SCHEDULE_PREFIX}get`;
 
           yield* send(
             HttpClientRequest.post(
@@ -323,21 +291,18 @@ describe("Scheduler Bindings", () => {
             ),
           );
 
-          // Update: push the fire time out further and set a description.
-          const updated = (yield* send(
-            HttpClientRequest.put(
-              `${baseUrl}/schedules/${name}?delaySeconds=1800&description=rescheduled`,
-            ),
+          const found = (yield* send(
+            HttpClientRequest.get(`${baseUrl}/schedules/${name}`),
           ).pipe(Effect.flatMap((r) => r.json))) as {
-            scheduleArn: string;
+            arn: string;
+            name: string;
+            state: string;
             expression: string;
           };
-          expect(updated.scheduleArn).toContain(`:schedule/default/${name}`);
 
-          // Out-of-band: the new expression and description landed.
-          const observed = yield* scheduler.getSchedule({ Name: name });
-          expect(observed.ScheduleExpression).toBe(updated.expression);
-          expect(observed.Description).toBe("rescheduled");
+          expect(found.name).toBe(name);
+          expect(found.state).toBe("ENABLED");
+          expect(found.expression).toMatch(/^at\(/);
 
           // cleanup via the DeleteSchedule binding route
           const deleted = yield* send(
@@ -345,125 +310,175 @@ describe("Scheduler Bindings", () => {
           );
           expect(deleted.status).toBe(200);
         }),
-      { timeout: 120_000 },
-    );
+      );
 
-    test.provider("surfaces the typed not-found as a 404", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.put(
-            `${baseUrl}/schedules/${SCHEDULE_PREFIX}missing-upd`,
-          ),
-        );
-        expect(response.status).toBe(404);
-      }),
-    );
-  });
-
-  describe("ListSchedules", () => {
-    test.provider(
-      "lists runtime-minted schedules by prefix (default-group scoped)",
-      (_stack) =>
+      test.provider("surfaces the typed not-found as a 404", (_stack) =>
         Effect.gen(function* () {
-          const nameA = `${SCHEDULE_PREFIX}list-a`;
-          const nameB = `${SCHEDULE_PREFIX}list-b`;
-
-          yield* send(
-            HttpClientRequest.post(
-              `${baseUrl}/schedules/${nameA}?delaySeconds=900`,
-            ),
-          );
-          yield* send(
-            HttpClientRequest.post(
-              `${baseUrl}/schedules/${nameB}?delaySeconds=900`,
-            ),
-          );
-
-          const listed = (yield* send(
+          const response = yield* send(
             HttpClientRequest.get(
-              `${baseUrl}/schedules?namePrefix=${SCHEDULE_PREFIX}list-`,
+              `${baseUrl}/schedules/${SCHEDULE_PREFIX}missing`,
             ),
-          ).pipe(Effect.flatMap((r) => r.json))) as {
-            names: string[];
-            error?: string;
-            message?: string;
-          };
+          );
+          expect(response.status).toBe(404);
+        }),
+      );
+    });
 
-          // A typed failure inside the Lambda surfaces here with its tag.
-          expect(listed.error, listed.message).toBeUndefined();
-          expect(listed.names).toContain(nameA);
-          expect(listed.names).toContain(nameB);
+    describe("UpdateSchedule", () => {
+      test.provider(
+        "reschedules a pending schedule (full PUT + iam:PassRole)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const name = `${SCHEDULE_PREFIX}upd`;
 
-          // cleanup via the DeleteSchedule binding route
-          for (const name of [nameA, nameB]) {
+            yield* send(
+              HttpClientRequest.post(
+                `${baseUrl}/schedules/${name}?delaySeconds=900`,
+              ),
+            );
+
+            // Update: push the fire time out further and set a description.
+            const updated = (yield* send(
+              HttpClientRequest.put(
+                `${baseUrl}/schedules/${name}?delaySeconds=1800&description=rescheduled`,
+              ),
+            ).pipe(Effect.flatMap((r) => r.json))) as {
+              scheduleArn: string;
+              expression: string;
+            };
+            expect(updated.scheduleArn).toContain(`:schedule/default/${name}`);
+
+            // Out-of-band: the new expression and description landed.
+            const observed = yield* scheduler.getSchedule({ Name: name });
+            expect(observed.ScheduleExpression).toBe(updated.expression);
+            expect(observed.Description).toBe("rescheduled");
+
+            // cleanup via the DeleteSchedule binding route
             const deleted = yield* send(
               HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
             );
             expect(deleted.status).toBe(200);
-          }
-        }),
-      { timeout: 120_000 },
-    );
-  });
+          }),
+        { timeout: 120_000 },
+      );
 
-  describe("DeleteSchedule", () => {
-    test.provider(
-      "deletes a pending schedule and reports not-found on repeat",
-      (_stack) =>
+      test.provider("surfaces the typed not-found as a 404", (_stack) =>
         Effect.gen(function* () {
-          const name = `${SCHEDULE_PREFIX}del`;
-
-          yield* send(
-            HttpClientRequest.post(
-              `${baseUrl}/schedules/${name}?delaySeconds=900`,
+          const response = yield* send(
+            HttpClientRequest.put(
+              `${baseUrl}/schedules/${SCHEDULE_PREFIX}missing-upd`,
             ),
           );
-
-          // out-of-band: it exists before deletion
-          const observed = yield* scheduler.getSchedule({ Name: name });
-          expect(observed.Name).toBe(name);
-
-          const first = yield* send(
-            HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
-          );
-          expect(first.status).toBe(200);
-          expect(((yield* first.json) as any).deleted).toBe(true);
-
-          // out-of-band typed wait-until-gone
-          yield* waitUntilScheduleGone(name);
-
-          // idempotent repeat surfaces the typed ResourceNotFoundException
-          const second = yield* send(
-            HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
-          );
-          expect(second.status).toBe(404);
+          expect(response.status).toBe(404);
         }),
-      { timeout: 120_000 },
-    );
-  });
+      );
+    });
 
-  describe("ScheduleEventSource", () => {
-    test.provider(
-      "the cron handler consumes its own scheduled invocations",
-      (_stack) =>
-        Effect.gen(function* () {
-          // The fixture registered consumeSchedule(every("1 minute"), ...) at
-          // deploy time; the first fire lands within a minute of schedule
-          // creation (usually before the tests start), forwarded into the
-          // cron queue as the typed ScheduleEvent envelope. Bounded: long-poll
-          // ~90s to ride out one full rate window.
-          const event = yield* receiveMatching(
-            cronQueueUrl,
-            (body) => body.marker === "alch-schedtest-cron-fired",
-            { times: 15 },
-          );
+    describe("ListSchedules", () => {
+      test.provider(
+        "lists runtime-minted schedules by prefix (default-group scoped)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const nameA = `${SCHEDULE_PREFIX}list-a`;
+            const nameB = `${SCHEDULE_PREFIX}list-b`;
 
-          expect(event.scheduleArn).toContain(":schedule/default/");
-          expect(event.scheduleId).toMatch(/^Scheduler[0-9a-f]{10}$/);
-          expect(event.scheduledTime).toBeTruthy();
-          expect(event.executionId).toBeTruthy();
-        }),
-      { timeout: 120_000 },
-    );
-  });
-});
+            yield* send(
+              HttpClientRequest.post(
+                `${baseUrl}/schedules/${nameA}?delaySeconds=900`,
+              ),
+            );
+            yield* send(
+              HttpClientRequest.post(
+                `${baseUrl}/schedules/${nameB}?delaySeconds=900`,
+              ),
+            );
+
+            const listed = (yield* send(
+              HttpClientRequest.get(
+                `${baseUrl}/schedules?namePrefix=${SCHEDULE_PREFIX}list-`,
+              ),
+            ).pipe(Effect.flatMap((r) => r.json))) as {
+              names: string[];
+              error?: string;
+              message?: string;
+            };
+
+            // A typed failure inside the Lambda surfaces here with its tag.
+            expect(listed.error, listed.message).toBeUndefined();
+            expect(listed.names).toContain(nameA);
+            expect(listed.names).toContain(nameB);
+
+            // cleanup via the DeleteSchedule binding route
+            for (const name of [nameA, nameB]) {
+              const deleted = yield* send(
+                HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
+              );
+              expect(deleted.status).toBe(200);
+            }
+          }),
+        { timeout: 120_000 },
+      );
+    });
+
+    describe("DeleteSchedule", () => {
+      test.provider(
+        "deletes a pending schedule and reports not-found on repeat",
+        (_stack) =>
+          Effect.gen(function* () {
+            const name = `${SCHEDULE_PREFIX}del`;
+
+            yield* send(
+              HttpClientRequest.post(
+                `${baseUrl}/schedules/${name}?delaySeconds=900`,
+              ),
+            );
+
+            // out-of-band: it exists before deletion
+            const observed = yield* scheduler.getSchedule({ Name: name });
+            expect(observed.Name).toBe(name);
+
+            const first = yield* send(
+              HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
+            );
+            expect(first.status).toBe(200);
+            expect(((yield* first.json) as any).deleted).toBe(true);
+
+            // out-of-band typed wait-until-gone
+            yield* waitUntilScheduleGone(name);
+
+            // idempotent repeat surfaces the typed ResourceNotFoundException
+            const second = yield* send(
+              HttpClientRequest.delete(`${baseUrl}/schedules/${name}`),
+            );
+            expect(second.status).toBe(404);
+          }),
+        { timeout: 120_000 },
+      );
+    });
+
+    describe("ScheduleEventSource", () => {
+      test.provider(
+        "the cron handler consumes its own scheduled invocations",
+        (_stack) =>
+          Effect.gen(function* () {
+            // The fixture registered consumeSchedule(every("1 minute"), ...) at
+            // deploy time; the first fire lands within a minute of schedule
+            // creation (usually before the tests start), forwarded into the
+            // cron queue as the typed ScheduleEvent envelope. Bounded: long-poll
+            // ~90s to ride out one full rate window.
+            const event = yield* receiveMatching(
+              cronQueueUrl,
+              (body) => body.marker === "alch-schedtest-cron-fired",
+              { times: 15 },
+            );
+
+            expect(event.scheduleArn).toContain(":schedule/default/");
+            expect(event.scheduleId).toMatch(/^Scheduler[0-9a-f]{10}$/);
+            expect(event.scheduledTime).toBeTruthy();
+            expect(event.executionId).toBeTruthy();
+          }),
+        { timeout: 120_000 },
+      );
+    });
+  },
+);

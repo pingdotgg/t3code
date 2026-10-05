@@ -1,0 +1,156 @@
+---
+title: Certificate authorities
+description: Select a CA, configure external account binding, and understand account identity and key storage.
+---
+
+An `ACME.Account` is the identity used to sign orders with one certificate
+authority (CA). Certificates reference that account; changing the issuing account
+replaces the dependent certificate resource.
+
+## Choose a directory
+
+| Preset | Intended use | External account binding |
+| --- | --- | --- |
+| `ACME.LetsEncryptStaging` | Development; untrusted certificates | No |
+| `ACME.LetsEncrypt` | Publicly trusted production certificates | No |
+| `ACME.ZeroSSL` | ZeroSSL ACME issuance | Required |
+| `ACME.GoogleTrustServicesStaging` | Google Trust Services staging | Required |
+| `ACME.GoogleTrustServices` | Google Trust Services production | Required |
+
+A preset selects a directory URL, not an Alchemy subscription. CA eligibility,
+issuance limits, validity periods, and terms still apply. Check the CA's current
+requirements before deploying. The supplied Google presets do not imply that a
+Google account or external binding credentials are provisioned for you.
+
+## Start with staging
+
+Inside the stack from [Getting started](/acme/getting-started):
+
+```typescript
+const account = yield* ACME.Account("Issuer", {
+  ca: ACME.LetsEncryptStaging,
+  contact: ["mailto:ops@example.com"],
+  termsOfServiceAgreed: true,
+});
+```
+
+Staging exercises real account registration and DNS-01 validation. Its certificate
+chain is intentionally untrusted; a browser warning is expected even after a
+successful deployment.
+
+## Switch to production
+
+```diff lang="typescript"
+ const account = yield* ACME.Account("Issuer", {
+-  ca: ACME.LetsEncryptStaging,
++  ca: ACME.LetsEncrypt,
+```
+
+Changing the directory replaces the account and reissues dependent certificates.
+Use a separate production stage and state store when development certificates
+must remain independent. Schedule [renewal](/acme/renewal) before deploying a
+production certificate to a live service.
+
+## Configure ZeroSSL external account binding
+
+External account binding (EAB) associates an ACME account with a CA customer
+account. Obtain a matching key ID and HMAC key from ZeroSSL and put them in your
+secret configuration as `ZEROSSL_EAB_KID` and `ZEROSSL_EAB_HMAC_KEY`.
+
+```typescript
+import * as ACME from "alchemy/ACME";
+import * as Config from "effect/Config";
+
+export const Issuer = ACME.Account("Issuer", {
+  ca: ACME.ZeroSSL,
+  eab: {
+    keyId: Config.String("ZEROSSL_EAB_KID"),
+    hmacKey: Config.Redacted("ZEROSSL_EAB_HMAC_KEY"),
+  },
+  termsOfServiceAgreed: true,
+});
+```
+
+The HMAC key is the CA-issued base64url value, not your ZeroSSL REST API key.
+Keep the pair together. Yield `Issuer` in the stack or reference it from a
+certificate to register it. Google Trust Services uses the same `eab` shape with
+credentials obtained from Google.
+
+## Reuse an existing account resource
+
+```typescript
+const account = yield* Issuer;
+const certificate = yield* ACME.Certificate("Api", {
+  account,
+  identifiers: ["api.example.com"],
+  solver: Cloudflare.DNS.AcmeSolver({
+    zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+  }),
+});
+```
+
+Referencing the same account resource reuses its persisted signing key and account
+URL. EAB is used when registering the account; ordinary signed requests use the
+account key. Changing the EAB key ID replaces the account. Changing only the HMAC
+value does not force an existing account to register again.
+
+## Choose an account key algorithm
+
+```diff lang="typescript"
+ export const Issuer = ACME.Account("Issuer", {
+   ca: ACME.ZeroSSL,
++  keyAlgorithm: "RS256",
+```
+
+The default is `ES256`; `RS256` is also supported. Changing the account algorithm
+replaces the account. A certificate's separate `keyAlgorithm` controls the key
+used by your TLS server, not the account signing key.
+
+## Use a custom directory
+
+```typescript
+export const PrivateIssuer = ACME.Account("PrivateIssuer", {
+  ca: {
+    directoryUrl: "https://ca.internal.example/acme/acme/directory",
+  },
+  termsOfServiceAgreed: true,
+});
+```
+
+Use this form for another ACME-compatible CA. It must offer DNS-01 challenges for
+the requested identifiers. Network access to the directory and authorization
+endpoints must be available wherever issuance runs.
+
+## Trust a private CA's HTTPS endpoint
+
+```diff lang="typescript"
+   ca: {
+     directoryUrl: "https://ca.internal.example/acme/acme/directory",
++    trustedRoot: Config.String("ACME_CA_ROOT_PEM"),
+   },
+```
+
+`trustedRoot` is a PEM trust anchor for the CA's **API connection**, not the chain
+that your application serves. The current HTTP implementation supplies Bun's
+`fetch` TLS option; other runtimes may ignore it. Use Bun for this private-root
+path, or arrange platform-level trust and verify connectivity in your target
+runtime. It does not disable certificate verification.
+
+## Preserve account identity
+
+Alchemy generates the account key and stores it in stack state. `AccountProps`
+does not currently accept an existing account key or account URL, so importing an
+externally created account is not supported by this resource. The lower-level
+Distilled SDK can accept explicit credentials, but it does not import them into
+Alchemy's resource lifecycle.
+
+Back up state securely. Recreating a lost state file generates a new key rather
+than recovering the old account. A crash after CA registration but before the
+first state save can likewise leave an account whose key was not persisted.
+`Redacted` protects ordinary logs, not the storage backend.
+
+## Next steps
+
+- [DNS validation](/acme/dns-validation) — prove control of the requested names.
+- [Runtime issuance](/acme/runtime) — bind this account into an application.
+- [Account reference](/providers/acme/account) — all account props and outputs.

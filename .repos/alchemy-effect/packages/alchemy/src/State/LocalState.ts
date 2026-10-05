@@ -2,28 +2,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { dotAlchemyDirectory } from "../AlchemyContext.ts";
 import type { PlatformError } from "effect/PlatformError";
 import { existsSync } from "node:fs";
 import { decodeFqn, encodeFqn } from "../FQN.ts";
 import { recordStateStoreInit } from "../Telemetry/Metrics.ts";
+import { initialCwd } from "../Util/Node.ts";
 import { writeFileAtomic } from "../Util/AtomicFile.ts";
 import { STATE_STORE_VERSION } from "./HttpStateApi.ts";
 import { State, StateStoreError, type StateService } from "./State.ts";
 import { encodeState, reviveState } from "./StateEncoding.ts";
-
-/**
- * The process's working directory, captured ONCE at module load.
- *
- * The local state tree is anchored here instead of calling `process.cwd()`
- * at store-build time: every state store built in this process — a deploy's
- * and its later destroy's alike — must resolve the SAME `.alchemy/state`
- * tree. A per-build `process.cwd()` read lets any transient working
- * directory change (third-party code sharing the process) point one
- * session's store at a different (empty) tree. A destroy built during such
- * a window lists no state, plans "no changes", and silently leaks every
- * cloud resource of the stack.
- */
-const initialCwd = process.cwd();
 
 export const localState = () =>
   Layer.effect(
@@ -46,8 +34,9 @@ export const makeLocalState = () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const dotAlchemy = path.join(initialCwd, ".alchemy");
-    const stateDir = path.join(dotAlchemy, "state");
+    const dotAlchemy = yield* dotAlchemyDirectory;
+    // Keep the store anchored across deploy/destroy even if another task changes cwd.
+    const stateDir = path.resolve(initialCwd, dotAlchemy, "state");
 
     const fail = (err: PlatformError) =>
       Effect.fail(

@@ -7,8 +7,8 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node"
 import { Context, Effect, Layer, Schema } from "effect"
-import { Model } from "effect/unstable/schema"
-import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql"
+import { Model } from "effect/schema"
+import { SqlClient, SqlModel, SqlSchema } from "effect/sql"
 
 // Use a branded string for the group id, so it cannot be mixed up with other
 // string ids in the application.

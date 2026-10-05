@@ -1,3 +1,4 @@
+import * as Iterable from "../../Iterable.ts"
 import * as JsonSchema from "../../JsonSchema.ts"
 import { remainder } from "../../Number.ts"
 import type * as Schema from "../../Schema.ts"
@@ -54,6 +55,7 @@ const never: ImportedJsonSchemaRepresentation = { _tag: "Never", checks: [] }
 const unknown: ImportedJsonSchemaRepresentation = { _tag: "Unknown", checks: [] }
 const string: ImportedJsonSchemaRepresentation = { _tag: "String", checks: [] }
 const unsupportedStructuredValue = "Only primitive values are supported in \"const\" and \"enum\"."
+const jsonSchemaPatternFlags = "u"
 
 function isObject(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input)
@@ -366,8 +368,10 @@ function translateJsonSchemaMultiDocument(
     switch (representation.id) {
       case "effect/schema/isMinLength":
         return (value as string).length >= payload.minLength
-      case "effect/schema/isMaxLength":
-        return (value as string).length <= payload.maxLength
+      case "effect/schema/isMinCodePoints":
+        return Iterable.size(value as string) >= payload.minCodePoints
+      case "effect/schema/isMaxCodePoints":
+        return Iterable.size(value as string) <= payload.maxCodePoints
       case "effect/schema/isPattern":
         return new RegExp(payload.source as string, payload.flags as string).test(value as string)
       case "effect/schema/isFinite":
@@ -507,7 +511,7 @@ function translateJsonSchemaMultiDocument(
         }
         let matches = false
         for (const pattern of scope.patterns) {
-          if (globalThis.RegExp(pattern.source).test(name)) {
+          if (globalThis.RegExp(pattern.source, jsonSchemaPatternFlags).test(name)) {
             types.push(pattern.type)
             matches = true
           }
@@ -1063,15 +1067,26 @@ function translateJsonSchemaMultiDocument(
         )
       case "ignore":
         return undefined
-      case "apply":
-        return jsonSchemaFilter("effect/schema/isPattern", { source: pattern, flags: "" })
+      case "apply": {
+        let regex: RegExp
+        try {
+          regex = globalThis.RegExp(pattern, jsonSchemaPatternFlags)
+        } catch {
+          throw errorWithPath("Cannot import pattern using ECMAScript Unicode mode.", path)
+        }
+        return jsonSchemaFilter("effect/schema/isPattern", { source: regex.source, flags: regex.flags })
+      }
     }
   }
 
   function collectStringChecks(schema: JsonSchema.JsonSchema, path: Path): Array<Check> {
     const checks: Array<Check> = []
-    addNumberCheck(checks, schema.minLength, "effect/schema/isMinLength", "minLength")
-    addNumberCheck(checks, schema.maxLength, "effect/schema/isMaxLength", "maxLength")
+    if (schema.minLength === 1) {
+      addNumberCheck(checks, schema.minLength, "effect/schema/isMinLength", "minLength")
+    } else {
+      addNumberCheck(checks, schema.minLength, "effect/schema/isMinCodePoints", "minCodePoints")
+    }
+    addNumberCheck(checks, schema.maxLength, "effect/schema/isMaxCodePoints", "maxCodePoints")
     if (typeof schema.pattern === "string") {
       const check = importPatternCheck(schema.pattern, [...path, "pattern"])
       if (check !== undefined) checks.push(check)

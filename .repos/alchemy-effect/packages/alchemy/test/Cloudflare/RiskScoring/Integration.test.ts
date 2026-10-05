@@ -42,7 +42,10 @@ test.provider.skipIf(entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:riskscoring", "live"],
+    timeout: 90_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -96,7 +99,10 @@ test.provider.skipIf(!entitled)(
         .pipe(Effect.flip);
       expect(gone._tag).toEqual("RiskScoringIntegrationNotFound");
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:riskscoring", "live"],
+    timeout: 90_000,
+  },
 );
 
 // Read-only list assertion. Always runs: on an unentitled account the
@@ -124,7 +130,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:riskscoring", "live"],
+    timeout: 90_000,
+  },
 );
 
 // Entitled-account variant: deploy an integration and assert `list()`
@@ -156,5 +165,8 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:riskscoring", "live"],
+    timeout: 90_000,
+  },
 );

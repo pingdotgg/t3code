@@ -39,169 +39,180 @@ const silenceWindow = Effect.gen(function* () {
 const sameInstant = (a: string | undefined | null, b: string) =>
   a != null && Date.parse(a) === Date.parse(b);
 
-test.provider("create, update window in place, delete silence", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const { start, end, extendedEnd } = yield* silenceWindow;
+test.provider(
+  "create, update window in place, delete silence",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const { start, end, extendedEnd } = yield* silenceWindow;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
-          "SilencedPolicy",
-          {
-            alertType: "universal_ssl_event_type",
-            mechanisms: { email: [{ id: EMAIL }] },
-          },
-        );
-        return yield* Cloudflare.Alerting.Silence("Maintenance", {
-          policyId: policy.policyId,
-          startTime: start,
-          endTime: end,
-        });
-      }),
-    );
-
-    expect(initial.silenceId).toBeDefined();
-    expect(initial.accountId).toEqual(accountId);
-    expect(initial.policyId).toBeDefined();
-    expect(sameInstant(initial.startTime, start)).toBe(true);
-    expect(sameInstant(initial.endTime, end)).toBe(true);
-
-    // Verify out-of-band via the API.
-    const actual = yield* alerting.getSilence({
-      accountId,
-      silenceId: initial.silenceId,
-    });
-    expect(actual.policyId).toEqual(initial.policyId);
-    expect(sameInstant(actual.startTime, start)).toBe(true);
-    expect(sameInstant(actual.endTime, end)).toBe(true);
-
-    // Extend the window in place — same silence id.
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
-          "SilencedPolicy",
-          {
-            alertType: "universal_ssl_event_type",
-            mechanisms: { email: [{ id: EMAIL }] },
-          },
-        );
-        return yield* Cloudflare.Alerting.Silence("Maintenance", {
-          policyId: policy.policyId,
-          startTime: start,
-          endTime: extendedEnd,
-        });
-      }),
-    );
-
-    expect(updated.silenceId).toEqual(initial.silenceId);
-    expect(sameInstant(updated.endTime, extendedEnd)).toBe(true);
-
-    const afterUpdate = yield* alerting.getSilence({
-      accountId,
-      silenceId: initial.silenceId,
-    });
-    expect(sameInstant(afterUpdate.endTime, extendedEnd)).toBe(true);
-
-    yield* stack.destroy();
-
-    yield* waitForSilenceDeleted(accountId, initial.silenceId);
-  }).pipe(logLevel),
-);
-
-test.provider("replaces silence when the policy changes", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const { start, end } = yield* silenceWindow;
-
-    yield* stack.destroy();
-
-    const deploySilence = (policyResourceId: "PolicyA" | "PolicyB") =>
-      stack.deploy(
+      const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          const policyA = yield* Cloudflare.Alerting.NotificationPolicy(
-            "PolicyA",
+          const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+            "SilencedPolicy",
             {
               alertType: "universal_ssl_event_type",
               mechanisms: { email: [{ id: EMAIL }] },
             },
           );
-          const policyB = yield* Cloudflare.Alerting.NotificationPolicy(
-            "PolicyB",
-            {
-              alertType: "universal_ssl_event_type",
-              mechanisms: { email: [{ id: EMAIL }] },
-            },
-          );
-          const target = policyResourceId === "PolicyA" ? policyA : policyB;
-          const silence = yield* Cloudflare.Alerting.Silence("ReplaceMe", {
-            policyId: target.policyId,
+          return yield* Cloudflare.Alerting.Silence("Maintenance", {
+            policyId: policy.policyId,
             startTime: start,
             endTime: end,
           });
-          return { policyA, policyB, silence };
         }),
       );
 
-    const initial = yield* deploySilence("PolicyA");
-    expect(initial.silence.policyId).toEqual(initial.policyA.policyId);
+      expect(initial.silenceId).toBeDefined();
+      expect(initial.accountId).toEqual(accountId);
+      expect(initial.policyId).toBeDefined();
+      expect(sameInstant(initial.startTime, start)).toBe(true);
+      expect(sameInstant(initial.endTime, end)).toBe(true);
 
-    // Pointing the silence at a different policy is a replacement — the
-    // silence update API cannot move a silence between policies.
-    const replaced = yield* deploySilence("PolicyB");
-    expect(replaced.silence.policyId).toEqual(replaced.policyB.policyId);
-    expect(replaced.silence.silenceId).not.toEqual(initial.silence.silenceId);
+      // Verify out-of-band via the API.
+      const actual = yield* alerting.getSilence({
+        accountId,
+        silenceId: initial.silenceId,
+      });
+      expect(actual.policyId).toEqual(initial.policyId);
+      expect(sameInstant(actual.startTime, start)).toBe(true);
+      expect(sameInstant(actual.endTime, end)).toBe(true);
 
-    // The replaced (old) silence must be gone.
-    yield* waitForSilenceDeleted(accountId, initial.silence.silenceId);
+      // Extend the window in place — same silence id.
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+            "SilencedPolicy",
+            {
+              alertType: "universal_ssl_event_type",
+              mechanisms: { email: [{ id: EMAIL }] },
+            },
+          );
+          return yield* Cloudflare.Alerting.Silence("Maintenance", {
+            policyId: policy.policyId,
+            startTime: start,
+            endTime: extendedEnd,
+          });
+        }),
+      );
 
-    const actual = yield* alerting.getSilence({
-      accountId,
-      silenceId: replaced.silence.silenceId,
-    });
-    expect(actual.policyId).toEqual(replaced.policyB.policyId);
+      expect(updated.silenceId).toEqual(initial.silenceId);
+      expect(sameInstant(updated.endTime, extendedEnd)).toBe(true);
 
-    yield* stack.destroy();
+      const afterUpdate = yield* alerting.getSilence({
+        accountId,
+        silenceId: initial.silenceId,
+      });
+      expect(sameInstant(afterUpdate.endTime, extendedEnd)).toBe(true);
 
-    yield* waitForSilenceDeleted(accountId, replaced.silence.silenceId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+
+      yield* waitForSilenceDeleted(accountId, initial.silenceId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:alerting", "live"] },
 );
 
-test.provider("list enumerates the deployed silence", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const { start, end } = yield* silenceWindow;
+test.provider(
+  "replaces silence when the policy changes",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const { start, end } = yield* silenceWindow;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
-          "ListedPolicy",
-          {
-            alertType: "universal_ssl_event_type",
-            mechanisms: { email: [{ id: EMAIL }] },
-          },
+      const deploySilence = (policyResourceId: "PolicyA" | "PolicyB") =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const policyA = yield* Cloudflare.Alerting.NotificationPolicy(
+              "PolicyA",
+              {
+                alertType: "universal_ssl_event_type",
+                mechanisms: { email: [{ id: EMAIL }] },
+              },
+            );
+            const policyB = yield* Cloudflare.Alerting.NotificationPolicy(
+              "PolicyB",
+              {
+                alertType: "universal_ssl_event_type",
+                mechanisms: { email: [{ id: EMAIL }] },
+              },
+            );
+            const target = policyResourceId === "PolicyA" ? policyA : policyB;
+            const silence = yield* Cloudflare.Alerting.Silence("ReplaceMe", {
+              policyId: target.policyId,
+              startTime: start,
+              endTime: end,
+            });
+            return { policyA, policyB, silence };
+          }),
         );
-        return yield* Cloudflare.Alerting.Silence("ListedSilence", {
-          policyId: policy.policyId,
-          startTime: start,
-          endTime: end,
-        });
-      }),
-    );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Alerting.Silence);
-    const all = yield* provider.list();
+      const initial = yield* deploySilence("PolicyA");
+      expect(initial.silence.policyId).toEqual(initial.policyA.policyId);
 
-    expect(all.some((s) => s.silenceId === deployed.silenceId)).toBe(true);
+      // Pointing the silence at a different policy is a replacement — the
+      // silence update API cannot move a silence between policies.
+      const replaced = yield* deploySilence("PolicyB");
+      expect(replaced.silence.policyId).toEqual(replaced.policyB.policyId);
+      expect(replaced.silence.silenceId).not.toEqual(initial.silence.silenceId);
 
-    yield* stack.destroy();
+      // The replaced (old) silence must be gone.
+      yield* waitForSilenceDeleted(accountId, initial.silence.silenceId);
 
-    yield* waitForSilenceDeleted(accountId, deployed.silenceId);
-  }).pipe(logLevel),
+      const actual = yield* alerting.getSilence({
+        accountId,
+        silenceId: replaced.silence.silenceId,
+      });
+      expect(actual.policyId).toEqual(replaced.policyB.policyId);
+
+      yield* stack.destroy();
+
+      yield* waitForSilenceDeleted(accountId, replaced.silence.silenceId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:alerting", "live"] },
+);
+
+test.provider(
+  "list enumerates the deployed silence",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const { start, end } = yield* silenceWindow;
+
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+            "ListedPolicy",
+            {
+              alertType: "universal_ssl_event_type",
+              mechanisms: { email: [{ id: EMAIL }] },
+            },
+          );
+          return yield* Cloudflare.Alerting.Silence("ListedSilence", {
+            policyId: policy.policyId,
+            startTime: start,
+            endTime: end,
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Alerting.Silence,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((s) => s.silenceId === deployed.silenceId)).toBe(true);
+
+      yield* stack.destroy();
+
+      yield* waitForSilenceDeleted(accountId, deployed.silenceId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:alerting", "live"] },
 );
 
 const waitForSilenceDeleted = (accountId: string, silenceId: string) =>

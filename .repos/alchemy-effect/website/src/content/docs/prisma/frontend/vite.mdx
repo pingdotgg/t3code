@@ -1,0 +1,159 @@
+---
+title: Vite
+description: Deploy a Vite SPA to Prisma Compute with Prisma.Website.Vite — static files served on Bun and Vite's native dev server locally.
+sidebar:
+  order: 2
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.Vite` runs [Vite](https://vite.dev)'s build and serves
+its output with a generated static-file server on **Bun in Prisma
+Compute**. The Node-target output is uploaded as `tar.gz`, not a Docker
+image. There is no framework SSR handler, but the site still has a
+Compute runtime.
+
+React, Vue, and Solid client SPAs belong here, as do multi-page HTML
+apps. Use the dedicated [Astro](/prisma/frontend/astro),
+[React Router](/prisma/frontend/react-router),
+[SolidStart](/prisma/frontend/solidstart),
+[SvelteKit](/prisma/frontend/sveltekit), or
+[TanStack Start](/prisma/frontend/tanstack-start) resource for SSR.
+
+## Install
+
+The build integration is separate from alchemy. Install it in the Vite
+project; the resource loads its `/vite` and `/vite/node` exports:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.*` loads natively, including framework plugins and
+Tailwind. No SSR adapter is needed:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});
+```
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.Vite("Website");
+```
+
+Omit `project` to create a database-less Prisma project on live deploy.
+Pass `project` to use one already declared in your Stack.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyViteSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+`site.url` is the Compute endpoint on deploy and Vite's local address
+in dev. See the [Vite example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-vite).
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.Vite("Website", {
++  env: {
++    VITE_GREETING: "Hello from Alchemy!",
++  },
+});
+```
+
+`env` is applied before build and dev, and passed to Compute. Vite
+inlines `VITE_*` into the client bundle; other keys are not exposed to
+the browser. Never put a secret in a `VITE_*` key.
+
+## Read the environment
+
+```typescript
+// src/main.ts
+const greeting = import.meta.env.VITE_GREETING ?? "hello";
+```
+
+The browser sees the value captured at build time, not a request-time
+lookup of Compute's environment.
+
+## Single-page vs multi-page
+
+`assets.notFoundHandling` defaults to `"single-page-application"`:
+unmatched paths return `index.html` with status 200 for client routing.
+Use `"404-page"` for multi-page sites with a `404.html`:
+
+```typescript
+export const Website = Prisma.Website.Vite("Docs", {
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+## Vite configuration
+
+`rootDir` is the directory containing `package.json`, default `"."`.
+The serializable `vite` bag overrides the native config:
+
+```typescript
+export const Website = Prisma.Website.Vite("Website", {
+  rootDir: "./app",
+  vite: { outDir: "build", base: "/docs/" },
+});
+```
+
+`outDir` is relative to `rootDir`; omitted, it follows the file's
+`build.outDir` (Vite defaults to `dist`). `base` sets the public base path.
+
+## Local development
+
+`bun alchemy dev` runs Vite's own server with HMR. The Website creates
+no Prisma project, database, app, or domain. Use `.pipe(Alchemy.remote())`
+to deploy the live path during dev instead.
+
+## Custom domain
+
+```typescript
+export const Website = Prisma.Website.Vite("Website", {
+  domain: "app.example.com",
+});
+```
+
+This creates `Prisma.CustomDomain` and makes `site.url` the HTTPS hostname.
+The app must be on the project's current default branch. Configure the
+returned DNS records yourself and verify provisioning status before
+cutover; see [Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [Vite API](/providers/prisma/website/vite).
+- [Websites](/prisma/frontend/websites) — the full framework family.
+- [Compute apps](/prisma/compute/apps) — the underlying runtime.

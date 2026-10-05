@@ -77,7 +77,10 @@ test.provider(
 
       yield* expectGone(accountId, watermark.watermarkId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:stream", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -133,7 +136,10 @@ test.provider(
 
       yield* expectGone(accountId, replaced.watermarkId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:stream", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (account collection): deploy a watermark, then
@@ -164,5 +170,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:stream", "live"],
+    timeout: 120_000,
+  },
 );

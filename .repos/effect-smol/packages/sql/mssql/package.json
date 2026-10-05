@@ -1,6 +1,6 @@
 {
   "name": "@effect/sql-mssql",
-  "version": "4.0.0-rc.115",
+  "version": "4.0.1",
   "type": "module",
   "license": "MIT",
   "description": "A Microsoft SQL Server toolkit for Effect",

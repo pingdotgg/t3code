@@ -34,88 +34,99 @@ const fixtureEntries = [
 // the co-located Waku.local.test.ts suite.
 const runEmulated = process.env.ALCHEMY_TEST_DEV === "1";
 
-describe.skipIf(!runLive || runEmulated)("AWS.Website.Waku", () => {
-  test.provider(
-    "deploys RSC SSR on a streaming Lambda URL with S3 assets behind CloudFront",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-waku-aws-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
-
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.Waku("WakuSite", {
-              rootDir,
-              forceDestroy: true,
-              invalidation: { paths: "all", wait: true },
-            });
-            return { site };
-          }),
-        );
-
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(/^https:\/\//);
-        expect(deployed.site.serverUrl).toBeDefined();
-        yield* Effect.log(
-          `site url: ${url} | server url: ${deployed.site.serverUrl}`,
-        );
-
-        // The Lambda Function URL serves the SSR page directly — isolates
-        // server-function health from the CloudFront edge routing.
-        yield* expectUrlContains(
-          `${deployed.site.serverUrl!}`,
-          "WAKU_AWS_PAGE_MARKER",
-          {
-            timeout: "120 seconds",
-            label: "SSR direct from Lambda URL",
-          },
-        );
-
-        // SSR page rendered by the Lambda through CloudFront.
-        yield* expectUrlContains(`${url}/`, "WAKU_AWS_PAGE_MARKER", {
-          timeout: "180 seconds",
-          label: "SSR home page",
-        });
-        // API route (waku's `_api` pattern, `_api` prefix stripped) through
-        // the streaming Function URL origin.
-        yield* expectUrlContains(
-          `${url}/echo?echo=roundtrip`,
-          "WAKU_AWS_API_MARKER",
-          { label: "API route" },
-        );
-        yield* expectUrlContains(`${url}/echo?echo=roundtrip`, "roundtrip", {
-          label: "API route query echo",
-        });
-        // Public file served from S3 via the KV file manifest.
-        yield* expectUrlContains(
-          `${url}/robots.txt`,
-          "waku-aws-robots-marker",
-          {
-            label: "public asset from S3",
-          },
-        );
-        // SSG page (waku prerendered it into dist/public/about/index.html at
-        // build time; the edge router's postfix lookup serves it from S3 at
-        // the extensionless URL waku links to).
-        yield* expectUrlContains(`${url}/about`, "WAKU_AWS_STATIC_MARKER", {
-          label: "SSG page",
-        });
-
-        const distributionId = deployed.site.distribution!.distributionId;
-
-        if (!process.env.NO_DESTROY) {
+describe.skipIf(!runLive || runEmulated)(
+  "AWS.Website.Waku",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudfront",
+      "provider:aws:website",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "deploys RSC SSR on a streaming Lambda URL with S3 assets behind CloudFront",
+      (stack) =>
+        Effect.gen(function* () {
           yield* stack.destroy();
-          yield* assertDistributionDeleted(distributionId);
-        }
-      }),
-    { timeout: 2_400_000 },
-  );
-});
+
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-waku-aws-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
+
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.Waku("WakuSite", {
+                rootDir,
+                forceDestroy: true,
+                invalidation: { paths: "all", wait: true },
+              });
+              return { site };
+            }),
+          );
+
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(/^https:\/\//);
+          expect(deployed.site.serverUrl).toBeDefined();
+          yield* Effect.log(
+            `site url: ${url} | server url: ${deployed.site.serverUrl}`,
+          );
+
+          // The Lambda Function URL serves the SSR page directly — isolates
+          // server-function health from the CloudFront edge routing.
+          yield* expectUrlContains(
+            `${deployed.site.serverUrl!}`,
+            "WAKU_AWS_PAGE_MARKER",
+            {
+              timeout: "120 seconds",
+              label: "SSR direct from Lambda URL",
+            },
+          );
+
+          // SSR page rendered by the Lambda through CloudFront.
+          yield* expectUrlContains(`${url}/`, "WAKU_AWS_PAGE_MARKER", {
+            timeout: "180 seconds",
+            label: "SSR home page",
+          });
+          // API route (waku's `_api` pattern, `_api` prefix stripped) through
+          // the streaming Function URL origin.
+          yield* expectUrlContains(
+            `${url}/echo?echo=roundtrip`,
+            "WAKU_AWS_API_MARKER",
+            { label: "API route" },
+          );
+          yield* expectUrlContains(`${url}/echo?echo=roundtrip`, "roundtrip", {
+            label: "API route query echo",
+          });
+          // Public file served from S3 via the KV file manifest.
+          yield* expectUrlContains(
+            `${url}/robots.txt`,
+            "waku-aws-robots-marker",
+            {
+              label: "public asset from S3",
+            },
+          );
+          // SSG page (waku prerendered it into dist/public/about/index.html at
+          // build time; the edge router's postfix lookup serves it from S3 at
+          // the extensionless URL waku links to).
+          yield* expectUrlContains(`${url}/about`, "WAKU_AWS_STATIC_MARKER", {
+            label: "SSG page",
+          });
+
+          const distributionId = deployed.site.distribution!.distributionId;
+
+          if (!process.env.NO_DESTROY) {
+            yield* stack.destroy();
+            yield* assertDistributionDeleted(distributionId);
+          }
+        }),
+      { timeout: 2_400_000 },
+    );
+  },
+);
 
 const assertDistributionDeleted = (distributionId: string) =>
   cloudfront.getDistribution({ Id: distributionId }).pipe(

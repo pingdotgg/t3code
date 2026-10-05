@@ -14,20 +14,23 @@ const { test } = Test.make({ providers: AWS.providers() });
 // no-default-VPC issues), so the deploy-backed assertion is gated below. This
 // path still exercises the full enumeration + tag-hydration code and asserts a
 // well-typed `Attributes[]`.
-test.provider("list returns well-typed DBProxy attributes", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(DBProxy);
-    const all = yield* provider.list();
+test.provider(
+  "list returns well-typed DBProxy attributes",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(DBProxy);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const proxy of all) {
-      expect(typeof proxy.dbProxyName).toBe("string");
-      expect(typeof proxy.dbProxyArn).toBe("string");
-      expect(Array.isArray(proxy.vpcSubnetIds)).toBe(true);
-      expect(Array.isArray(proxy.vpcSecurityGroupIds)).toBe(true);
-      expect(typeof proxy.tags).toBe("object");
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const proxy of all) {
+        expect(typeof proxy.dbProxyName).toBe("string");
+        expect(typeof proxy.dbProxyArn).toBe("string");
+        expect(Array.isArray(proxy.vpcSubnetIds)).toBe(true);
+        expect(Array.isArray(proxy.vpcSecurityGroupIds)).toBe(true);
+        expect(typeof proxy.tags).toBe("object");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
 // Deploy-backed list test. Gated behind AWS_TEST_RDS_DBPROXY=1 because a
@@ -66,4 +69,5 @@ test.provider.skipIf(!process.env.AWS_TEST_RDS_DBPROXY)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );

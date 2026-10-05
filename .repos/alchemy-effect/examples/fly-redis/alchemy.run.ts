@@ -8,7 +8,7 @@ import * as Alchemy from "alchemy";
 import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
-import { Cache, PublicIp, Site } from "./src/shared.ts";
+import { Cache } from "./src/shared.ts";
 
 export default Alchemy.Stack(
   "FlyRedis",
@@ -17,17 +17,13 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const site = yield* Site;
     const cache = yield* Cache;
-    const ip = yield* PublicIp;
     const api = yield* Api;
 
     return {
-      appName: site.appName,
-      appUrl: site.url,
+      appName: api.appName,
       redisId: cache.redisId,
       redisName: cache.name,
-      ip: ip.ip,
       apiUrl: api.url,
     };
   }),

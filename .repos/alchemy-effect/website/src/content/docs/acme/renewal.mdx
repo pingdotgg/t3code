@@ -1,0 +1,135 @@
+---
+title: Renewal & revocation
+description: Schedule renewal, understand replacement and deletion, and protect certificate and account keys.
+---
+
+An `ACME.Certificate` is checked when Alchemy plans a deployment. It has no
+background timer. Keeping the stack deployed is not enough to keep its
+certificates renewed.
+
+## Choose a renewal window
+
+In the certificate from [Getting started](/acme/getting-started):
+
+```diff lang="typescript"
+ const certificate = yield* ACME.Certificate("Site", {
+   account,
+   identifiers: ["example.com"],
+   solver: Cloudflare.DNS.AcmeSolver({
+     zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+   }),
++  renewBefore: "30 days",
+ });
+```
+
+Thirty days is the default. When less than this remains before `notAfter`, a
+deployment issues a new certificate with a fresh private key and updates the
+resource outputs. Choose a window shorter than the CA's certificate lifetime;
+a longer window can cause issuance on every deployment.
+
+## Schedule deployments
+
+```sh
+alchemy deploy --stage prod --profile prod --yes
+```
+
+Run the same deployment regularly from your existing scheduler or CI runner.
+Daily is a reasonable starting point for a 30-day renewal window. The runner
+must use the same stack name, stage, protected state backend, source revision,
+and necessary credentials as the production deployment. `--yes` approves the
+plan, so review source changes separately and serialize deployments to that
+stack. See [CI setup](/environments/ci) for credential configuration.
+
+## Monitor expiry independently
+
+Return `certificate.notAfter` from the stack and feed it into your monitoring.
+Also inspect the certificate actually served by your TLS endpoint: updating
+Alchemy's state does not prove that an external service loaded the replacement.
+Alert early enough to investigate DNS failures, rejected orders, or unavailable
+credentials before the old certificate expires.
+
+## Understand which changes issue again
+
+| Change | Result |
+| --- | --- |
+| Certificate is inside `renewBefore` | Update: issue a new certificate and key |
+| Identifier set changes | Update: issue again |
+| Certificate `keyAlgorithm` changes | Update: issue again |
+| `preferredChain` changes | Update: issue again |
+| Issuing account URL changes | Replace the certificate resource |
+| Solver or propagation settings alone change | Keep the valid certificate; use new settings on later issuance |
+| `revokeOnDelete` changes | Update deletion policy without issuing again |
+
+An ordinary renewal updates the stored certificate; it does not automatically
+revoke the previous one. Retain any old material securely if your operational
+process needs explicit revocation after cutover.
+
+## Revoke on resource deletion
+
+```diff lang="typescript"
+ const certificate = yield* ACME.Certificate("Site", {
+   account,
+   identifiers: ["example.com"],
+   solver: Cloudflare.DNS.AcmeSolver({
+     zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+   }),
++  revokeOnDelete: true,
+ });
+```
+
+This opts into CA revocation when that certificate resource is deleted, including
+deletion of an old resource generation during replacement. It does not revoke
+old certificates on every in-place renewal. Revocation uses the certificate's
+own private key, so deleting an old certificate can still work after its account
+has been deactivated.
+
+## Destroy a stack deliberately
+
+```sh
+alchemy destroy --stage dev
+```
+
+With the default `revokeOnDelete: false`, deletion forgets certificate state but
+leaves the certificate valid at the CA. Account deletion deactivates the ACME
+account; deactivation is distinct from revoking its issued certificates. Removing
+a certificate from a TLS consumer is another separate operation.
+
+:::caution
+Save any material needed for later revocation before destroying state. Once the
+key is gone, you cannot rely on this stack to revoke the certificate. If the
+certificate is still serving traffic, replace it at the consumer before revoking
+it.
+:::
+
+## Protect account and certificate keys
+
+The account's `privateKey` is a redacted private JWK used for ACME requests. The
+certificate's `privateKey` is a redacted PKCS#8 PEM used by the TLS server. They
+are separate keys with separate purposes.
+
+Restrict state access to trusted deployment identities, use encryption at rest
+where your backend supports it, protect backups, and exclude local state from
+source control. `Redacted` is a logging safeguard, not encryption. Avoid returning
+keys as top-level stack outputs or unwrapping them for diagnostic logging.
+
+The certificate resource's read operation returns persisted attributes; it does
+not query the CA for out-of-band revocation. Expiry checks alone are therefore
+not a certificate-status monitoring system.
+
+## Renew runtime-issued certificates
+
+For certificates issued through `IssueCertificate`, your application must store
+the chain, key, expiry, and enough account/domain metadata to manage the result.
+Schedule a new `issue` call before expiry, install the new material at the
+consumer, verify it is serving, and only then retire the previous certificate.
+
+Serialize issuance per identifier set, persist jobs durably, and honor CA retry
+hints. An in-memory Worker variable is not durable storage or a renewal schedule.
+Destroying the account stack does not discover or clean up runtime-issued
+certificates for you.
+
+## Next steps
+
+- [Using certificates](/acme/using-certificates) — connect renewal outputs to a TLS consumer.
+- [Runtime issuance](/acme/runtime) — issue and revoke through an application binding.
+- [Troubleshooting](/acme/troubleshooting) — investigate a failed renewal.

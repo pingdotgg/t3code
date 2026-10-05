@@ -1,11 +1,43 @@
 import { Generated, OpenRouterClient, OpenRouterLanguageModel } from "@effect/ai-openrouter"
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { deepStrictEqual } from "@effect/vitest/utils"
 import { Effect, Schema, Stream } from "effect"
-import { type AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/unstable/ai"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { type AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("Generated", () => {
+  it.effect("sends audio transcriptions as JSON with structured provider options", () =>
+    Effect.gen(function*() {
+      const payload: typeof Generated.CreateAudioTranscriptionsRequestJson.Encoded = {
+        model: "openai/whisper-1",
+        input_audio: { data: "UklGRg==", format: "wav" },
+        provider: { options: { openai: { prompt: "Effect" } } },
+        language: "en",
+        response_format: "verbose_json",
+        timestamp_granularities: ["word"]
+      }
+      const response = { text: "Hello Effect", language: "en", duration: 1.5 }
+      let requests = 0
+      const client = Generated.make(
+        HttpClient.make((request) => {
+          requests++
+          assert.strictEqual(request.method, "POST")
+          assert.strictEqual(request.url, "https://openrouter.ai/api/v1/audio/transcriptions")
+          assert.strictEqual(request.headers["content-type"], "application/json")
+          assert.strictEqual(request.body._tag, "Uint8Array")
+          if (request.body._tag === "Uint8Array") {
+            deepStrictEqual(JSON.parse(new TextDecoder().decode(request.body.body)), payload)
+          }
+          return Effect.succeed(HttpClientResponse.fromWeb(
+            request,
+            globalThis.Response.json(response)
+          ))
+        }).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://openrouter.ai/api/v1")))
+      )
+      deepStrictEqual(yield* client.createAudioTranscriptions({ payload }), response)
+      assert.strictEqual(requests, 1)
+    }))
+
   it("decodes nullable generation statistics", () => {
     const response: Generated.GetGeneration200 = {
       data: {
@@ -132,6 +164,7 @@ describe("Generated", () => {
         }))
         const client = OpenRouterClient.OpenRouterClient.of({
           client: Generated.make(HttpClient.make(() => Effect.die("Unexpected HTTP request"))),
+          createDecisions: () => Effect.die("Unexpected decisions request"),
           createChatCompletion: () => Effect.succeed([body, response]),
           createChatCompletionStream: () => Effect.succeed([response, Stream.fromIterable(chunks)])
         })

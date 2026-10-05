@@ -1,6 +1,6 @@
 import { Layer } from "effect"
-import * as KeyValueStoreTest from "effect-test/unstable/persistence/KeyValueStoreTest"
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
+import * as KeyValueStoreTest from "effect-test/persistence/KeyValueStoreTest"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { MysqlContainer } from "./utils.ts"
 
 KeyValueStoreTest.suite(

@@ -1,0 +1,418 @@
+---
+title: "Part 3: Effect Jobs"
+description: Write a smoke test as an Effect program, run it as a Kubernetes Job that Alchemy builds and pushes for you, watch it re-run when the program changes, and schedule it as a CronJob.
+sidebar:
+  order: 3
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+In [Part 2](/kubernetes/tutorial/part-2) you configured podinfo in its
+own namespace. Now you'll write your own code and run it on the
+cluster. You'll start with a smoke test, written in Effect, that
+checks podinfo is healthy after every change. Then you'll run the
+same program on a schedule.
+
+## Share resources between files
+
+The Job will live in its own file and needs the cluster, the
+namespace, and the Deployment. Move them out of `alchemy.run.ts` into
+`src/infra.ts`:
+
+```typescript
+// src/infra.ts
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Effect from "effect/Effect";
+
+export const Cluster = Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+});
+
+export const Namespace = Effect.gen(function* () {
+  const cluster = yield* Cluster;
+  return yield* Kubernetes.Manifest("Namespace", {
+    cluster,
+    manifest: {
+      apiVersion: "v1",
+      kind: "Namespace",
+      metadata: { name: "my-app" },
+    },
+  });
+});
+
+export const Web = Effect.gen(function* () {
+  const cluster = yield* Cluster;
+  const namespace = yield* Namespace;
+  return yield* Kubernetes.Deployment("Web", {
+    cluster,
+    name: "web",
+    namespace: namespace.name,
+    image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+    port: 9898,
+    replicas: 2,
+    serviceType: "ClusterIP",
+    env: {
+      PODINFO_UI_MESSAGE: "hello from alchemy",
+    },
+    resources: {
+      requests: { cpu: "10m", memory: "32Mi" },
+      limits: { memory: "64Mi" },
+    },
+  });
+});
+```
+
+A resource declared at module scope is an Effect you can `yield*`
+from anywhere. Every `yield*` resolves to the same resource, so the
+Stack and the Job share one cluster, one namespace, and one
+Deployment.
+
+## Use them from the Stack
+
+Replace the inline declarations in `alchemy.run.ts`:
+
+```diff lang="typescript"
+import * as Alchemy from "alchemy";
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Effect from "effect/Effect";
++import { Cluster, Web } from "./src/infra.ts";
+
+export default Alchemy.Stack(
+  "MyCluster",
+  {
+    providers: Kubernetes.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+-    const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+-      name: "alchemy",
+-    });
+-    const namespace = yield* Kubernetes.Manifest("Namespace", { ... });
+-    const web = yield* Kubernetes.Deployment("Web", { ... });
++    const cluster = yield* Cluster;
++    const web = yield* Web;
+
+    return {
+      context: cluster.context,
+      namespace: web.namespace,
+      service: web.serviceName,
+    };
+  }),
+);
+```
+
+The logical IDs haven't changed, so a deploy now would show no
+changes. Moving code between files doesn't move resources.
+
+## Declare the Job
+
+Create `src/SmokeTest.ts`. A `Kubernetes.Job` that runs your own code
+takes two Effects, one for its props and one for its implementation:
+
+```typescript
+// src/SmokeTest.ts
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Effect from "effect/Effect";
+import { Cluster, Namespace } from "./infra.ts";
+
+export default Kubernetes.Job(
+  "SmokeTest",
+  Effect.gen(function* () {
+    const cluster = yield* Cluster;
+    const namespace = yield* Namespace;
+    return {
+      cluster,
+      main: import.meta.url,
+      name: "smoke-test",
+      namespace: namespace.name,
+    };
+  }),
+  Effect.gen(function* () {
+    return {
+      run: Effect.log("smoke test"),
+    };
+  }),
+);
+```
+
+`main: import.meta.url` says the program is this module. On deploy,
+Alchemy bundles it, builds a container image, and pushes it to the
+local cluster's registry. In the pod, a generated entrypoint runs
+`run` to completion and exits.
+
+## Bind the service URL
+
+Inside the cluster, a Service is reachable at
+`<service>.<namespace>.svc.cluster.local`. Build that URL from the
+Deployment's attributes in the Job's implementation:
+
+```diff lang="typescript"
+import * as Kubernetes from "alchemy/Kubernetes";
++import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
+-import { Cluster, Namespace } from "./infra.ts";
++import { Cluster, Namespace, Web } from "./infra.ts";
+```
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const web = yield* Web;
++  const webUrl = yield* Output.interpolate`http://${web.serviceName}.${web.namespace}.svc.cluster.local:${web.port}`;
++
+  return {
+    run: Effect.log("smoke test"),
+  };
+}),
+```
+
+`Output.interpolate` builds a string from the Deployment's
+attributes. Yielding it in the implementation binds the value to the
+Job. Alchemy resolves it at deploy time, delivers it to the pod, and
+gives you `webUrl`, an Effect that returns the URL at runtime. The
+binding also makes the Job depend on the Deployment.
+
+## Check the service
+
+Now write the test. Read the bound URL and call podinfo's health
+endpoint with Effect's `HttpClient`:
+
+```diff lang="typescript"
+import * as Effect from "effect/Effect";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { Cluster, Namespace, Web } from "./infra.ts";
+```
+
+```diff lang="typescript"
+return {
+-  run: Effect.log("smoke test"),
++  run: Effect.gen(function* () {
++    const url = yield* webUrl;
++    const response = yield* HttpClient.get(`${url}/healthz`).pipe(
++      Effect.flatMap(HttpClientResponse.filterStatusOk),
++    );
++    yield* Effect.log(`${url} is healthy (${response.status})`);
++  }).pipe(Effect.orDie),
+};
+```
+
+`HttpClientResponse.filterStatusOk` turns any non-2xx response into
+an error.
+`Effect.orDie` turns errors into a failed process. A Job has nowhere
+to return an error to, so failing is how it reports one.
+
+## Retry while podinfo starts
+
+The Job can start before podinfo's pods are ready. Retry the request
+a few times with a backoff:
+
+```diff lang="typescript"
+import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
+import * as HttpClient from "effect/http/HttpClient";
+```
+
+```diff lang="typescript"
+const response = yield* HttpClient.get(`${url}/healthz`).pipe(
+  Effect.flatMap(HttpClientResponse.filterStatusOk),
++  Effect.retry({
++    schedule: Schedule.exponential("1 second"),
++    times: 5,
++  }),
+);
+```
+
+## Retries and cleanup
+
+Tell Kubernetes how to treat the finished Job:
+
+```diff lang="typescript"
+return {
+  cluster,
+  main: import.meta.url,
+  name: "smoke-test",
+  namespace: namespace.name,
++  backoffLimit: 2,
++  ttlSecondsAfterFinished: 600,
+};
+```
+
+`backoffLimit` is how many times Kubernetes retries a failed pod
+before marking the Job failed. `ttlSecondsAfterFinished` lets
+Kubernetes delete the finished Job after ten minutes. Alchemy tracks
+the Job through its ServiceAccount, so a cleaned-up Job isn't
+treated as missing or run again.
+
+## Run it from the Stack
+
+Yield the Job in `alchemy.run.ts` and return its name:
+
+```diff lang="typescript"
++import SmokeTest from "./src/SmokeTest.ts";
+import { Cluster, Web } from "./src/infra.ts";
+```
+
+```diff lang="typescript"
+const cluster = yield* Cluster;
+const web = yield* Web;
++const smokeTest = yield* SmokeTest;
+
+return {
+  context: cluster.context,
+  namespace: web.namespace,
+  service: web.serviceName,
++  smokeTest: smokeTest.jobName,
+};
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
+
+[g]+[/g] [b]SmokeTest[/b] [d](Kubernetes.Job)[/d]
+
+Proceed?
+◉ Yes ○ No
+[d]Bundling SmokeTest program...[/d]
+[d]Building container image localhost:5001/mycluster-smoketest-live-you-…:112df477…[/d]
+[d]Pushed localhost:5001/mycluster-smoketest-live-you-…:112df477…[/d]
+[g]✓[/g] [b]SmokeTest[/b] [d](Kubernetes.Job)[/d] [g]created[/g]
+{
+[s2]context: "kind-alchemy",
+[s2]namespace: "my-app",
+[s2]service: "web",
+[s2]smokeTest: "smoke-test-4dceddd5",
+}`} />
+
+Kubernetes starts a Job as soon as it's created. The deploy doesn't
+wait for it to finish. Follow it with `kubectl`:
+
+```sh
+kubectl --context kind-alchemy -n my-app wait --for=condition=complete job/smoke-test-4dceddd5
+kubectl --context kind-alchemy -n my-app logs job/smoke-test-4dceddd5
+```
+
+```text
+Kubernetes Job bootstrap starting...
+INFO http://web.my-app.svc.cluster.local:9898 is healthy (200)
+```
+
+## Change the program
+
+The Job is named `smoke-test-4dceddd5`, not `smoke-test`. Kubernetes
+doesn't allow a Job's pod template to change after it's created, so
+Alchemy names each Job after a hash of what it runs. Change the
+program and you get a new Job. Leave it alone and nothing re-runs.
+
+Change the log message and deploy:
+
+```diff lang="typescript"
+-yield* Effect.log(`${url} is healthy (${response.status})`);
++yield* Effect.log(`${url} responded ${response.status}`);
+```
+
+<Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
+
+[y]~[/y] [b]SmokeTest[/b] [d](Kubernetes.Job)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]SmokeTest[/b] [d](Kubernetes.Job)[/d] [y]updated[/y]
+{
+[s2]context: "kind-alchemy",
+[s2]namespace: "my-app",
+[s2]service: "web",
+[s2]smokeTest: "smoke-test-81931ef0",
+}`} />
+
+Alchemy rebuilt the image, ran `smoke-test-81931ef0`, and deleted
+the previous Job. Deploy once more without changes and the plan is
+empty.
+
+## Run it on a schedule
+
+A health check is more useful when it keeps running. Copy
+`src/SmokeTest.ts` to `src/HealthCheck.ts`, rename it, and replace
+the retry settings with a `schedule`:
+
+```diff lang="typescript"
+export default Kubernetes.Job(
+-  "SmokeTest",
++  "HealthCheck",
+  Effect.gen(function* () {
+    // ...
+    return {
+      cluster,
+      main: import.meta.url,
+-      name: "smoke-test",
++      name: "health-check",
+      namespace: namespace.name,
+-      backoffLimit: 2,
+-      ttlSecondsAfterFinished: 600,
++      schedule: "*/5 * * * *",
+    };
+  }),
+```
+
+`schedule` takes a standard five-field cron expression. Setting it
+makes Alchemy create a Kubernetes `CronJob`, which starts a Job from
+the same image every five minutes. A CronJob can be updated in place, so
+it keeps the plain name `health-check`.
+
+## Deploy the CronJob
+
+Yield it from the Stack:
+
+```diff lang="typescript"
++import HealthCheck from "./src/HealthCheck.ts";
+import SmokeTest from "./src/SmokeTest.ts";
+```
+
+```diff lang="typescript"
+const smokeTest = yield* SmokeTest;
++yield* HealthCheck;
+```
+
+Deploy, wait for the next five-minute mark, and list the runs:
+
+```sh
+kubectl --context kind-alchemy -n my-app get cronjobs,jobs
+```
+
+```text
+NAME                         SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+cronjob.batch/health-check   */5 * * * *   <none>     False     0        12s             4m
+
+NAME                              STATUS     COMPLETIONS   DURATION   AGE
+job.batch/health-check-29835710   Complete   1/1           5s         12s
+job.batch/smoke-test-81931ef0     Complete   1/1           4s         6m
+```
+
+## Recap
+
+You now have:
+
+- Shared resources in `src/infra.ts`, used by the Stack and by the
+  Job
+- A smoke test written in Effect, built and pushed by Alchemy, that
+  runs whenever the program changes
+- The same program running every five minutes as a CronJob
+
+In [Part 4](/kubernetes/tutorial/part-4), you'll install a cluster
+add-on from a Helm chart.

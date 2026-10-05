@@ -7,7 +7,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import ContactsBindingsFunctionLive, {
   ContactsBindingsFunction,
@@ -37,6 +37,7 @@ test.provider(
         "IncidentManagerNotOnboarded",
       ]).toContain(error._tag);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmcontacts", "live"] },
 );
 
 test.provider(
@@ -59,6 +60,7 @@ test.provider(
         "InvalidRotationArn",
       ]).toContain(error._tag);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmcontacts", "live"] },
 );
 
 test.provider(
@@ -76,6 +78,7 @@ test.provider(
         "IncidentManagerNotOnboarded",
       ]).toContain(error._tag);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmcontacts", "live"] },
 );
 
 // The bindings fixture needs the account-wide Incident Manager replication
@@ -196,5 +199,14 @@ test.provider.skipIf(!process.env.AWS_TEST_INCIDENT_MANAGER)(
 
       yield* stack.destroy();
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:ssmcontacts",
+      "provider:aws:ssmincidents",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

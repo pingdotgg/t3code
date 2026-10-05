@@ -13,6 +13,13 @@ declare const nullOr: number | null
 declare const undefinedOr: number | undefined
 
 describe("Option", () => {
+  it("data-last product operations", () => {
+    expect(Option.product(Option.some("a"))(number)).type.toBe<Option.Option<[number, string]>>()
+    expect(Option.productMany([Option.some(1), Option.some(2)])(number)).type.toBe<
+      Option.Option<[number, ...Array<number>]>
+    >()
+  })
+
   it("filter", () => {
     expect(Option.filter(number, predicateNumberOrString)).type.toBe<Option.Option<number>>()
     expect(pipe(number, Option.filter(predicateNumberOrString))).type.toBe<Option.Option<number>>()

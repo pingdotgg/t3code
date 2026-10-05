@@ -25,6 +25,7 @@ import type { RuntimeContext } from "../RuntimeContext.ts";
  * ```
  *
  * @binding
+ * @product Billing
  */
 export interface CreateCreditGrant extends Binding.Service<
   CreateCreditGrant,

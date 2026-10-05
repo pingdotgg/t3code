@@ -69,5 +69,5 @@ test.provider(
   // ConcurrentModificationException until then), so the wall-clock floor is
   // AWS-side provisioning time. 120s left no headroom and flaked; the wait is
   // bounded by the provider's retry schedule, not by this timeout.
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 180_000 },
 );

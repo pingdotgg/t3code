@@ -42,6 +42,7 @@ export const PresignGetObjectHttp = Layer.effect(
             method: "GET",
             bucket: bucketName,
             key: request.key,
+            versionId: request.versionId,
             expiresIn: request.expiresIn,
             responseContentType: request.contentType,
           }).pipe(Effect.provideContext(services));

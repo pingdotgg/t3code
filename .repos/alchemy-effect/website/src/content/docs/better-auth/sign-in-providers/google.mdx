@@ -1,0 +1,357 @@
+---
+title: Google
+description: Add Google sign-in to a D1-backed Alchemy Worker, one step at a time.
+---
+
+Start in an existing Alchemy project with [Bun](https://bun.sh) and a [configured Cloudflare profile](/cloudflare/setup). This page supplies every application file and uses Google's server-side authorization-code flow, not the Google browser SDK.
+
+## Add the auth dependencies
+
+```sh
+bun add @alchemy.run/better-auth better-auth@1.7.5 kysely
+```
+
+Use an integration release matching your installed Alchemy version. All file paths below are relative to your project root.
+
+## Read the Google credentials
+
+Create `src/credentials.ts`:
+
+```typescript
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+
+export const googleCredentials = Effect.gen(function* () {
+  const enabled = yield* Config.Boolean("GOOGLE_ENABLED").pipe(
+    Config.withDefault(false),
+  );
+  if (!enabled) return undefined;
+
+  return {
+    clientId: yield* Config.String("GOOGLE_CLIENT_ID"),
+    clientSecret: Redacted.value(
+      yield* Config.Redacted("GOOGLE_CLIENT_SECRET"),
+    ),
+  };
+});
+```
+
+Google starts disabled so the first run can discover the local URL without credentials. When enabled, this server-only Effect reads both credentials and unwraps the redacted secret for Better Auth.
+
+## Construct Better Auth
+
+Create `src/auth.ts`:
+
+```typescript
+import { BetterAuth } from "@alchemy.run/better-auth";
+import * as Config from "effect/Config";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { googleCredentials } from "./credentials.ts";
+
+const makeAuth = Effect.gen(function* () {
+  const baseURL = yield* Config.String("AUTH_BASE_URL").pipe(Config.option);
+  const google = yield* googleCredentials;
+  return yield* BetterAuth({
+    basePath: "/api/auth",
+    baseURL: Option.getOrUndefined(baseURL),
+    socialProviders: google ? { google } : {},
+    account: { accountLinking: { disableImplicitLinking: true } },
+  });
+});
+```
+
+Options stay directly in `BetterAuth`; without `AUTH_BASE_URL`, it derives the origin from the request. The `Context` and `Layer` imports are used by the next addition to this same file.
+
+## Expose the Auth service
+
+Append to `src/auth.ts`:
+
+```typescript
+export class Auth extends Context.Service<
+  Auth,
+  Effect.Success<typeof makeAuth>
+>()("app/Auth") {
+  static readonly layer = Layer.effect(Auth, makeAuth);
+}
+```
+
+The service exposes the inferred Better Auth instance to the Worker. Its layer constructs the instance and reads Config during initialization, not in browser code.
+
+## Declare the database
+
+Create `src/database.ts`:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const AuthDb = Cloudflare.D1.Database("AuthDb");
+```
+
+This declares the D1 resource used for users, accounts, and sessions. Alchemy supplies its local implementation during `alchemy dev`.
+
+## Supply the database layer
+
+Create `src/auth-live.ts`:
+
+```typescript
+import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
+import * as Layer from "effect/Layer";
+import { Auth } from "./auth.ts";
+import { AuthDb } from "./database.ts";
+
+export const AuthLive = Auth.layer.pipe(
+  Layer.provide(CloudflareD1(AuthDb)),
+);
+```
+
+`CloudflareD1` supplies the native Worker binding and supported automatic schema migrations. Alchemy also provisions Better Auth's stable signing secret automatically; do not create a manual secret or migration script.
+
+## Host the auth endpoints
+
+Create `src/worker.ts`:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Auth } from "./auth.ts";
+import { AuthLive } from "./auth-live.ts";
+
+export default class AuthWorker extends Cloudflare.Worker<AuthWorker>()(
+  "AuthWorker",
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"] },
+    assets: { directory: "./public", runWorkerFirst: ["/api/*"] },
+  },
+  Effect.gen(function* () {
+    const auth = yield* Auth;
+    return { fetch: auth.fetch };
+  }).pipe(Effect.provide(AuthLive)),
+) {}
+```
+
+Requests under `/api/*` reach Better Auth, including its callback and built-in error page. The static asset handler serves the HTML and browser bundle from `public`.
+
+## Define the stack
+
+Use this as `alchemy.run.ts`:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthWorker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "GoogleAuth",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const worker = yield* AuthWorker;
+    return { url: worker.url };
+  }),
+);
+```
+
+This standalone stack exports the Worker's URL. Preserve the local state directory and use the same stage across restarts so resource identities and the signing secret remain stable.
+
+## Add the HTML controls
+
+Create `public/index.html`:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Google sign-in</title>
+  </head>
+  <body>
+    <h1>Google sign-in</h1>
+    <button id="sign-in" type="button">Sign in with Google</button>
+    <button id="session" type="button">Read session</button>
+    <button id="sign-out" type="button">Sign out</button>
+    <p id="status" role="status"></p>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>
+```
+
+These three controls will sign in, read the current session, and sign out. The module script runs after the document is parsed, so the client can find the controls immediately.
+
+## Initialize the browser client
+
+Create `src/client.ts`:
+
+```typescript
+import { createAuthClient } from "better-auth/client";
+
+const authClient = createAuthClient();
+const status = document.querySelector<HTMLParagraphElement>("#status")!;
+
+async function run(action: () => Promise<string>) {
+  try {
+    status.textContent = await action();
+  } catch {
+    status.textContent = "Could not reach the server. Try again.";
+  }
+}
+```
+
+The client uses the current origin and `/api/auth`, with no server imports or credentials. `run` displays results as text and handles network failures for each action below.
+
+## Start Google sign-in
+
+Append to `src/client.ts`:
+
+```typescript
+async function signIn(): Promise<string> {
+  const { data, error } = await authClient.signIn.social({
+    provider: "google",
+    callbackURL: "/",
+    disableRedirect: true,
+  });
+  if (error) return "Could not start Google sign-in. Check your settings.";
+  if (!data?.url) return "No authorization URL was returned.";
+  window.location.assign(data.url);
+  return "Redirecting to Google…";
+}
+
+document.querySelector<HTMLButtonElement>("#sign-in")!
+  .addEventListener("click", () => void run(signIn));
+```
+
+The button requests an authorization URL and navigates to Google only if initiation succeeds. `callbackURL: "/"` is the successful return page, not the provider's registered callback endpoint.
+
+## Read the session
+
+Append to `src/client.ts`:
+
+```typescript
+async function readSession(): Promise<string> {
+  const { data, error } = await authClient.getSession();
+  if (error) return "Could not read your session. Try again.";
+  return data ? `Signed in as ${data.user.name}` : "Not signed in.";
+}
+
+document.querySelector<HTMLButtonElement>("#session")!
+  .addEventListener("click", () => void run(readSession));
+void run(readSession);
+```
+
+The page checks the actual session on load, including after the OAuth redirect. The Read session button repeats that check; a successful redirect alone is not proof of authentication.
+
+## Sign out
+
+Append to `src/client.ts`:
+
+```typescript
+async function signOut(): Promise<string> {
+  const { error } = await authClient.signOut();
+  return error ? "Could not sign out. Try again." : "Signed out.";
+}
+
+document.querySelector<HTMLButtonElement>("#sign-out")!
+  .addEventListener("click", () => void run(signOut));
+```
+
+This asks Better Auth to end the session and reports the result. For account linking beyond this demo, use the upstream [account linking guide](https://www.better-auth.com/docs/concepts/users-accounts#account-linking) rather than bypassing verified-email checks or merging rows.
+
+## Bundle the browser module
+
+```sh
+bun build ./src/client.ts --target browser --outdir ./public
+```
+
+This creates `public/client.js` for the HTML script tag. Rebuild it after editing the client.
+
+## Discover the local origin
+
+```sh
+bunx alchemy dev --stage google-guide
+```
+
+Alchemy allocates an available port and prints the URL; open that exact URL, but leave sign-in alone until Google is configured. Keep `GOOGLE_ENABLED` and `AUTH_BASE_URL` unset on this first run so OAuth remains disabled and no origin is guessed.
+
+## Name the app on the consent screen
+
+In the [Google Cloud console](https://console.cloud.google.com/), select your project and open **Google Auth platform → Branding → Get started**. Enter the app name, support email, and developer contact information; supply the production homepage, privacy policy, and authorized domain before publishing.
+
+## Choose the audience
+
+In **Audience**, use **Internal** only for an eligible Workspace organization whose users should have access; otherwise choose **External**. For an External app in testing, add the accounts that will exercise the integration under **Audience → Test users**.
+
+## Limit the consent scopes
+
+In **Data Access**, configure only `openid`, `email`, and `profile` for ordinary sign-in; Better Auth requests these scopes by default. Google's [OAuth consent guide](https://developers.google.com/workspace/guides/configure-oauth-consent) covers the settings; do not add API scopes or force consent merely to create a session.
+
+## Register a web client
+
+```text
+/api/auth/callback/google
+```
+
+Under **Google Auth platform → Clients → Create client**, choose **Web application** and append the path above to the printed local origin for the **Authorized redirect URI**. Authorized JavaScript origins are not a substitute for redirect URIs, and this flow does not require the Google browser SDK; see Google's [web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server).
+
+## Save the server credentials
+
+Create `.env.local`:
+
+```dotenv
+GOOGLE_ENABLED=true
+GOOGLE_CLIENT_ID=replace-with-your-client-id
+GOOGLE_CLIENT_SECRET=replace-with-your-client-secret
+```
+
+Copy the web client's ID and secret into these template values. Keep this file gitignored; never put the secret in `VITE_*`, browser code, source control, or logs.
+
+## Enable Google locally
+
+Stop the first dev process, then run:
+
+```sh
+bunx alchemy dev --stage google-guide --env-file .env.local
+```
+
+If the printed origin changed, update Google's exact redirect registration before signing in. An optional `AUTH_BASE_URL` override must equal that origin without a trailing slash or `/api/auth`; leaving it unset avoids pinning an old dev port.
+
+## Try the sign-in flow
+
+Open the current Worker URL, select **Sign in with Google**, and choose an allowed account. Back on `/`, check the displayed session, then select **Sign out** and **Read session** to confirm it is gone.
+
+## Set a production origin
+
+Use this separate `.env.production` template:
+
+```dotenv
+AUTH_BASE_URL=https://auth.example.com
+GOOGLE_ENABLED=true
+GOOGLE_CLIENT_ID=replace-with-production-client-id
+GOOGLE_CLIENT_SECRET=replace-with-production-client-secret
+```
+
+Replace the origin with the actual HTTPS Worker origin and use separate credentials with redirect URI `https://auth.example.com/api/auth/callback/google`, adjusted to match. Keep the file gitignored and load these values for production; `AUTH_BASE_URL` does not attach a custom domain to the Worker.
+
+## Review access before publishing
+
+Before public launch, review publishing status and any required brand or scope verification; testing-mode access is not a production rollout, and Workspace administrators may impose additional restrictions. Google's stable subject identifies the provider account—an email suffix or hosted-domain login hint alone is not an application authorization policy.
+
+## Diagnose callback failures
+
+Better Auth displays callback failures on its built-in `/api/auth/error` page; no custom error query flag is needed. Keep state, PKCE, origin, and CSRF checks enabled.
+
+## Correct a redirect mismatch
+
+For `redirect_uri_mismatch`, compare the registered URI with the exact current scheme, hostname, port, and `/api/auth/callback/google` path, including any `AUTH_BASE_URL` override. Restart sign-in after correcting settings instead of replaying an authorization code.
+
+## Check access restrictions
+
+For `access_denied` or `org_internal`, check audience, test users, publishing status, and Workspace policy. Retry with an allowed account after correcting the configuration.
+
+## Check rejected credentials
+
+For `invalid_client`, verify that the credential pair belongs to the same web client and rotate revoked or expired secrets. Never log credentials, tokens, or complete callback URLs.

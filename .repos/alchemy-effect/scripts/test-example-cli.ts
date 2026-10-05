@@ -14,7 +14,7 @@ const devOnly = process.argv.includes("--dev-only");
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const exampleRoot = path.resolve(repositoryRoot, example);
-// The real launcher, not `bin/alchemy.ts`: it pins bun's tsconfig to
+// The real launcher, not `bin/alchemy.js`: it pins bun's tsconfig to
 // alchemy's own, so the CLI's .tsx files are not transpiled with the
 // example's JSX settings (solid-js examples otherwise crash the CLI).
 const alchemyBin = path.join(

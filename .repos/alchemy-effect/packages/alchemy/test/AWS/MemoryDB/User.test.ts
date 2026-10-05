@@ -95,5 +95,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeletingOrGone(user.userName);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:memorydb", "live"], timeout: 240_000 },
 );

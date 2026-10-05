@@ -1,8 +1,7 @@
 import { NodeCrypto, NodeFileSystem } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Effect, Fiber, FileSystem, Latch, Layer, Option } from "effect"
-import { TestClock } from "effect/testing"
+import { Effect, Exit, Fiber, FileSystem, Latch, Layer, Option } from "effect"
 import {
   Entity,
   EntityAddress,
@@ -19,8 +18,9 @@ import {
   ShardingConfig,
   Snowflake,
   SqlMessageStorage
-} from "effect/unstable/cluster"
-import { SqlClient } from "effect/unstable/sql"
+} from "effect/cluster"
+import { SqlClient } from "effect/sql"
+import { TestClock } from "effect/testing"
 import { MysqlContainer } from "../fixtures/mysql2-utils.ts"
 import { PgContainer } from "../fixtures/pg-utils.ts"
 import {
@@ -62,6 +62,74 @@ describe("SqlMessageStorage", () => {
       timeout: 120000
     })(label, (it) => {
       if (label === "pg") {
+        for (const reset of ["resetShards", "resetAddresses"] as const) {
+          it.effect(`${reset} does not deadlock with a concurrent message claim`, () =>
+            Effect.gen(function*() {
+              yield* truncate
+              const sql = yield* SqlClient.SqlClient
+              const storage = yield* SqlMessageStorage.makeEncoded().pipe(Effect.provide(NodeCrypto.layer))
+              // Heap order is the reverse of the claim query's rowid order.
+              yield* sql`
+                INSERT INTO cluster_messages
+                  (id, rowid, shard_id, entity_type, entity_id, kind, tag, payload, headers, processed, request_id)
+                VALUES
+                  (2, 2, 'default:1', 'test', '1', 0, 'GetUser', '{}', '{}', FALSE, 2),
+                  (1, 1, 'default:1', 'test', '1', 0, 'GetUser', '{}', '{}', FALSE, 1)
+              `
+              // Pause after the reset locks row 2, so the claim can lock row 1.
+              yield* sql`
+                CREATE FUNCTION cluster_test_slow_reset() RETURNS trigger AS $$
+                BEGIN
+                  IF NEW.last_read IS NULL AND NEW.rowid = 2 THEN
+                    PERFORM pg_sleep(2);
+                  END IF;
+                  RETURN NEW;
+                END $$ LANGUAGE plpgsql
+              `
+              yield* sql`
+                CREATE TRIGGER cluster_test_slow_reset BEFORE UPDATE ON cluster_messages
+                FOR EACH ROW EXECUTE FUNCTION cluster_test_slow_reset()
+              `
+              yield* Effect.gen(function*() {
+                const resetFiber = yield* Effect.gen(function*() {
+                  // Make the unordered UPDATE use heap order regardless of indexes.
+                  yield* sql`SET LOCAL enable_indexscan = off`
+                  yield* sql`SET LOCAL enable_bitmapscan = off`
+                  yield* reset === "resetShards"
+                    ? storage.resetShards(["default:1"])
+                    : storage.resetAddresses([EntityAddress.make({
+                      shardId: ShardId.make("default", 1),
+                      entityType: EntityType.make("test"),
+                      entityId: EntityId.make("1")
+                    })])
+                }).pipe(sql.withTransaction, Effect.exit, Effect.forkChild)
+                yield* Effect.gen(function*() {
+                  while (true) {
+                    const waiting = yield* sql`
+                      SELECT 1 FROM pg_stat_activity
+                      WHERE pid <> pg_backend_pid() AND wait_event = 'PgSleep'
+                      AND query LIKE '%cluster_messages%'
+                    `
+                    if (waiting.length > 0) return
+                    yield* Effect.sleep("10 millis")
+                  }
+                }).pipe(Effect.timeout("5 seconds"))
+                const claim = yield* Effect.exit(storage.unprocessedMessages(["default:1"], Date.now()))
+                const resetResult = yield* Fiber.join(resetFiber)
+                expect(Exit.isSuccess(resetResult)).toBe(true)
+                assert(Exit.isSuccess(claim), String(claim))
+                expect(claim.value.map((message) => message.envelope.requestId)).toEqual(["1", "2"])
+                expect(yield* storage.unprocessedMessages(["default:1"], Date.now())).toHaveLength(0)
+              }).pipe(Effect.ensuring(
+                Effect.gen(function*() {
+                  yield* sql`DROP TRIGGER cluster_test_slow_reset ON cluster_messages`
+                  yield* sql`DROP FUNCTION cluster_test_slow_reset()`
+                  yield* truncate
+                }).pipe(Effect.orDie)
+              ))
+            }).pipe(TestClock.withLive))
+        }
+
         it.effect("creates an index for insertion-ordered message reads", () =>
           Effect.gen(function*() {
             const sql = yield* SqlClient.SqlClient
@@ -74,6 +142,100 @@ describe("SqlMessageStorage", () => {
             expect(indexes).toHaveLength(1)
           }))
       }
+
+      it.effect("resetRequests with no IDs leaves existing claims untouched", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const storage = yield* MessageStorage.MessageStorage
+          const request = yield* makeRequest()
+          yield* storage.saveRequest(request)
+          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(1)
+          yield* storage.resetRequests([])
+          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(0)
+        }))
+
+      it.effect("resetRequests releases only the selected request at a shared address", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const storage = yield* MessageStorage.MessageStorage
+          const selected = yield* makeRequest()
+          const unrelated = yield* makeRequest()
+          yield* storage.saveRequest(selected)
+          yield* storage.saveRequest(unrelated)
+          const shards = [selected.envelope.address.shardId]
+          expect(yield* storage.unprocessedMessages(shards)).toHaveLength(2)
+          yield* storage.resetRequests([selected.envelope.requestId])
+          const messages = yield* storage.unprocessedMessages(shards)
+          expect(messages.map((message) => message.envelope.requestId)).toEqual([selected.envelope.requestId])
+          expect(yield* storage.unprocessedMessages(shards)).toHaveLength(0)
+        }))
+
+      it.effect("resetRequests preserves chunk replies, exit replies, and completed state", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const storage = yield* MessageStorage.MessageStorage
+          const streaming = yield* makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id: 123 }) })
+          const completed = yield* makeRequest()
+          yield* storage.saveRequest(streaming)
+          yield* storage.saveRequest(completed)
+          const shards = [streaming.envelope.address.shardId]
+          expect(yield* storage.unprocessedMessages(shards)).toHaveLength(2)
+          yield* storage.saveReply(yield* makeChunkReply(streaming))
+          yield* storage.saveReply(yield* makeReply(completed))
+          const replies = yield* storage.repliesFor([streaming, completed])
+          expect(replies).toHaveLength(2)
+          expect(yield* storage.unprocessedMessages(shards)).toHaveLength(0)
+          const sql = yield* SqlClient.SqlClient
+          const processed = yield* sql`SELECT processed FROM cluster_messages ORDER BY rowid`
+          yield* storage.resetRequests([streaming.envelope.requestId, completed.envelope.requestId])
+          const messages = yield* storage.unprocessedMessages(shards)
+          // Replies keep both requests out of the SQL read loop.
+          expect(messages).toHaveLength(0)
+          expect(yield* storage.repliesFor([streaming, completed])).toEqual(replies)
+          expect(yield* sql`SELECT processed FROM cluster_messages ORDER BY rowid`).toEqual(processed)
+          yield* truncate
+        }))
+
+      it.effect("clearReplies requeues when the expected reply is current", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const storage = yield* MessageStorage.MessageStorage
+          const request = yield* makeRequest()
+          const reply = yield* makeReply(request)
+          yield* storage.saveRequest(request)
+          yield* storage.saveReply(reply)
+          yield* storage.clearReplies(request.envelope.requestId, { expectedReplyId: reply.reply.id })
+          expect(yield* storage.repliesFor([request])).toHaveLength(0)
+          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(1)
+        }))
+
+      it.effect("clearReplies with a stale expected reply preserves a newer completion and processed state", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const sql = yield* SqlClient.SqlClient
+          const storage = yield* MessageStorage.MessageStorage
+          const request = yield* makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id: 123 }) })
+          const oldReply = yield* makeChunkReply(request)
+          const completed = yield* makeReply(request)
+          yield* storage.saveRequest(request)
+          yield* storage.saveReply(oldReply)
+          yield* storage.saveReply(completed)
+          const before = yield* sql`SELECT processed, last_reply_id FROM cluster_messages WHERE id = ${
+            String(request.envelope.requestId)
+          }`.pipe(Effect.provideService(SqlClient.SafeIntegers, true))
+          yield* storage.clearReplies(request.envelope.requestId, { expectedReplyId: oldReply.reply.id })
+          expect((yield* storage.repliesFor([request])).map((r) => r.id)).toEqual([
+            oldReply.reply.id,
+            completed.reply.id
+          ])
+          expect(
+            yield* sql`SELECT processed, last_reply_id FROM cluster_messages WHERE id = ${
+              String(request.envelope.requestId)
+            }`.pipe(Effect.provideService(SqlClient.SafeIntegers, true))
+          ).toEqual(before)
+          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(0)
+          yield* truncate
+        }))
 
       it.effect("saveRequest", () =>
         Effect.gen(function*() {

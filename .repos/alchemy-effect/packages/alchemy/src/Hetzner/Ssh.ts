@@ -6,8 +6,8 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Binding from "../Binding.ts";
 import type { Server } from "./Server.ts";
 
@@ -66,6 +66,7 @@ export interface SshClient {
  * ```
  *
  * @binding
+ * @product Server
  */
 export interface Ssh extends Binding.Service<
   Ssh,

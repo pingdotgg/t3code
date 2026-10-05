@@ -1,0 +1,313 @@
+---
+title: Runtime issuance
+description: Deploy an authenticated Worker that issues and revokes certificates using a bound ACME account.
+---
+
+`ACME.IssueCertificate` lets an application issue certificates without deploying
+a new `ACME.Certificate` resource. The account is still managed by your stack,
+but the application owns the issued certificates' storage, installation, renewal,
+and revocation.
+
+This example deploys an authenticated administrative Worker. `POST /issue`
+returns a certificate for one fixed hostname; `POST /revoke` accepts a leaf PEM
+and revokes it using the bound account. It is a starting point for an internal
+issuer, not a public self-service certificate API.
+
+## Prepare credentials
+
+Complete [Cloudflare setup](/cloudflare/setup) and obtain [ZeroSSL EAB credentials](/acme/certificate-authorities#configure-zerossl-external-account-binding).
+Set `ZEROSSL_EAB_KID`, `ZEROSSL_EAB_HMAC_KEY`, and a long, randomly generated
+`ISSUER_ADMIN_TOKEN` in your deployment's secret configuration. Replace
+`example.com` and `api.example.com` below with your zone and hostname.
+
+The deployment identity also needs permission to create the zone-scoped API
+token used by `WriteDnsHttp`. It is not enough to supply a token that can only
+edit DNS records. See the [DNS write binding](/providers/cloudflare/dns/writedns).
+
+:::note[CA reachability]
+The deployed-Worker integration test uses ZeroSSL. Let's Encrypt returned TLS
+connection errors from deployed Cloudflare Workers during testing, although it
+worked for deploy-time and local-workerd issuance. Verify the CA from the actual
+hosting environment. ZeroSSL issuance uses its production CA and consumes its
+issuance allowance.
+:::
+
+## Define the account
+
+Create `resources.ts`:
+
+```typescript
+import * as ACME from "alchemy/ACME";
+import * as Config from "effect/Config";
+
+export const Issuer = ACME.Account("Issuer", {
+  ca: ACME.ZeroSSL,
+  eab: {
+    keyId: Config.String("ZEROSSL_EAB_KID"),
+    hmacKey: Config.Redacted("ZEROSSL_EAB_HMAC_KEY"),
+  },
+  termsOfServiceAgreed: true,
+});
+```
+
+The Worker will bind this account's directory URL, account URL, and redacted
+private key. Treat access to the Worker and its configuration as access to the
+account.
+
+## Reference the runtime DNS zone
+
+Add a zone resource to `resources.ts`:
+
+```typescript
+import { adopt } from "alchemy/AdoptPolicy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import { retain } from "alchemy/RemovalPolicy";
+
+export const Zone = Cloudflare.Zone.Zone("DnsZone", {
+  name: "example.com",
+}).pipe(adopt(), retain());
+```
+
+Unlike the ID-only deploy-time solver, `WriteDns` binds a zone resource. This
+example adopts your existing zone and retains it when the stack is destroyed.
+Adoption allows Alchemy to manage the zone's settings, so inspect the plan and
+match any non-default settings you need to preserve. If your application already
+owns a zone resource, import it instead of declaring another one.
+
+## Bind the issuer
+
+In the Worker's initialization Effect, bind the account:
+
+```typescript
+const issuer = yield* ACME.IssueCertificate(Issuer);
+```
+
+Provide `ACME.IssueCertificateHttp` on that host Effect. The client methods run
+inside a request and require Alchemy's runtime context; they are not deploy-time
+operations.
+
+## Bind DNS access
+
+```typescript
+const dns = yield* Cloudflare.DNS.WriteDns(Zone);
+```
+
+Provide `Cloudflare.DNS.WriteDnsHttp` on the same host Effect. It creates a DNS
+write token scoped to `Zone` at deployment. The complete Worker below includes
+both implementation layers.
+
+## Authorize the request
+
+```typescript
+if (request.headers.authorization !== `Bearer ${Redacted.value(adminToken)}`) {
+  return HttpServerResponse.text("Unauthorized", { status: 401 });
+}
+```
+
+Read `adminToken` from `Config.Redacted("ISSUER_ADMIN_TOKEN")` during initialization.
+Authentication runs before issuance or revocation. A production multi-tenant
+issuer also needs per-tenant domain authorization, quotas, and durable job
+serialization; possession of a DNS token alone is not tenant authorization.
+
+## Issue one fixed hostname
+
+```typescript
+const issued = yield* issuer.issue({
+  identifiers: ["api.example.com"],
+  solver: Cloudflare.DNS.acmeDnsSolver(dns),
+});
+```
+
+Keep the hostname fixed until you have a domain-authorization model. Constructing
+a solver per call isolates its cleanup bookkeeping. The result includes `chain`,
+`certificate`, `privateKey`, `notAfter`, and order metadata.
+
+## Revoke a leaf certificate
+
+```typescript
+yield* issuer.revoke({ certificate: yield* request.text });
+```
+
+The account signs the revocation request. Alternatively, pass the certificate's
+own `privateKey` to sign with that key. An already-revoked response counts as
+success. Revocation does not remove a certificate installed on Fly or another
+TLS consumer.
+
+## Assemble the Worker
+
+Create `issuer-worker.ts`. This complete file combines the bindings, authorization,
+and two operations above:
+
+```typescript
+import * as ACME from "alchemy/ACME";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Config from "effect/Config";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Issuer, Zone } from "./resources.ts";
+
+export default class IssuerWorker extends Cloudflare.Worker<IssuerWorker>()(
+  "IssuerWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const issuer = yield* ACME.IssueCertificate(Issuer);
+    const dns = yield* Cloudflare.DNS.WriteDns(Zone);
+    const adminToken = yield* Config.Redacted("ISSUER_ADMIN_TOKEN");
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        if (request.headers.authorization !== `Bearer ${Redacted.value(adminToken)}`) {
+          return HttpServerResponse.text("Unauthorized", { status: 401 });
+        }
+        if (request.method !== "POST") {
+          return HttpServerResponse.text("Use POST", {
+            status: 405,
+            headers: { allow: "POST" },
+          });
+        }
+        const pathname = new URL(request.url, "https://issuer.invalid").pathname;
+        if (pathname === "/issue") {
+          const issued = yield* issuer.issue({
+            identifiers: ["api.example.com"],
+            solver: Cloudflare.DNS.acmeDnsSolver(dns),
+          });
+          return yield* HttpServerResponse.json(
+            {
+              certificate: issued.certificate,
+              chain: issued.chain,
+              privateKey: Redacted.value(issued.privateKey),
+              notAfter: issued.notAfter,
+              serial: issued.serial,
+            },
+            { headers: { "cache-control": "no-store" } },
+          );
+        }
+        if (pathname === "/revoke") {
+          const certificate = yield* request.text;
+          if (!certificate.startsWith("-----BEGIN CERTIFICATE-----")) {
+            return HttpServerResponse.text("Expected a leaf PEM", { status: 400 });
+          }
+          yield* issuer.revoke({ certificate });
+          return HttpServerResponse.text("Revoked");
+        }
+        return HttpServerResponse.text("Not found", { status: 404 });
+      }).pipe(
+        Effect.catchTag("AcmeRateLimited", (error) =>
+          HttpServerResponse.json(
+            { error: "Certificate authority rate limit" },
+            {
+              status: 429,
+              headers: error.retryAfter === undefined
+                ? {}
+                : {
+                    "retry-after": String(Math.ceil(
+                      Duration.toMillis(error.retryAfter) / 1000,
+                    )),
+                  },
+            },
+          ),
+        ),
+        Effect.catchCause(() =>
+          Effect.succeed(
+            HttpServerResponse.text("Certificate operation failed", { status: 502 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(
+    Effect.provide(ACME.IssueCertificateHttp),
+    Effect.provide(Cloudflare.DNS.WriteDnsHttp),
+  ),
+) {}
+```
+
+The response deliberately unwraps the **certificate** private key for the
+administrative caller, over HTTPS, with `Cache-Control: no-store`. It never
+returns the **account** key. Do not log response bodies or publish this endpoint
+without authentication. A production issuer should generally write directly to
+its protected certificate store or TLS consumer instead of exporting keys over
+HTTP. Replace the generic failure response with sanitized internal diagnostics
+when integrating it into your application.
+
+## Deploy the Worker
+
+Create `alchemy.run.ts`:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as ACME from "alchemy/ACME";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import IssuerWorker from "./issuer-worker.ts";
+
+export default Alchemy.Stack(
+  "RuntimeCertificates",
+  {
+    providers: Layer.mergeAll(ACME.providers(), Cloudflare.providers()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const worker = yield* IssuerWorker;
+    return { url: worker.url };
+  }),
+);
+```
+
+Run `alchemy deploy --stage dev` and use the returned HTTPS URL. Protect the
+local state, or switch to your protected remote state backend before sharing
+this deployment with a CI runner.
+
+## Call the issuer
+
+Set `ISSUER_URL` to the deployment output and `ISSUER_ADMIN_TOKEN` in your shell
+without committing or sharing its value:
+
+```sh
+umask 077
+curl --fail-with-body --max-time 180 \
+  -X POST "$ISSUER_URL/issue" \
+  -H "Authorization: Bearer $ISSUER_ADMIN_TOKEN" \
+  -o issued.json
+```
+
+`issued.json` contains a private key; the restrictive umask keeps newly created
+files private to your user. Store the result securely rather than printing it.
+Every successful call issues again: this endpoint has no cache or idempotency
+key. A client timeout can leave issuance completed without a delivered result,
+so avoid blind retries.
+
+## Revoke the test certificate
+
+```sh
+jq -r '.certificate' issued.json > leaf.pem
+curl --fail-with-body --max-time 60 \
+  -X POST "$ISSUER_URL/revoke" \
+  -H "Authorization: Bearer $ISSUER_ADMIN_TOKEN" \
+  -H "Content-Type: application/pem-certificate-chain" \
+  --data-binary @leaf.pem
+```
+
+Revoke only after removing or replacing the certificate at any consumer using
+it. Dispose of local key material according to your secret-handling policy.
+Destroying the Worker stack does not revoke this runtime-issued certificate.
+
+## Add storage and renewal before production
+
+Persist the issued material and expiry in an access-controlled store, and serialize
+issuance for each identifier set. Schedule a new issuance before `notAfter`, install
+the replacement, and verify the live TLS endpoint before retiring the old one.
+Neither the Worker binding nor an in-memory variable provides those guarantees.
+
+DNS propagation alone waits 60 seconds by default. Ensure that your hosting plan,
+client timeout, and request lifetime accommodate the full flow. For long-running
+production work, use a durable job runner whose lifetime is independent of the
+HTTP client, rather than starting untracked work after returning a response.
+
+The SDK retries individual protocol requests. Catch `AcmeRateLimited` to preserve
+the CA's `retryAfter` hint, as above, and reschedule durably rather than repeatedly
+retrying the entire issuance flow. See [Troubleshooting](/acme/troubleshooting).

@@ -159,7 +159,16 @@ test.provider(
         ).toBe("PendingDeletion");
       }
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:kms",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 for (const blocked of ["SSE-C", "NONE"] as const) {
@@ -226,7 +235,15 @@ for (const blocked of ["SSE-C", "NONE"] as const) {
           );
         expect(absent).toBe(true);
       }),
-    { timeout: 120_000 },
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:s3",
+        "provider:aws:statestore",
+        "live",
+      ],
+      timeout: 120_000,
+    },
   );
 }
 
@@ -378,7 +395,15 @@ test.provider(
         expect(absent).toBe(true);
       }
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 const STACK = "S3StateStoreTestStack";
@@ -457,7 +482,15 @@ test.provider(
       }).pipe(Effect.ensuring(cleanStage(state, stage)));
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -523,6 +556,25 @@ test.provider(
           },
         });
 
+        // Bucket configuration reads are eventually consistent. Observe the
+        // injected drift before reconciliation, or a stale AES256 read can
+        // incorrectly make the provider conclude that no repair is needed.
+        const driftedEncryption = yield* s3
+          .getBucketEncryption({ Bucket: bucketName })
+          .pipe(
+            Effect.map(
+              (result) =>
+                result.ServerSideEncryptionConfiguration?.Rules?.[0]
+                  ?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm,
+            ),
+            Effect.repeat({
+              until: (algorithm) => algorithm === "aws:kms",
+              schedule: Schedule.spaced("1 second"),
+              times: 8,
+            }),
+          );
+        expect(driftedEncryption).toBe("aws:kms");
+
         const secured = yield* makeS3State({
           bucketName,
           prefix: "security-test",
@@ -560,7 +612,15 @@ test.provider(
         );
       }).pipe(Effect.ensuring(deleteBucket));
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -599,7 +659,15 @@ test.provider(
       }).pipe(Effect.ensuring(cleanStage(state, stage)));
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -646,5 +714,13 @@ test.provider(
       }).pipe(Effect.ensuring(cleanStage(state, stage)));
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:statestore",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -1191,7 +1191,7 @@ test.provider.skip(
 
       yield* Effect.log("=== All stages completed successfully! ===");
     }).pipe(logLevel),
-  { timeout: 1_000_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 1_000_000 },
 );
 
 test.provider.skip(
@@ -2225,7 +2225,7 @@ test.provider.skip(
         "=== Comprehensive VPC test completed successfully! ===",
       );
     }).pipe(logLevel),
-  { timeout: 1_000_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 1_000_000 },
 );
 
 // ============================================================================

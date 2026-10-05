@@ -105,5 +105,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertIpSetDeleted(replaced.ipSetName, replaced.ipSetId);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:wafv2", "live"], timeout: 120_000 },
 );

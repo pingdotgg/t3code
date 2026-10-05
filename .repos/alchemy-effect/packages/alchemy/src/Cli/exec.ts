@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { watchImport } from "@alchemy.run/node-utils/watch-import";
 import { trackBunImports } from "@alchemy.run/node-utils/watch-import-bun";
 import { fileURLToPath } from "node:url";
@@ -86,6 +86,8 @@ const runDev = Effect.fn(function* (options: DevOptions) {
     target,
     operation: "deploy",
     force: options.force,
+    include: options.include,
+    exclude: options.exclude,
     updateStateStore: true,
     dev: true,
   }).pipe(renderPlanning({ operation: "Dev", stage: options.stage }));

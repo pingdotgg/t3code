@@ -70,6 +70,7 @@ const firstUrl = (
  * ```
  *
  * @layer
+ * @product MySQL
  * @provides Railway.ConnectMySQL
  */
 export const ConnectMySQLHttp = Layer.effect(

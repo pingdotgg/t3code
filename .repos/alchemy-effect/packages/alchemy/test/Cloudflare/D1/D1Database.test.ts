@@ -16,21 +16,26 @@ const logLevel = Effect.provideService(
 // database, resolve the provider from context via the typed
 // `Provider.findProvider`, call `list()`, and assert the deployed database
 // appears in the exhaustively-paginated result.
-test.provider("list enumerates the deployed database", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed database",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const database = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.D1.Database("ListDatabase");
-      }),
-    );
+      const database = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.D1.Database("ListDatabase");
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.D1.Database);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.D1.Database);
+      const all = yield* provider.list();
 
-    expect(all.some((db) => db.databaseId === database.databaseId)).toBe(true);
+      expect(all.some((db) => db.databaseId === database.databaseId)).toBe(
+        true,
+      );
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:d1", "live"] },
 );

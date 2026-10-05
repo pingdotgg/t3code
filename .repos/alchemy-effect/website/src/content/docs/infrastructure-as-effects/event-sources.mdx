@@ -104,7 +104,7 @@ the call, and the handler receives a `Stream` of typed messages:
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const Orders = Cloudflare.Queues.Queue("Orders");
 

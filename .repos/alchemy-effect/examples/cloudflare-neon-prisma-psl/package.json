@@ -1,0 +1,31 @@
+{
+  "name": "cloudflare-neon-prisma-psl",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-neon-prisma-psl"
+  },
+  "type": "module",
+  "scripts": {
+    "generate": "alchemy prisma generate",
+    "generate:watch": "alchemy prisma generate --watch",
+    "deploy": "pnpm generate && alchemy deploy",
+    "dev": "pnpm generate && alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@prisma/orm-postgres": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "prisma": "catalog:"
+  }
+}

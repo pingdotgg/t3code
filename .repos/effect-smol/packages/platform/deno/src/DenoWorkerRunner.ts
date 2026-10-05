@@ -12,8 +12,8 @@ import { identity } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
 import * as Scope from "effect/Scope"
-import { WorkerError, WorkerReceiveError } from "effect/unstable/workers/WorkerError"
-import * as WorkerRunner from "effect/unstable/workers/WorkerRunner"
+import { WorkerError, WorkerReceiveError } from "effect/workers/WorkerError"
+import * as WorkerRunner from "effect/workers/WorkerRunner"
 
 const cachedPorts = new Set<MessagePort>()
 function globalHandleConnect(event: MessageEvent) {

@@ -119,6 +119,7 @@ export type FileLink = Resource<
  * ```
  *
  * @resource
+ * @product Files
  */
 export const FileLink = Resource<FileLink>("Stripe.FileLink");
 

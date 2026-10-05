@@ -104,7 +104,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(created.stackName);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:cloudformation", "live"],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -122,5 +125,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(created.stackName);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:cloudformation", "live"],
+    timeout: 300_000,
+  },
 );

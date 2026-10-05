@@ -18,6 +18,23 @@ export const alchemyMetadataKeys = {
   id: "alchemy.id",
   type: "alchemy.type",
   replica: "alchemy.replica",
+  instance: "alchemy.instance",
+  fqn: "alchemy.fqn",
+  baseName: "alchemy.base-name",
+  generation: "alchemy.generation",
+  workload: "alchemy.workload",
+  sequence: "alchemy.sequence",
+  count: "alchemy.count",
+  image: "alchemy.image",
+  containerImageSet: "alchemy.container-image-set",
+  phase: "alchemy.phase",
+  protocol: "alchemy.deployment-protocol",
+  roles: "alchemy.readiness-roles",
+  role: "alchemy.readiness-role",
+  predecessors: "alchemy.predecessors",
+  restored: "alchemy.idle-policy-restored",
+  checkedInstance: "alchemy.checked-instance",
+  secretsVersion: "alchemy.min-secrets-version",
 } as const;
 
 export type FlyAlchemyType = "Fly.Machine" | "Fly.Service";

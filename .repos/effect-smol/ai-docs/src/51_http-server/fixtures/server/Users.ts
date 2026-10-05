@@ -1,6 +1,6 @@
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node"
 import { Context, Effect, Layer, Schema } from "effect"
-import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql"
+import { SqlClient, SqlModel, SqlSchema } from "effect/sql"
 import { User } from "../domain/User.ts"
 import type { UserId } from "../domain/User.ts"
 import { SearchQueryTooShort, UserNotFound, UsersError } from "../domain/UserErrors.ts"

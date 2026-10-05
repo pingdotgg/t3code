@@ -99,7 +99,15 @@ test.provider(
       yield* verifyDeleted("update");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -130,7 +138,15 @@ test.provider(
       yield* verifyDeleted("state");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -161,7 +177,15 @@ test.provider(
       yield* verifyDeleted("replace");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -178,7 +202,11 @@ test.provider(
       const credentials = yield* yield* GitHubCredentials;
       const client = credentials.octokit({ baseUrl: undefined });
       client.hook.before("request", (options) => {
-        if (options.url === "/user/repos") options.url = `/orgs/${owner}/repos`;
+        const url = new URL(options.url, "https://api.github.com");
+        if (url.pathname === "/user/repos") {
+          url.pathname = `/orgs/${owner}/repos`;
+          options.url = url.toString();
+        }
       });
       const provider = yield* Provider.findProvider(GitHub.Milestone);
       const allMilestones = yield* provider
@@ -199,7 +227,15 @@ test.provider(
       yield* verifyDeleted("list");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -221,7 +257,15 @@ test.provider(
       yield* verifyDeleted("duedate");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -252,5 +296,13 @@ test.provider(
       yield* verifyDeleted("defaults");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:milestone",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

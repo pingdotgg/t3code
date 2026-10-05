@@ -134,6 +134,7 @@ export interface Variable extends Resource<
  * ```
  *
  * @resource
+ * @product Actions
  */
 export const Variable = Resource<Variable>("GitHub.Variable");
 

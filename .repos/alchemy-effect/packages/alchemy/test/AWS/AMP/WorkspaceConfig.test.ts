@@ -176,7 +176,10 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:amp", "provider:aws:logs", "live"],
+    timeout: 300_000,
+  },
 );
 
 // Anomaly detectors train asynchronously (backfill against workspace data),
@@ -234,5 +237,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertWorkspaceDeleted(workspaceId);
     }),
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:amp", "live"], timeout: 300_000 },
 );

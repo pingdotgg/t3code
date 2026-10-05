@@ -11,6 +11,8 @@ import type { LogEntry } from "./Model.ts";
 export type TestStatus = "pass" | "fail" | "skip" | "todo";
 
 export interface TestMeta {
+  readonly tags: ReadonlyArray<string>;
+  readonly optInTags: ReadonlyArray<string>;
   /** Stable id: `<file> > <describe chain> > <name>`. */
   readonly id: string;
   readonly file: string;
@@ -30,6 +32,15 @@ export interface TestResult {
 }
 
 export interface RunSummary {
+  readonly dryRun?: boolean;
+  /** Coverage within the command's path, name, .only and global tag filters. */
+  readonly plan?:
+    | {
+        readonly found: number;
+        readonly selected: number;
+        readonly excluded: number;
+      }
+    | undefined;
   readonly files: number;
   readonly passed: number;
   readonly failed: number;
@@ -46,6 +57,24 @@ export interface RunSummary {
 }
 
 export type TestEvent =
+  | {
+      readonly _tag: "PlanPreview";
+      readonly phases: ReadonlyArray<
+        ReadonlyArray<{
+          readonly tags: ReadonlyArray<string>;
+          readonly concurrency: number | "unbounded";
+          readonly tests: number;
+          readonly files: number;
+          readonly skipped: number;
+        }>
+      >;
+    }
+  | {
+      readonly _tag: "PlanPhaseStart";
+      readonly phase: number;
+      readonly phases: number;
+      readonly tests: number;
+    }
   | { readonly _tag: "CollectStart"; readonly files: ReadonlyArray<string> }
   | {
       /** Import progress: one per file during the collection phase. */

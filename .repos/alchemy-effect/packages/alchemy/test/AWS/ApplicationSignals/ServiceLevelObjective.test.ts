@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:applicationsignals", "live"] },
 );
 
 // A period-based SLI over an arbitrary CloudWatch metric (the metric does
@@ -168,5 +169,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertSloGone(replaced.sloName);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:applicationsignals", "live"],
+    timeout: 120_000,
+  },
 );

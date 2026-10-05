@@ -50,53 +50,61 @@ const delegateAccountId = process.env.CLOUDFLARE_TEST_BYOIP_DELEGATE_ACCOUNT_ID;
 
 // The read-only catalog endpoints are available regardless of the BYOIP
 // entitlement — exercise the distilled wiring live on every run.
-test.provider("lists the services catalog and prefixes (read-only)", (stack) =>
-  Effect.gen(function* () {
-    const accountId = yield* resolveAccountId;
+test.provider(
+  "lists the services catalog and prefixes (read-only)",
+  (stack) =>
+    Effect.gen(function* () {
+      const accountId = yield* resolveAccountId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const services = yield* retryForbidden(
-      addressing.listServices.items({ accountId }).pipe(
-        Stream.runCollect,
-        Effect.map((c) => Array.from(c)),
-      ),
-    );
-    expect(Array.isArray(services)).toBe(true);
+      const services = yield* retryForbidden(
+        addressing.listServices.items({ accountId }).pipe(
+          Stream.runCollect,
+          Effect.map((c) => Array.from(c)),
+        ),
+      );
+      expect(Array.isArray(services)).toBe(true);
 
-    const prefixes = yield* retryForbidden(
-      addressing.listPrefixes.items({ accountId }).pipe(
-        Stream.runCollect,
-        Effect.map((c) => Array.from(c)),
-      ),
-    );
-    expect(Array.isArray(prefixes)).toBe(true);
+      const prefixes = yield* retryForbidden(
+        addressing.listPrefixes.items({ accountId }).pipe(
+          Stream.runCollect,
+          Effect.map((c) => Array.from(c)),
+        ),
+      );
+      expect(Array.isArray(prefixes)).toBe(true);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"] },
 );
 
 // `list()` enumerates account-scoped BYOIP prefixes via the catalog endpoint,
 // which is available regardless of the BYOIP entitlement (it returns an empty
 // array on accounts with no onboarded prefixes). The result is a well-typed
 // `PrefixAttributes[]` — the exact shape `read` produces.
-test.provider("list enumerates account prefixes (read-only)", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates account prefixes (read-only)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(Cloudflare.Addressing.Prefix);
-    const all = yield* retryForbidden(provider.list());
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Addressing.Prefix,
+      );
+      const all = yield* retryForbidden(provider.list());
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const p of all) {
-      expect(typeof p.prefixId).toBe("string");
-      expect(typeof p.accountId).toBe("string");
-      expect(typeof p.cidr).toBe("string");
-      expect(typeof p.asn).toBe("number");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const p of all) {
+        expect(typeof p.prefixId).toBe("string");
+        expect(typeof p.accountId).toBe("string");
+        expect(typeof p.cidr).toBe("string");
+        expect(typeof p.asn).toBe("number");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"] },
 );
 
 test.provider.skipIf(!byoipCidr || !byoipAsn)(
@@ -154,7 +162,10 @@ test.provider.skipIf(!byoipCidr || !byoipAsn)(
       );
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!byoipPrefixId)(
@@ -211,7 +222,10 @@ test.provider.skipIf(!byoipPrefixId)(
       );
       expect(after.onDemand?.advertised ?? false).toEqual(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!byoipPrefixId || !delegateAccountId)(
@@ -259,7 +273,10 @@ test.provider.skipIf(!byoipPrefixId || !delegateAccountId)(
       );
       expect(after.some((d) => d.id === created.delegationId)).toBe(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!byoipPrefixId)(
@@ -325,5 +342,8 @@ test.provider.skipIf(!byoipPrefixId)(
       );
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );

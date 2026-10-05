@@ -133,7 +133,14 @@ test.provider(
 
       yield* expectNamespaceGone(accountId, "alchemy-wfp-test-ns-v2");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:workersforplatforms",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 const namespaceName = "alchemy-wfp-test-script-ns";
@@ -177,7 +184,14 @@ test.provider(
       yield* expectScriptGone(accountId, namespaceName, scriptName);
       yield* expectNamespaceGone(accountId, namespaceName);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:workersforplatforms",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 const assetsNamespaceName = "alchemy-wfp-assets-test-ns";
@@ -264,7 +278,15 @@ test.provider(
       yield* expectScriptGone(accountId, assetsNamespaceName, workerName);
       yield* expectNamespaceGone(accountId, assetsNamespaceName);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workersforplatforms",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -307,5 +329,12 @@ test.provider(
 
       yield* expectNamespaceGone(accountId, "alchemy-wfp-test-list-ns");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:workersforplatforms",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -85,6 +85,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:apishield",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (zone-scoped singleton): there is no account-wide
@@ -95,23 +103,26 @@ test.provider(
 // result is an empty array — the assertion is that `list()` resolves to an
 // array (proving the typed skip path) rather than throwing. Presence of the
 // standing test zone is asserted only on an entitled account (env-gated).
-test.provider("list enumerates the configuration across all zones", (stack) =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(
-      Cloudflare.ApiShield.Configuration,
-    );
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates the configuration across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.ApiShield.Configuration,
+      );
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    if (entitledZoneId) {
-      expect(all.some((c) => c.zoneId === entitledZoneId)).toBe(true);
-    }
+      if (entitledZoneId) {
+        expect(all.some((c) => c.zoneId === entitledZoneId)).toBe(true);
+      }
 
-    // `stack` is unused (the singleton always exists on every entitled zone),
-    // but keep the destroy bookends so the harness state stays clean.
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      // `stack` is unused (the singleton always exists on every entitled zone),
+      // but keep the destroy bookends so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:apishield", "live"] },
 );
 
 test.provider.skipIf(!entitledZoneId)(
@@ -166,5 +177,8 @@ test.provider.skipIf(!entitledZoneId)(
       const restored = yield* getConfiguration(zoneId);
       expect(restored.authIdCharacteristics).toEqual([]);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:apishield", "live"],
+    timeout: 120_000,
+  },
 );

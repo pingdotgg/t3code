@@ -17,7 +17,7 @@
     "docs:check": "bun run docs:generate && DOCS_FAST=1 astro build",
     "generate:readme-hero": "bun scripts/generate-readme-hero.ts",
     "build": "bun scripts/generate-brand-assets.ts && bun run build:reference && bun run build:llms && astro build",
-    "dev:site": "astro dev",
+    "dev:site": "API_REFERENCE_COPY_MARKERS=1 bun run build:reference && astro dev",
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
@@ -40,6 +40,7 @@
     "@tailwindcss/vite": "catalog:",
     "alchemy": "workspace:*",
     "astro": "catalog:",
+    "cuelume": "catalog:",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -50,6 +51,7 @@
     "yaml": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/vite-plugin-copy-editor": "workspace:*",
     "@iconify-json/simple-icons": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

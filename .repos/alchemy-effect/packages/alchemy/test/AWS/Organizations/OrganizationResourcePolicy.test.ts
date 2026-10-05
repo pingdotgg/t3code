@@ -12,18 +12,21 @@ const { test } = Test.make({ providers: AWS.providers() });
 // []. This runs read-only: a missing policy or a non-org account both yield []
 // via the typed ResourcePolicyNotFoundException / AWSOrganizationsNotInUseException
 // catches, so the assertion holds without deploying anything.
-test.provider("list enumerates the organization resource policy", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(OrganizationResourcePolicy);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates the organization resource policy",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(OrganizationResourcePolicy);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    expect(all.length).toBeLessThanOrEqual(1);
+      expect(Array.isArray(all)).toBe(true);
+      expect(all.length).toBeLessThanOrEqual(1);
 
-    for (const policy of all) {
-      expect(typeof policy.resourcePolicyId).toBe("string");
-      expect(typeof policy.resourcePolicyArn).toBe("string");
-      expect(policy.document).toBeDefined();
-    }
-  }),
+      for (const policy of all) {
+        expect(typeof policy.resourcePolicyId).toBe("string");
+        expect(typeof policy.resourcePolicyArn).toBe("string");
+        expect(policy.document).toBeDefined();
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );

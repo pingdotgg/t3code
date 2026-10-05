@@ -52,5 +52,8 @@ test.provider(
 
       yield* assertBusGone("alchemy-test-eventbus-list");
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:eventbridge", "live"],
+    timeout: 120_000,
+  },
 );

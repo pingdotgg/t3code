@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { MANIFEST_FILE, ManifestJson, type Manifest } from "../Manifest.ts";
 import { PkgApi, type TarballRef } from "../Protocol.ts";
 
@@ -69,6 +69,11 @@ export const publish = Effect.fn("publish")(function* (
     return yield* new PublishError({
       message: `artifact was packed for ${manifest.registry}, not ${registry}`,
     });
+  }
+
+  if (manifest.packages.length === 0) {
+    yield* Console.log("No affected packages to publish.");
+    return { packages: [] };
   }
 
   const upload = (pkg: Manifest["packages"][number]) =>

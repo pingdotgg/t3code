@@ -4,20 +4,29 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 export const withBuilder =
-  (prefix: string) =>
+  (prefix: string, options?: { attestations?: boolean }) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const name = `${prefix}-${yield* Stage}`;
       const docker = yield* Docker;
       return yield* Effect.acquireUseRelease(
-        docker.run([
-          "buildx",
-          "create",
-          "--name",
-          name,
-          "--driver",
-          "docker-container",
-        ]),
+        // A killed run cannot release its builder. Remove any leftover first,
+        // so every invocation starts from an empty cache under the same name.
+        docker
+          .run(["buildx", "rm", "--force", name])
+          .pipe(
+            Effect.ignore,
+            Effect.andThen(
+              docker.run([
+                "buildx",
+                "create",
+                "--name",
+                name,
+                "--driver",
+                "docker-container",
+              ]),
+            ),
+          ),
         () =>
           Effect.acquireUseRelease(
             Effect.sync(() => {
@@ -26,7 +35,9 @@ export const withBuilder =
                 attestations: process.env.BUILDX_NO_DEFAULT_ATTESTATIONS,
               };
               process.env.BUILDX_BUILDER = name;
-              process.env.BUILDX_NO_DEFAULT_ATTESTATIONS = "false";
+              process.env.BUILDX_NO_DEFAULT_ATTESTATIONS = String(
+                options?.attestations === false,
+              );
               return previous;
             }),
             () =>

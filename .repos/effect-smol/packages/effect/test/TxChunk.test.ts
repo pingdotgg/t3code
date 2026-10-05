@@ -339,4 +339,23 @@ describe("TxChunk", () => {
       expect(Chunk.toReadonlyArray(result)).toEqual([1, 2, 3, 4, 5, 6])
     })
   })
+
+  describe("guards", () => {
+    it("isTxChunk should identify TxChunk instances", async () => {
+      const program = Effect.tx(Effect.gen(function*() {
+        const txChunk = yield* TxChunk.fromIterable([1, 2, 3])
+        return [
+          TxChunk.isTxChunk(txChunk),
+          TxChunk.isTxChunk({}),
+          TxChunk.isTxChunk(null),
+          TxChunk.isTxChunk(undefined),
+          TxChunk.isTxChunk([1, 2, 3]),
+          TxChunk.isTxChunk(Chunk.fromIterable([1, 2, 3]))
+        ]
+      }))
+
+      const result = await Effect.runPromise(program)
+      expect(result).toEqual([true, false, false, false, false, false])
+    })
+  })
 })

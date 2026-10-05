@@ -255,6 +255,7 @@ export type CreditGrant = Resource<
  * ```
  *
  * @resource
+ * @product Billing
  */
 export const CreditGrant = Resource<CreditGrant>("Stripe.CreditGrant");
 

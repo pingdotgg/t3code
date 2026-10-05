@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 export class FlyOrgNotFound extends Data.TaggedError("Fly.OrgNotFound")<{
   message: string;

@@ -102,6 +102,7 @@ test.provider(
       const restored = yield* getCustomNs(zoneId);
       expect(restored.enabled ?? false).toEqual(false);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider(
@@ -128,6 +129,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // Canonical `list()` test (zone-scoped singleton). There is no account-wide
@@ -165,6 +167,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // In an ACNS-entitled account, `list()` must surface the enabled zone.
@@ -194,6 +197,7 @@ test.provider.skipIf(!acnsZoneId)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider.skipIf(!acnsZoneId)(
@@ -224,4 +228,5 @@ test.provider.skipIf(!acnsZoneId)(
       const restored = yield* getCustomNs(zoneId);
       expect(restored.enabled ?? false).toEqual(false);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );

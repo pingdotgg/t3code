@@ -149,6 +149,7 @@ export type RadarValueList = Resource<
  * ```
  *
  * @resource
+ * @product Radar
  */
 export const RadarValueList = Resource<RadarValueList>("Stripe.RadarValueList");
 

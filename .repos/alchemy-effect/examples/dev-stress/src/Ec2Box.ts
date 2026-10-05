@@ -1,7 +1,7 @@
 import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { EC2_MARKER } from "./ec2/marker.ts";
 import { PORTS } from "./ports.ts";
 

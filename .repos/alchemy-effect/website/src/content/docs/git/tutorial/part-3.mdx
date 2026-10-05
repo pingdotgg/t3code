@@ -28,8 +28,8 @@ Create `src/public-read.ts`:
 // src/public-read.ts
 import * as Git from "alchemy/Git";
 import * as Effect from "effect/Effect";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpRouter from "effect/http/HttpRouter";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
 
 export const PublicRead = Effect.gen(function* () {
   const registry = yield* Git.RegistryStore;

@@ -24,6 +24,7 @@ export interface RetrieveShippingRateRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Product
  */
 export interface RetrieveShippingRate extends Binding.Service<
   RetrieveShippingRate,

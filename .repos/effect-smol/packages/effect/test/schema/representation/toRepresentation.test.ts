@@ -252,15 +252,11 @@ describe("SchemaRepresentation.toRepresentation", () => {
   })
 
   describe("schema annotations and declarations", () => {
-    it("preserves brands", () => {
+    it("omits brands", () => {
       assert.deepStrictEqual(
         SchemaRepresentation.toRepresentation(Schema.String.pipe(Schema.brand("A"), Schema.brand("B")).ast),
         {
-          representation: {
-            _tag: "String",
-            annotations: { brands: ["A", "B"] },
-            checks: []
-          },
+          representation: { _tag: "String", checks: [] },
           references: {}
         }
       )

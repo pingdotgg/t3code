@@ -3,7 +3,7 @@ import * as Fly from "alchemy/Fly";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
-import { Db, PublicIp, Site } from "./src/shared.ts";
+import { Db } from "./src/shared.ts";
 
 export default Alchemy.Stack(
   "FlyWebsiteViteExample",
@@ -12,8 +12,6 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const site = yield* Site;
-    const ip = yield* PublicIp;
     const db = yield* Db;
     const api = yield* Api;
     const web = yield* Fly.Website.Vite("Web", {
@@ -29,8 +27,7 @@ export default Alchemy.Stack(
       url: web.url,
       apiUrl: api.url,
       appName: web.app?.appName,
-      apiAppName: site.appName,
-      ip: ip.ip,
+      apiAppName: api.appName,
       clusterId: db.clusterId,
     };
   }),

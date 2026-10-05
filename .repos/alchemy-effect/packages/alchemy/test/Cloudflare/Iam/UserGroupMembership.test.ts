@@ -135,7 +135,15 @@ test.provider(
       // Destroy removed the membership (and the groups themselves).
       yield* expectGone(accountId, v2.groupB.userGroupId, memberId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:account",
+      "provider:cloudflare:iam",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -170,5 +178,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:account",
+      "provider:cloudflare:iam",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

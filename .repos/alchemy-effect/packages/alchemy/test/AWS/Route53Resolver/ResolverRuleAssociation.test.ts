@@ -20,22 +20,32 @@ const { test } = Test.make({ providers: AWS.providers() });
 // Ungated typed-error probe: association APIs surface the typed
 // ResourceNotFoundException tag for a nonexistent rule (against a real VPC
 // — AWS validates the VPC id first with InvalidParameterException).
-test.provider("associating a nonexistent rule fails with a typed tag", () =>
-  Effect.gen(function* () {
-    const net = yield* defaultNetwork;
-    const result = yield* r53r
-      .associateResolverRule({
-        ResolverRuleId: "rslvr-rr-00000000000000000",
-        VPCId: net.vpcId,
-      })
-      .pipe(
-        Effect.map(() => "created" as const),
-        Effect.catchTag("ResourceNotFoundException", () =>
-          Effect.succeed("not-found" as const),
-        ),
-      );
-    expect(result).toBe("not-found");
-  }),
+test.provider(
+  "associating a nonexistent rule fails with a typed tag",
+  () =>
+    Effect.gen(function* () {
+      const net = yield* defaultNetwork;
+      const result = yield* r53r
+        .associateResolverRule({
+          ResolverRuleId: "rslvr-rr-00000000000000000",
+          VPCId: net.vpcId,
+        })
+        .pipe(
+          Effect.map(() => "created" as const),
+          Effect.catchTag("ResourceNotFoundException", () =>
+            Effect.succeed("not-found" as const),
+          ),
+        );
+      expect(result).toBe("not-found");
+    }),
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:route53resolver",
+      "live",
+    ],
+  },
 );
 
 // The full lifecycle is gated: a VPC rule association takes ~1-2 minutes to
@@ -136,5 +146,13 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertRuleGone(deployed.rule.resolverRuleId);
       yield* assertEndpointDeleting(deployed.endpoint.resolverEndpointId);
     }),
-  { timeout: 480_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:route53resolver",
+      "live",
+    ],
+    timeout: 480_000,
+  },
 );

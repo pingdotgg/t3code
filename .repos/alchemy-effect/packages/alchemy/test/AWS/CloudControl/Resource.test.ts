@@ -93,5 +93,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(paramName);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:cloudcontrol", "live"],
+    timeout: 240_000,
+  },
 );

@@ -1,0 +1,168 @@
+---
+title: Drizzle Postgres on Hetzner
+description: Run a Drizzle API on a Hetzner Server with external Neon Postgres and reviewed SQL migrations.
+---
+
+Alchemy's Hetzner provider has no managed Postgres resource; this guide runs the application on Hetzner and stores its data in **Neon Postgres**. Start with [Hetzner setup](/hetzner/setup), the [Service tutorial](/hetzner/tutorial/part-2), [Neon setup](/neon/setup), and a `src/schema.ts` exporting `Users` from the [Postgres client guide](/sql/drizzle/postgres).
+
+## Install the database dependencies
+
+```sh
+pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg
+pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+```
+
+The Drizzle versions match the repository's Effect integration.
+
+## Configure migrations
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/schema.ts",
+  out: "./drizzle",
+  dbCredentials: { url: process.env.DATABASE_URL! },
+});
+```
+
+The migration runner uses Neon's direct connection URL; the Service will use its pooled URL.
+
+## Generate after changing the schema
+
+```sh
+pnpm exec drizzle-kit generate
+```
+
+Review the generated SQL and snapshots, including any rename decisions, before applying them.
+
+## Commit the migration
+
+```sh
+git add src/schema.ts drizzle.config.ts drizzle
+git diff --cached
+```
+
+```sh
+git commit -m "Add users migration"
+```
+
+Commit the schema, SQL, and snapshots together; do not generate migration history during deployment.
+
+## Declare the external database
+
+```typescript
+// src/db.ts
+import * as Neon from "alchemy/Neon";
+
+export const Db = Neon.Project("Db", {
+  region: "aws-eu-central-1",
+});
+```
+
+The project's default branch hosts the database; see [Neon connections](/neon/data/connections) for its direct and pooled outputs.
+
+## Register Neon alongside Hetzner
+
+```diff lang="typescript"
+ // alchemy.run.ts
++import * as Neon from "alchemy/Neon";
++import * as Layer from "effect/Layer";
+
+-  providers: Hetzner.providers(),
++  providers: Layer.mergeAll(Hetzner.providers(), Neon.providers()),
+```
+
+Keep the tutorial's Server, `yield* Api`, and state backend unchanged.
+
+## Pass the database URL to the Service
+
+Replace the Service's props object in `src/api.ts` with this Effect, importing `Db` from `./db.ts`:
+
+```typescript
+Effect.gen(function* () {
+  const server = yield* Box;
+  const database = yield* Db;
+  return {
+    server,
+    main: import.meta.url,
+    port: 3000,
+    env: { DATABASE_URL: database.pooledConnectionUri },
+  };
+}),
+```
+
+The URL is server-side configuration, not browser configuration; protect the state backend and never expose it as a public Stack output.
+
+## Install the driver on the Server
+
+```diff lang="typescript"
+ return {
+   server,
+   main: import.meta.url,
+   port: 3000,
++  build: { install: ["pg"] },
+   env: { DATABASE_URL: database.pooledConnectionUri },
+ };
+```
+
+Hetzner's Service packaging installs `pg` beside the bundle, preserving its CommonJS exports.
+
+## Provision before the first migration
+
+```sh
+pnpm alchemy deploy
+```
+
+Keep the tutorial's `/health` route independent of database tables so systemd deployment readiness does not depend on migrations. Allow the Server outbound access to Neon's Postgres endpoint over TLS.
+
+## Apply the committed SQL
+
+```sh
+pnpm exec drizzle-kit migrate
+```
+
+Supply the Neon project's `connectionUri` as secret `DATABASE_URL` in the migration runner, retaining its TLS parameters. This guide keeps Drizzle as the migration owner and does not set Neon's optional `migrations` prop.
+
+## Read the URL at runtime
+
+```diff lang="typescript"
+ // src/api.ts
++import * as Drizzle from "alchemy/Drizzle/Postgres";
++import * as Config from "effect/Config";
+
+ Effect.gen(function* () {
++  const db = yield* Drizzle.Postgres(Config.Redacted("DATABASE_URL"));
+   return {
+```
+
+Add this to the Service's runtime Effect, not its props Effect; the URL and connection are resolved lazily when queried.
+
+## Query after the health check
+
+```diff lang="typescript"
++import { Users } from "./schema.ts";
+
+ if (url.pathname === "/health") {
+   return yield* HttpServerResponse.json({ ok: true });
+ }
+-return HttpServerResponse.text("Hello from Hetzner!");
++const users = yield* db.select().from(Users).pipe(Effect.orDie);
++return yield* HttpServerResponse.json({ users });
+```
+
+The existing request handler supplies the query scope, and `/health` remains independent of the database.
+
+## Deploy the application
+
+```sh
+pnpm alchemy deploy
+```
+
+For later changes, generate, review, and commit the schema, SQL, and snapshots before applying migrations and deploying compatible application code. `alchemy deploy` updates the systemd Service; it does not replace the migration command used here.
+
+## Continue
+
+See the [Neon connection guide](/neon/data/connections), [portable Postgres queries](/sql/drizzle/postgres), and [migration workflow](/sql/drizzle/migrations). The [hetzner-website-vite example](https://github.com/alchemy-run/alchemy/tree/main/examples/hetzner-website-vite) supplies the Neon-to-Service environment wiring; this guide uses committed migrations instead of that example's request-time table creation.

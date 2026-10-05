@@ -1,0 +1,198 @@
+---
+title: Container images
+description: Choose where a Deployment or Job's container image comes from and where built images are pushed. Sources are a registry reference, your own Dockerfile, or a bundled Effect program.
+---
+
+Every [Deployment](/kubernetes/workloads/deployments) and
+[Job](/kubernetes/workloads/jobs) runs exactly one image source, set
+flat on its props:
+
+- **Registry reference.** `image` runs a pre-built image such as
+  `nginx:1.27`.
+- **Your Dockerfile.** `context` runs an image built from your
+  Dockerfile. `dockerfile` is optional.
+- **Effect program.** `main` runs your Effect program, bundled into a
+  generated image. `handler` and `build` are optional.
+
+If several are present, `main` wins, then `image`, then
+`context`/`dockerfile`. With `main`, `image` means something else.
+See [Bundle an Effect program](#bundle-an-effect-program).
+
+## Where built images go
+
+`image` references are pulled by the cluster's nodes as written.
+`context` and `main` images are built on the deploying machine with
+Docker and pushed to a registry the nodes can pull from:
+
+- **[`Kubernetes.LocalCluster`](/kubernetes/clusters/local).** Images
+  go to its built-in local registry.
+- **A connection with a `registry`.** Images go to
+  `<server>/<name>:<hash>` in that registry. See
+  [Container registries](/kubernetes/clusters/registries).
+- **[Amazon EKS](/kubernetes/clusters/eks).** Each workload gets a
+  private ECR repository. EKS also mirrors `image` references into
+  it.
+
+Without any of these, a `main` or `context` workload fails before
+anything is applied, with a message asking for a `registry`.
+
+Images are tagged with a hash of their content. For `main`, that's
+the bundled program and generated Dockerfile. For `context`, it's the
+build context and Dockerfile. A deploy with unchanged content builds
+nothing.
+
+## Run a registry image
+
+```typescript
+const cache = yield* Kubernetes.Deployment("Cache", {
+  cluster,
+  image: "valkey/valkey:8.1",
+  port: 6379,
+  serviceType: "ClusterIP",
+});
+```
+
+Alchemy decides whether to update from the reference string.
+Re-pushing the same tag doesn't redeploy anything. Pin a version or a
+digest such as `repo@sha256:…`, and change it to roll out a new
+image.
+
+## Build your Dockerfile
+
+Point `context` at a directory with a Dockerfile:
+
+```typescript
+const legacy = yield* Kubernetes.Deployment("Legacy", {
+  cluster,
+  context: "./legacy",
+  port: 8080,
+});
+```
+
+`dockerfile` defaults to `${context}/Dockerfile`. To use another one,
+pass a path relative to the directory you deploy from.
+Editing any file in the context triggers a rebuild and a rollout on
+the next deploy.
+
+## Bundle an Effect program
+
+With `main`, the workload's implementation is an Effect in the same
+module:
+
+```typescript
+export default Kubernetes.Deployment(
+  "Api",
+  { cluster, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }),
+);
+```
+
+Alchemy bundles the module with rolldown and wraps it in a generated
+entrypoint. For a Deployment the entrypoint is an HTTP server, and
+for a Job it's a run-to-completion program. Alchemy then builds an
+image from a generated Dockerfile. The generated entrypoint imports
+`@effect/platform-bun`, so install it alongside `alchemy` and
+`effect`. The related props are:
+
+- `handler` is the named export to run. It defaults to `"default"`.
+- `image` is the base image of the generated Dockerfile. It defaults
+  to `oven/bun:1`. Any image that can run Bun works.
+- `dockerfile` is a base environment Dockerfile for when you need
+  system packages. It can be a path or inline content.
+- `build` sets bundler options. Unused code is tree-shaken, and
+  `effect`, alchemy, and `@distilled.cloud` are marked side-effect
+  free so they prune aggressively. Add your own side-effect-free
+  packages with `build: { pure: { packages: ["my-lib"] } }`. Turn
+  the behavior off with `build: { pure: false }`.
+
+A change to the program, or to anything it imports, triggers a
+rebuild and a rollout.
+
+## CPU architecture
+
+Built images target the nodes' CPU architecture. Alchemy uses the
+first of these that is set:
+
+- A workload's own `architecture` prop, either `"amd64"` or
+  `"arm64"`.
+- The connection's `architecture`. `LocalCluster` sets it to your
+  machine's, and you can set it on
+  [`KubeConfig`](/kubernetes/clusters/registries#match-the-node-architecture).
+- `amd64` when neither is set.
+
+Registry images used as written are pulled by the nodes for their
+own architecture, so prefer multi-architecture images.
+
+## Pull from a private registry
+
+Nodes need credentials to pull private images, whether you pass them
+as `image` or Alchemy pushed them from `main` or `context`. Create
+an image-pull Secret with a [Manifest](/kubernetes/objects/manifests)
+and reference it from the pod template:
+
+```typescript
+const pullSecret = yield* Kubernetes.Manifest("GhcrPullSecret", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "Secret",
+    type: "kubernetes.io/dockerconfigjson",
+    metadata: { name: "ghcr", namespace: "apps" },
+    data: { ".dockerconfigjson": dockerConfigJsonBase64 },
+  },
+});
+
+const api = yield* Kubernetes.Deployment("Api", {
+  cluster,
+  namespace: "apps",
+  image: "ghcr.io/acme/api:v1.4.0",
+  port: 8080,
+  podTemplate: {
+    spec: { imagePullSecrets: [{ name: pullSecret.name }] },
+  },
+});
+```
+
+## Build images with Docker.Image
+
+You can manage an image's name and tags yourself, for example to
+publish `acme/api:v1.4.0` for other systems too. Build it with
+[`Docker.Image`](/docker/build-and-push) and pass its reference as
+`image`:
+
+```typescript
+import * as Docker from "alchemy/Docker";
+import * as Config from "effect/Config";
+
+const image = yield* Docker.Image("ApiImage", {
+  name: "acme/api",
+  tag: "v1.4.0",
+  build: { context: "./api", platform: "linux/amd64" },
+  registry: {
+    server: "ghcr.io",
+    username: "acme-bot",
+    password: Config.Redacted("GHCR_TOKEN"),
+  },
+});
+
+const api = yield* Kubernetes.Deployment("Api", {
+  cluster,
+  image: image.imageRef,
+  port: 8080,
+});
+```
+
+Add `Docker.providers()` to the Stack's providers.
+
+## Where next
+
+- **[Container registries](/kubernetes/clusters/registries).** Add a
+  registry to a connection.
+- **[Jobs & CronJobs](/kubernetes/workloads/jobs).** Run Effect
+  programs to completion.
+- **[`Deployment` reference](/providers/kubernetes/deployment).**
+  Lists every image source prop.

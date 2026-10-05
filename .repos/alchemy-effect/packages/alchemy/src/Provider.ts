@@ -10,6 +10,7 @@ import type { ScopedPlanStatusSession } from "./Report.ts";
 import type { Diff } from "./Diff.ts";
 import type { Input } from "./Input.ts";
 import type { InstanceId } from "./InstanceId.ts";
+import type { State } from "./State/State.ts";
 import type { Platform } from "./Platform.ts";
 import { defaultProviderMode, type ProviderMode } from "./ProviderMode.ts";
 import type {
@@ -61,7 +62,10 @@ export interface Provider<
   >;
 }
 
-type LifecycleServices = InstanceId | Artifacts;
+// Supplied by the engine to every lifecycle operation (the stack's `state`
+// layer is merged into the context lifecycle ops run under), so they are not
+// requirements of the provider layer itself.
+type LifecycleServices = InstanceId | Artifacts | State;
 
 export const Provider = <R extends ResourceLike>(
   type: R["Type"],

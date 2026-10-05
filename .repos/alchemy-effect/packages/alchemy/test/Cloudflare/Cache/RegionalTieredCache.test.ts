@@ -57,113 +57,120 @@ const setBaseline = (zoneId: string, value: "on" | "off") =>
   );
 
 // Both cases mutate the same zone-level Regional Tiered Cache singleton; run them serially so they don't corrupt each other's captured `initialValue` under the global concurrent test config.
-describe.sequential("RegionalTieredCache", () => {
-  test.provider(
-    "surfaces the typed SettingUnavailableForPlan error on non-Enterprise zones",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+describe.sequential(
+  "RegionalTieredCache",
+  { tags: ["provider:cloudflare", "provider:cloudflare:cache", "live"] },
+  () => {
+    test.provider(
+      "surfaces the typed SettingUnavailableForPlan error on non-Enterprise zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        // The standard testing zone is plan-gated — both the out-of-band
-        // distilled call and a deploy must fail with the typed tag.
-        const error = yield* cache.getRegionalTieredCache({ zoneId }).pipe(
-          Effect.retry({
-            while: (e) => e._tag === "Forbidden",
-            schedule: forbiddenRetrySchedule,
-            times: 8,
-          }),
-          Effect.flip,
-        );
-        expect(error._tag).toEqual("SettingUnavailableForPlan");
+          // The standard testing zone is plan-gated — both the out-of-band
+          // distilled call and a deploy must fail with the typed tag.
+          const error = yield* cache.getRegionalTieredCache({ zoneId }).pipe(
+            Effect.retry({
+              while: (e) => e._tag === "Forbidden",
+              schedule: forbiddenRetrySchedule,
+              times: 8,
+            }),
+            Effect.flip,
+          );
+          expect(error._tag).toEqual("SettingUnavailableForPlan");
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-  );
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { tags: ["provider:cloudflare:zone"] },
+    );
 
-  test.provider.skipIf(!enterpriseZoneId)(
-    "enables Regional Tiered Cache and restores the original value on destroy",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = enterpriseZoneId!;
+    test.provider.skipIf(!enterpriseZoneId)(
+      "enables Regional Tiered Cache and restores the original value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = enterpriseZoneId!;
 
-        yield* stack.destroy();
-        // Known baseline: Regional Tiered Cache defaults to "off".
-        yield* setBaseline(zoneId, "off");
+          yield* stack.destroy();
+          // Known baseline: Regional Tiered Cache defaults to "off".
+          yield* setBaseline(zoneId, "off");
 
-        const setting = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Cache.RegionalTieredCache(
-              "RegionalCache",
-              {
-                zoneId,
-              },
-            );
-          }),
-        );
+          const setting = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Cache.RegionalTieredCache(
+                "RegionalCache",
+                {
+                  zoneId,
+                },
+              );
+            }),
+          );
 
-        expect(setting.zoneId).toEqual(zoneId);
-        expect(setting.value).toEqual("on");
-        // The pre-management value was captured for restore-on-destroy.
-        expect(setting.initialValue).toEqual("off");
+          expect(setting.zoneId).toEqual(zoneId);
+          expect(setting.value).toEqual("on");
+          // The pre-management value was captured for restore-on-destroy.
+          expect(setting.initialValue).toEqual("off");
 
-        // Out-of-band verification via the distilled API.
-        const live = yield* getRegionalTieredCache(zoneId);
-        expect(live.value).toEqual("on");
+          // Out-of-band verification via the distilled API.
+          const live = yield* getRegionalTieredCache(zoneId);
+          expect(live.value).toEqual("on");
 
-        // Update in place — same singleton, initialValue survives.
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Cache.RegionalTieredCache(
-              "RegionalCache",
-              {
-                zoneId,
-                enabled: false,
-              },
-            );
-          }),
-        );
-        expect(updated.value).toEqual("off");
-        expect(updated.initialValue).toEqual("off");
+          // Update in place — same singleton, initialValue survives.
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Cache.RegionalTieredCache(
+                "RegionalCache",
+                {
+                  zoneId,
+                  enabled: false,
+                },
+              );
+            }),
+          );
+          expect(updated.value).toEqual("off");
+          expect(updated.initialValue).toEqual("off");
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        // Destroy restored the value the setting had before we managed it.
-        const restored = yield* getRegionalTieredCache(zoneId);
-        expect(restored.value).toEqual("off");
-      }).pipe(logLevel),
-  );
+          // Destroy restored the value the setting had before we managed it.
+          const restored = yield* getRegionalTieredCache(zoneId);
+          expect(restored.value).toEqual("off");
+        }).pipe(logLevel),
+    );
 
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for this per-zone setting, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Regional Tiered Cache is
-  // Enterprise-only, so non-entitled zones surface `SettingUnavailableForPlan`
-  // and are skipped — on a non-Enterprise account the result is well-formed
-  // (often empty). The "contains the test zone" assertion only holds when an
-  // Enterprise zone id is supplied via env.
-  test.provider("list enumerates the setting across entitled zones", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.destroy();
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for this per-zone setting, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Regional Tiered Cache is
+    // Enterprise-only, so non-entitled zones surface `SettingUnavailableForPlan`
+    // and are skipped — on a non-Enterprise account the result is well-formed
+    // (often empty). The "contains the test zone" assertion only holds when an
+    // Enterprise zone id is supplied via env.
+    test.provider(
+      "list enumerates the setting across entitled zones",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-      const provider = yield* Provider.findProvider(
-        Cloudflare.Cache.RegionalTieredCache,
-      );
-      const all = yield* provider.list();
+          const provider = yield* Provider.findProvider(
+            Cloudflare.Cache.RegionalTieredCache,
+          );
+          const all = yield* provider.list();
 
-      // Always well-formed: an array whose entries match the Attributes shape.
-      expect(Array.isArray(all)).toBe(true);
-      for (const row of all) {
-        expect(typeof row.zoneId).toBe("string");
-        expect(typeof row.value).toBe("string");
-      }
+          // Always well-formed: an array whose entries match the Attributes shape.
+          expect(Array.isArray(all)).toBe(true);
+          for (const row of all) {
+            expect(typeof row.zoneId).toBe("string");
+            expect(typeof row.value).toBe("string");
+          }
 
-      // On an Enterprise account, the entitled zone is enumerated.
-      if (enterpriseZoneId) {
-        expect(all.some((s) => s.zoneId === enterpriseZoneId)).toBe(true);
-      }
+          // On an Enterprise account, the entitled zone is enumerated.
+          if (enterpriseZoneId) {
+            expect(all.some((s) => s.zoneId === enterpriseZoneId)).toBe(true);
+          }
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+    );
+  },
+);

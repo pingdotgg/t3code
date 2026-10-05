@@ -18,11 +18,21 @@ const { test } = Test.make(testOptions);
 // problem of every Kubernetes workload test (an EKS control-plane create
 // is ~15 min), so lifecycle coverage rides the gated Deployment E2E
 // cluster rather than paying for its own; see Deployment.test.ts.
-test.provider("list returns an empty array (in-cluster objects)", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Kubernetes.Manifest);
-    const all = yield* provider.list();
-    expect(Array.isArray(all)).toBe(true);
-    expect(all).toEqual([]);
-  }),
+test.provider(
+  "list returns an empty array (in-cluster objects)",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Kubernetes.Manifest);
+      const all = yield* provider.list();
+      expect(Array.isArray(all)).toBe(true);
+      expect(all).toEqual([]);
+    }),
+  {
+    tags: [
+      "provider:aws",
+      "provider:kubernetes",
+      "provider:kubernetes:manifest",
+      "live",
+    ],
+  },
 );

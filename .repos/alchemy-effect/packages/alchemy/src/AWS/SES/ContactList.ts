@@ -268,13 +268,13 @@ export const ContactListProvider = () =>
             // getList tolerates NotFound; the list is not always readable the
             // instant create returns, and on the AlreadyExists race another
             // writer may still be mid-create.
-            observed = yield* getList(name).pipe(
+            observed = (yield* getList(name).pipe(
               Effect.repeat({
                 schedule: Schedule.spaced("1 second"),
                 until: (list) => list !== undefined,
                 times: 8,
               }),
-            );
+            ))!;
           } else {
             // 3. SYNC — only the aspects the caller manages. An omitted prop
             //    keeps whatever SES currently has, matching every sibling

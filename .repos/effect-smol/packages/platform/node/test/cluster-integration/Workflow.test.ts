@@ -1,16 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Latch, Layer, Option, Schema } from "effect"
-import { ClusterSchema, ClusterWorkflowEngine, Entity, EntityId, Sharding } from "effect/unstable/cluster"
-import { PersistedQueue } from "effect/unstable/persistence"
-import { Rpc } from "effect/unstable/rpc"
-import {
-  Activity,
-  DurableClock,
-  DurableDeferred,
-  DurableQueue,
-  Workflow,
-  WorkflowEngine
-} from "effect/unstable/workflow"
+import { ClusterSchema, ClusterWorkflowEngine, Entity, EntityId, Sharding } from "effect/cluster"
+import { PersistedQueue } from "effect/persistence"
+import { Rpc } from "effect/rpc"
+import { Activity, DurableClock, DurableDeferred, DurableQueue, Workflow, WorkflowEngine } from "effect/workflow"
 import { type Backend, type ClusterRunner, make } from "./harness.ts"
 
 const EndToEndWorkflow = Workflow.make("ClusterIntegrationEndToEnd", {

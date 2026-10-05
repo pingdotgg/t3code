@@ -88,5 +88,14 @@ test(
     const anonymous = yield* getJson<{ email: string | null }>(`${baseUrl}/me`);
     expect(anonymous.email).toBeNull();
   }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

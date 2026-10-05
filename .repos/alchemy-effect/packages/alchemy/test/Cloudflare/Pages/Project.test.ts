@@ -64,213 +64,225 @@ const purgeProject = (accountId: string, projectName: string) =>
     }),
   );
 
-test.provider("create and delete a project with generated name", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete a project with generated name",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const project = yield* stack.deploy(
-      Cloudflare.Pages.Project("DefaultProject", {}),
-    );
+      const project = yield* stack.deploy(
+        Cloudflare.Pages.Project("DefaultProject", {}),
+      );
 
-    expect(project.projectId).toBeDefined();
-    expect(project.accountId).toEqual(accountId);
-    expect(project.name).toBeTruthy();
-    expect(project.subdomain).toEqual(`${project.name}.pages.dev`);
-    expect(project.productionBranch).toEqual("main");
-    expect(project.createdOn).toBeTruthy();
+      expect(project.projectId).toBeDefined();
+      expect(project.accountId).toEqual(accountId);
+      expect(project.name).toBeTruthy();
+      expect(project.subdomain).toEqual(`${project.name}.pages.dev`);
+      expect(project.productionBranch).toEqual("main");
+      expect(project.createdOn).toBeTruthy();
 
-    const live = yield* getProject(accountId, project.name);
-    expect(live.id).toEqual(project.projectId);
-    expect(live.name).toEqual(project.name);
-    expect(live.productionBranch).toEqual("main");
+      const live = yield* getProject(accountId, project.name);
+      expect(live.id).toEqual(project.projectId);
+      expect(live.name).toEqual(project.name);
+      expect(live.productionBranch).toEqual("main");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, project.name);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, project.name);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );
 
-test.provider("update mutable props in place (same project id)", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "update mutable props in place (same project id)",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* purgeProject(accountId, NAME_UPDATE);
+      yield* stack.destroy();
+      yield* purgeProject(accountId, NAME_UPDATE);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("UpdateProject", {
-          name: NAME_UPDATE,
-          productionBranch: "main",
-          buildConfig: {
-            buildCommand: "npm run build",
-            destinationDir: "dist",
-          },
-          deploymentConfigs: {
-            production: {
-              compatibilityDate: "2025-01-01",
-              envVars: {
-                FOO: { value: "foo-v1" },
-                DROP_ME: { value: "going-away" },
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("UpdateProject", {
+            name: NAME_UPDATE,
+            productionBranch: "main",
+            buildConfig: {
+              buildCommand: "npm run build",
+              destinationDir: "dist",
+            },
+            deploymentConfigs: {
+              production: {
+                compatibilityDate: "2025-01-01",
+                envVars: {
+                  FOO: { value: "foo-v1" },
+                  DROP_ME: { value: "going-away" },
+                },
               },
             },
-          },
-        }).pipe(adopt(true));
-      }),
-    );
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(initial.name).toEqual(NAME_UPDATE);
-    expect(initial.productionBranch).toEqual("main");
+      expect(initial.name).toEqual(NAME_UPDATE);
+      expect(initial.productionBranch).toEqual("main");
 
-    const observed = yield* getProject(accountId, NAME_UPDATE);
-    expect(observed.buildConfig?.buildCommand).toEqual("npm run build");
-    expect(observed.deploymentConfigs.production?.envVars).toMatchObject({
-      FOO: { value: "foo-v1" },
-      DROP_ME: { value: "going-away" },
-    });
+      const observed = yield* getProject(accountId, NAME_UPDATE);
+      expect(observed.buildConfig?.buildCommand).toEqual("npm run build");
+      expect(observed.deploymentConfigs.production?.envVars).toMatchObject({
+        FOO: { value: "foo-v1" },
+        DROP_ME: { value: "going-away" },
+      });
 
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("UpdateProject", {
-          name: NAME_UPDATE,
-          productionBranch: "develop",
-          buildConfig: {
-            buildCommand: "npm run build:v2",
-            destinationDir: "out",
-          },
-          deploymentConfigs: {
-            production: {
-              compatibilityDate: "2025-06-01",
-              envVars: {
-                FOO: { value: "foo-v2" },
-                BAR: { value: "bar-v1" },
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("UpdateProject", {
+            name: NAME_UPDATE,
+            productionBranch: "develop",
+            buildConfig: {
+              buildCommand: "npm run build:v2",
+              destinationDir: "out",
+            },
+            deploymentConfigs: {
+              production: {
+                compatibilityDate: "2025-06-01",
+                envVars: {
+                  FOO: { value: "foo-v2" },
+                  BAR: { value: "bar-v1" },
+                },
               },
             },
-          },
-        }).pipe(adopt(true));
-      }),
-    );
+          }).pipe(adopt(true));
+        }),
+      );
 
-    // Same project mutated in place — not a replacement.
-    expect(updated.projectId).toEqual(initial.projectId);
-    expect(updated.productionBranch).toEqual("develop");
+      // Same project mutated in place — not a replacement.
+      expect(updated.projectId).toEqual(initial.projectId);
+      expect(updated.productionBranch).toEqual("develop");
 
-    const live = yield* getProject(accountId, NAME_UPDATE);
-    expect(live.productionBranch).toEqual("develop");
-    expect(live.buildConfig?.buildCommand).toEqual("npm run build:v2");
-    expect(live.buildConfig?.destinationDir).toEqual("out");
-    expect(live.deploymentConfigs.production?.compatibilityDate).toEqual(
-      "2025-06-01",
-    );
-    expect(live.deploymentConfigs.production?.envVars).toMatchObject({
-      FOO: { value: "foo-v2" },
-      BAR: { value: "bar-v1" },
-    });
-    // PATCH deep-merges — the reconciler must null out removed env vars.
-    expect(live.deploymentConfigs.production?.envVars).not.toHaveProperty(
-      "DROP_ME",
-    );
+      const live = yield* getProject(accountId, NAME_UPDATE);
+      expect(live.productionBranch).toEqual("develop");
+      expect(live.buildConfig?.buildCommand).toEqual("npm run build:v2");
+      expect(live.buildConfig?.destinationDir).toEqual("out");
+      expect(live.deploymentConfigs.production?.compatibilityDate).toEqual(
+        "2025-06-01",
+      );
+      expect(live.deploymentConfigs.production?.envVars).toMatchObject({
+        FOO: { value: "foo-v2" },
+        BAR: { value: "bar-v1" },
+      });
+      // PATCH deep-merges — the reconciler must null out removed env vars.
+      expect(live.deploymentConfigs.production?.envVars).not.toHaveProperty(
+        "DROP_ME",
+      );
 
-    // Redeploying identical props is a no-op (still the same project).
-    const noop = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("UpdateProject", {
-          name: NAME_UPDATE,
-          productionBranch: "develop",
-          buildConfig: {
-            buildCommand: "npm run build:v2",
-            destinationDir: "out",
-          },
-          deploymentConfigs: {
-            production: {
-              compatibilityDate: "2025-06-01",
-              envVars: {
-                FOO: { value: "foo-v2" },
-                BAR: { value: "bar-v1" },
+      // Redeploying identical props is a no-op (still the same project).
+      const noop = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("UpdateProject", {
+            name: NAME_UPDATE,
+            productionBranch: "develop",
+            buildConfig: {
+              buildCommand: "npm run build:v2",
+              destinationDir: "out",
+            },
+            deploymentConfigs: {
+              production: {
+                compatibilityDate: "2025-06-01",
+                envVars: {
+                  FOO: { value: "foo-v2" },
+                  BAR: { value: "bar-v1" },
+                },
               },
             },
-          },
-        }).pipe(adopt(true));
-      }),
-    );
-    expect(noop.projectId).toEqual(initial.projectId);
+          }).pipe(adopt(true));
+        }),
+      );
+      expect(noop.projectId).toEqual(initial.projectId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, NAME_UPDATE);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, NAME_UPDATE);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );
 
-test.provider("list enumerates the deployed project", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed project",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* purgeProject(accountId, NAME_LIST);
+      yield* stack.destroy();
+      yield* purgeProject(accountId, NAME_LIST);
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("ListProject", {
-          name: NAME_LIST,
-        }).pipe(adopt(true));
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("ListProject", {
+            name: NAME_LIST,
+          }).pipe(adopt(true));
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Pages.Project);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Pages.Project);
+      const all = yield* provider.list();
 
-    const match = all.find((p) => p.projectId === deployed.projectId);
-    expect(match).toBeDefined();
-    expect(match?.name).toEqual(NAME_LIST);
-    expect(match?.accountId).toEqual(accountId);
-    expect(match?.subdomain).toEqual(`${NAME_LIST}.pages.dev`);
+      const match = all.find((p) => p.projectId === deployed.projectId);
+      expect(match).toBeDefined();
+      expect(match?.name).toEqual(NAME_LIST);
+      expect(match?.accountId).toEqual(accountId);
+      expect(match?.subdomain).toEqual(`${NAME_LIST}.pages.dev`);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, NAME_LIST);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, NAME_LIST);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );
 
-test.provider("changing the name triggers replacement", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing the name triggers replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* purgeProject(accountId, NAME_REPLACE_A);
-    yield* purgeProject(accountId, NAME_REPLACE_B);
+      yield* stack.destroy();
+      yield* purgeProject(accountId, NAME_REPLACE_A);
+      yield* purgeProject(accountId, NAME_REPLACE_B);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("ReplaceProject", {
-          name: NAME_REPLACE_A,
-        }).pipe(adopt(true));
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("ReplaceProject", {
+            name: NAME_REPLACE_A,
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(initial.name).toEqual(NAME_REPLACE_A);
+      expect(initial.name).toEqual(NAME_REPLACE_A);
 
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Pages.Project("ReplaceProject", {
-          name: NAME_REPLACE_B,
-        }).pipe(adopt(true));
-      }),
-    );
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Pages.Project("ReplaceProject", {
+            name: NAME_REPLACE_B,
+          }).pipe(adopt(true));
+        }),
+      );
 
-    // The name is the project's identity — a new physical project exists.
-    expect(replaced.projectId).not.toEqual(initial.projectId);
-    expect(replaced.name).toEqual(NAME_REPLACE_B);
+      // The name is the project's identity — a new physical project exists.
+      expect(replaced.projectId).not.toEqual(initial.projectId);
+      expect(replaced.name).toEqual(NAME_REPLACE_B);
 
-    // The old project was deleted as part of the replacement.
-    yield* expectGone(accountId, NAME_REPLACE_A);
+      // The old project was deleted as part of the replacement.
+      yield* expectGone(accountId, NAME_REPLACE_A);
 
-    const live = yield* getProject(accountId, NAME_REPLACE_B);
-    expect(live.id).toEqual(replaced.projectId);
+      const live = yield* getProject(accountId, NAME_REPLACE_B);
+      expect(live.id).toEqual(replaced.projectId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, NAME_REPLACE_B);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, NAME_REPLACE_B);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );

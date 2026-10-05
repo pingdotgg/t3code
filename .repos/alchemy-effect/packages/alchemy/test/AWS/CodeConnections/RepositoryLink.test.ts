@@ -75,7 +75,10 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:codeconnections", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(
@@ -120,5 +123,8 @@ test.provider.skipIf(
         );
       expect(after).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:codeconnections", "live"],
+    timeout: 120_000,
+  },
 );

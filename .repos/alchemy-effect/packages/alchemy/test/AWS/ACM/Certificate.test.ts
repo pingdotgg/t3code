@@ -56,7 +56,10 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:acm", "provider:aws:route53", "live"],
+    timeout: 180_000,
+  },
 );
 
 // Canonical `list()` test (AWS account/region-scoped collection): request a
@@ -106,7 +109,7 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:acm", "live"], timeout: 120_000 },
 );
 
 class CertificateNotListed extends Data.TaggedError("CertificateNotListed") {}
@@ -140,7 +143,7 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:acm", "live"], timeout: 180_000 },
 );
 
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
@@ -262,5 +265,5 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:acm", "live"], timeout: 240_000 },
 );

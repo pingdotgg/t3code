@@ -53,91 +53,95 @@ const readEnvironmentCredentials = Effect.gen(function* () {
   return yield* auth.readEnvironment;
 });
 
-describe("Prisma auth provider", () => {
-  it.effect("reads PRISMA_SERVICE_TOKEN for CI", () =>
-    Effect.gen(function* () {
-      const credentials = yield* readEnvironmentCredentials;
-      expect(credentials.source).toEqual({
-        type: "env",
-        details: "PRISMA_SERVICE_TOKEN",
-      });
-      expect(Redacted.value(credentials.serviceToken)).toBe("service-token");
-    }).pipe(
-      Effect.provide(testLayer({ PRISMA_SERVICE_TOKEN: "service-token" })),
-    ),
-  );
+describe(
+  "Prisma auth provider",
+  { tags: ["unit", "provider:prisma", "local"] },
+  () => {
+    it.effect("reads PRISMA_SERVICE_TOKEN for CI", () =>
+      Effect.gen(function* () {
+        const credentials = yield* readEnvironmentCredentials;
+        expect(credentials.source).toEqual({
+          type: "env",
+          details: "PRISMA_SERVICE_TOKEN",
+        });
+        expect(Redacted.value(credentials.serviceToken)).toBe("service-token");
+      }).pipe(
+        Effect.provide(testLayer({ PRISMA_SERVICE_TOKEN: "service-token" })),
+      ),
+    );
 
-  it.effect("falls back to PRISMA_API_TOKEN for CI", () =>
-    Effect.gen(function* () {
-      const credentials = yield* readEnvironmentCredentials;
-      expect(credentials.source).toEqual({
-        type: "env",
-        details: "PRISMA_API_TOKEN",
-      });
-      expect(Redacted.value(credentials.serviceToken)).toBe("api-token");
-    }).pipe(Effect.provide(testLayer({ PRISMA_API_TOKEN: "api-token" }))),
-  );
+    it.effect("falls back to PRISMA_API_TOKEN for CI", () =>
+      Effect.gen(function* () {
+        const credentials = yield* readEnvironmentCredentials;
+        expect(credentials.source).toEqual({
+          type: "env",
+          details: "PRISMA_API_TOKEN",
+        });
+        expect(Redacted.value(credentials.serviceToken)).toBe("api-token");
+      }).pipe(Effect.provide(testLayer({ PRISMA_API_TOKEN: "api-token" }))),
+    );
 
-  it.effect("reads inline stored Prisma service tokens", () =>
-    Effect.gen(function* () {
-      const credentials = yield* readStoredCredentials;
+    it.effect("reads inline stored Prisma service tokens", () =>
+      Effect.gen(function* () {
+        const credentials = yield* readStoredCredentials;
 
-      expect(credentials.type).toBe("serviceToken");
-      expect(credentials.source).toEqual({ type: "stored" });
-      expect(Redacted.value(credentials.serviceToken)).toBe("stored-token");
-    }).pipe(Effect.provide(testLayer())),
-  );
+        expect(credentials.type).toBe("serviceToken");
+        expect(credentials.source).toEqual({ type: "stored" });
+        expect(Redacted.value(credentials.serviceToken)).toBe("stored-token");
+      }).pipe(Effect.provide(testLayer())),
+    );
 
-  it.effect("returns redacted details for stored credentials", () =>
-    Effect.gen(function* () {
-      const auth = yield* prismaAuthProvider;
-      const details = yield* auth.details("default", {
-        method: "stored",
-        serviceToken: "stored-token",
-      });
-
-      expect(details.lines).toEqual([
-        { key: "serviceToken", value: "stor****" },
-      ]);
-    }).pipe(Effect.provide(testLayer())),
-  );
-
-  it.effect("rejects whitespace-only service tokens in configureWith", () =>
-    Effect.gen(function* () {
-      const auth = yield* prismaAuthProvider;
-      if (auth.configureWith === undefined) {
-        return yield* Effect.die(
-          "Prisma does not expose flag-driven configuration",
-        );
-      }
-      const error = yield* auth
-        .configureWith("default", {
+    it.effect("returns redacted details for stored credentials", () =>
+      Effect.gen(function* () {
+        const auth = yield* prismaAuthProvider;
+        const details = yield* auth.details("default", {
           method: "stored",
-          values: { serviceToken: "   " },
-        })
-        .pipe(Effect.flip);
+          serviceToken: "stored-token",
+        });
 
-      expect(error._tag).toBe("AuthError");
-      expect(error.message).toContain("invalid 'serviceToken'");
-    }).pipe(Effect.provide(testLayer())),
-  );
+        expect(details.lines).toEqual([
+          { key: "serviceToken", value: "stor****" },
+        ]);
+      }).pipe(Effect.provide(testLayer())),
+    );
 
-  it.effect("declares the stored configure method", () =>
-    Effect.gen(function* () {
-      const auth = yield* prismaAuthProvider;
+    it.effect("rejects whitespace-only service tokens in configureWith", () =>
+      Effect.gen(function* () {
+        const auth = yield* prismaAuthProvider;
+        if (auth.configureWith === undefined) {
+          return yield* Effect.die(
+            "Prisma does not expose flag-driven configuration",
+          );
+        }
+        const error = yield* auth
+          .configureWith("default", {
+            method: "stored",
+            values: { serviceToken: "   " },
+          })
+          .pipe(Effect.flip);
 
-      expect(auth.configureMethods).toEqual([
-        {
-          method: "stored",
-          fields: [
-            expect.objectContaining({
-              name: "serviceToken",
-              label: "Prisma Service Token",
-              secret: true,
-            }),
-          ],
-        },
-      ]);
-    }).pipe(Effect.provide(testLayer())),
-  );
-});
+        expect(error._tag).toBe("AuthError");
+        expect(error.message).toContain("invalid 'serviceToken'");
+      }).pipe(Effect.provide(testLayer())),
+    );
+
+    it.effect("declares the stored configure method", () =>
+      Effect.gen(function* () {
+        const auth = yield* prismaAuthProvider;
+
+        expect(auth.configureMethods).toEqual([
+          {
+            method: "stored",
+            fields: [
+              expect.objectContaining({
+                name: "serviceToken",
+                label: "Prisma Service Token",
+                secret: true,
+              }),
+            ],
+          },
+        ]);
+      }).pipe(Effect.provide(testLayer())),
+    );
+  },
+);

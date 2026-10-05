@@ -164,5 +164,5 @@ test.provider(
       // redundant refresh can consume the test's remaining timeout budget.
       yield* assertConfigGone(replacedId);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:route53", "live"], timeout: 120_000 },
 );

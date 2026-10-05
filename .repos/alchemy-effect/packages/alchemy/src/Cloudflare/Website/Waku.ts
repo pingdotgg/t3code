@@ -96,6 +96,13 @@ export interface WakuProps<
   };
 }
 
+// These options are inspected while constructing the Worker. Resolve them in
+// the outer props Effect; pass-through properties can remain deferred Inputs.
+type WakuInput<Bindings extends WorkerBindingProps> = InputProps<
+  WakuProps<Bindings>,
+  "compatibility" | "assets" | "waku"
+>;
+
 /**
  * A Cloudflare Worker deployed from a [Waku](https://waku.gg) project.
  *
@@ -231,8 +238,8 @@ export const Waku: {
     <const Bindings extends WorkerBindingProps = {}, Req = never>(
       id: string,
       propsEff?:
-        | InputProps<WakuProps<Bindings>>
-        | Effect.Effect<InputProps<WakuProps<Bindings>>, never, Req>,
+        | WakuInput<Bindings>
+        | Effect.Effect<WakuInput<Bindings>, never, Req>,
     ): Effect.Effect<Self, never, Req | Providers> & {
       new (): Worker<{
         [
@@ -244,8 +251,8 @@ export const Waku: {
   <const Bindings extends WorkerBindingProps = {}, Req = never>(
     id: string,
     propsEff?:
-      | InputProps<WakuProps<Bindings>>
-      | Effect.Effect<InputProps<WakuProps<Bindings>>, never, Req>,
+      | WakuInput<Bindings>
+      | Effect.Effect<WakuInput<Bindings>, never, Req>,
   ): Effect.Effect<
     Worker<{
       [
@@ -255,9 +262,19 @@ export const Waku: {
     never,
     Req | Providers
   >;
-} = ((id?: any, propsEff?: any) =>
+} = (<const Bindings extends WorkerBindingProps = {}, Req = never>(
+  id?: string,
+  propsEff?:
+    | WakuInput<Bindings>
+    | Effect.Effect<WakuInput<Bindings>, never, Req>,
+) =>
   id === undefined
-    ? (id: string, propsEff: any) => effectClass(Waku(id, propsEff))
+    ? <const Bindings extends WorkerBindingProps = {}, Req = never>(
+        id: string,
+        propsEff?:
+          | WakuInput<Bindings>
+          | Effect.Effect<WakuInput<Bindings>, never, Req>,
+      ) => effectClass(Waku(id, propsEff))
     : Worker(
         id,
         Effect.map(

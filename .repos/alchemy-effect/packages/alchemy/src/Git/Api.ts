@@ -21,8 +21,8 @@
  * {@link InternalApi}, mounted separately. Shared schemas and tagged
  * errors live in `Api/Schema.ts` and are re-exported flatly from here.
  */
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpApi from "effect/http-api/HttpApi";
 import { GitHub } from "./Api/GitHub.ts";
 import { Objects } from "./Api/Objects.ts";
 import { Protocol } from "./Api/Protocol.ts";

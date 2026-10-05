@@ -101,9 +101,11 @@ describe("readOctaneOutput", () => {
 });
 
 describe("makeCloudflareTarget", () => {
-  it("declares the adapter contract octane.config.ts must satisfy", () => {
+  it("owns the Cloudflare build and accepts the optional legacy adapter", () => {
     const target = makeCloudflareTarget({ compatibilityDate: "2026-03-10" });
     expect(target.platform).toBe("cloudflare");
+    expect(target.requiresAdapter).toBeUndefined();
+    expect(target.build).toBeTypeOf("function");
     expect(target.adapterName).toBe(ADAPTER_NAME);
     expect(target.adapterPackage).toBe(ADAPTER_PACKAGE);
     expect(target.serverEntryFileName).toBe("worker.js");

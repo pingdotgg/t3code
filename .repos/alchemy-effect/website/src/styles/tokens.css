@@ -13,7 +13,7 @@
 :root {
   /* ---------- Brand: muted forest greens ---------- */
   --alc-accent: #5c7a3e; /* moss — primary brand */
-  --alc-accent-deep: #3f5a2a; /* deep forest — pressed/emphasis */
+  --alc-accent-deep: #38511f; /* deep forest — pressed/emphasis (AAA ≥7:1 on parchment) */
   --alc-accent-warm: #7a9a5e; /* sage — lighter, sunny */
   --alc-accent-bright: #8fb15e; /* lit leaves — accents on cream */
   /* Translucent so surfaces using `accent-soft` (hero CTA cards, asides,
@@ -57,8 +57,8 @@
   /* ---------- Text ---------- */
   --alc-fg-1: #2a2620; /* primary — walnut */
   --alc-fg-2: #4e402c; /* body — deep tan */
-  --alc-fg-3: #85714f; /* muted — mushroom */
-  --alc-fg-4: #a89572; /* tertiary / captions */
+  --alc-fg-3: #52442e; /* muted — dark mushroom (AAA ≥7:1 incl. footer bg) */
+  --alc-fg-4: #564733; /* tertiary / captions (AAA ≥7:1 incl. footer bg) */
   --alc-fg-invert: #fbf6ea; /* on dark (code/term) */
   --alc-fg-on-accent: #fbf6ea; /* on moss */
 
@@ -168,8 +168,8 @@
   /* Text — cream scale */
   --alc-fg-1: #faf6ec; /* primary — parchment */
   --alc-fg-2: #e2d7bc; /* body — washed parchment */
-  --alc-fg-3: #a89572; /* muted — walnut-400 still reads */
-  --alc-fg-4: #85714f; /* tertiary / captions */
+  --alc-fg-3: #c0af89; /* muted — lifted walnut (AAA ≥7:1 on elevated cards) */
+  --alc-fg-4: #b9a881; /* tertiary / captions (AAA ≥7:1 on elevated cards) */
   /* `--alc-fg-invert` is text on the dark code surface, which stays dark in
      both modes — so this token is the same in light and dark. */
   --alc-fg-invert: #fbf6ea;
@@ -360,4 +360,25 @@ body.alc-root,
 .alc-code ::selection {
   background: #5c7a3e66; /* editor.selectionBackground from the walnut EC theme */
   color: var(--alc-code-var);
+}
+
+/* ---------- Reduced motion (site-wide) ----------
+   Visitors who ask for less motion get every CSS animation and transition
+   jumped to its end state (entrance animations land on their final frame,
+   looping pulses and spinners stop) and instant scrolling. Canvas and
+   scripted demos check the same media query in JS. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+  html,
+  * {
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,0 +1,217 @@
+---
+title: Manifests
+description: Apply any single Kubernetes object with Kubernetes.Manifest, including Namespaces, ConfigMaps, Secrets, StatefulSets, Ingresses, CRDs and custom resources, and order objects with Output references.
+---
+
+[`Kubernetes.Manifest`](/providers/kubernetes/manifest) applies one
+Kubernetes object, written as a literal object in the same shape as
+its YAML. Use it for everything
+[`Deployment`](/kubernetes/workloads/deployments) and
+[`Job`](/kubernetes/workloads/jobs) don't model. That includes
+Namespaces, ConfigMaps, Secrets, StatefulSets, DaemonSets, Ingresses,
+RBAC, NetworkPolicies, and custom resources.
+
+```typescript
+const config = yield* Kubernetes.Manifest("AppConfig", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    metadata: { name: "app-config", namespace: "apps" },
+    data: { LOG_LEVEL: "info" },
+  },
+});
+```
+
+The object is applied with server-side apply, re-applied whenever
+the manifest changes, and deleted on destroy.
+
+## Required fields
+
+- `apiVersion` and `kind` are required, as in YAML.
+- `metadata.name` is required. Objects that rely on `generateName`
+  aren't supported, because Alchemy needs a fixed name to find the
+  object again.
+- `metadata.namespace` is required for namespaced kinds. A Manifest
+  doesn't default to `default`. Omit the namespace only for
+  cluster-scoped kinds such as `Namespace`, `ClusterRole`, or
+  `CustomResourceDefinition`.
+
+Every other field (`spec`, `data`, `stringData`, `type`, `rules`, …)
+is passed through untouched. The Kubernetes API server validates the
+object when it's applied, and a rejected object fails the deploy
+with the server's message.
+
+## Order objects with Outputs
+
+Each Manifest is its own resource, and resources deploy in parallel
+unless one references another. To create an ordering, reference the
+`name`, `namespace`, `kind`, `apiVersion`, or `uid` attribute of
+another Manifest:
+
+```typescript
+const ns = yield* Kubernetes.Manifest("Namespace", {
+  cluster,
+  manifest: { apiVersion: "v1", kind: "Namespace", metadata: { name: "apps" } },
+});
+
+const quota = yield* Kubernetes.Manifest("Quota", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "ResourceQuota",
+    metadata: { name: "apps-quota", namespace: ns.name },
+    spec: { hard: { pods: "50", "requests.cpu": "20" } },
+  },
+});
+```
+
+`ns.name` resolves to `"apps"`. It also tells Alchemy to create the
+Namespace before the ResourceQuota, and to delete the ResourceQuota
+before the Namespace on destroy.
+
+## Run a StatefulSet
+
+Sometimes you need full control of a workload's containers, such as
+probes, volume mounts, sidecars, or Secret references. In that case,
+write the workload as a Manifest:
+
+```typescript
+const redis = yield* Kubernetes.Manifest("Redis", {
+  cluster,
+  manifest: {
+    apiVersion: "apps/v1",
+    kind: "StatefulSet",
+    metadata: { name: "redis", namespace: ns.name },
+    spec: {
+      serviceName: "redis",
+      replicas: 1,
+      selector: { matchLabels: { app: "redis" } },
+      template: {
+        metadata: { labels: { app: "redis" } },
+        spec: {
+          containers: [
+            {
+              name: "redis",
+              image: "redis:7.4",
+              ports: [{ containerPort: 6379 }],
+              volumeMounts: [{ name: "data", mountPath: "/data" }],
+            },
+          ],
+        },
+      },
+      volumeClaimTemplates: [
+        {
+          metadata: { name: "data" },
+          spec: {
+            accessModes: ["ReadWriteOnce"],
+            resources: { requests: { storage: "1Gi" } },
+          },
+        },
+      ],
+    },
+  },
+});
+```
+
+A Manifest applies exactly one object. The StatefulSet's headless
+Service is a second Manifest.
+
+## Custom resources
+
+Kinds Alchemy doesn't know are looked up through the cluster's API
+discovery endpoint, so custom resources work without any
+registration. The CRD must be installed before the first custom
+resource is applied. When the CRD comes from the same Stack,
+reference one of its attributes from the custom resource. An
+annotation is a convenient place for it:
+
+```typescript
+const crd = yield* Kubernetes.Manifest("WidgetCrd", {
+  cluster,
+  manifest: {
+    apiVersion: "apiextensions.k8s.io/v1",
+    kind: "CustomResourceDefinition",
+    metadata: { name: "widgets.acme.io" },
+    spec: {
+      group: "acme.io",
+      scope: "Namespaced",
+      names: { plural: "widgets", singular: "widget", kind: "Widget" },
+      versions: [
+        {
+          name: "v1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: {
+                spec: { type: "object", properties: { size: { type: "integer" } } },
+              },
+            },
+          },
+        },
+      ],
+    },
+  },
+});
+
+const widget = yield* Kubernetes.Manifest("Widget", {
+  cluster,
+  manifest: {
+    apiVersion: "acme.io/v1",
+    kind: "Widget",
+    metadata: {
+      name: "w",
+      namespace: "default",
+      annotations: { "acme.io/crd": crd.name },
+    },
+    spec: { size: 3 },
+  },
+});
+```
+
+The reference also orders destroy, so the Widget is deleted before
+its CRD. CRDs installed by an operator's Helm chart come from a
+[HelmChart](/kubernetes/objects/helm-charts). Reference one of its
+attributes the same way.
+
+## Updates and replacement
+
+An object's identity is its cluster, `apiVersion`, `kind`, `name`,
+and `namespace`:
+
+- **Any other field.** Changing `spec`, `data`, or labels re-applies
+  the object in place.
+- **`apiVersion`, `kind`, `name`, or `namespace`.** Changing one
+  causes a replacement. The new object is applied, then the old one
+  is deleted.
+- **`cluster`.** Changing it causes a replacement. See
+  [Move a resource to another cluster](/kubernetes/clusters/connecting#move-a-resource-to-another-cluster).
+
+Server-side apply sends the full object and takes ownership of every
+field in it. Fields you remove from the manifest are removed from
+the object. Fields that Alchemy never set are left alone, whether
+controllers or other tools set them. See
+[How objects are managed](/kubernetes/workloads/object-lifecycle).
+
+## Attributes
+
+- `name` is the `metadata.name` of the object.
+- `namespace` is the `metadata.namespace`, or `undefined` for
+  cluster-scoped kinds.
+- `kind` is the object's kind.
+- `apiVersion` is the object's API version.
+- `uid` is the UID the API server assigned.
+- `ref` is a reference to the object (`apiVersion`, `kind`, `name`,
+  `namespace`).
+- `connection` is the cluster connection.
+
+## Where next
+
+- **[Helm charts](/kubernetes/objects/helm-charts).** Apply many
+  objects from a chart as one resource.
+- **[How objects are managed](/kubernetes/workloads/object-lifecycle).**
+  Field ownership, drift, and deletion.
+- **[`Manifest` reference](/providers/kubernetes/manifest).** Every
+  prop and attribute.

@@ -4,8 +4,8 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import type { ProviderService } from "../Provider.ts";
 import type { ResourceLike } from "../Resource.ts";
@@ -37,8 +37,7 @@ export const SPAWNER_URL_ENV_KEY = "ALCHEMY_RPC_SPAWNER_URL" as const;
 
 /**
  * The one sidecar entry every RPC-backed provider is served from.
- * Resolve through package exports so this also works when the proxy is
- * bundled into `bin/exec.js`. The active export conditions select `src/`
+ * Resolve through package exports. The active export conditions select `src/`
  * under Bun or the dev loader and `lib/` in a published Node install.
  */
 export const SIDECAR_ENTRY_URL = import.meta.resolve("alchemy/Local/Sidecar");

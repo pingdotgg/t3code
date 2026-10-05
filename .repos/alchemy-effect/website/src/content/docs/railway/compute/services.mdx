@@ -64,7 +64,7 @@ Return `fetch` from the constructor Effect to boot an HTTP server.
 ```diff lang="typescript"
 import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Site } from "./project.ts";
 
 export default class Api extends Railway.Service<Api>()(

@@ -1,0 +1,7 @@
+{
+  "name": "prisma-website-artifact-next",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "next build" },
+  "dependencies": { "next": "16.2.10", "react": "19.3.0", "react-dom": "19.3.0" }
+}

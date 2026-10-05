@@ -60,109 +60,120 @@ const setBaseline = (zoneId: string, value: "on" | "off") =>
 // Both cases mutate the same zone-level Tiered Caching singleton with
 // opposite baselines; run them serially so they don't corrupt each other's
 // captured `initialValue` under the global concurrent test config.
-describe.sequential("TieredCaching", () => {
-  test.provider(
-    "enables Tiered Caching and restores the original value on destroy",
-    (stack) =>
+describe.sequential(
+  "TieredCaching",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:argo",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "enables Tiered Caching and restores the original value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Known baseline: tiered caching off before we manage it.
+          yield* setBaseline(zoneId, "off");
+
+          const setting = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
+                zoneId,
+              });
+            }),
+          );
+
+          expect(setting.zoneId).toEqual(zoneId);
+          expect(setting.value).toEqual("on");
+          // The pre-management value was captured for restore-on-destroy.
+          expect(setting.initialValue).toEqual("off");
+
+          const live = yield* getTieredCaching(zoneId);
+          expect(live.value).toEqual("on");
+
+          yield* stack.destroy();
+
+          // Destroy restored the value the setting had before we managed it.
+          const restored = yield* getTieredCaching(zoneId);
+          expect(restored.value).toEqual("off");
+        }).pipe(logLevel),
+    );
+
+    test.provider(
+      "updates enabled in place and keeps the captured initial value",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Known baseline: tiered caching on before we manage it.
+          yield* setBaseline(zoneId, "on");
+
+          const initial = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
+                zoneId,
+                enabled: false,
+              });
+            }),
+          );
+
+          expect(initial.value).toEqual("off");
+          expect(initial.initialValue).toEqual("on");
+
+          const liveOff = yield* getTieredCaching(zoneId);
+          expect(liveOff.value).toEqual("off");
+
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
+                zoneId,
+                enabled: true,
+              });
+            }),
+          );
+
+          // Same singleton patched in place; the original value survives the
+          // update so destroy still restores the pre-management state.
+          expect(updated.value).toEqual("on");
+          expect(updated.initialValue).toEqual("on");
+
+          const liveOn = yield* getTieredCaching(zoneId);
+          expect(liveOn.value).toEqual("on");
+
+          yield* stack.destroy();
+
+          const restored = yield* getTieredCaching(zoneId);
+          expect(restored.value).toEqual("on");
+        }).pipe(logLevel),
+    );
+
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for this per-zone setting, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider("list enumerates the setting across all zones", (stack) =>
       Effect.gen(function* () {
         const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        // Known baseline: tiered caching off before we manage it.
-        yield* setBaseline(zoneId, "off");
-
-        const setting = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
-              zoneId,
-            });
-          }),
+        const provider = yield* Provider.findProvider(
+          Cloudflare.Argo.TieredCaching,
         );
+        const all = yield* provider.list();
 
-        expect(setting.zoneId).toEqual(zoneId);
-        expect(setting.value).toEqual("on");
-        // The pre-management value was captured for restore-on-destroy.
-        expect(setting.initialValue).toEqual("off");
+        expect(all.length).toBeGreaterThan(0);
+        expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
 
-        const live = yield* getTieredCaching(zoneId);
-        expect(live.value).toEqual("on");
-
+        // `stack` is unused here (the singleton always exists on every zone),
+        // but keep the destroy bookend so the harness state stays clean.
         yield* stack.destroy();
-
-        // Destroy restored the value the setting had before we managed it.
-        const restored = yield* getTieredCaching(zoneId);
-        expect(restored.value).toEqual("off");
       }).pipe(logLevel),
-  );
-
-  test.provider(
-    "updates enabled in place and keeps the captured initial value",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        // Known baseline: tiered caching on before we manage it.
-        yield* setBaseline(zoneId, "on");
-
-        const initial = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
-              zoneId,
-              enabled: false,
-            });
-          }),
-        );
-
-        expect(initial.value).toEqual("off");
-        expect(initial.initialValue).toEqual("on");
-
-        const liveOff = yield* getTieredCaching(zoneId);
-        expect(liveOff.value).toEqual("off");
-
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
-              zoneId,
-              enabled: true,
-            });
-          }),
-        );
-
-        // Same singleton patched in place; the original value survives the
-        // update so destroy still restores the pre-management state.
-        expect(updated.value).toEqual("on");
-        expect(updated.initialValue).toEqual("on");
-
-        const liveOn = yield* getTieredCaching(zoneId);
-        expect(liveOn.value).toEqual("on");
-
-        yield* stack.destroy();
-
-        const restored = yield* getTieredCaching(zoneId);
-        expect(restored.value).toEqual("on");
-      }).pipe(logLevel),
-  );
-
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for this per-zone setting, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider("list enumerates the setting across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
-
-      const provider = yield* Provider.findProvider(
-        Cloudflare.Argo.TieredCaching,
-      );
-      const all = yield* provider.list();
-
-      expect(all.length).toBeGreaterThan(0);
-      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
-
-      // `stack` is unused here (the singleton always exists on every zone),
-      // but keep the destroy bookend so the harness state stays clean.
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+    );
+  },
+);

@@ -1,0 +1,145 @@
+---
+title: "Part 5: Add GitHub sign-in"
+description: Register a GitHub OAuth app, bind its credentials through Effect Config, and sign in from the browser.
+sidebar:
+  order: 5
+---
+
+Continue from [Part 4](/better-auth/tutorial/part-4). GitHub credentials come from a GitHub OAuth application; Alchemy's automatic signing secret is a separate value.
+
+## Register the local OAuth application
+
+Use the `DEV_URL` captured from Alchemy in [Part 1](/better-auth/tutorial/part-1). Print the two URLs to register:
+
+```sh
+printf 'Homepage URL: %s\n' "$DEV_URL"
+printf 'Authorization callback URL: %s/api/auth/callback/github\n' "$DEV_URL"
+```
+
+Open [GitHub's new OAuth application form](https://github.com/settings/applications/new), name the app, and paste those values into its homepage and callback fields.
+
+Use a separate OAuth application for production so its credentials remain independent of local development.
+
+## Keep credentials out of Git
+
+```gitignore
+# .gitignore
+.env
+.env.*
+!.env.example
+node_modules/
+.alchemy/
+public/ui.js
+```
+
+Preserve the local `.alchemy` directory even though it is ignored by Git; it contains this tutorial's deployment state.
+
+## Supply the GitHub credentials
+
+Generate a client secret in the GitHub application settings, then save the values locally:
+
+```dotenv
+# .env
+GITHUB_CLIENT_ID=your-local-oauth-client-id
+GITHUB_CLIENT_SECRET=your-local-oauth-client-secret
+```
+
+These names are application configuration keys, not built-in Better Auth environment variables. The next step reads them explicitly.
+
+## Read the client ID
+
+```diff lang="typescript"
+ // src/auth.ts
++import * as Config from "effect/Config";
+
+-const makeAuth = BetterAuth({
+-  basePath: "/api/auth",
+-  emailAndPassword: { enabled: true },
++const makeAuth = Effect.gen(function* () {
++  const clientId = yield* Config.String("GITHUB_CLIENT_ID");
++  return yield* BetterAuth({
++    basePath: "/api/auth",
++    emailAndPassword: { enabled: true },
++  });
+ });
+```
+
+Resolve configuration while constructing the Auth layer so Alchemy discovers and binds it. Reading it only inside a request handler would be too late for deployment-time binding discovery.
+
+## Read the client secret
+
+```diff lang="typescript"
+ // src/auth.ts
++import * as Redacted from "effect/Redacted";
+
+ const makeAuth = Effect.gen(function* () {
+   const clientId = yield* Config.String("GITHUB_CLIENT_ID");
++  const clientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
+   return yield* BetterAuth({
+     basePath: "/api/auth",
+     emailAndPassword: { enabled: true },
+   });
+ });
+```
+
+Keep the secret redacted until the library needs the string. Neither credential belongs in the browser bundle.
+
+## Enable GitHub
+
+```diff lang="typescript"
+ // src/auth.ts
+   return yield* BetterAuth({
+     basePath: "/api/auth",
+     emailAndPassword: { enabled: true },
++    socialProviders: {
++      github: {
++        clientId,
++        clientSecret: Redacted.value(clientSecret),
++      },
++    },
+   });
+```
+
+The existing Auth service and middleware infer the updated options. The database layer stays unchanged.
+
+## Add a sign-in button
+
+```diff lang="html"
+ <!-- public/index.html -->
+ <button id="sign-out" type="button">Sign out</button>
++<button id="github" type="button">Sign in with GitHub</button>
+```
+
+## Start the authorization flow
+
+```typescript
+// Append to src/ui.ts
+const signInWithGitHub = async () => {
+  const { error } = await authClient.signIn.social({
+    provider: "github",
+    callbackURL: "/",
+  });
+  if (error) show(error.message ?? "GitHub sign-in failed");
+};
+
+document.querySelector("#github")!.addEventListener("click", () => {
+  void signInWithGitHub().catch(() => show("Unable to reach the server."));
+});
+```
+
+The client redirects to GitHub and returns through the registered callback. The resulting session works with the same `/api/me` endpoint.
+
+Better Auth handles failed callbacks on its built-in error page. No custom error query parameter or callback handler is needed.
+
+## Restart with the new configuration
+
+Stop the running development command, rebuild the client, and start it again:
+
+```sh
+bun build ./src/ui.ts --target browser --outdir ./public
+bunx alchemy dev --stage tutorial
+```
+
+Try GitHub sign-in and call the protected API. Then sign out, retry, and cancel at GitHub to check the error path.
+
+Use the [GitHub provider guide](/better-auth/sign-in-providers/github) for account linking and provider-specific settings. Continue to [Part 6: Deploy and verify](/better-auth/tutorial/part-6).

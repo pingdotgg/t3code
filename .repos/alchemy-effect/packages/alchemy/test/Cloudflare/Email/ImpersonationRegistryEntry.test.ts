@@ -97,7 +97,10 @@ test.provider.skipIf(!entitled)(
       );
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Read-only: `list()` enumerates the account registry. On the standard
@@ -127,7 +130,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Entitled accounts: deploy a real entry and assert `list()` includes it.
@@ -155,5 +161,8 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );

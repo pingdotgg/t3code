@@ -25,61 +25,57 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("Fly.Website.Octane local", () => {
-  test.provider(
-    "dev runs the framework server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Fly.Website.Octane local",
+  { tags: ["provider:fly", "provider:fly:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs the framework server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-octane-fly-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-octane-fly-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const fs = yield* FileSystem.FileSystem;
-        const pathMod = yield* Path.Path;
-        const configPath = pathMod.join(rootDir, "octane.config.ts");
-        const raw = yield* fs.readFileString(configPath);
-        yield* fs.writeFileString(
-          configPath,
-          raw
-            .replaceAll(
-              "@alchemy.run/frontend-frameworks/octane/aws-adapter",
-              "@alchemy.run/frontend-frameworks/octane/node-adapter",
-            )
-            .replaceAll("{ aws }", "{ node }")
-            .replaceAll("adapter: aws()", "adapter: node()"),
-        );
+          const fs = yield* FileSystem.FileSystem;
+          const pathMod = yield* Path.Path;
+          const configPath = pathMod.join(rootDir, "octane.config.ts");
+          const raw = yield* fs.readFileString(configPath);
+          expect(raw).not.toContain("adapter:");
+          expect(raw).not.toContain("@alchemy.run/frontend-frameworks");
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Fly.Website.Octane("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Fly.Website.Octane("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.app).toBeUndefined();
-        expect(deployed.site.ip).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.app).toBeUndefined();
+          expect(deployed.site.ip).toBeUndefined();
 
-        yield* expectUrlContains(`${url}/`, "OCTANE_AWS_PAGE_MARKER", {
-          timeout: "90 seconds",
-          label: "dev home page",
-        });
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=roundtrip`,
-          "OCTANE_AWS_API_MARKER",
-          { label: "api route (dev)" },
-        );
+          yield* expectUrlContains(`${url}/`, "OCTANE_AWS_PAGE_MARKER", {
+            timeout: "90 seconds",
+            label: "dev home page",
+          });
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=roundtrip`,
+            "OCTANE_AWS_API_MARKER",
+            { label: "api route (dev)" },
+          );
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

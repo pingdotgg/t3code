@@ -1,7 +1,7 @@
 import { bindFunction } from "@/Railway/Bind.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Api } from "./rpc-api-tag.ts";
 import Query from "./rpc-query.ts";
 import { Partition, Site } from "./rpc-shared.ts";

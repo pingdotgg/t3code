@@ -13,10 +13,6 @@ export const API_PORT = 3000;
  */
 export const MIGRATE_TOKEN = "fly-postgres-example-migrate";
 
-export const Site = Fly.App("Site", {
-  enableSubdomains: true,
-});
-
 /**
  * Drizzle schema generation. The generated SQL under `./migrations` is
  * applied through the Api service's `/migrate` route (see api.ts) — MPG
@@ -30,7 +26,3 @@ export const Schema = Drizzle.Schema("app-schema", {
 
 export const Db = Fly.Postgres("Db", { region: "iad" });
 
-export const PublicIp = Fly.IpAssignment("Shared", {
-  app: Site,
-  type: "shared_v4",
-});

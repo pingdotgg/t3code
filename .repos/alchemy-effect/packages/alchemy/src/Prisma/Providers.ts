@@ -1,13 +1,19 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { AuthProviders } from "../Auth/AuthProvider.ts";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
 import { ProfileStore, ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Provider from "../Provider.ts";
+import * as Command from "../Command/index.ts";
 import { PlatformServices } from "../Util/PlatformServices.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
+import { Server, ServerProvider } from "../Website/Server.ts";
+import {
+  WebsiteArtifact,
+  WebsiteArtifactProvider,
+} from "./Website/Artifact.ts";
 import { PrismaAuth } from "./AuthProvider.ts";
 import { App, AppProvider } from "./App.ts";
 import { Branch, BranchProvider } from "./Branch.ts";
@@ -34,6 +40,8 @@ import {
   PrismaUploadClientLive,
 } from "./Internal/HttpClient.ts";
 import { fromProfile } from "./PrismaEnvironment.ts";
+import { Contract, ContractProvider } from "./ORM/Contract.ts";
+import { Migrate, MigrateProvider } from "./ORM/Migrate.ts";
 import { Project, ProjectProvider } from "./Project.ts";
 import {
   SourceRepository,
@@ -226,6 +234,10 @@ export const providers = () =>
       CustomDomain,
       EnvironmentVariable,
       SourceRepository,
+      Contract,
+      Migrate,
+      Server,
+      WebsiteArtifact,
     ]),
   ).pipe(
     Layer.provideMerge(
@@ -242,6 +254,10 @@ export const providers = () =>
         CustomDomainProvider(),
         EnvironmentVariableProvider(),
         SourceRepositoryProvider(),
+        ContractProvider(),
+        MigrateProvider(),
+        ServerProvider(),
+        WebsiteArtifactProvider(),
       ),
     ),
     // The management client layer is shared by every live variant. It is
@@ -249,6 +265,7 @@ export const providers = () =>
     // auth registers without resolving credentials, so `alchemy dev` never
     // needs a Prisma token.
     Layer.provideMerge(stackManagementApiLayer()),
+    Layer.provideMerge(Command.providers()),
     Layer.provide(FetchHttpClient.layer),
     Layer.orDie,
   );

@@ -90,6 +90,14 @@ jobs:
       - name: Run Typecheck
         run: pnpm tsc -b
 
+      # Must run after `tsc -b`: it reads distilled's emitted `lib/*.d.ts`,
+      # and stale/missing declarations resolve to `any`.
+      - name: Lint providers
+        run: pnpm lint:providers
+
+      - name: Test CLI launcher
+        run: timeout 240 pnpm test test/Cli/launcher.test.ts test/Cli/exitCodes.test.ts --retry 0 --concurrency 1
+
       - name: Check API JSDocs
         run: pnpm docs:check-jsdoc
 

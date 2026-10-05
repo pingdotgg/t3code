@@ -96,6 +96,7 @@ test.provider(
       const restored = yield* getSetting(zoneId, "always_online");
       expect(valueOf(restored)).toEqual("on");
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider(
@@ -144,6 +145,7 @@ test.provider(
       const restored = yield* getSetting(zoneId, "browser_cache_ttl");
       expect(valueOf(restored)).toEqual(14400);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider(
@@ -198,6 +200,7 @@ test.provider(
       const finalRestored = yield* getSetting(zoneId, "email_obfuscation");
       expect(valueOf(finalRestored)).toEqual("on");
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // Canonical `list()` test. Zone settings are keyed by (zoneId, settingId):
@@ -205,42 +208,45 @@ test.provider(
 // setting, emitting one Attributes per (zone, setting) — the same shape
 // `read` produces. Deploy a deterministic setting on the standing test zone
 // and assert that exact (zone, setting) entry shows up in the listing.
-test.provider("list enumerates the deployed (zone, setting) pair", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates the deployed (zone, setting) pair",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    // Known baseline so the value we assert against is deterministic.
-    yield* setBaseline(zoneId, "always_use_https", "off");
+      yield* stack.destroy();
+      // Known baseline so the value we assert against is deterministic.
+      yield* setBaseline(zoneId, "always_use_https", "off");
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Zone.Setting("AlwaysUseHttps", {
-          zoneId,
-          settingId: "always_use_https",
-          value: "on",
-        });
-      }),
-    );
-    expect(deployed.settingId).toEqual("always_use_https");
-    expect(deployed.value).toEqual("on");
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Zone.Setting("AlwaysUseHttps", {
+            zoneId,
+            settingId: "always_use_https",
+            value: "on",
+          });
+        }),
+      );
+      expect(deployed.settingId).toEqual("always_use_https");
+      expect(deployed.value).toEqual("on");
 
-    const provider = yield* Provider.findProvider(Cloudflare.Zone.Setting);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Zone.Setting);
+      const all = yield* provider.list();
 
-    // The deployed (zone, setting) pair is present, hydrated into the exact
-    // `read`/`Attributes` shape (one row per (zoneId, settingId)).
-    expect(all.length).toBeGreaterThan(0);
-    const entry = all.find(
-      (s) => s.zoneId === zoneId && s.settingId === "always_use_https",
-    );
-    expect(entry).toBeDefined();
-    expect(entry?.value).toEqual("on");
+      // The deployed (zone, setting) pair is present, hydrated into the exact
+      // `read`/`Attributes` shape (one row per (zoneId, settingId)).
+      expect(all.length).toBeGreaterThan(0);
+      const entry = all.find(
+        (s) => s.zoneId === zoneId && s.settingId === "always_use_https",
+      );
+      expect(entry).toBeDefined();
+      expect(entry?.value).toEqual("on");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Capture-and-restore: destroy put the setting back to its baseline.
-    const restored = yield* getSetting(zoneId, "always_use_https");
-    expect(valueOf(restored)).toEqual("off");
-  }).pipe(logLevel),
+      // Capture-and-restore: destroy put the setting back to its baseline.
+      const restored = yield* getSetting(zoneId, "always_use_https");
+      expect(valueOf(restored)).toEqual("off");
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );

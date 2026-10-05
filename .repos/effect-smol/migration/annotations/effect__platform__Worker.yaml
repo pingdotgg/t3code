@@ -42,7 +42,7 @@
   note: "Pool sizing options moved to the worker RPC protocol; initial messages are provided separately with RpcWorker.layerInitialMessage."
 "@effect/platform/Worker#Worker":
   replacement: "Worker.Worker"
-  note: "The name remains in effect/unstable/workers/Worker, but it is now the low-level send/run abstraction rather than execute/executeEffect."
+  note: "The name remains in effect/workers/Worker, but it is now the low-level send/run abstraction rather than execute/executeEffect."
 "@effect/platform/Worker#Worker.Options":
   replacement: "Worker.Worker[\"run\"] options"
   note: "Encoding moved to RPC schemas; the low-level run operation only accepts an optional onSpawn effect."

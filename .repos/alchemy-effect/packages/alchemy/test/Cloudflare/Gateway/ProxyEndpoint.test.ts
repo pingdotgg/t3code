@@ -83,6 +83,7 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, endpoint.proxyEndpointId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );
 
 // IP-based proxy endpoints are an Enterprise entitlement. On the testing
@@ -90,89 +91,98 @@ test.provider(
 // error (Cloudflare code 2009: "IP based proxy endpoints are limited to
 // enterprise accounts."). Exercise the typed error surface directly; if the
 // account ever becomes Enterprise the create succeeds and we clean up.
-test.provider("ip-kind endpoints surface the typed entitlement error", () =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "ip-kind endpoints surface the typed entitlement error",
+  () =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    const outcome = yield* zeroTrust
-      .createGatewayProxyEndpoint({
-        accountId,
-        name: "alchemy-zt-proxy-ip",
-        kind: "ip",
-        // RFC 5737 documentation range.
-        ips: ["203.0.113.1/32"],
-      })
-      .pipe(
-        Effect.retry({
-          while: (e) => e._tag === "Forbidden",
-          schedule: Schedule.exponential("500 millis"),
-          times: 8,
-        }),
-        Effect.map((created) => ({ _tag: "Created" as const, created })),
-        Effect.catchTag("IpProxyEndpointsRequireEnterprise", (e) =>
-          Effect.succeed({ _tag: "Entitlement" as const, error: e }),
-        ),
-      );
-
-    if (outcome._tag === "Created") {
-      // Enterprise account — clean up the endpoint we just made.
-      yield* zeroTrust
-        .deleteGatewayProxyEndpoint({
+      const outcome = yield* zeroTrust
+        .createGatewayProxyEndpoint({
           accountId,
-          proxyEndpointId: outcome.created.id ?? "",
+          name: "alchemy-zt-proxy-ip",
+          kind: "ip",
+          // RFC 5737 documentation range.
+          ips: ["203.0.113.1/32"],
         })
-        .pipe(Effect.catchTag("ProxyEndpointNotFound", () => Effect.void));
-      expect(outcome.created.name).toEqual("alchemy-zt-proxy-ip");
-    } else {
-      expect(outcome.error._tag).toEqual("IpProxyEndpointsRequireEnterprise");
-    }
-  }).pipe(logLevel),
+        .pipe(
+          Effect.retry({
+            while: (e) => e._tag === "Forbidden",
+            schedule: Schedule.exponential("500 millis"),
+            times: 8,
+          }),
+          Effect.map((created) => ({ _tag: "Created" as const, created })),
+          Effect.catchTag("IpProxyEndpointsRequireEnterprise", (e) =>
+            Effect.succeed({ _tag: "Entitlement" as const, error: e }),
+          ),
+        );
+
+      if (outcome._tag === "Created") {
+        // Enterprise account — clean up the endpoint we just made.
+        yield* zeroTrust
+          .deleteGatewayProxyEndpoint({
+            accountId,
+            proxyEndpointId: outcome.created.id ?? "",
+          })
+          .pipe(Effect.catchTag("ProxyEndpointNotFound", () => Effect.void));
+        expect(outcome.created.name).toEqual("alchemy-zt-proxy-ip");
+      } else {
+        expect(outcome.error._tag).toEqual("IpProxyEndpointsRequireEnterprise");
+      }
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );
 
-test.provider("list enumerates the deployed proxy endpoint", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed proxy endpoint",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Self-heal: remove any same-named endpoint left orphaned in the cloud by a
-    // previously-interrupted run so the deploy below doesn't trip the
-    // "OwnedBySomeoneElse" adoption guard.
-    const orphans = yield* zeroTrust.listGatewayProxyEndpoints
-      .items({ accountId })
-      .pipe(
-        Stream.filter((e) => e.name === "alchemy-zt-proxy-list"),
-        Stream.runCollect,
-        Effect.map((chunk) => Array.from(chunk)),
+      // Self-heal: remove any same-named endpoint left orphaned in the cloud by a
+      // previously-interrupted run so the deploy below doesn't trip the
+      // "OwnedBySomeoneElse" adoption guard.
+      const orphans = yield* zeroTrust.listGatewayProxyEndpoints
+        .items({ accountId })
+        .pipe(
+          Stream.filter((e) => e.name === "alchemy-zt-proxy-list"),
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk)),
+        );
+      yield* Effect.forEach(orphans, (o) =>
+        zeroTrust
+          .deleteGatewayProxyEndpoint({
+            accountId,
+            proxyEndpointId: o.id ?? "",
+          })
+          .pipe(Effect.catchTag("ProxyEndpointNotFound", () => Effect.void)),
       );
-    yield* Effect.forEach(orphans, (o) =>
-      zeroTrust
-        .deleteGatewayProxyEndpoint({ accountId, proxyEndpointId: o.id ?? "" })
-        .pipe(Effect.catchTag("ProxyEndpointNotFound", () => Effect.void)),
-    );
 
-    // identity-kind endpoints work on all Zero Trust plans, so this deploy is
-    // not entitlement-gated (unlike ip-kind, which needs Enterprise).
-    const endpoint = yield* stack.deploy(
-      Cloudflare.Gateway.ProxyEndpoint("ListProxy", {
-        name: "alchemy-zt-proxy-list",
-        kind: "identity",
-      }),
-    );
+      // identity-kind endpoints work on all Zero Trust plans, so this deploy is
+      // not entitlement-gated (unlike ip-kind, which needs Enterprise).
+      const endpoint = yield* stack.deploy(
+        Cloudflare.Gateway.ProxyEndpoint("ListProxy", {
+          name: "alchemy-zt-proxy-list",
+          kind: "identity",
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Gateway.ProxyEndpoint,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Gateway.ProxyEndpoint,
+      );
+      const all = yield* provider.list();
 
-    const match = all.find(
-      (x) => x.proxyEndpointId === endpoint.proxyEndpointId,
-    );
-    expect(match).toBeDefined();
-    expect(match?.accountId).toEqual(accountId);
-    expect(match?.name).toEqual("alchemy-zt-proxy-list");
-    expect(match?.kind).toEqual("identity");
+      const match = all.find(
+        (x) => x.proxyEndpointId === endpoint.proxyEndpointId,
+      );
+      expect(match).toBeDefined();
+      expect(match?.accountId).toEqual(accountId);
+      expect(match?.name).toEqual("alchemy-zt-proxy-list");
+      expect(match?.kind).toEqual("identity");
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );

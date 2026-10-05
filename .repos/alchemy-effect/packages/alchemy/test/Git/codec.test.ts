@@ -47,7 +47,7 @@ import {
 import { SIDEBAND_DATA_MAX, sidebandFrames } from "@/Git/Protocol/Sideband.ts";
 import { deflate, inflate, inflateEntry } from "@/Git/Protocol/Zlib.ts";
 
-describe("pkt-line", () => {
+describe("pkt-line", { tags: ["unit", "local"] }, () => {
   it.live("encodes data, text (LF-appended), flush, and ERR pkts", () =>
     Effect.gen(function* () {
       expect(utf8Decode(pktText("done"))).toBe("0009done\n");
@@ -124,7 +124,7 @@ describe("pkt-line", () => {
   );
 });
 
-describe("sideband framing", () => {
+describe("sideband framing", { tags: ["unit", "local"] }, () => {
   it.live("splits payloads at the 65515-byte data cap with the band byte", () =>
     Effect.gen(function* () {
       const big = new Uint8Array(SIDEBAND_DATA_MAX + 10).fill(7);
@@ -138,7 +138,7 @@ describe("sideband framing", () => {
   );
 });
 
-describe("pack varints", () => {
+describe("pack varints", { tags: ["unit", "local"] }, () => {
   it.live(
     "type/size header round-trips across the continuation boundaries",
     () =>
@@ -217,7 +217,7 @@ describe("pack varints", () => {
   );
 });
 
-describe("delta application", () => {
+describe("delta application", { tags: ["unit", "local"] }, () => {
   it.live("applies copy + insert instruction streams", () =>
     Effect.gen(function* () {
       const base = utf8Encode("the quick brown fox jumps over the lazy dog");
@@ -271,7 +271,7 @@ describe("delta application", () => {
   );
 });
 
-describe("tree codec", () => {
+describe("tree codec", { tags: ["unit", "local"] }, () => {
   it.live("sorts directories as name + '/' (the fsck rule)", () =>
     Effect.gen(function* () {
       const entries = [
@@ -303,35 +303,39 @@ describe("tree codec", () => {
   );
 });
 
-describe("object hashing (real-git oracle oids)", () => {
-  it.live("hashes blobs to the oids git computes", () =>
-    Effect.gen(function* () {
-      // git hash-object oracle values
-      expect(yield* hashObject(ObjectType.blob, utf8Encode("hello\n"))).toBe(
-        "ce013625030ba8dba906f756967f9e9ca394464a",
-      );
-      expect(
-        yield* hashObject(ObjectType.blob, utf8Encode("hello world\n")),
-      ).toBe("3b18e512dba79e4c8300dd08aeb37f8e728b8dad");
-      // the famous empty blob / empty tree constants
-      expect(yield* hashObject(ObjectType.blob, new Uint8Array(0))).toBe(
-        "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
-      );
-      expect(yield* hashObject(ObjectType.tree, new Uint8Array(0))).toBe(
-        "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
-      );
-    }),
-  );
+describe(
+  "object hashing (real-git oracle oids)",
+  { tags: ["unit", "local"] },
+  () => {
+    it.live("hashes blobs to the oids git computes", () =>
+      Effect.gen(function* () {
+        // git hash-object oracle values
+        expect(yield* hashObject(ObjectType.blob, utf8Encode("hello\n"))).toBe(
+          "ce013625030ba8dba906f756967f9e9ca394464a",
+        );
+        expect(
+          yield* hashObject(ObjectType.blob, utf8Encode("hello world\n")),
+        ).toBe("3b18e512dba79e4c8300dd08aeb37f8e728b8dad");
+        // the famous empty blob / empty tree constants
+        expect(yield* hashObject(ObjectType.blob, new Uint8Array(0))).toBe(
+          "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+        );
+        expect(yield* hashObject(ObjectType.tree, new Uint8Array(0))).toBe(
+          "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        );
+      }),
+    );
 
-  it.live("hex codecs round-trip", () =>
-    Effect.gen(function* () {
-      const hex = "9e0b5a0bd293f9feda554193a204193a2c3c5d9c";
-      expect(bytesToHex(hexToBytes(hex))).toBe(hex);
-    }),
-  );
-});
+    it.live("hex codecs round-trip", () =>
+      Effect.gen(function* () {
+        const hex = "9e0b5a0bd293f9feda554193a204193a2c3c5d9c";
+        expect(bytesToHex(hexToBytes(hex))).toBe(hex);
+      }),
+    );
+  },
+);
 
-describe("commit parsing", () => {
+describe("commit parsing", { tags: ["unit", "local"] }, () => {
   it.live("parses tree/parents/identities/message", () =>
     Effect.gen(function* () {
       const tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -375,7 +379,7 @@ describe("commit parsing", () => {
   );
 });
 
-describe("commit encoding", () => {
+describe("commit encoding", { tags: ["unit", "local"] }, () => {
   // A real git-produced commit (git 2.x, `git commit -m`), checked in as a
   // fixture: the oid is git's own, so a matching hash proves the bytes are
   // byte-exact.
@@ -480,7 +484,7 @@ describe("commit encoding", () => {
   );
 });
 
-describe("zlib boundary accounting", () => {
+describe("zlib boundary accounting", { tags: ["unit", "local"] }, () => {
   it.live("inflateEntry reports the exact compressed span of each entry", () =>
     Effect.gen(function* () {
       const a = yield* deflate(utf8Encode("first object content"));

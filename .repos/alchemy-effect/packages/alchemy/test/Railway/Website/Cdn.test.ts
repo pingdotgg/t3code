@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Railway from "@/Railway";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -27,22 +28,42 @@ const origin = Effect.gen(function* () {
   return { project, environment, service };
 });
 
-const readConfig = (serviceId: string, environmentId: string) =>
-  railway.serviceInstance(
-    { serviceId, environmentId },
-    {
-      edgeConfig: {
-        id: true,
-        enabled: true,
-        caching: {
-          mode: true,
-          htmlCaching: true,
-          purgeOnDeploy: true,
-          defaultTtlSeconds: true,
-        },
-      },
-    },
-  );
+const readConfig = Query.fn((serviceId: string, environmentId: string) => ({
+  edgeConfig: RailwayApi.serviceInstance({
+    serviceId,
+    environmentId,
+  }).edgeConfig.pipe(
+    Query.map((config) => ({
+      id: config.id,
+      enabled: config.enabled,
+      caching: config.caching.pipe(
+        Query.map((caching) => ({
+          mode: caching.mode,
+          htmlCaching: caching.htmlCaching,
+          purgeOnDeploy: caching.purgeOnDeploy,
+          defaultTtlSeconds: caching.defaultTtlSeconds,
+        })),
+      ),
+    })),
+  ),
+}));
+
+const readCachingState = Query.fn(
+  (serviceId: string, environmentId: string) => {
+    const instance = RailwayApi.serviceInstance({ serviceId, environmentId });
+    return {
+      serviceId: instance.serviceId,
+      edgeConfig: instance.edgeConfig.pipe(
+        Query.map((config) => ({
+          enabled: config.enabled,
+          caching: config.caching.pipe(
+            Query.map((caching) => ({ mode: caching.mode })),
+          ),
+        })),
+      ),
+    };
+  },
+);
 
 test.provider(
   "enable, update, and disable CDN while retaining its origin",
@@ -115,36 +136,38 @@ test.provider(
         created.environment.environmentId,
       );
 
-      const disabled = yield* railway
-        .serviceInstance(
-          {
-            serviceId: retained.service.serviceId,
-            environmentId: retained.environment.environmentId,
-          },
-          {
-            serviceId: true,
-            edgeConfig: { enabled: true, caching: { mode: true } },
-          },
-        )
-        .pipe(
-          Effect.map((instance) => ({
-            serviceId: instance.serviceId,
-            // Edge routing can stay enabled after CDN caching is switched off.
-            cachingEnabled:
-              instance.edgeConfig?.enabled === true &&
-              instance.edgeConfig.caching != null &&
-              instance.edgeConfig.caching.mode.toLowerCase() !== "off",
-          })),
-          Effect.repeat({
-            schedule: Schedule.spaced("1 second"),
-            until: (observed) => !observed.cachingEnabled,
-            times: 10,
-          }),
-        );
+      const disabled = yield* readCachingState(
+        retained.service.serviceId,
+        retained.environment.environmentId,
+      ).pipe(
+        Effect.map((instance) => ({
+          serviceId: instance.serviceId,
+          // Edge routing can stay enabled after CDN caching is switched off.
+          cachingEnabled:
+            instance.edgeConfig?.enabled === true &&
+            instance.edgeConfig.caching != null &&
+            instance.edgeConfig.caching.mode.toLowerCase() !== "off",
+        })),
+        Effect.repeat({
+          schedule: Schedule.spaced("1 second"),
+          until: (observed) => !observed.cachingEnabled,
+          times: 10,
+        }),
+      );
       expect(disabled.serviceId).toEqual(retained.service.serviceId);
       expect(disabled.cachingEnabled).toEqual(false);
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:website",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

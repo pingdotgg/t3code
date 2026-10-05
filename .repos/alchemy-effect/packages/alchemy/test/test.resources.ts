@@ -4,19 +4,29 @@ import { Artifacts } from "@/Artifacts";
 import * as Binding from "@/Binding.ts";
 import { isResolved } from "@/Diff.ts";
 import * as ProviderLayer from "@/Local/ProviderLayer.ts";
+import { Platform, type Main, type PlatformProps } from "@/Platform.ts";
 import * as Provider from "@/Provider.ts";
 import { LOCAL_ID_PREFIX, type ProviderMode } from "@/ProviderMode.ts";
 import { Resource, type ResourceBinding } from "@/Resource";
+import { unpackEnvValue } from "@/RuntimeContext.ts";
+import {
+  createHostRuntimeContext,
+  type HostRuntimeContext,
+  type ServerHost,
+} from "@/Server/Process.ts";
 import { Stack } from "@/Stack";
 import * as State from "@/State/index";
 import { isUnknown } from "@/Util/unknown";
 import { Data } from "effect";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 // Bucket
 export type BucketProps = {
@@ -1328,6 +1338,63 @@ export const ProbeBindingLive = Layer.succeed(
   }),
 );
 
+// CapturedConfigHost - a Platform whose Init reads `Config.String("CAPTURED_MODE")`.
+// Its provider's diff always returns `noop` without comparing `env`, so only
+// the engine's comparison of Init-captured values can plan an update (#1831).
+// `reconcile` echoes the delivered value as the `mode` attribute.
+export interface CapturedConfigHostProps extends PlatformProps {
+  main?: string;
+  env?: Record<string, unknown>;
+}
+
+export interface CapturedConfigHost extends Resource<
+  "Test.CapturedConfigHost",
+  CapturedConfigHostProps,
+  { mode: unknown }
+> {}
+
+export const CapturedConfigHost: Platform<
+  CapturedConfigHost,
+  ServerHost,
+  Main<ServerHost>,
+  HostRuntimeContext
+> = Platform("Test.CapturedConfigHost", {
+  createRuntimeContext: createHostRuntimeContext("Test.CapturedConfigHost"),
+});
+
+export const capturedConfigHostProvider = () =>
+  Provider.succeed(CapturedConfigHost, {
+    list: () => Effect.succeed([]),
+    diff: () => Effect.succeed({ action: "noop" as const }),
+    reconcile: Effect.fn(function* ({ news }) {
+      const mode = unpackEnvValue(news.env?.CAPTURED_MODE as string);
+      return { mode: Redacted.isRedacted(mode) ? Redacted.value(mode) : mode };
+    }),
+    delete: Effect.fn(function* () {}),
+  });
+
+/** Declare the host with `mode` served to its Init's `Config` reads. */
+export const capturedConfigHost = (mode: string) =>
+  Effect.gen(function* () {
+    const ambient = yield* ConfigProvider.ConfigProvider;
+    return yield* CapturedConfigHost(
+      "Host",
+      { main: "index.ts" },
+      Effect.gen(function* () {
+        const value = yield* Config.String("CAPTURED_MODE");
+        return { fetch: Effect.succeed(HttpServerResponse.text(value)) };
+      }),
+    ).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({ CAPTURED_MODE: mode }),
+          ambient,
+        ),
+      ),
+    );
+  });
+
 // Layers
 export const TestLayers = () =>
   Layer.mergeAll(
@@ -1348,6 +1415,7 @@ export const TestLayers = () =>
     deleteFirstResourceProvider(),
     driftResourceProvider(),
     modalResourceProvider(),
+    capturedConfigHostProvider(),
     ProbeBindingLive,
   );
 

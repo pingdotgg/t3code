@@ -10,15 +10,15 @@ import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import type * as Queue from "effect/Queue"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import type * as Redacted from "effect/Redacted"
 import type * as Scope from "effect/Scope"
+import * as Client from "effect/sql/SqlClient"
+import type { Borrower, Connection } from "effect/sql/SqlConnection"
+import { SqlError, UnknownError } from "effect/sql/SqlError"
+import type { Custom, Fragment } from "effect/sql/Statement"
+import * as Statement from "effect/sql/Statement"
 import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Borrower, Connection } from "effect/unstable/sql/SqlConnection"
-import type { SqlError } from "effect/unstable/sql/SqlError"
-import type { Custom, Fragment } from "effect/unstable/sql/Statement"
-import * as Statement from "effect/unstable/sql/Statement"
 import type { Duplex } from "node:stream"
 import type { ConnectionOptions } from "node:tls"
 import { validateChannelName } from "./internal/sqlError.ts"
@@ -53,13 +53,15 @@ export interface PgClient extends Client.SqlClient {
   readonly config: PgClientConfig
   readonly json: (_: unknown) => Fragment
   /**
-   * Registers a channel listener and returns its non-empty payload queue after
+   * Registers a channel listener and returns its notification queue after
    * PostgreSQL confirms `LISTEN`. The listener holds a connection until the
    * scope closes.
+   * Connection failures after registration fail the queue with the original
+   * `SqlError`. Intentional scope closure interrupts consumers.
    */
   readonly listen: (
     channel: string
-  ) => Effect.Effect<Queue.Dequeue<PgConnection.Notification>, SqlError, Scope.Scope>
+  ) => Effect.Effect<Queue.Dequeue<PgConnection.Notification, SqlError>, SqlError, Scope.Scope>
   readonly notify: (channel: string, payload: string) => Effect.Effect<void, SqlError>
 }
 
@@ -86,13 +88,35 @@ export interface PgClientConfig {
   readonly ssl?: boolean | ConnectionOptions | undefined
   readonly database?: string | undefined
   readonly username?: string | undefined
-  readonly password?: Redacted.Redacted | undefined
+  /**
+   * A static password or an Effect evaluated for each connection attempt.
+   * Providers must handle typed errors and require no services.
+   * {@link Effect.orDie} converts typed errors to defects, not retryable SQL errors.
+   */
+  readonly password?: Redacted.Redacted | Effect.Effect<Redacted.Redacted> | undefined
 
   readonly connectTimeout?: Duration.Input | undefined
 
   readonly stream?: (() => Duplex) | undefined
 
+  /**
+   * Overrides `startupParameters.application_name`, the URL's `application_name`,
+   * and the default `"@effect/sql-pg"`, in that order.
+   */
   readonly applicationName?: string | undefined
+  /**
+   * Session defaults sent in every physical connection's startup packet.
+   * Names are lowercased; `user`, `database`, `replication`, and `options` are
+   * reserved. `client_encoding` only accepts UTF8 / UTF-8 (case-insensitive).
+   * Empty names and NUL bytes fail before connecting; PostgreSQL validates
+   * other settings. Do not set the same GUC here and in `startupOptions`.
+   */
+  readonly startupParameters?: Readonly<Record<string, string>> | undefined
+  /**
+   * Opaque PostgreSQL startup options, overriding the URL's `options` parameter.
+   * Forwarded without parsing `-c` flags or checking for duplicate GUCs.
+   */
+  readonly startupOptions?: string | undefined
   readonly spanAttributes?: Record<string, unknown> | undefined
 
   readonly transformResultNames?: ((str: string) => string) | undefined
@@ -203,7 +227,7 @@ const makeImpl = Effect.fnUntraced(function*(
 
   const listen = (
     channel: string
-  ): Effect.Effect<Queue.Dequeue<PgConnection.Notification>, SqlError, Scope.Scope> =>
+  ): Effect.Effect<Queue.Dequeue<PgConnection.Notification, SqlError>, SqlError, Scope.Scope> =>
     Effect.flatMap(options.listenAcquirer, (connection) => connection.listen(channel))
 
   return Object.assign(
@@ -213,6 +237,8 @@ const makeImpl = Effect.fnUntraced(function*(
       // Postgres prepares transaction control like anything else, and a client
       // with preparation turned off falls back to the unnamed path anyway.
       prepareTransactionControls: true,
+      commit,
+      releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
       transactionAcquirer: options.transactionAcquirer,
       compiler,
       spanAttributes: [
@@ -302,6 +328,24 @@ class ConnectionImpl implements Connection {
       : stream
   }
 }
+
+/** PostgreSQL returns `ROLLBACK` for `COMMIT` when a transaction is aborted. */
+const commit = (conn: Connection): Effect.Effect<void, SqlError> =>
+  Effect.flatMap(
+    conn.executeRaw("COMMIT", []) as Effect.Effect<PgConnection.Result, SqlError>,
+    (result) =>
+      result.command === "ROLLBACK"
+        ? Effect.fail(
+          new SqlError({
+            reason: new UnknownError({
+              cause: new Error("COMMIT rolled back an aborted transaction"),
+              message: "PgClient: COMMIT rolled back an aborted transaction",
+              operation: "commit"
+            })
+          })
+        )
+        : Effect.void
+  )
 
 const makeConnection = (
   connection: PgConnection.PgConnection,

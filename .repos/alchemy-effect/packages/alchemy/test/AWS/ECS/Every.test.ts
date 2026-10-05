@@ -81,5 +81,14 @@ test.provider(
         );
       expect(gone).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:ecs",
+      "provider:aws:scheduler",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

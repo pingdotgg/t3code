@@ -42,7 +42,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dlp", "live"],
+    timeout: 90_000,
+  },
 );
 
 // Entitled: deploy a custom profile and confirm `list()` enumerates it.
@@ -75,5 +78,8 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dlp", "live"],
+    timeout: 90_000,
+  },
 );

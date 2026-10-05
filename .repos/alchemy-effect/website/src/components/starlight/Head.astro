@@ -11,6 +11,7 @@
  * still ship.
  */
 import Default from "@astrojs/starlight/components/Head.astro";
+import FontPreloads from "../FontPreloads.astro";
 import PostHog from "../analytics/PostHog.astro";
 import BrandIcons from "../../brand/Icons.astro";
 import StructuredData from "../StructuredData.astro";
@@ -27,6 +28,8 @@ const ogImage = new URL(`/og/${ogSlug}.webp`, Astro.site);
 ---
 
 <Default><slot /></Default>
+
+<FontPreloads />
 
 {/* Brand mark. Starlight already emits the SVG from its own `favicon`
     config, so skip it here and add only the raster/apple-touch candidates. */}

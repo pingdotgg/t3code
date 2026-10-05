@@ -163,195 +163,213 @@ const program = (opts: {
     return { cert5, cert6, association };
   });
 
-describe.skipIf(!!process.env.FAST)("HostnameAssociation", () => {
-  // Hostname associations are keyed entirely by {zoneId, hostname} and
-  // Cloudflare exposes no endpoint that enumerates which hostnames in a zone
-  // have an AOP association, so `list()` is non-listable and returns []. This
-  // read-only assertion always runs (no cert/hostname deploy required).
-  test.provider("list returns [] for the non-listable association", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.destroy();
-
-      const provider = yield* Provider.findProvider(
-        Cloudflare.OriginTlsClientAuth.HostnameAssociation,
-      );
-      const all = yield* provider.list();
-      expect(all).toEqual([]);
-
-      yield* stack.destroy();
-    }).pipe(
-      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
-      logLevel,
-    ),
-  );
-
-  test.provider(
-    "associates a hostname, updates cert and enablement in place, voids on destroy",
-    (stack) =>
+describe.skipIf(!!process.env.FAST)(
+  "HostnameAssociation",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "live",
+    ],
+  },
+  () => {
+    // Hostname associations are keyed entirely by {zoneId, hostname} and
+    // Cloudflare exposes no endpoint that enumerates which hostnames in a zone
+    // have an AOP association, so `list()` is non-listable and returns []. This
+    // read-only assertion always runs (no cert/hostname deploy required).
+    test.provider("list returns [] for the non-listable association", (stack) =>
       Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* voidAssociation(zoneId, HOST_LIFECYCLE);
-        yield* purgeCertificates(zoneId, [CERT_5, CERT_6]);
-
-        // Create — pin cert 5, enabled.
-        const initial = yield* stack.deploy(
-          program({
-            zoneId,
-            hostname: HOST_LIFECYCLE,
-            cert: "5",
-            enabled: true,
-          }),
-        );
-
-        expect(initial.association.zoneId).toEqual(zoneId);
-        expect(initial.association.hostname).toEqual(HOST_LIFECYCLE);
-        expect(initial.association.certId).toEqual(initial.cert5.certificateId);
-        expect(initial.association.enabled).toEqual(true);
-
-        const observed = yield* getAssociation(zoneId, HOST_LIFECYCLE);
-        expect(observed?.certId).toEqual(initial.cert5.certificateId);
-        expect(observed?.enabled).toEqual(true);
-
-        // Update in place — repin to cert 6 and disable enforcement.
-        const updated = yield* stack.deploy(
-          program({
-            zoneId,
-            hostname: HOST_LIFECYCLE,
-            cert: "6",
-            enabled: false,
-          }),
-        );
-
-        expect(updated.association.hostname).toEqual(HOST_LIFECYCLE);
-        expect(updated.association.certId).toEqual(updated.cert6.certificateId);
-        expect(updated.association.enabled).toEqual(false);
-
-        const reobserved = yield* getAssociation(zoneId, HOST_LIFECYCLE);
-        expect(reobserved?.certId).toEqual(updated.cert6.certificateId);
-        expect(reobserved?.enabled).toEqual(false);
-
-        // Destroy — the association is voided (`enabled: null`).
         yield* stack.destroy();
 
-        const gone = yield* getAssociation(zoneId, HOST_LIFECYCLE).pipe(
-          Effect.flatMap((assoc) =>
-            assoc === undefined
-              ? Effect.void
-              : Effect.fail({ _tag: "AssociationNotVoided" } as const),
-          ),
-          // Frequent, bounded spaced poll (~240s): voiding settles through
-          // edge propagation asynchronously and can occasionally take well
-          // past two minutes, so poll every 5s with a generous bound rather
-          // than backing off exponentially (whose late gaps overshoot).
-          Effect.retry({
-            while: (e) => e._tag === "AssociationNotVoided",
-            schedule: Schedule.spaced("5 seconds"),
-            times: 48,
-          }),
-          Effect.map(() => true),
+        const provider = yield* Provider.findProvider(
+          Cloudflare.OriginTlsClientAuth.HostnameAssociation,
         );
-        expect(gone).toEqual(true);
+        const all = yield* provider.list();
+        expect(all).toEqual([]);
+
+        yield* stack.destroy();
       }).pipe(
         Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
         logLevel,
       ),
-    // Two sequential deploys, each uploading two hostname client-certificates
-    // plus the association, on Cloudflare's per-zone-serialized client-cert
-    // API. Under a full concurrent `./test/Cloudflare` run this zone's cert
-    // mutations contend with the sibling Certificate/HostnameCertificate
-    // suites (each create/delete bounded-retries the per-zone 409), then a
-    // ~240s spaced void poll — give real headroom while staying bounded.
-    { timeout: 420_000 },
-  );
+    );
 
-  test.provider(
-    "replaces the association when the hostname changes",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+    test.provider(
+      "associates a hostname, updates cert and enablement in place, voids on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* voidAssociation(zoneId, HOST_REPLACE_A);
-        yield* voidAssociation(zoneId, HOST_REPLACE_B);
-        yield* purgeCertificates(zoneId, [CERT_5, CERT_6]);
+          yield* stack.destroy();
+          yield* voidAssociation(zoneId, HOST_LIFECYCLE);
+          yield* purgeCertificates(zoneId, [CERT_5, CERT_6]);
 
-        const initial = yield* stack.deploy(
-          program({
-            zoneId,
-            hostname: HOST_REPLACE_A,
-            cert: "5",
-            enabled: true,
-          }),
-        );
-        expect(initial.association.hostname).toEqual(HOST_REPLACE_A);
+          // Create — pin cert 5, enabled.
+          const initial = yield* stack.deploy(
+            program({
+              zoneId,
+              hostname: HOST_LIFECYCLE,
+              cert: "5",
+              enabled: true,
+            }),
+          );
 
-        // Changing the hostname is a replacement — the old hostname's
-        // association is voided and the new hostname gets its own entry.
-        const replaced = yield* stack.deploy(
-          program({
-            zoneId,
-            hostname: HOST_REPLACE_B,
-            cert: "5",
-            enabled: true,
-          }),
-        );
-        expect(replaced.association.hostname).toEqual(HOST_REPLACE_B);
-        expect(replaced.association.certId).toEqual(
-          replaced.cert5.certificateId,
-        );
+          expect(initial.association.zoneId).toEqual(zoneId);
+          expect(initial.association.hostname).toEqual(HOST_LIFECYCLE);
+          expect(initial.association.certId).toEqual(
+            initial.cert5.certificateId,
+          );
+          expect(initial.association.enabled).toEqual(true);
 
-        const observedNew = yield* getAssociation(zoneId, HOST_REPLACE_B);
-        expect(observedNew?.enabled).toEqual(true);
+          const observed = yield* getAssociation(zoneId, HOST_LIFECYCLE);
+          expect(observed?.certId).toEqual(initial.cert5.certificateId);
+          expect(observed?.enabled).toEqual(true);
 
-        // The old hostname's association must be voided by the replacement.
-        const oldGone = yield* getAssociation(zoneId, HOST_REPLACE_A).pipe(
-          Effect.flatMap((assoc) =>
-            assoc === undefined
-              ? Effect.void
-              : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+          // Update in place — repin to cert 6 and disable enforcement.
+          const updated = yield* stack.deploy(
+            program({
+              zoneId,
+              hostname: HOST_LIFECYCLE,
+              cert: "6",
+              enabled: false,
+            }),
+          );
+
+          expect(updated.association.hostname).toEqual(HOST_LIFECYCLE);
+          expect(updated.association.certId).toEqual(
+            updated.cert6.certificateId,
+          );
+          expect(updated.association.enabled).toEqual(false);
+
+          const reobserved = yield* getAssociation(zoneId, HOST_LIFECYCLE);
+          expect(reobserved?.certId).toEqual(updated.cert6.certificateId);
+          expect(reobserved?.enabled).toEqual(false);
+
+          // Destroy — the association is voided (`enabled: null`).
+          yield* stack.destroy();
+
+          const gone = yield* getAssociation(zoneId, HOST_LIFECYCLE).pipe(
+            Effect.flatMap((assoc) =>
+              assoc === undefined
+                ? Effect.void
+                : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+            ),
+            // Frequent, bounded spaced poll (~240s): voiding settles through
+            // edge propagation asynchronously and can occasionally take well
+            // past two minutes, so poll every 5s with a generous bound rather
+            // than backing off exponentially (whose late gaps overshoot).
+            Effect.retry({
+              while: (e) => e._tag === "AssociationNotVoided",
+              schedule: Schedule.spaced("5 seconds"),
+              times: 48,
+            }),
+            Effect.map(() => true),
+          );
+          expect(gone).toEqual(true);
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
           ),
-          // Frequent, bounded spaced poll (~120s): voiding settles through
-          // edge propagation asynchronously, so check every 5s rather than
-          // backing off exponentially (whose late gaps overshoot the timeout).
-          Effect.retry({
-            while: (e) => e._tag === "AssociationNotVoided",
-            schedule: Schedule.spaced("5 seconds"),
-            times: 24,
-          }),
-          Effect.map(() => true),
-        );
-        expect(oldGone).toEqual(true);
+          logLevel,
+        ),
+      // Two sequential deploys, each uploading two hostname client-certificates
+      // plus the association, on Cloudflare's per-zone-serialized client-cert
+      // API. Under a full concurrent `./test/Cloudflare` run this zone's cert
+      // mutations contend with the sibling Certificate/HostnameCertificate
+      // suites (each create/delete bounded-retries the per-zone 409), then a
+      // ~240s spaced void poll — give real headroom while staying bounded.
+      { tags: ["provider:cloudflare:zone"], timeout: 420_000 },
+    );
 
-        yield* stack.destroy();
+    test.provider(
+      "replaces the association when the hostname changes",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        // Voiding is asynchronous (the void PUT settles through edge
-        // propagation) — poll until the association reads as absent rather
-        // than asserting on a single (potentially stale) read.
-        const newGone = yield* getAssociation(zoneId, HOST_REPLACE_B).pipe(
-          Effect.flatMap((assoc) =>
-            assoc === undefined
-              ? Effect.void
-              : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+          yield* stack.destroy();
+          yield* voidAssociation(zoneId, HOST_REPLACE_A);
+          yield* voidAssociation(zoneId, HOST_REPLACE_B);
+          yield* purgeCertificates(zoneId, [CERT_5, CERT_6]);
+
+          const initial = yield* stack.deploy(
+            program({
+              zoneId,
+              hostname: HOST_REPLACE_A,
+              cert: "5",
+              enabled: true,
+            }),
+          );
+          expect(initial.association.hostname).toEqual(HOST_REPLACE_A);
+
+          // Changing the hostname is a replacement — the old hostname's
+          // association is voided and the new hostname gets its own entry.
+          const replaced = yield* stack.deploy(
+            program({
+              zoneId,
+              hostname: HOST_REPLACE_B,
+              cert: "5",
+              enabled: true,
+            }),
+          );
+          expect(replaced.association.hostname).toEqual(HOST_REPLACE_B);
+          expect(replaced.association.certId).toEqual(
+            replaced.cert5.certificateId,
+          );
+
+          const observedNew = yield* getAssociation(zoneId, HOST_REPLACE_B);
+          expect(observedNew?.enabled).toEqual(true);
+
+          // The old hostname's association must be voided by the replacement.
+          const oldGone = yield* getAssociation(zoneId, HOST_REPLACE_A).pipe(
+            Effect.flatMap((assoc) =>
+              assoc === undefined
+                ? Effect.void
+                : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+            ),
+            // Frequent, bounded spaced poll (~120s): voiding settles through
+            // edge propagation asynchronously, so check every 5s rather than
+            // backing off exponentially (whose late gaps overshoot the timeout).
+            Effect.retry({
+              while: (e) => e._tag === "AssociationNotVoided",
+              schedule: Schedule.spaced("5 seconds"),
+              times: 24,
+            }),
+            Effect.map(() => true),
+          );
+          expect(oldGone).toEqual(true);
+
+          yield* stack.destroy();
+
+          // Voiding is asynchronous (the void PUT settles through edge
+          // propagation) — poll until the association reads as absent rather
+          // than asserting on a single (potentially stale) read.
+          const newGone = yield* getAssociation(zoneId, HOST_REPLACE_B).pipe(
+            Effect.flatMap((assoc) =>
+              assoc === undefined
+                ? Effect.void
+                : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+            ),
+            // Frequent, bounded spaced poll (~120s): voiding settles through
+            // edge propagation asynchronously, so check every 5s rather than
+            // backing off exponentially (whose late gaps overshoot the timeout).
+            Effect.retry({
+              while: (e) => e._tag === "AssociationNotVoided",
+              schedule: Schedule.spaced("5 seconds"),
+              times: 24,
+            }),
+            Effect.map(() => true),
+          );
+          expect(newGone).toEqual(true);
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
           ),
-          // Frequent, bounded spaced poll (~120s): voiding settles through
-          // edge propagation asynchronously, so check every 5s rather than
-          // backing off exponentially (whose late gaps overshoot the timeout).
-          Effect.retry({
-            while: (e) => e._tag === "AssociationNotVoided",
-            schedule: Schedule.spaced("5 seconds"),
-            times: 24,
-          }),
-          Effect.map(() => true),
-        );
-        expect(newGone).toEqual(true);
-      }).pipe(
-        Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
-        logLevel,
-      ),
-    // Same per-zone-serialized client-cert contention as the lifecycle case
-    // above, plus two spaced void polls — give real headroom under load.
-    { timeout: 300_000 },
-  );
-});
+          logLevel,
+        ),
+      // Same per-zone-serialized client-cert contention as the lifecycle case
+      // above, plus two spaced void polls — give real headroom under load.
+      { tags: ["provider:cloudflare:zone"], timeout: 300_000 },
+    );
+  },
+);

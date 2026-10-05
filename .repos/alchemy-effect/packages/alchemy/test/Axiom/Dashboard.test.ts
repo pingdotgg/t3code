@@ -60,4 +60,5 @@ test.provider.skipIf(!hasAxiomCreds)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:axiom", "provider:axiom:dashboard", "live"] },
 );

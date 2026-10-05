@@ -83,7 +83,10 @@ test.provider.skipIf(!magicTransit)(
         .pipe(Effect.flip);
       expect(error._tag).toEqual("SynProtectionRuleNotFound");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Ungated: list() enumerates every rule in the ambient account. On the
@@ -105,7 +108,10 @@ test.provider(
         expect(typeof r.accountId).toBe("string");
       }
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Gated full lifecycle: on an entitled account, a deployed rule must appear
@@ -138,5 +144,8 @@ test.provider.skipIf(!magicTransit)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+    timeout: 120_000,
+  },
 );

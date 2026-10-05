@@ -92,7 +92,7 @@ test.provider(
 
       yield* reclaimTaskDefinitionFamily(family);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 240_000 },
 );
 
 // Multi-container + task-level props round-trip. Registering a task definition
@@ -187,7 +187,7 @@ test.provider(
 
       yield* reclaimTaskDefinitionFamily(family);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 120_000 },
 );
 
 // Revision hygiene: every reconcile registers a NEW task-definition
@@ -263,7 +263,7 @@ test.provider(
         );
       expect(activeRevisions).toEqual([]);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 240_000 },
 );
 
 // `environmentFiles` parity: the prop lands on the primary container of the
@@ -319,5 +319,8 @@ test.provider(
         );
       expect(roleGone).toBe(true);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ecs", "provider:aws:iam", "live"],
+    timeout: 240_000,
+  },
 );

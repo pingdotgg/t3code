@@ -197,6 +197,7 @@ export type Plan = Resource<
  * ```
  *
  * @resource
+ * @product Product
  */
 export const Plan = Resource<Plan>("Stripe.Plan");
 

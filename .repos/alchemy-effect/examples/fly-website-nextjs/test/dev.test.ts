@@ -27,7 +27,7 @@ const alchemyBin = path.join(
   "node_modules",
   "alchemy",
   "bin",
-  "alchemy.ts",
+  "alchemy.js",
 );
 // Isolated stage so this suite never fights integ.test.ts (same stack
 // name) over state rows.
@@ -142,7 +142,8 @@ test(
     // Dev identity: the framework dev server, not Fly. The port is
     // whatever the framework bound — only the URL captured from the CLI's
     // stdout is authoritative.
-    expect(new URL(url).hostname).toBe("localhost");
+    // Next.js advertises the bind address, so accept either loopback name.
+    expect(["localhost", "127.0.0.1"]).toContain(new URL(url).hostname);
     expect(url).not.toContain("example.invalid");
 
     // SSR env parity: GREETING from alchemy.run.ts reaches the dev server.

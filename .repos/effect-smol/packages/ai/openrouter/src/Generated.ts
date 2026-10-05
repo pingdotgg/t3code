@@ -1,17 +1,18 @@
 /**
+ * @stability unstable
  * @since 1.0.0
  */
 
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import type { SchemaError } from "effect/Schema"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import * as Sse from "effect/unstable/encoding/Sse"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 // non-recursive definitions
 export type AABenchmarkEntry = {
   readonly "agentic_index": number | null
@@ -27879,42 +27880,6 @@ export const CreateAudioTranscriptionsParams = Schema.Struct({
 })
 export type CreateAudioTranscriptionsRequestJson = STTRequest
 export const CreateAudioTranscriptionsRequestJson = STTRequest
-export type CreateAudioTranscriptionsRequestFormData = {
-  readonly "file": string
-  readonly "language"?: string
-  readonly "model": string
-  readonly "response_format"?: "json" | "verbose_json"
-  readonly "temperature"?: number
-  readonly "timestamp_granularities[]"?: ReadonlyArray<"word" | "segment">
-}
-export const CreateAudioTranscriptionsRequestFormData = Schema.Struct({
-  "file": Schema.String.annotate({
-    "description":
-      "The audio file to transcribe. The format is derived from the filename extension or the file part content type. Max 25 MB; send larger files as base64 JSON via input_audio.",
-    "format": "binary"
-  }),
-  "language": Schema.optionalKey(
-    Schema.String.annotate({ "description": "The language of the input audio (ISO-639-1)." })
-  ),
-  "model": Schema.String.annotate({ "description": "The model to use for transcription." }),
-  "response_format": Schema.optionalKey(
-    Schema.Literals(["json", "verbose_json"]).annotate({
-      "description":
-        "The response format. \"json\" (default) returns { text, usage }; \"verbose_json\" additionally returns task, language, duration, and segment-level timestamps (OpenAI-compatible providers only)."
-    })
-  ),
-  "temperature": Schema.optionalKey(
-    Schema.Number.annotate({ "description": "The sampling temperature." }).check(
-      Schema.isFinite().annotate({ "expected": "a finite number" })
-    )
-  ),
-  "timestamp_granularities[]": Schema.optionalKey(
-    Schema.Array(Schema.Literals(["word", "segment"])).annotate({
-      "description":
-        "Timestamp detail levels to include when response_format is \"verbose_json\". \"word\" additionally returns word-level timestamps in the words array."
-    })
-  )
-})
 export type CreateAudioTranscriptions200 = STTResponse
 export const CreateAudioTranscriptions200 = STTResponse
 export type CreateAudioTranscriptions400 = BadRequestResponse
@@ -32915,7 +32880,7 @@ export const make = (
           "X-OpenRouter-Title": options.params?.["X-OpenRouter-Title"] ?? undefined,
           "X-OpenRouter-Categories": options.params?.["X-OpenRouter-Categories"] ?? undefined
         }),
-        HttpClientRequest.bodyFormData(options.payload as any),
+        HttpClientRequest.bodyJsonUnsafe(options.payload),
         withResponse(options.config)(HttpClientResponse.matchStatus({
           "2xx": decodeSuccess(CreateAudioTranscriptions200),
           "400": decodeError("CreateAudioTranscriptions400", CreateAudioTranscriptions400),
@@ -34628,7 +34593,7 @@ export interface OpenRouterClient {
   readonly "createAudioTranscriptions": <Config extends OperationConfig>(
     options: {
       readonly params?: typeof CreateAudioTranscriptionsParams.Encoded | undefined
-      readonly payload: typeof CreateAudioTranscriptionsRequestFormData.Encoded
+      readonly payload: typeof CreateAudioTranscriptionsRequestJson.Encoded
       readonly config?: Config | undefined
     }
   ) => Effect.Effect<

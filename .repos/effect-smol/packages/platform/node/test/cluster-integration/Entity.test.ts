@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Clock, Effect, Exit, Fiber, Latch, Layer, PrimaryKey, Schema, Scope } from "effect"
-import { ClusterSchema, Entity, EntityResource, Singleton } from "effect/unstable/cluster"
-import { Rpc } from "effect/unstable/rpc"
+import { ClusterSchema, Entity, EntityResource, Singleton } from "effect/cluster"
+import { Rpc } from "effect/rpc"
 import { type Backend, type ClusterRunner, make } from "./harness.ts"
 
 class Request extends Schema.Class<Request>("ClusterEntityRequest")({

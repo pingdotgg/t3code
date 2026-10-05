@@ -15,7 +15,9 @@
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type * as rolldown from "rolldown";
 import * as Bundle from "../../Bundle/Bundle.ts";
 import {
@@ -73,10 +75,12 @@ export interface FunctionBundleResult {
   /** Deferred archive build (performs native-package installs). */
   readonly buildArchive: Effect.Effect<
     { archive: Uint8Array<ArrayBufferLike>; archiveHash: string },
-    any,
-    any
+    Bundle.BundleError,
+    BundleServices
   >;
 }
+
+type BundleServices = FileSystem.FileSystem | Path.Path | ChildProcessSpawner;
 
 export const makeFunctionBundler = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -114,32 +118,34 @@ export const makeFunctionBundler = Effect.gen(function* () {
   // CJS `require`s of exports-mapped subpaths.
   const prebuiltCode: (
     realMain: string,
-  ) => Effect.Effect<FunctionBundleResult, any, any> = Effect.fn(function* (
-    realMain: string,
-  ) {
-    const lastSlash = realMain.lastIndexOf("/");
-    const dir = realMain.slice(0, lastSlash);
-    const files = yield* walkFiles(dir);
-    const archiveFiles: ZipFile[] = [];
-    const fileHashes: Record<string, string> = {};
-    for (const rel of files) {
-      const content = yield* fs.readFile(`${dir}/${rel}`);
-      archiveFiles.push({ path: rel, content });
-      fileHashes[rel] = yield* sha256(content);
-    }
-    const identityHash = yield* sha256Object(fileHashes);
-    const buildArchive = Effect.gen(function* () {
-      const archive = yield* zipFiles(archiveFiles);
-      return { archive, archiveHash: identityHash };
-    });
-    return { identityHash, buildArchive };
-  });
+  ) => Effect.Effect<FunctionBundleResult, PlatformError> = Effect.fn(
+    function* (realMain: string) {
+      const lastSlash = realMain.lastIndexOf("/");
+      const dir = realMain.slice(0, lastSlash);
+      const files = yield* walkFiles(dir);
+      const archiveFiles: ZipFile[] = [];
+      const fileHashes: Record<string, string> = {};
+      for (const rel of files) {
+        const content = yield* fs.readFile(`${dir}/${rel}`);
+        archiveFiles.push({ path: rel, content });
+        fileHashes[rel] = yield* sha256(content);
+      }
+      const identityHash = yield* sha256Object(fileHashes);
+      const buildArchive = Effect.gen(function* () {
+        const archive = yield* zipFiles(archiveFiles);
+        return { archive, archiveHash: identityHash };
+      });
+      return { identityHash, buildArchive };
+    },
+  );
 
   const resolveBundlePlan: (
     props: FunctionZipProps,
-  ) => Effect.Effect<FunctionBundlePlan, any, any> = Effect.fn(function* (
-    props: FunctionZipProps,
-  ) {
+  ) => Effect.Effect<
+    FunctionBundlePlan,
+    Bundle.BundleError | PlatformError,
+    FileSystem.FileSystem | Path.Path
+  > = Effect.fn(function* (props: FunctionZipProps) {
     const {
       output: buildOutput,
       install,
@@ -231,83 +237,86 @@ export default await bootstrap(entrypoint);
   const finishBundle: (
     plan: FunctionBundlePlan,
     bundleOutput: Bundle.BundleOutput,
-  ) => Effect.Effect<FunctionBundleResult, any, any> = Effect.fn(function* (
-    plan: FunctionBundlePlan,
-    bundleOutput: Bundle.BundleOutput,
-  ) {
-    const mainFile = bundleOutput.files[0];
-    const code =
-      typeof mainFile.content === "string"
-        ? new TextEncoder().encode(mainFile.content)
-        : mainFile.content;
+  ) => Effect.Effect<FunctionBundleResult, Bundle.BundleError, BundleServices> =
+    Effect.fn(function* (
+      plan: FunctionBundlePlan,
+      bundleOutput: Bundle.BundleOutput,
+    ) {
+      const mainFile = bundleOutput.files[0];
+      const code =
+        typeof mainFile.content === "string"
+          ? new TextEncoder().encode(mainFile.content)
+          : mainFile.content;
 
-    const includeSourceMaps =
-      plan.uploadSourceMap &&
-      (plan.sourcemap === true || plan.sourcemap === "hidden");
+      const includeSourceMaps =
+        plan.uploadSourceMap &&
+        (plan.sourcemap === true || plan.sourcemap === "hidden");
 
-    const extraFiles = bundleOutput.files
-      .slice(1)
-      .filter(
-        (f: Bundle.BundleFile) => includeSourceMaps || !f.path.endsWith(".map"),
-      )
-      .map((f: Bundle.BundleFile) => ({
-        path: f.path,
-        content: f.content,
-      }));
+      const extraFiles = bundleOutput.files
+        .slice(1)
+        .filter(
+          (f: Bundle.BundleFile) =>
+            includeSourceMaps || !f.path.endsWith(".map"),
+        )
+        .map((f: Bundle.BundleFile) => ({
+          path: f.path,
+          content: f.content,
+        }));
 
-    // Resolve install versions without running npm so `diff` can compare a
-    // stable identity hash. The archive build performs the install.
-    const installIdentity = yield* resolvePackageInstallIdentity({
-      cwd: plan.cwd,
-      requested: plan.requested,
-    });
-    const resolved = installIdentity.resolved;
-    const hasInstalledPackages = Object.keys(resolved).length > 0;
+      // Resolve install versions without running npm so `diff` can compare a
+      // stable identity hash. The archive build performs the install.
+      const installIdentity = yield* resolvePackageInstallIdentity({
+        cwd: plan.cwd,
+        requested: plan.requested,
+      });
+      const resolved = installIdentity.resolved;
+      const hasInstalledPackages = Object.keys(resolved).length > 0;
 
-    // Identity hash drives change detection in `diff`. With native packages,
-    // the installed bytes are not captured by the bundle hash, so fold the
-    // resolved versions, package-manager lockfile, and architecture in
-    // instead of installing.
-    const identityHash = hasInstalledPackages
-      ? yield* hashPackageInstallIdentity({
-          bundleHash: bundleOutput.hash,
-          identity: installIdentity,
-          architecture: plan.architecture,
-        })
-      : bundleOutput.hash;
-
-    const buildArchive = Effect.gen(function* () {
-      const installedPackageFiles = hasInstalledPackages
-        ? yield* installResolvedPackages({
-            resolved,
-            overrides: installIdentity.overrides,
+      // Identity hash drives change detection in `diff`. With native packages,
+      // the installed bytes are not captured by the bundle hash, so fold the
+      // resolved versions, package-manager lockfile, and architecture in
+      // instead of installing.
+      const identityHash = hasInstalledPackages
+        ? yield* hashPackageInstallIdentity({
+            bundleHash: bundleOutput.hash,
+            identity: installIdentity,
             architecture: plan.architecture,
           })
-        : [];
-      const archiveFiles = [...extraFiles, ...installedPackageFiles];
-      const archive = yield* zipCode(
-        code,
-        archiveFiles.length > 0 ? archiveFiles : undefined,
-      );
-      // The S3 asset key is content-addressed, so the archive hash must be a
-      // true hash of the bytes when native packages are present.
-      const archiveHash =
-        installedPackageFiles.length > 0
-          ? yield* sha256(archive)
-          : bundleOutput.hash;
-      return { archive, archiveHash };
-    });
+        : bundleOutput.hash;
 
-    return { identityHash, buildArchive };
-  });
+      const buildArchive = Effect.gen(function* () {
+        const installedPackageFiles = hasInstalledPackages
+          ? yield* installResolvedPackages({
+              resolved,
+              overrides: installIdentity.overrides,
+              architecture: plan.architecture,
+            })
+          : [];
+        const archiveFiles = [...extraFiles, ...installedPackageFiles];
+        const archive = yield* zipCode(
+          code,
+          archiveFiles.length > 0 ? archiveFiles : undefined,
+        );
+        // The S3 asset key is content-addressed, so the archive hash must be a
+        // true hash of the bytes when native packages are present.
+        const archiveHash =
+          installedPackageFiles.length > 0
+            ? yield* sha256(archive)
+            : bundleOutput.hash;
+        return { archive, archiveHash };
+      });
+
+      return { identityHash, buildArchive };
+    });
 
   const bundleCode: (
     id: string,
     props: FunctionZipProps,
-  ) => Effect.Effect<FunctionBundleResult, any, any> = Effect.fn(function* (
-    _id: string,
-    props: FunctionZipProps,
-  ) {
+  ) => Effect.Effect<
+    FunctionBundleResult,
+    Bundle.BundleError | PlatformError,
+    BundleServices
+  > = Effect.fn(function* (_id: string, props: FunctionZipProps) {
     if (props.bundle === false) {
       const realMain = yield* TempRoot.resolveMainPath(props.main);
       return yield* prebuiltCode(realMain);

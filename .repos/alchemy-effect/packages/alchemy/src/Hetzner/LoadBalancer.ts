@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import type {
   CreateLoadBalancerRequestServicesItem,
   GetLoadBalancerResponseLoadBalancer,
@@ -450,6 +450,7 @@ export type LoadBalancer = Resource<
  * ```
  *
  * @resource
+ * @product Load Balancer
  */
 export const LoadBalancer = Resource<LoadBalancer>("Hetzner.LoadBalancer");
 
@@ -1043,13 +1044,13 @@ const createLoadBalancerName = (
   });
 
 const getById = (id: number) =>
-  Services.loadBalancers.getLoadBalancer({ id }).pipe(
+  Hetzner.loadBalancers.getLoadBalancer({ id }).pipe(
     Effect.map(({ load_balancer }) => load_balancer),
     Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
   );
 
 const getByName = (name: string) =>
-  Services.loadBalancers
+  Hetzner.loadBalancers
     .listLoadBalancers({ name, per_page: 50 })
     .pipe(
       Effect.map(({ load_balancers }) =>
@@ -1058,7 +1059,7 @@ const getByName = (name: string) =>
     );
 
 const getByLabels = (labels: Record<string, string>) =>
-  Services.loadBalancers
+  Hetzner.loadBalancers
     .listLoadBalancers({
       label_selector: labelSelector(labels),
       per_page: 50,
@@ -1087,7 +1088,7 @@ const observe = Effect.fn(function* ({
 });
 
 const refresh = (id: number) =>
-  Services.loadBalancers.getLoadBalancer({ id }).pipe(
+  Hetzner.loadBalancers.getLoadBalancer({ id }).pipe(
     Effect.map(({ load_balancer }) => load_balancer),
     Effect.retry({
       while: (e) => e._tag === "NotFound" || retryable(e),
@@ -1132,7 +1133,7 @@ const syncMetadata = (args: {
     const labelsChanged = removed.length > 0 || upsert.length > 0;
     const nameChanged = args.current.name !== args.name;
     if (!labelsChanged && !nameChanged) return args.current;
-    const updated = yield* Services.loadBalancers
+    const updated = yield* Hetzner.loadBalancers
       .updateLoadBalancer({
         id: args.current.id,
         name: nameChanged ? args.name : undefined,
@@ -1149,7 +1150,7 @@ const syncAlgorithm = (
   Effect.gen(function* () {
     if (asAlgorithm(current.algorithm.type) === desired) return;
     yield* runAction(
-      Services.loadBalancerActions.changeLoadBalancerAlgorithm({
+      Hetzner.loadBalancerActions.changeLoadBalancerAlgorithm({
         id: current.id,
         type: desired,
       }),
@@ -1160,7 +1161,7 @@ const syncType = (current: CloudLoadBalancer, desired: string) =>
   Effect.gen(function* () {
     if (current.load_balancer_type.name === desired) return;
     yield* runAction(
-      Services.loadBalancerActions.changeLoadBalancerType({
+      Hetzner.loadBalancerActions.changeLoadBalancerType({
         id: current.id,
         load_balancer_type: desired,
       }),
@@ -1171,7 +1172,7 @@ const syncProtection = (current: CloudLoadBalancer, desired: boolean) =>
   Effect.gen(function* () {
     if (current.protection.delete === desired) return;
     yield* runAction(
-      Services.loadBalancerActions.changeLoadBalancerProtection({
+      Hetzner.loadBalancerActions.changeLoadBalancerProtection({
         id: current.id,
         delete: desired,
       }),
@@ -1183,14 +1184,14 @@ const syncPublicInterface = (current: CloudLoadBalancer, desired: boolean) =>
     if (current.public_net.enabled === desired) return;
     if (desired) {
       yield* runAction(
-        Services.loadBalancerActions.enableLoadBalancerPublicInterface({
+        Hetzner.loadBalancerActions.enableLoadBalancerPublicInterface({
           id: current.id,
         }),
       );
       return;
     }
     yield* runAction(
-      Services.loadBalancerActions.disableLoadBalancerPublicInterface({
+      Hetzner.loadBalancerActions.disableLoadBalancerPublicInterface({
         id: current.id,
       }),
     );
@@ -1212,7 +1213,7 @@ const syncServices = (
     for (const service of observed) {
       if (desiredByPort.has(service.listenPort)) continue;
       yield* runAction(
-        Services.loadBalancerActions.deleteLoadBalancerService({
+        Hetzner.loadBalancerActions.deleteLoadBalancerService({
           id: loadBalancerId,
           listen_port: service.listenPort,
         }),
@@ -1223,7 +1224,7 @@ const syncServices = (
       const existing = observedByPort.get(service.listenPort);
       if (existing === undefined) {
         yield* runAction(
-          Services.loadBalancerActions.addLoadBalancerService({
+          Hetzner.loadBalancerActions.addLoadBalancerService({
             id: loadBalancerId,
             protocol: service.protocol,
             listen_port: service.listenPort,
@@ -1244,7 +1245,7 @@ const syncServices = (
         continue;
       }
       yield* runAction(
-        Services.loadBalancerActions.updateLoadBalancerService({
+        Hetzner.loadBalancerActions.updateLoadBalancerService({
           id: loadBalancerId,
           protocol: service.protocol,
           listen_port: service.listenPort,
@@ -1259,7 +1260,7 @@ const syncServices = (
 
 const addTargetRequest = (loadBalancerId: number, target: NormalizedTarget) => {
   if (target.type === "server") {
-    return Services.loadBalancerActions.addLoadBalancerTarget({
+    return Hetzner.loadBalancerActions.addLoadBalancerTarget({
       id: loadBalancerId,
       type: "server",
       server: {
@@ -1270,14 +1271,14 @@ const addTargetRequest = (loadBalancerId: number, target: NormalizedTarget) => {
     });
   }
   if (target.type === "label_selector") {
-    return Services.loadBalancerActions.addLoadBalancerTarget({
+    return Hetzner.loadBalancerActions.addLoadBalancerTarget({
       id: loadBalancerId,
       type: "label_selector",
       label_selector: { selector: target.selector },
       use_private_ip: target.usePrivateIp,
     });
   }
-  return Services.loadBalancerActions.addLoadBalancerTarget({
+  return Hetzner.loadBalancerActions.addLoadBalancerTarget({
     id: loadBalancerId,
     type: "ip",
     ip: { ip: target.ip },
@@ -1289,7 +1290,7 @@ const removeTargetRequest = (
   target: NormalizedTarget,
 ) => {
   if (target.type === "server") {
-    return Services.loadBalancerActions.removeLoadBalancerTarget({
+    return Hetzner.loadBalancerActions.removeLoadBalancerTarget({
       id: loadBalancerId,
       type: "server",
       server: {
@@ -1299,13 +1300,13 @@ const removeTargetRequest = (
     });
   }
   if (target.type === "label_selector") {
-    return Services.loadBalancerActions.removeLoadBalancerTarget({
+    return Hetzner.loadBalancerActions.removeLoadBalancerTarget({
       id: loadBalancerId,
       type: "label_selector",
       label_selector: { selector: target.selector },
     });
   }
-  return Services.loadBalancerActions.removeLoadBalancerTarget({
+  return Hetzner.loadBalancerActions.removeLoadBalancerTarget({
     id: loadBalancerId,
     type: "ip",
     ip: { ip: target.ip },
@@ -1354,7 +1355,7 @@ const syncNetworks = (
     for (const item of observed) {
       if (desiredIds.has(item.networkId)) continue;
       yield* runAction(
-        Services.loadBalancerActions.detachLoadBalancerFromNetwork({
+        Hetzner.loadBalancerActions.detachLoadBalancerFromNetwork({
           id: loadBalancerId,
           network: item.networkId,
         }),
@@ -1364,7 +1365,7 @@ const syncNetworks = (
     for (const networkId of desired) {
       if (observedIds.has(networkId)) continue;
       yield* runAction(
-        Services.loadBalancerActions.attachLoadBalancerToNetwork({
+        Hetzner.loadBalancerActions.attachLoadBalancerToNetwork({
           id: loadBalancerId,
           network: networkId,
         }),
@@ -1377,7 +1378,7 @@ export const LoadBalancerProvider = () =>
     stables: ["id", "location", "locationId", "networkZone", "created"],
 
     list: Effect.fn(function* () {
-      const items = yield* Services.loadBalancers.listLoadBalancers
+      const items = yield* Hetzner.loadBalancers.listLoadBalancers
         .items({ label_selector: alchemyStackSelector, per_page: 50 })
         .pipe(
           Stream.runCollect,
@@ -1450,7 +1451,7 @@ export const LoadBalancerProvider = () =>
       }
 
       if (current === undefined) {
-        const created = yield* Services.loadBalancers
+        const created = yield* Hetzner.loadBalancers
           .createLoadBalancer({
             name,
             load_balancer_type: loadBalancerType,
@@ -1527,14 +1528,14 @@ export const LoadBalancerProvider = () =>
 
       if (current.protection.delete) {
         yield* runAction(
-          Services.loadBalancerActions.changeLoadBalancerProtection({
+          Hetzner.loadBalancerActions.changeLoadBalancerProtection({
             id: current.id,
             delete: false,
           }),
         ).pipe(Effect.catchIf(alreadyGone, () => Effect.void));
       }
 
-      yield* Services.loadBalancers.deleteLoadBalancer({ id: current.id }).pipe(
+      yield* Hetzner.loadBalancers.deleteLoadBalancer({ id: current.id }).pipe(
         Effect.catchTag("NotFound", () => Effect.void),
         Effect.retry({
           while: retryable,

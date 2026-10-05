@@ -1,7 +1,7 @@
 import { splitSqlStatements } from "@/SQL/SqlFile";
 import { describe, expect, test } from "alchemy-test";
 
-describe("SqlFile", () => {
+describe("SqlFile", { tags: ["unit", "local"] }, () => {
   describe("splitSqlStatements", () => {
     test("splits statements separated by breakpoints on their own line", () => {
       const sql = [

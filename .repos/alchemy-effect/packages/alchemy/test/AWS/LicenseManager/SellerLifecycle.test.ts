@@ -8,8 +8,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import LicenseManagerSellerFunctionLive, {
   LicenseManagerSellerFunction,
 } from "./seller-handler";
@@ -92,143 +92,156 @@ const postJson = (path: string) =>
     Effect.flatMap((r) => r.json),
   );
 
-describe.sequential("LicenseManager Seller Lifecycle", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "LicenseManager seller setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+describe.sequential(
+  "LicenseManager Seller Lifecycle",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:licensemanager",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "LicenseManager seller setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("LicenseManager seller setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* LicenseManagerSellerFunction;
-        }).pipe(Effect.provide(LicenseManagerSellerFunctionLive)),
-      );
+        yield* Effect.logInfo("LicenseManager seller setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* LicenseManagerSellerFunction;
+          }).pipe(Effect.provide(LicenseManagerSellerFunctionLive)),
+        );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `LicenseManager seller setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `LicenseManager seller setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `LicenseManager seller setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `LicenseManager seller setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
+
+    describe("binding registration", () => {
+      test.provider(
+        "all 9 seller-plane capabilities initialize in the runtime",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/bindings")) as {
+              bound: string[];
+            };
+            expect(response.bound).toHaveLength(9);
+          }),
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
+    describe("seller data plane", { tags: ["provider:aws:iam"] }, () => {
+      test.provider(
+        "issue -> version -> token mint/exchange -> checkout/extend/checkin -> grant -> delete",
+        (_stack) =>
+          Effect.gen(function* () {
+            yield* ensureOnboarded;
+            const { Account } = yield* sts.getCallerIdentity({});
+            const response = (yield* postJson(
+              `/lifecycle?account=${Account}`,
+            )) as {
+              licenseArn: string;
+              licenseStatus: string | null;
+              bumpedVersion: string | null;
+              tokenListed: number;
+              accessToken: string;
+              checkedOut: boolean;
+              extended: boolean;
+              grant: string;
+              deletionStatus: string | null;
+            };
 
-  describe("binding registration", () => {
-    test.provider(
-      "all 9 seller-plane capabilities initialize in the runtime",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/bindings")) as {
-            bound: string[];
-          };
-          expect(response.bound).toHaveLength(9);
-        }),
-    );
-  });
+            // CreateLicense issued a real license that reached AVAILABLE.
+            expect(response.licenseArn).toContain(":license:");
+            expect(response.licenseStatus).toBe("AVAILABLE");
+            // CreateLicenseVersion published version 2.
+            expect(response.bumpedVersion).toBe("2");
+            // CreateToken + ListTokens round-tripped the token metadata.
+            expect(response.tokenListed).toBe(1);
+            // GetAccessToken exchanged the (Redacted) refresh token — or
+            // surfaced one of its typed rejections; both prove the grant.
+            expect([
+              "Ok",
+              "AuthorizationException",
+              "ValidationException",
+              "AccessDeniedException",
+              "InvalidParameterValueException",
+            ]).toContain(response.accessToken);
+            // CheckoutLicense / ExtendLicenseConsumption ran for real.
+            expect(response.checkedOut).toBe(true);
+            expect(response.extended).toBe(true);
+            // CreateGrant + DeleteGrant — a self-account grant may be rejected
+            // with a typed validation error; both outcomes prove the wiring.
+            expect([
+              "CreatedAndDeleted",
+              "InvalidParameterValueException",
+              "ValidationException",
+              "AuthorizationException",
+              "ResourceLimitExceededException",
+            ]).toContain(response.grant);
+            // DeleteLicense retired it.
+            expect(["PENDING_DELETE", "DELETED"]).toContain(
+              response.deletionStatus,
+            );
 
-  describe("seller data plane", () => {
-    test.provider(
-      "issue -> version -> token mint/exchange -> checkout/extend/checkin -> grant -> delete",
-      (_stack) =>
-        Effect.gen(function* () {
-          yield* ensureOnboarded;
-          const { Account } = yield* sts.getCallerIdentity({});
-          const response = (yield* postJson(
-            `/lifecycle?account=${Account}`,
-          )) as {
-            licenseArn: string;
-            licenseStatus: string | null;
-            bumpedVersion: string | null;
-            tokenListed: number;
-            accessToken: string;
-            checkedOut: boolean;
-            extended: boolean;
-            grant: string;
-            deletionStatus: string | null;
-          };
+            // Out-of-band zero-orphan verification via distilled: no fixture
+            // license remains AVAILABLE.
+            const { Licenses } = yield* licensemanager.listLicenses({});
+            const leftovers = (Licenses ?? []).filter(
+              (l): boolean =>
+                l.LicenseName === FIXTURE_LICENSE_NAME &&
+                l.Status === "AVAILABLE",
+            );
+            expect(leftovers).toHaveLength(0);
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-          // CreateLicense issued a real license that reached AVAILABLE.
-          expect(response.licenseArn).toContain(":license:");
-          expect(response.licenseStatus).toBe("AVAILABLE");
-          // CreateLicenseVersion published version 2.
-          expect(response.bumpedVersion).toBe("2");
-          // CreateToken + ListTokens round-tripped the token metadata.
-          expect(response.tokenListed).toBe(1);
-          // GetAccessToken exchanged the (Redacted) refresh token — or
-          // surfaced one of its typed rejections; both prove the grant.
-          expect([
-            "Ok",
-            "AuthorizationException",
-            "ValidationException",
-            "AccessDeniedException",
-            "InvalidParameterValueException",
-          ]).toContain(response.accessToken);
-          // CheckoutLicense / ExtendLicenseConsumption ran for real.
-          expect(response.checkedOut).toBe(true);
-          expect(response.extended).toBe(true);
-          // CreateGrant + DeleteGrant — a self-account grant may be rejected
-          // with a typed validation error; both outcomes prove the wiring.
-          expect([
-            "CreatedAndDeleted",
-            "InvalidParameterValueException",
-            "ValidationException",
-            "AuthorizationException",
-            "ResourceLimitExceededException",
-          ]).toContain(response.grant);
-          // DeleteLicense retired it.
-          expect(["PENDING_DELETE", "DELETED"]).toContain(
-            response.deletionStatus,
-          );
-
-          // Out-of-band zero-orphan verification via distilled: no fixture
-          // license remains AVAILABLE.
-          const { Licenses } = yield* licensemanager.listLicenses({});
-          const leftovers = (Licenses ?? []).filter(
-            (l): boolean =>
-              l.LicenseName === FIXTURE_LICENSE_NAME &&
-              l.Status === "AVAILABLE",
-          );
-          expect(leftovers).toHaveLength(0);
-        }),
-      { timeout: 120_000 },
-    );
-  });
-
-  describe("CreateGrantVersion", () => {
-    test.provider(
-      "surfaces a typed rejection for a nonexistent grant ARN (proving the grant)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/grant-version-invalid")) as {
-            tag: string;
-          };
-          expect([
-            "InvalidParameterValueException",
-            "ValidationException",
-            "AuthorizationException",
-          ]).toContain(response.tag);
-        }),
-      { timeout: 60_000 },
-    );
-  });
-});
+    describe("CreateGrantVersion", () => {
+      test.provider(
+        "surfaces a typed rejection for a nonexistent grant ARN (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/grant-version-invalid")) as {
+              tag: string;
+            };
+            expect([
+              "InvalidParameterValueException",
+              "ValidationException",
+              "AuthorizationException",
+            ]).toContain(response.tag);
+          }),
+        { timeout: 60_000 },
+      );
+    });
+  },
+);

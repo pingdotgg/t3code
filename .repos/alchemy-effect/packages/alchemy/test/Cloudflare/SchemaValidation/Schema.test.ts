@@ -156,7 +156,15 @@ test.provider(
         .pipe(Effect.flip);
       expect(gone._tag).toEqual("SchemaNotFound");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:schemavalidation",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): `list()` enumerates every
@@ -197,5 +205,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:schemavalidation",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

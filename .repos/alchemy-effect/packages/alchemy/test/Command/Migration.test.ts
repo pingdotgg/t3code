@@ -97,7 +97,7 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["local"], timeout: 60000 },
 );
 
 // ─────────────────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["local"], timeout: 60000 },
 );
 
 // ─────────────────────────────────────────────────────────────────────
@@ -189,5 +189,5 @@ test.provider(
 
       expect(yield* getState("orphan-build")).toBeUndefined();
     }),
-  { timeout: 60000 },
+  { tags: ["local"], timeout: 60000 },
 );

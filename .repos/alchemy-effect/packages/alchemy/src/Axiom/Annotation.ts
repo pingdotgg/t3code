@@ -54,6 +54,7 @@ export type Annotation = Resource<
  * ```
  *
  * @resource
+ * @product Dataset
  */
 export const Annotation = Resource<Annotation>("Axiom.Annotation");
 

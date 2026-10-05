@@ -313,6 +313,7 @@ export type SpriteRuntimeContext = FlyHostRuntimeContext;
  * ```
  *
  * @resource
+ * @product Sprite
  */
 export const Sprite: Platform<
   Sprite,

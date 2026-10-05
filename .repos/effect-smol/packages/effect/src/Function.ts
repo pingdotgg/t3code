@@ -1379,7 +1379,9 @@ export function memoizeIdempotent<A extends object>(f: (a: A) => A): (a: A) => A
     if (cached !== undefined) return cached
     const result = f(a)
     cache.set(a, result)
-    cache.set(result, result)
+    if (result !== a) {
+      cache.set(result, result)
+    }
     return result
   }
 }

@@ -1,5 +1,5 @@
-import * as CliOutput from "effect/unstable/cli/CliOutput";
-import type { FlagDoc, HelpDoc } from "effect/unstable/cli/HelpDoc";
+import * as CliOutput from "effect/cli/CliOutput";
+import type { FlagDoc, HelpDoc } from "effect/cli/HelpDoc";
 
 /**
  * Compact enum-style flag types so one long choice list (`--log-level`'s

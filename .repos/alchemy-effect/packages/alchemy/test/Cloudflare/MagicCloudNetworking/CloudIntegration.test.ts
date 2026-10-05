@@ -88,28 +88,44 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+  },
 );
 
-test.provider("list returns a well-typed array of integrations", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list returns a well-typed array of integrations",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.MagicCloudNetworking.CloudIntegration,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicCloudNetworking.CloudIntegration,
+      );
+      const all = yield* provider.list();
 
-    // On an unentitled account `list()` catches the typed `FeatureNotEnabled`
-    // tag and yields `[]`; on an entitled account it enumerates every
-    // integration. Either way the result is the full Attributes array.
-    expect(Array.isArray(all)).toBe(true);
-    for (const item of all) {
-      expect(typeof item.integrationId).toBe("string");
-      expect(typeof item.accountId).toBe("string");
-    }
+      // On an unentitled account `list()` catches the typed `FeatureNotEnabled`
+      // tag and yields `[]`; on an entitled account it enumerates every
+      // integration. Either way the result is the full Attributes array.
+      expect(Array.isArray(all)).toBe(true);
+      for (const item of all) {
+        expect(typeof item.integrationId).toBe("string");
+        expect(typeof item.accountId).toBe("string");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -136,7 +152,14 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -192,7 +215,14 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(accountId, integration.integrationId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -228,5 +258,12 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(accountId, replaced.integrationId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

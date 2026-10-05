@@ -25,7 +25,7 @@ const makeDb = () => ({
 
 type Db = ReturnType<typeof makeDb>;
 
-describe("proxyChain", () => {
+describe("proxyChain", { tags: ["unit", "local"], timeout: 5000 }, () => {
   it.effect("replays a property-read + call chain when yielded", () =>
     Effect.gen(function* () {
       const db = proxyChain<Db>(Effect.succeed(makeDb()));
@@ -290,4 +290,4 @@ describe("proxyChain", () => {
         }),
     );
   });
-}, 5000);
+});

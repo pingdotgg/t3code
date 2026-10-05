@@ -68,6 +68,7 @@ const firstUrl = (
  * ```
  *
  * @layer
+ * @product Postgres
  * @provides Railway.ConnectPostgres
  */
 export const ConnectPostgresHttp = Layer.effect(

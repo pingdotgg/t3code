@@ -1,0 +1,155 @@
+---
+title: Drizzle Postgres on Prisma Compute
+description: Use Alchemy's Prisma hosting provider to run a Drizzle API against Prisma Postgres.
+---
+
+Prisma here means Alchemy's Prisma hosting and database provider, not Prisma ORM. Complete [Prisma setup](/prisma/setup), start from the [prisma-compute-effect example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-compute-effect), and add a `src/schema.ts` exporting `Users` from the [Postgres client guide](/sql/drizzle/postgres).
+
+## Install the database dependencies
+
+```sh
+pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg
+pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+```
+
+The Drizzle versions match the repository's Effect integration.
+
+## Configure migrations
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/schema.ts",
+  out: "./drizzle",
+  dbCredentials: { url: process.env.DATABASE_URL! },
+});
+```
+
+The migration runner needs the direct Postgres connection URL, not an Accelerate URL.
+
+## Generate after changing the schema
+
+```sh
+pnpm exec drizzle-kit generate
+```
+
+Review the generated SQL and snapshots, including any rename decisions, before applying them.
+
+## Commit the migration
+
+```sh
+git add src/schema.ts drizzle.config.ts drizzle
+git diff --cached
+```
+
+```sh
+git commit -m "Add users migration"
+```
+
+Commit the schema, SQL, and snapshots together; deployment consumes this reviewed history.
+
+## Keep the standalone database
+
+The starter's `src/Database.ts` creates an explicit [Prisma Postgres database](/prisma/data/postgres) rather than relying on the project's default database:
+
+```typescript
+export const Postgres = Prisma.Postgres(
+  "Postgres",
+  Effect.gen(function* () {
+    const project = yield* Project;
+    return { project, region, branchGitName: "main" };
+  }),
+);
+```
+
+Keep `createDatabase: false` on `Project`, and use the same project and branch for Compute.
+
+## Keep the connection resource
+
+```typescript
+export const Connection = Prisma.Connection(
+  "Connection",
+  Effect.gen(function* () {
+    const postgres = yield* Postgres;
+    return { database: postgres, name: "api" };
+  }),
+);
+```
+
+This is the starter's [connection resource](/prisma/data/connections); its redacted outputs include direct and pooled URLs when available.
+
+## Keep the Compute binding
+
+```typescript
+// Inside the runtime Effect in src/Api.ts
+const db = yield* Prisma.Connect(Connection);
+```
+
+```typescript
+// On that runtime Effect
+.pipe(Effect.provide(Prisma.ConnectBinding))
+```
+
+`Prisma.Compute<Api>()` uses `main: import.meta.filename` and binds connection values into its environment. `db.databaseUrl` is the connection Effect to pass to Drizzle, not a SQL execution method.
+
+## Provision before the first migration
+
+```sh
+pnpm alchemy deploy
+```
+
+Keep the starter's `Prisma.providers()`, `yield* Api`, and `/api/health` handler for this initial deployment. Its connection-binding check does not query application tables.
+
+## Apply the committed SQL
+
+```sh
+pnpm exec drizzle-kit migrate
+```
+
+Supply the connection resource's `directConnectionString` output as the migration runner's secret `DATABASE_URL`; it must contain a PostgreSQL URL, not be absent or Accelerate-only. `Prisma.Postgres` has no production `migrations` prop, and `dev.migrate` only runs against the local development database.
+
+## Open the Drizzle client
+
+```diff lang="typescript"
+ // src/Api.ts
++import * as Drizzle from "alchemy/Drizzle/Postgres";
+
+ const db = yield* Prisma.Connect(Connection);
++const database = yield* Drizzle.Postgres(db.databaseUrl);
+```
+
+`databaseUrl` prefers pooled Postgres and then direct Postgres; use a connection that actually has one of those URLs, since Drizzle's `pg` driver cannot use an Accelerate-only fallback.
+
+## Query from Compute
+
+Import `Users` from `./schema.ts` and replace the starter's `fetch` handler:
+
+```typescript
+fetch: Effect.gen(function* () {
+  const request = yield* HttpServerRequest;
+  const path = new URL(request.url, "http://localhost").pathname;
+  if (path === "/api/health") {
+    return yield* HttpServerResponse.json({ ok: true });
+  }
+  const users = yield* database.select().from(Users).pipe(Effect.orDie);
+  return yield* HttpServerResponse.json({ users });
+}),
+```
+
+Keep the existing `healthCheck: { path: "/api/health" }`; application queries now run within the request scope.
+
+## Deploy and exercise the query
+
+```sh
+pnpm alchemy deploy
+curl "$API_URL/"
+```
+
+Set `API_URL` to the Stack's `url` output and verify the query response, not just `/api/health`. For later changes, generate, review, and commit first, then apply migrations and deploy compatible code; `alchemy deploy` does not replace `drizzle-kit migrate`.
+
+## Continue
+
+See the [Prisma Postgres guide](/prisma/data/postgres), [Compute deployment guide](/prisma/compute/apps), [portable Postgres queries](/sql/drizzle/postgres), and [migration workflow](/sql/drizzle/migrations). The [Prisma tutorial example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-tutorial) exercises the same Postgres driver through `SQL.Postgres` in Compute.

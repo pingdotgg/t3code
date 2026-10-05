@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { dotAlchemyDirectory } from "../../../AlchemyContext.ts";
 import * as FileSystem from "effect/FileSystem";
 import { flow } from "effect/Function";
 import type * as Path from "effect/Path";
@@ -8,23 +9,19 @@ import type * as rolldown from "rolldown";
 import * as Artifacts from "../../../Artifacts.ts";
 import * as Bundle from "../../../Bundle/Bundle.ts";
 import { findCwdForBundle, resolveMainPath } from "../../../Bundle/TempRoot.ts";
-import {
-  isWorkflowExport,
-  type WorkflowExport,
-} from "../../Workflows/Workflow.ts";
-import {
-  isDurableObjectExport,
-  type DurableObjectExport,
-} from "../DurableObject.ts";
+import { isWorkflowExport } from "../../Workflows/Workflow.ts";
+import { isDurableObjectExport } from "../DurableObject.ts";
 import type { SourceContext, SourceProvider } from "../Source.ts";
 import { bundleSource } from "./shared.ts";
 import { workerModulePlugin } from "./WorkerModulePlugin.ts";
+import type { WorkerExport } from "../WorkerRuntimeContext.ts";
+import type { SqlMigrationSnapshot } from "../SqlMigrationsRuntime.ts";
 
 /**
- * Bundler options for a Worker: the generic {@link Bundle.BundleExtraOptions}
- * plus rolldown output overrides merged over Alchemy's defaults.
+ * Bundler options for a Worker: Rolldown input/output overrides and
+ * {@link Bundle.BundleExtraOptions}, merged over Alchemy's defaults.
  */
-export interface WorkerBuildOptions extends Bundle.BundleExtraOptions {
+export interface WorkerBuildOptions extends Bundle.BundleConfig {
   /**
    * Rolldown output options merged over Alchemy's defaults. Use this to
    * control chunking (`codeSplitting`), minification, etc.
@@ -52,7 +49,7 @@ export interface WorkerBundleOptions {
       }
     | {
         kind: "effect";
-        exports: Record<string, DurableObjectExport | WorkflowExport>;
+        exports: Record<string, WorkerExport>;
       };
   stack: { name: string; stage: string };
   extraOptions: WorkerBuildOptions | undefined;
@@ -75,11 +72,32 @@ export interface WorkerBundleOptions {
  * actually invoke makes the identity check pass regardless of which copy the
  * plugin package resolved.
  */
-const rebindEsmExternalRequirePlugin = (
+const configureCloudflarePlugins = (
   plugins: Array<rolldown.Plugin | null>,
   esmExternalRequirePlugin: (typeof import("rolldown/plugins"))["esmExternalRequirePlugin"],
-): Array<rolldown.Plugin | null> =>
-  plugins.map((plugin) => {
+  aliases: NonNullable<rolldown.InputOptions["resolve"]>["alias"],
+): Array<rolldown.Plugin | null> => {
+  const aliasKeys = Object.entries(aliases ?? {})
+    .filter(([, value]) => !Array.isArray(value) || value.length > 0)
+    .map(([key]) => key);
+  const isAliased = (id: string) =>
+    aliasKeys.some((key) => {
+      if (key.endsWith("$")) return id === key.slice(0, -1);
+      const wildcard = key.indexOf("*");
+      if (wildcard !== -1) {
+        const prefix = key.slice(0, wildcard);
+        const suffix = key.slice(wildcard + 1);
+        return (
+          id.length >= prefix.length + suffix.length &&
+          id.startsWith(prefix) &&
+          id.endsWith(suffix)
+        );
+      }
+      return (
+        id === key || id.startsWith(`${key}/`) || id.startsWith(`${key}\\`)
+      );
+    });
+  return plugins.map((plugin) => {
     if (
       typeof plugin === "object" &&
       plugin !== null &&
@@ -87,16 +105,41 @@ const rebindEsmExternalRequirePlugin = (
       plugin.name === "builtin:esm-external-require" &&
       "_options" in plugin
     ) {
+      const options = plugin._options as Parameters<
+        typeof esmExternalRequirePlugin
+      >[0];
       return esmExternalRequirePlugin(
-        plugin._options as Parameters<typeof esmExternalRequirePlugin>[0],
+        options && {
+          ...options,
+          external: options.external.filter(
+            (id) => typeof id !== "string" || !isAliased(id),
+          ),
+        },
       ) as rolldown.Plugin;
+    }
+    // Let Rolldown resolve user aliases before compatibility polyfills.
+    if (plugin?.resolveId && aliasKeys.length > 0) {
+      const hook = plugin.resolveId;
+      const handler = typeof hook === "function" ? hook : hook.handler;
+      return {
+        ...plugin,
+        resolveId: {
+          ...(typeof hook === "function" ? {} : hook),
+          handler(source, importer, options) {
+            if (isAliased(source)) return null;
+            return handler.call(this, source, importer, options);
+          },
+        },
+      };
     }
     return plugin;
   });
+};
 
 export const WorkerBundle = Effect.gen(function* () {
   const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const virtualEntryPlugin = yield* Bundle.virtualEntryPlugin;
+  const dotAlchemy = yield* dotAlchemyDirectory;
 
   const makeOptions = Effect.fn(function* (options: WorkerBundleOptions) {
     // Loaded lazily so importing the Cloudflare provider (or the CLI, whose
@@ -122,25 +165,31 @@ export const WorkerBundle = Effect.gen(function* () {
     );
     // The Cloudflare-flavored plugin set, shared by the parent build and
     // by every nested `?worker` module build (see WorkerModulePlugin.ts).
+    const overrides = options.extraOptions?.input;
     const cloudflarePlugins = () =>
-      rebindEsmExternalRequirePlugin(
+      configureCloudflarePlugins(
         cloudflareRolldown({
           compatibilityDate: options.compatibility.date,
           compatibilityFlags: options.compatibility.flags,
         }),
         esmExternalRequirePlugin,
+        overrides?.resolve?.alias,
       );
     const workerModules: rolldown.Plugin = workerModulePlugin({
       loadRolldown: () => import("rolldown"),
       nested: async () => ({
         external: ["lightningcss", "fsevents"],
         cwd,
-        plugins: [cloudflarePlugins(), workerModules],
-        checks: { unresolvedImport: false, ineffectiveDynamicImport: false },
+        ...overrides,
+        plugins: [overrides?.plugins, cloudflarePlugins(), workerModules],
+        checks: {
+          unresolvedImport: false,
+          ineffectiveDynamicImport: false,
+          ...overrides?.checks,
+        },
       }),
     });
     const inputOptions: rolldown.InputOptions = {
-      input: realMain,
       preserveEntrySignatures: options.extraOptions?.preserveEntrySignatures,
       // Forever-devtool native modules that vite/chokidar reference behind
       // runtime guards. Rolldown resolves before tree-shaking, so the dead
@@ -149,7 +198,10 @@ export const WorkerBundle = Effect.gen(function* () {
       // See rolldown/tsdown#212.
       external: ["lightningcss", "fsevents"],
       cwd,
+      ...overrides,
+      input: realMain,
       plugins: [
+        overrides?.plugins,
         cloudflarePlugins(),
         workerModules,
         options.entry.kind === "effect"
@@ -165,6 +217,7 @@ export const WorkerBundle = Effect.gen(function* () {
         unresolvedImport: false,
         // The shared platform boundary keeps guarded Node/Bun adapter imports.
         ineffectiveDynamicImport: false,
+        ...overrides?.checks,
       },
     };
     const outputOptions: rolldown.OutputOptions = {
@@ -181,7 +234,7 @@ export const WorkerBundle = Effect.gen(function* () {
       // modules so evaluation follows ESM semantics regardless of how the
       // graph was chunked. See DrizzleSchemaChunks.test.ts.
       strictExecutionOrder: true,
-      dir: `.alchemy/bundles/${options.id}`,
+      dir: path.join(dotAlchemy, "bundles", options.id),
       ...options.extraOptions?.output,
     };
     return { inputOptions, outputOptions, extraOptions: options.extraOptions };
@@ -225,31 +278,35 @@ export const WorkerBundle = Effect.gen(function* () {
 });
 
 export const makeEffectVirtualEntry = (
-  exports: Record<string, DurableObjectExport | WorkflowExport>,
+  exports: Record<string, WorkerExport>,
   stack: { name: string; stage: string },
 ) => {
   const doClasses: string[] = [];
   const wfClasses: string[] = [];
+  const migrations: Record<string, SqlMigrationSnapshot> = {};
   for (const [className, entry] of Object.entries(exports)) {
     if (isDurableObjectExport(entry)) {
       doClasses.push(className);
     } else if (isWorkflowExport(entry)) {
       wfClasses.push(className);
+    } else if (entry.kind === "sqlMigrations") {
+      migrations[className] = entry.snapshot;
     }
   }
+  const hasMigrations = Object.keys(migrations).length > 0;
   const hasDoClasses = doClasses.length > 0;
   const hasWfClasses = wfClasses.length > 0;
   return (importPath: string) => `
 import * as Effect from "effect/Effect";
 
 import { env, DurableObject, WorkerEntrypoint${hasWfClasses ? ", WorkflowEntrypoint" : ""} } from "cloudflare:workers";
-import { makeDurableObjectBridge, makeWorkerBridge${hasWfClasses ? ", makeWorkflowBridge" : ""} } from "alchemy/Cloudflare/Bridge";
+import { makeDurableObjectBridge, makeWorkerBridge${hasWfClasses ? ", makeWorkflowBridge" : ""}${hasMigrations ? ", withSqlMigrations" : ""} } from "alchemy/Cloudflare/Bridge";
 import { makeEntrypointLayer } from "alchemy/Runtime";
 
 import entrypoint from ${JSON.stringify(importPath)};
 
 const meta = {
-  entrypoint,
+  entrypoint: ${hasMigrations ? `withSqlMigrations(entrypoint, ${JSON.stringify(migrations)})` : "entrypoint"},
   stack: {
     name: ${JSON.stringify(stack.name)},
     stage: ${JSON.stringify(stack.stage)},

@@ -64,5 +64,13 @@ test.provider(
       const gone = yield* describeResource(created.location.resourceArn);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lakeformation",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

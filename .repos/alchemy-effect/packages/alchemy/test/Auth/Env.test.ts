@@ -18,47 +18,59 @@ const provideConfig = (values: Record<string, unknown>) =>
     ConfigProvider.fromUnknown(values),
   );
 
-it.effect("reads optional environment configuration", () =>
-  Effect.gen(function* () {
-    expect(yield* getEnv("PRESENT")).toBe("value");
-    expect(yield* getEnv("MISSING")).toBeUndefined();
-  }).pipe(provideConfig({ PRESENT: "value" })),
+it.effect(
+  "reads optional environment configuration",
+  () =>
+    Effect.gen(function* () {
+      expect(yield* getEnv("PRESENT")).toBe("value");
+      expect(yield* getEnv("MISSING")).toBeUndefined();
+    }).pipe(provideConfig({ PRESENT: "value" })),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("preserves the configuration error as the cause of AuthError", () =>
-  getEnvRequired("MISSING").pipe(
-    Effect.flip,
-    Effect.tap((error) =>
-      Effect.sync(() => {
-        expect(error).toBeInstanceOf(AuthError);
-        expect(error.message).toBe("Missing required env: MISSING");
-        expect(error.cause).toBeDefined();
-      }),
+it.effect(
+  "preserves the configuration error as the cause of AuthError",
+  () =>
+    getEnvRequired("MISSING").pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(AuthError);
+          expect(error.message).toBe("Missing required env: MISSING");
+          expect(error.cause).toBeDefined();
+        }),
+      ),
+      provideConfig({}),
     ),
-    provideConfig({}),
-  ),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("handles optional and required redacted configuration", () =>
-  Effect.gen(function* () {
-    const present = yield* getEnvRedactedRequired("SECRET");
-    expect(Redacted.value(present)).toBe("secret");
-    expect(yield* getEnvRedacted("MISSING")).toBeUndefined();
-  }).pipe(provideConfig({ SECRET: "secret" })),
+it.effect(
+  "handles optional and required redacted configuration",
+  () =>
+    Effect.gen(function* () {
+      const present = yield* getEnvRedactedRequired("SECRET");
+      expect(Redacted.value(present)).toBe("secret");
+      expect(yield* getEnvRedacted("MISSING")).toBeUndefined();
+    }).pipe(provideConfig({ SECRET: "secret" })),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("maps prompt cancellation without retrying the prompt", () =>
-  Effect.gen(function* () {
-    let attempts = 0;
-    const error = yield* mapPromptCancellation(
-      Effect.suspend(() => {
-        attempts++;
-        return Effect.fail(new TerminalCancelled());
-      }),
-    ).pipe(Effect.flip);
+it.effect(
+  "maps prompt cancellation without retrying the prompt",
+  () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const error = yield* mapPromptCancellation(
+        Effect.suspend(() => {
+          attempts++;
+          return Effect.fail(new TerminalCancelled());
+        }),
+      ).pipe(Effect.flip);
 
-    expect(attempts).toBe(1);
-    expect(error).toBeInstanceOf(AuthError);
-    expect(error.cause).toBeInstanceOf(TerminalCancelled);
-  }),
+      expect(attempts).toBe(1);
+      expect(error).toBeInstanceOf(AuthError);
+      expect(error.cause).toBeInstanceOf(TerminalCancelled);
+    }),
+  { tags: ["unit", "local"] },
 );

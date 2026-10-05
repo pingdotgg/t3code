@@ -15,45 +15,49 @@ import * as Duration from "effect/Duration";
 // Date-typed prop must come back as a real Date — not `{}` (the old
 // structural-walk bug, which churned a phantom update on every plan) and
 // not a bare ISO string (which lies about the declared prop type).
-describe("StateEncoding Duration round-trip", () => {
-  // The revived value is untyped JSON, but a Duration in = a Duration out is
-  // exactly what these tests assert; the cast lets `Duration.equals` (which
-  // no longer accepts `unknown`) verify it.
-  const roundTrip = (value: Duration.Duration) =>
-    JSON.parse(
-      JSON.stringify(encodeState(value)),
-      reviveState,
-    ) as Duration.Duration;
+describe(
+  "StateEncoding Duration round-trip",
+  { tags: ["unit", "local"] },
+  () => {
+    // The revived value is untyped JSON, but a Duration in = a Duration out is
+    // exactly what these tests assert; the cast lets `Duration.equals` (which
+    // no longer accepts `unknown`) verify it.
+    const roundTrip = (value: Duration.Duration) =>
+      JSON.parse(
+        JSON.stringify(encodeState(value)),
+        reviveState,
+      ) as Duration.Duration;
 
-  test("finite, infinity, and negative infinity survive encode → JSON → revive", () => {
-    expect(
-      Duration.equals(roundTrip(Duration.seconds(15)), Duration.seconds(15)),
-    ).toBe(true);
-    expect(
-      Duration.equals(roundTrip(Duration.infinity), Duration.infinity),
-    ).toBe(true);
-    expect(
-      Duration.equals(
-        roundTrip(Duration.negativeInfinity),
-        Duration.negativeInfinity,
-      ),
-    ).toBe(true);
-  });
-
-  test("decodeDuration rebuilds Duration.toJSON without clamping negatives", () => {
-    expect(
-      Duration.equals(
-        decodeDuration(Duration.negativeInfinity.toJSON())!,
-        Duration.negativeInfinity,
-      ),
-    ).toBe(true);
-    expect(encodeState(Duration.millis(15000))).toEqual({
-      [DURATION_MARKER]: Duration.millis(15000).toJSON(),
+    test("finite, infinity, and negative infinity survive encode → JSON → revive", () => {
+      expect(
+        Duration.equals(roundTrip(Duration.seconds(15)), Duration.seconds(15)),
+      ).toBe(true);
+      expect(
+        Duration.equals(roundTrip(Duration.infinity), Duration.infinity),
+      ).toBe(true);
+      expect(
+        Duration.equals(
+          roundTrip(Duration.negativeInfinity),
+          Duration.negativeInfinity,
+        ),
+      ).toBe(true);
     });
-  });
-});
 
-describe("StateEncoding Date round-trip", () => {
+    test("decodeDuration rebuilds Duration.toJSON without clamping negatives", () => {
+      expect(
+        Duration.equals(
+          decodeDuration(Duration.negativeInfinity.toJSON())!,
+          Duration.negativeInfinity,
+        ),
+      ).toBe(true);
+      expect(encodeState(Duration.millis(15000))).toEqual({
+        [DURATION_MARKER]: Duration.millis(15000).toJSON(),
+      });
+    });
+  },
+);
+
+describe("StateEncoding Date round-trip", { tags: ["unit", "local"] }, () => {
   const value = {
     expires: new Date("2027-01-01T00:00:00.000Z"),
     nested: { dates: [new Date("2028-06-15T12:30:00.000Z")] },

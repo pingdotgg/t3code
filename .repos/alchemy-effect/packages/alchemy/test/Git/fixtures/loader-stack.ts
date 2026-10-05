@@ -1,4 +1,4 @@
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 import { TestRoutes } from "./http.ts";
 /**
  * The Git host with its pack hasher on dynamically loaded Workers (DESIGN

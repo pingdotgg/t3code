@@ -6,7 +6,7 @@
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Effect, Option, Schema } from "effect"
-import { Argument, Command, Flag } from "effect/unstable/cli"
+import { Argument, Command, Flag } from "effect/cli"
 
 // You can define flags outside of commands and reuse them across multiple
 // commands.

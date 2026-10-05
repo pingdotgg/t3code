@@ -101,7 +101,10 @@ test.provider(
       // Re-running destroy is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -135,7 +138,10 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, peer.peerId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -161,5 +167,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );

@@ -3,7 +3,7 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { LanguageModel } from "effect/unstable/ai/LanguageModel";
+import type { LanguageModel } from "effect/ai/LanguageModel";
 import * as Binding from "../../Binding.ts";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { Gateway as GatewayResource } from "./Gateway.ts";
@@ -15,7 +15,7 @@ import { type LanguageModelOptions } from "./LanguageModel.ts";
  * the Cloudflare.AI. Gateway runtime binding so each operation returns
  * an Effect tagged with {@link GatewayError}, exposes the raw
  * Workers AI handle for `ai.run(...)`, and provides a `model(options)`
- * factory that produces an `effect/unstable/ai` `LanguageModel`
+ * factory that produces an `effect/ai` `LanguageModel`
  * `Layer`.
  *
  * Bind a {@link Gateway} to a Worker and obtain the

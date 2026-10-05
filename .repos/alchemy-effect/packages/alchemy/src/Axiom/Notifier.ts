@@ -66,6 +66,7 @@ export type Notifier = Resource<
  * ```
  *
  * @resource
+ * @product Monitor
  */
 export const Notifier = Resource<Notifier>("Axiom.Notifier");
 

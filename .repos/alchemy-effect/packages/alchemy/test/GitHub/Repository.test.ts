@@ -141,7 +141,10 @@ test.provider.skipIf(!owner || !canDeleteRepos)(
       const afterDestroy = yield* getRepo(renamed);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!owner || !canDeleteRepos)(
@@ -179,7 +182,10 @@ test.provider.skipIf(!owner || !canDeleteRepos)(
       const afterDestroy = yield* getRepo(name);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Owner changes are replacements, not moves (we never call GitHub's transfer
@@ -234,7 +240,10 @@ test.provider.skipIf(!owner || !owner2 || !canDeleteRepos)(
       const afterDestroy = yield* getRepo(name, owner2);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );
 
 // The safety property: under the DEFAULT `retain` removal policy, an owner
@@ -313,7 +322,10 @@ test.provider.skipIf(!owner || !owner2 || !canDeleteRepos)(
       expect(yield* getRepo(name, owner)).toBeUndefined();
       expect(yield* getRepo(name, owner2)).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Read-only enumeration: `list()` needs no owner — it walks every repository the
@@ -339,5 +351,8 @@ test.provider.skipIf(!hasToken)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );

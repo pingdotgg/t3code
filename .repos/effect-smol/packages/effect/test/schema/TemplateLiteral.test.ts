@@ -57,7 +57,7 @@ describe("TemplateLiteral", () => {
     )
   })
 
-  it.effect("preserves brands, supported checks, and explicit projections", () =>
+  it.effect("supports branded parts, checks, and explicit projections", () =>
     Effect.gen(function*() {
       const schema = Schema.TemplateLiteral([
         Schema.NonEmptyString.pipe(Schema.brand("Prefix")),

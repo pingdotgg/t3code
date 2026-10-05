@@ -6,7 +6,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import type { Server, ServerOptions } from "@prisma/dev";
 import type { DatabaseDev } from "./Database.ts";
 

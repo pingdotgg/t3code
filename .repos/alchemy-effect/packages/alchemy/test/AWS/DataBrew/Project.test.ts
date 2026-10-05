@@ -124,5 +124,14 @@ test.provider(
       const gone = yield* getProject(created.project.projectName);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:databrew",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

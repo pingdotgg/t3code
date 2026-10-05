@@ -2,12 +2,19 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform"
 import * as NodePathLayer from "@effect/platform-node/NodePath"
 import { assert, describe, it } from "@effect/vitest"
+import { HttpRouter, HttpStaticServer } from "effect/http"
 import * as Layer from "effect/Layer"
-import { HttpRouter, HttpStaticServer } from "effect/unstable/http"
+import * as Fs from "node:fs"
 import { copyFile, cp, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as NodePath from "node:path"
 import { fileURLToPath } from "node:url"
+import { vi } from "vitest"
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof Fs>()
+  return { ...original, createReadStream: vi.fn(original.createReadStream) }
+})
 
 const fixturesRoot = fileURLToPath(new URL("./fixtures/http-static-server", import.meta.url))
 const fixturesOutsideFile = fileURLToPath(new URL("./fixtures/http-static-server-outside.txt", import.meta.url))
@@ -56,7 +63,7 @@ const withStaticFiles = async (
   }
 }
 
-describe("HttpStaticServer", () => {
+describe("HttpStaticServer", { concurrent: false }, () => {
   it("serves files with expected content type and body", async () => {
     await withStaticFiles(async ({ handler }) => {
       const response = await handler(new Request("http://localhost/hello.txt"))
@@ -149,9 +156,71 @@ describe("HttpStaticServer", () => {
     })
   })
 
+  it("honors Range only for a matching strong If-Range ETag", async () => {
+    await withStaticFiles(async ({ handler, root }) => {
+      const first = await handler(new Request("http://localhost/range.txt"))
+      const etag = first.headers.get("etag")!
+      assert.strictEqual(etag.startsWith("W/"), false)
+      const fullBody = await first.text()
+      vi.mocked(Fs.createReadStream).mockClear()
+
+      const matching = await handler(
+        new Request("http://localhost/range.txt", {
+          headers: { Range: "bytes=0-10", "If-Range": etag }
+        })
+      )
+      assert.strictEqual(matching.status, 206)
+      assert.strictEqual(matching.headers.get("content-range"), `bytes 0-10/${fullBody.length}`)
+      assert.strictEqual(await matching.text(), "0123456789a")
+      // Only the selected range acquires a source, not the discarded full response.
+      assert.deepStrictEqual(vi.mocked(Fs.createReadStream).mock.calls, [[NodePath.join(root, "range.txt"), {
+        start: 0,
+        end: 10
+      }]])
+
+      // Weak tags and Last-Modified dates never match: filesystem metadata
+      // cannot prove a date is a strong validator.
+      for (const ifRange of [`W/${etag}`, first.headers.get("last-modified")!]) {
+        const response = await handler(
+          new Request("http://localhost/range.txt", {
+            headers: { Range: "bytes=0-10", "If-Range": ifRange }
+          })
+        )
+        assert.strictEqual(response.status, 200)
+        assert.strictEqual(response.headers.get("content-range"), null)
+        assert.strictEqual(await response.text(), fullBody)
+      }
+    })
+  })
+
+  it.each(["bytes=10-", "bytes=100-200"])(
+    "returns the full changed file for a stale If-Range ETag with Range %s",
+    async (range) => {
+      await withStaticFiles(async ({ handler, root }) => {
+        const first = await handler(new Request("http://localhost/range.txt"))
+        const etag = first.headers.get("etag")!
+        await first.text()
+        const updatedBody = "NEW-NEW-NEW-NEW-NEW-NEW-"
+        await writeFile(NodePath.join(root, "range.txt"), updatedBody)
+        const resumed = await handler(
+          new Request("http://localhost/range.txt", {
+            headers: { Range: range, "If-Range": etag }
+          })
+        )
+        assert.strictEqual(resumed.status, 200)
+        assert.strictEqual(resumed.headers.get("content-range"), null)
+        assert.strictEqual(resumed.headers.get("content-length"), String(updatedBody.length))
+        assert.notStrictEqual(resumed.headers.get("etag"), etag)
+        assert.strictEqual(await resumed.text(), updatedBody)
+      })
+    }
+  )
+
   it("handles range requests for valid, invalid, and malformed headers", async () => {
     await withStaticFiles(async ({ handler }) => {
-      const fullBody = await handler(new Request("http://localhost/range.txt")).then((response) => response.text())
+      const full = await handler(new Request("http://localhost/range.txt"))
+      const etag = full.headers.get("etag")!
+      const fullBody = await full.text()
       const fileSize = fullBody.length
 
       const first = await handler(new Request("http://localhost/range.txt", { headers: { Range: "bytes=0-10" } }))
@@ -169,9 +238,16 @@ describe("HttpStaticServer", () => {
       assert.strictEqual(suffix.headers.get("content-range"), `bytes ${fileSize - 10}-${fileSize - 1}/${fileSize}`)
       assert.strictEqual(await suffix.text(), fullBody.slice(-10))
 
-      const invalid = await handler(new Request("http://localhost/range.txt", { headers: { Range: "bytes=100-200" } }))
+      vi.mocked(Fs.createReadStream).mockClear()
+      const invalid = await handler(
+        new Request("http://localhost/range.txt", {
+          headers: { Range: "bytes=100-200", "If-Range": etag }
+        })
+      )
       assert.strictEqual(invalid.status, 416)
       assert.strictEqual(invalid.headers.get("content-range"), `bytes */${fileSize}`)
+      assert.strictEqual(await invalid.text(), "")
+      assert.deepStrictEqual(vi.mocked(Fs.createReadStream).mock.calls, [])
 
       const malformed = await handler(new Request("http://localhost/range.txt", { headers: { Range: "bytes=abc" } }))
       assert.strictEqual(malformed.status, 200)

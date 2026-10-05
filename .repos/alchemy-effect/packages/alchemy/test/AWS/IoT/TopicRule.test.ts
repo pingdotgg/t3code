@@ -28,60 +28,66 @@ const assertRuleGone = (ruleName: string) =>
     }),
   );
 
-describe.sequential("AWS.IoT.TopicRule", () => {
-  test.provider(
-    "creates, updates the SQL in place, and deletes a topic rule",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.sequential(
+  "AWS.IoT.TopicRule",
+  { tags: ["provider:aws", "provider:aws:iot", "live"] },
+  () => {
+    test.provider(
+      "creates, updates the SQL in place, and deletes a topic rule",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const created = yield* stack.deploy(
-          Effect.gen(function* () {
-            const rule = yield* TopicRule("Rule", {
-              sql: "SELECT * FROM 'alchemy/iot/test/v1'",
-              actions: [{ lambda: { functionArn: FAKE_LAMBDA_ARN } }],
-            });
-            return { ruleName: rule.ruleName, ruleArn: rule.ruleArn };
-          }),
-        );
+          const created = yield* stack.deploy(
+            Effect.gen(function* () {
+              const rule = yield* TopicRule("Rule", {
+                sql: "SELECT * FROM 'alchemy/iot/test/v1'",
+                actions: [{ lambda: { functionArn: FAKE_LAMBDA_ARN } }],
+              });
+              return { ruleName: rule.ruleName, ruleArn: rule.ruleArn };
+            }),
+          );
 
-        // Verify out-of-band.
-        const observed = yield* iot.getTopicRule({
-          ruleName: created.ruleName,
-        });
-        expect(observed.rule?.sql).toEqual(
-          "SELECT * FROM 'alchemy/iot/test/v1'",
-        );
+          // Verify out-of-band.
+          const observed = yield* iot.getTopicRule({
+            ruleName: created.ruleName,
+          });
+          expect(observed.rule?.sql).toEqual(
+            "SELECT * FROM 'alchemy/iot/test/v1'",
+          );
 
-        // Update the SQL — same name, so this is an in-place replaceTopicRule.
-        yield* stack.deploy(
-          Effect.gen(function* () {
-            yield* TopicRule("Rule", {
-              sql: "SELECT temperature FROM 'alchemy/iot/test/v2'",
-              actions: [{ lambda: { functionArn: FAKE_LAMBDA_ARN } }],
-            });
-          }),
-        );
-        const updated = yield* iot.getTopicRule({ ruleName: created.ruleName });
-        expect(updated.rule?.sql).toEqual(
-          "SELECT temperature FROM 'alchemy/iot/test/v2'",
-        );
+          // Update the SQL — same name, so this is an in-place replaceTopicRule.
+          yield* stack.deploy(
+            Effect.gen(function* () {
+              yield* TopicRule("Rule", {
+                sql: "SELECT temperature FROM 'alchemy/iot/test/v2'",
+                actions: [{ lambda: { functionArn: FAKE_LAMBDA_ARN } }],
+              });
+            }),
+          );
+          const updated = yield* iot.getTopicRule({
+            ruleName: created.ruleName,
+          });
+          expect(updated.rule?.sql).toEqual(
+            "SELECT temperature FROM 'alchemy/iot/test/v2'",
+          );
 
-        yield* stack.destroy();
-        yield* assertRuleGone(created.ruleName);
-      }),
-    { timeout: 180_000 },
-  );
+          yield* stack.destroy();
+          yield* assertRuleGone(created.ruleName);
+        }),
+      { timeout: 180_000 },
+    );
 
-  test.provider(
-    "getTopicRule on a missing rule surfaces the typed TopicRuleNotFound tag",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* iot
-          .getTopicRule({ ruleName: "alchemy_definitely_missing_rule_xyz" })
-          .pipe(Effect.flip);
-        expect(result._tag).toEqual("TopicRuleNotFound");
-      }),
-    { timeout: 60_000 },
-  );
-});
+    test.provider(
+      "getTopicRule on a missing rule surfaces the typed TopicRuleNotFound tag",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* iot
+            .getTopicRule({ ruleName: "alchemy_definitely_missing_rule_xyz" })
+            .pipe(Effect.flip);
+          expect(result._tag).toEqual("TopicRuleNotFound");
+        }),
+      { timeout: 60_000 },
+    );
+  },
+);

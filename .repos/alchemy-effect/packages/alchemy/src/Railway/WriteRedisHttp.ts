@@ -7,6 +7,7 @@ import { WriteRedis } from "./WriteRedis.ts";
  * HTTP implementation of {@link WriteRedis}.
  *
  * @layer
+ * @product Redis
  * @provides Railway.WriteRedis
  */
 export const WriteRedisHttp = Layer.effect(

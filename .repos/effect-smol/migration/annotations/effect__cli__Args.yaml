@@ -9,7 +9,7 @@
   note: "Infer the output of a command config record; standalone argument collections were removed."
 "@effect/cli/Args#Args":
   replacement: "Argument.Argument"
-  note: "Args was renamed to Argument in effect/unstable/cli."
+  note: "Args was renamed to Argument in effect/cli."
 "@effect/cli/Args#Args.BaseArgsConfig":
   replacement: "name: string"
   note: "Argument constructors now take the name as a required first parameter."

@@ -45,6 +45,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:rum", "live"] },
 );
 
 test.provider(
@@ -140,7 +141,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertMonitorDeleted(monitor.appMonitorName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:rum", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -183,7 +184,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertMonitorDeleted("alchemy-test-rum-monitor-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:rum", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -204,5 +205,5 @@ test.provider(
       expect(result._tag).toBe("Failure");
       yield* stack.destroy();
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:rum", "live"], timeout: 60_000 },
 );

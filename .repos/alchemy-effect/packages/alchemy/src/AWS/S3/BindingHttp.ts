@@ -55,7 +55,8 @@ export const makeBucketHttpBinding = <
    * Additionally grant `s3:ListBucket` on the bucket ARN. Required by
    * object-read actions so a missing key surfaces as `NoSuchKey`/`NotFound`
    * (404) instead of `AccessDenied` (403).
-   * @see https://repost.aws/articles/ARe3OTZ3SCTWWqGtiJ6aHn8Q/why-does-s-3-return-403-instead-of-404-when-the-object-doesnt-exist
+   * @see https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+   * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html
    */
   listBucket?: boolean;
 }) =>

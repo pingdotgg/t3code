@@ -14,6 +14,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import type { Hook, Mode, TestBody } from "./Model.ts";
 import { makeSuite } from "./Model.ts";
 import { currentSuite, withSuite } from "./Registry.ts";
+import { mergeTags, type Tags } from "./Tags.ts";
 
 // ---------------------------------------------------------------------------
 // Shared option handling (vitest accepts `number | { timeout?: number, ... }`)
@@ -22,6 +23,10 @@ import { currentSuite, withSuite } from "./Registry.ts";
 export type TestOptions =
   | number
   | {
+      /** Labels added to the tags inherited from enclosing suites. */
+      readonly tags?: Tags;
+      /** Tags that must each be explicitly named in the filter to enable this test or suite. */
+      readonly optInTags?: Tags;
       readonly timeout?: number;
       readonly retry?: number;
       readonly repeats?: number;
@@ -44,6 +49,12 @@ export const retryOf = (options?: TestOptions): number | undefined =>
 export const exclusiveOf = (options?: TestOptions): boolean =>
   typeof options === "object" && options !== null && options.exclusive === true;
 
+export const tagsOf = (options?: TestOptions): Tags | undefined =>
+  typeof options === "object" ? options?.tags : undefined;
+
+export const optInTagsOf = (options?: TestOptions): Tags | undefined =>
+  typeof options === "object" ? options?.optInTags : undefined;
+
 // ---------------------------------------------------------------------------
 // describe
 // ---------------------------------------------------------------------------
@@ -51,6 +62,10 @@ export const exclusiveOf = (options?: TestOptions): boolean =>
 type DescribeBody = (() => void) | undefined;
 
 export interface DescribeOptions {
+  /** Labels inherited by every nested suite and test. */
+  readonly tags?: Tags;
+  /** Tags that must each be explicitly named in the filter to enable this test or suite. */
+  readonly optInTags?: Tags;
   readonly concurrent?: boolean;
   readonly sequential?: boolean;
   readonly timeout?: number;
@@ -93,6 +108,8 @@ const makeDescribe = (config: DescribeConfig): DescribeFn => {
     let name: string;
     let body: DescribeBody;
     let sequential = config.sequential;
+    let tags: Tags | undefined;
+    let optInTags: Tags | undefined;
     if (typeof nameOrBody === "function") {
       name = "";
       body = nameOrBody;
@@ -101,6 +118,8 @@ const makeDescribe = (config: DescribeConfig): DescribeFn => {
       if (typeof second === "function") {
         body = second;
       } else if (typeof second === "object" && second !== null) {
+        tags = second.tags;
+        optInTags = second.optInTags;
         if (second.concurrent === true || second.sequential === false) {
           sequential = false;
         } else if (second.concurrent === false || second.sequential === true) {
@@ -112,7 +131,7 @@ const makeDescribe = (config: DescribeConfig): DescribeFn => {
       }
     }
     const parent = currentSuite();
-    const suite = makeSuite(name, parent, config.mode);
+    const suite = makeSuite(name, parent, config.mode, tags, optInTags);
     suite.sequential = sequential;
     parent.children.push(suite);
     // `describe.skip` still collects its children (they're reported as
@@ -124,9 +143,13 @@ const makeDescribe = (config: DescribeConfig): DescribeFn => {
   const withMethods = Object.assign(fn, {
     each:
       <T>(cases: ReadonlyArray<T>) =>
-      (name: string, eachBody: (args: T) => void, _options?: TestOptions) => {
+      (name: string, eachBody: (args: T) => void, options?: TestOptions) => {
         cases.forEach((args, index) => {
-          fn(formatEachName(name, args, index), () => eachBody(args));
+          fn(
+            formatEachName(name, args, index),
+            { tags: tagsOf(options), optInTags: optInTagsOf(options) },
+            () => eachBody(args),
+          );
         });
       },
     skipIf: (condition: unknown) =>
@@ -156,6 +179,9 @@ export const describe: DescribeFn = makeDescribe({
 // ---------------------------------------------------------------------------
 
 export interface RegisterTestOptions {
+  readonly tags?: Tags;
+  /** Tags that must each be explicitly named in the filter to enable this test or suite. */
+  readonly optInTags?: Tags;
   readonly name: string;
   readonly mode: Mode;
   readonly fails?: boolean;
@@ -171,6 +197,8 @@ export const registerTest = (options: RegisterTestOptions): void => {
   parent.children.push({
     type: "test",
     name: options.name,
+    tags: mergeTags(parent.tags, options.tags),
+    optInTags: mergeTags(parent.optInTags, options.optInTags),
     mode: options.mode,
     fails: options.fails ?? false,
     exclusive: options.exclusive ?? false,
@@ -245,6 +273,8 @@ export const makeTester = <R>(
       name,
       mode: "run",
       timeout: timeoutOf(options),
+      tags: tagsOf(options),
+      optInTags: optInTagsOf(options),
       retry: retryOf(options),
       exclusive: exclusiveOf(options),
       body: () => mapEffect(Effect.suspend(() => self(emptyContext))),
@@ -379,6 +409,8 @@ const registerFnTest = (
     mode: fn === undefined ? "todo" : mode,
     fails,
     timeout: timeoutOf(options),
+    tags: tagsOf(options),
+    optInTags: optInTagsOf(options),
     retry: retryOf(options),
     exclusive: exclusiveOf(options),
     body: fn === undefined ? undefined : fromFn(fn),

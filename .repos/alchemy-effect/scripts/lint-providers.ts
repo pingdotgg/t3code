@@ -10,8 +10,8 @@ import {
 
 /**
  * Lints every `packages/alchemy/src/{Cloud}/Providers.ts` file and fails if any
- * `providers()` factory ends up with `unknown` in its Layer requirements (the
- * 3rd `Layer<ROut, E, RIn>` type argument). An `unknown` RIn means some leaf
+ * `providers()` factory ends up with `unknown` or `any` in its Layer requirements
+ * (the 3rd `Layer<ROut, E, RIn>` type argument). An `unknown`/`any` RIn means some leaf
  * provider layer leaked an unsatisfied/undeclared requirement, which silently
  * poisons `StackServices` inference across every consumer.
  *
@@ -47,8 +47,10 @@ export async function lintProviders(
     return undefined;
   }
 
+  // `any` absorbs every other union member, so it must be checked alongside
+  // `unknown` or a leaked `any` silently passes.
   async function containsUnknown(type: Type): Promise<boolean> {
-    if (type.flags & TypeFlags.Unknown) return true;
+    if (type.flags & (TypeFlags.Unknown | TypeFlags.Any)) return true;
     if (type.isUnionType()) {
       for (const member of await type.getTypes()) {
         if (await containsUnknown(member)) return true;
@@ -90,43 +92,62 @@ export async function lintProviders(
 
     hadError = true;
 
-    // Find the leaf provider-layer factory calls responsible for the leak.
-    const calls: ts.CallExpression[] = [];
+    // Localize the leak structurally: every Layer-typed expression whose RIn
+    // is `unknown`/`any`, keeping only the innermost ones (composites such as
+    // `Layer.mergeAll(...)` or `.pipe(...)` merely inherit it from a child).
+    const candidates: ts.Node[] = [];
     const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node)) {
-        const text = node.expression.getText(sourceFile);
-        // Composite wrappers inherit unknown from their leaves.
-        if (
-          !/^Layer\.|\.pipe$|collection$/.test(text) &&
-          /Provider$|providers$|Live$/.test(text)
-        ) {
-          calls.push(node);
-        }
+      if (
+        ts.isCallExpression(node) ||
+        ts.isPropertyAccessExpression(node) ||
+        (ts.isIdentifier(node) &&
+          !(
+            ts.isPropertyAccessExpression(node.parent) &&
+            node.parent.name === node
+          ))
+      ) {
+        candidates.push(node);
       }
       node.forEachChild(visit);
     };
     providersVar.forEachChild(visit);
-    const offenders: { text: string; req: string }[] = [];
-    for (const call of calls) {
-      const req = await layerRequirements(
-        await checker.getTypeAtLocation(call),
-      );
-      if (req && (await containsUnknown(req))) {
-        offenders.push({
-          text: call.expression.getText(sourceFile),
-          req: await checker.typeToString(req),
-        });
+    const leaking: { node: ts.Node; req: Type }[] = [];
+    for (const node of candidates) {
+      const type = await checker.getTypeAtLocation(node);
+      const req = await layerRequirements(type);
+      if (
+        req &&
+        (await containsUnknown(req)) &&
+        (await checker.typeToString(type)).startsWith("Layer<")
+      ) {
+        leaking.push({ node, req });
       }
     }
+    const offenders: { text: string; req: string }[] = [];
+    for (const { node, req } of leaking) {
+      const hasLeakingChild = leaking.some(
+        (other) =>
+          other.node !== node &&
+          other.node.pos >= node.pos &&
+          other.node.end <= node.end,
+      );
+      if (hasLeakingChild) continue;
+      offenders.push({
+        text: node.getText(sourceFile).replace(/\s+/g, " ").slice(0, 120),
+        req: await checker.typeToString(req),
+      });
+    }
 
-    log(`✗ ${rel}  ->  providers() RIn includes \`unknown\``);
+    log(
+      `✗ ${rel}  ->  providers() RIn includes \`unknown\`/\`any\` (${await checker.typeToString(overallReq)})`,
+    );
     if (offenders.length === 0) {
       log(
         "    (could not localize a leaf culprit — inspect the composite layers)",
       );
     }
     for (const o of offenders) {
-      log(`    ✗ ${o.text}()  ->  RIn = ${o.req}`);
+      log(`    ✗ ${o.text}  ->  RIn = ${o.req}`);
     }
   }
 
@@ -140,7 +161,7 @@ if (import.meta.main) {
   if (!project) throw new Error(`Failed to open ${tsConfig}`);
   if (!(await lintProviders(project, srcRoot))) {
     console.error(
-      "\nProvider lint failed: one or more `providers()` factories have `unknown` requirements.",
+      "\nProvider lint failed: one or more `providers()` factories have `unknown`/`any` requirements.",
     );
     process.exitCode = 1;
   } else {

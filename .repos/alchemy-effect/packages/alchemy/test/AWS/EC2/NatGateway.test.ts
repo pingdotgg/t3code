@@ -98,5 +98,5 @@ test.provider.skipIf(!process.env.AWS_TEST_NAT_GATEWAY)(
       yield* assertEipGone(deployed.eip.allocationId);
       yield* assertVpcGone(deployed.vpc.vpcId);
     }).pipe(logLevel),
-  { timeout: 900_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 900_000 },
 );

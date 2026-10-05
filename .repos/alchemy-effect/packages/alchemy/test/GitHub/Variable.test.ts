@@ -1,4 +1,5 @@
 import * as GitHub from "@/GitHub";
+import { GitHubCredentials } from "@/GitHub/Credentials.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -53,9 +54,26 @@ test.provider.skipIf(!owner)(
       // Resolve the provider with the typed helper so `list()`'s element type
       // is the resource's `Attributes` (no `any`).
       const provider = yield* Provider.findProvider(GitHub.Variable);
-      const all = yield* provider.list();
+      const credentials = yield* yield* GitHubCredentials;
+      const client = credentials.octokit({ baseUrl: undefined });
+      // Exercise provider pagination within the dedicated test organization.
+      client.hook.before("request", (options) => {
+        const url = new URL(options.url, "https://api.github.com");
+        if (url.pathname === "/user/repos") {
+          url.pathname = `/orgs/${owner}/repos`;
+          options.url = url.toString();
+        }
+      });
+      const all = yield* provider
+        .list()
+        .pipe(
+          Effect.provideService(
+            GitHubCredentials,
+            Effect.succeed({ ...credentials, octokit: () => client }),
+          ),
+        );
 
-      // `list()` enumerates every variable across all repos the token can see.
+      // `list()` enumerates variables across repositories in the test org.
       // The variable we just deployed guarantees at least one row. The
       // resource's `Attributes` only exposes `updatedAt`, so we assert presence
       // by the enumeration being non-empty (it cannot key on a specific name).
@@ -64,5 +82,13 @@ test.provider.skipIf(!owner)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:repository",
+      "provider:github:variable",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

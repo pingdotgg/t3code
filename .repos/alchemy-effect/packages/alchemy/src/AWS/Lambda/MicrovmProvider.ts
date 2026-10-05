@@ -212,7 +212,7 @@ const artifactContent = (
   news: ContentInputs,
   note: (message: string) => Effect.Effect<void>,
 ) =>
-  Effect.gen(function* (): Generator<any, ArtifactContent, any> {
+  Effect.gen(function* () {
     if (news.main) {
       const runtime = news.runtime ?? "node";
       const port = news.port ?? DEFAULT_MICROVM_PORT;
@@ -232,7 +232,7 @@ const artifactContent = (
         { path: "Dockerfile", content: dockerfile },
         ...files,
       ]);
-      return { contentHash, identity, archive };
+      return { contentHash, identity, archive } satisfies ArtifactContent;
     }
 
     if (news.context) {
@@ -261,18 +261,27 @@ const artifactContent = (
         contentHash: yield* sha256(contentId),
         identity: contentId,
         archive,
-      };
+      } satisfies ArtifactContent;
     }
 
     if (news.codeArtifact?.uri) {
       const uri: string = news.codeArtifact.uri;
-      return { contentHash: yield* sha256(uri), identity: uri, uri };
+      return {
+        contentHash: yield* sha256(uri),
+        identity: uri,
+        uri,
+      } satisfies ArtifactContent;
     }
 
     return yield* Effect.die(
       "MicrovmImage requires one of `main`, `context`, or `codeArtifact.uri`.",
     );
-  }).pipe(Artifacts.cached(`microvm-image-content:${id}`));
+  }).pipe(
+    // Re-widen: inference normalizes the object-literal union (adding
+    // `uri?: undefined`), which defeats `"uri" in content` narrowing.
+    Effect.map((content): ArtifactContent => content),
+    Artifacts.cached(`microvm-image-content:${id}`),
+  );
 
 // Materialize + upload the code artifact and compute its build identity hash
 // (content + props). The `hash` formulas are unchanged from before

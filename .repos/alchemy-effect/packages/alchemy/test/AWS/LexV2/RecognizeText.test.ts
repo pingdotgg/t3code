@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import LexTestFunctionLive, { LexTestFunction } from "./handler.ts";
 
 const testOptions = { providers: AWS.providers() };
@@ -56,146 +56,162 @@ const recognize = (text: string, sessionId: string) =>
     ),
   );
 
-describe("LexV2 Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo("LexV2 e2e setup: destroying previous resources");
-      yield* sharedStack.destroy();
+describe(
+  "LexV2 Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:lexv2",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo("LexV2 e2e setup: destroying previous resources");
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo(
-        "LexV2 e2e setup: deploying role -> bot -> locale -> intent -> version (build) -> alias -> Lambda",
-      );
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* LexTestFunction;
-        }).pipe(Effect.provide(LexTestFunctionLive)),
-      );
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
+        yield* Effect.logInfo(
+          "LexV2 e2e setup: deploying role -> bot -> locale -> intent -> version (build) -> alias -> Lambda",
+        );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* LexTestFunction;
+          }).pipe(Effect.provide(LexTestFunctionLive)),
+        );
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
 
-      // Readiness probe — fresh function URLs take seconds to serve 200s.
-      yield* HttpClient.get(`${baseUrl}/health`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({
-          schedule: Schedule.max([
-            Schedule.fixed("2 seconds"),
-            Schedule.recurs(15),
-          ]),
-        }),
-      );
-    }),
-    // The bounded locale build can consume ~90s by itself. Lambda creation
-    // and IAM/function-URL propagation follow that build, so leave headroom
-    // for those bounded phases when the full AWS sweep saturates the account.
-    { timeout: 210_000 },
-  );
-  afterAll(sharedStack.destroy(), { timeout: 180_000 });
-
-  describe("RecognizeText", () => {
-    test.provider(
-      "recognizes a greeting utterance as the Greet intent",
-      () =>
-        Effect.gen(function* () {
-          const body = yield* recognize("hello", "alchemy-e2e-greet");
-          expect(body.intent).toBe("Greet");
-        }),
-      { timeout: 120_000 },
+        // Readiness probe — fresh function URLs take seconds to serve 200s.
+        yield* HttpClient.get(`${baseUrl}/health`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(15),
+            ]),
+          }),
+        );
+      }),
+      // The bounded locale build can consume ~90s by itself. Lambda creation
+      // and IAM/function-URL propagation follow that build, so leave headroom
+      // for those bounded phases when the full AWS sweep saturates the account.
+      { timeout: 210_000 },
     );
+    afterAll(sharedStack.destroy(), { timeout: 180_000 });
 
-    test.provider(
-      "routes an unmatched utterance to the fallback intent",
-      () =>
-        Effect.gen(function* () {
-          const body = yield* recognize(
-            "purple monkey dishwasher",
-            "alchemy-e2e-fallback",
-          );
-          expect(body.intent).toBe("FallbackIntent");
-        }),
-      { timeout: 120_000 },
-    );
-  });
+    describe("RecognizeText", () => {
+      test.provider(
+        "recognizes a greeting utterance as the Greet intent",
+        () =>
+          Effect.gen(function* () {
+            const body = yield* recognize("hello", "alchemy-e2e-greet");
+            expect(body.intent).toBe("Greet");
+          }),
+        { timeout: 120_000 },
+      );
 
-  describe("CodeHookEventSource", () => {
-    test.provider(
-      "fulfillment code hook closes the intent with the handler's message",
-      () =>
-        Effect.gen(function* () {
-          const body = yield* recognize("order a pizza", "alchemy-e2e-order");
-          expect(body.intent).toBe("OrderPizza");
-          expect(body.state).toBe("Fulfilled");
-          expect(body.messages).toContain(
-            "Order placed for alchemy-e2e-order!",
-          );
-        }),
-      { timeout: 120_000 },
-    );
-  });
+      test.provider(
+        "routes an unmatched utterance to the fallback intent",
+        () =>
+          Effect.gen(function* () {
+            const body = yield* recognize(
+              "purple monkey dishwasher",
+              "alchemy-e2e-fallback",
+            );
+            expect(body.intent).toBe("FallbackIntent");
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-  describe("Sessions", () => {
-    test.provider(
-      "put, get, and delete a session",
-      () =>
-        Effect.gen(function* () {
-          const sessionId = "alchemy-e2e-session";
+    describe("CodeHookEventSource", () => {
+      test.provider(
+        "fulfillment code hook closes the intent with the handler's message",
+        () =>
+          Effect.gen(function* () {
+            const body = yield* recognize("order a pizza", "alchemy-e2e-order");
+            expect(body.intent).toBe("OrderPizza");
+            expect(body.state).toBe("Fulfilled");
+            expect(body.messages).toContain(
+              "Order placed for alchemy-e2e-order!",
+            );
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-          // PutSession seeds attributes.
-          const put = yield* call(
-            HttpClientRequest.post(`${baseUrl}/session`).pipe(
-              HttpClientRequest.bodyJsonUnsafe({
-                sessionId,
-                attributes: { favorite: "pepperoni" },
-              }),
-            ),
-          );
-          expect(put.sessionId).toBe(sessionId);
+    describe("Sessions", () => {
+      test.provider(
+        "put, get, and delete a session",
+        () =>
+          Effect.gen(function* () {
+            const sessionId = "alchemy-e2e-session";
 
-          // GetSession reads them back.
-          const got = yield* call(
-            HttpClientRequest.get(`${baseUrl}/session?sessionId=${sessionId}`),
-          );
-          expect(got.attributes).toMatchObject({ favorite: "pepperoni" });
+            // PutSession seeds attributes.
+            const put = yield* call(
+              HttpClientRequest.post(`${baseUrl}/session`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({
+                  sessionId,
+                  attributes: { favorite: "pepperoni" },
+                }),
+              ),
+            );
+            expect(put.sessionId).toBe(sessionId);
 
-          // DeleteSession ends the conversation ...
-          const deleted = yield* call(
-            HttpClientRequest.delete(
+            // GetSession reads them back.
+            const got = yield* call(
+              HttpClientRequest.get(
+                `${baseUrl}/session?sessionId=${sessionId}`,
+              ),
+            );
+            expect(got.attributes).toMatchObject({ favorite: "pepperoni" });
+
+            // DeleteSession ends the conversation ...
+            const deleted = yield* call(
+              HttpClientRequest.delete(
+                `${baseUrl}/session?sessionId=${sessionId}`,
+              ),
+            );
+            expect(deleted.sessionId).toBe(sessionId);
+
+            // ... so a fresh GetSession reports the typed not-found tag.
+            const response = yield* HttpClient.get(
               `${baseUrl}/session?sessionId=${sessionId}`,
-            ),
-          );
-          expect(deleted.sessionId).toBe(sessionId);
+            );
+            const body = (yield* response.json) as { error?: string };
+            expect(body.error).toBe("ResourceNotFoundException");
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-          // ... so a fresh GetSession reports the typed not-found tag.
-          const response = yield* HttpClient.get(
-            `${baseUrl}/session?sessionId=${sessionId}`,
-          );
-          const body = (yield* response.json) as { error?: string };
-          expect(body.error).toBe("ResourceNotFoundException");
-        }),
-      { timeout: 120_000 },
-    );
-  });
-
-  describe("RecognizeUtterance", () => {
-    test.provider(
-      "recognizes a text utterance and returns response metadata",
-      () =>
-        Effect.gen(function* () {
-          const body = yield* call(
-            HttpClientRequest.post(`${baseUrl}/utterance`).pipe(
-              HttpClientRequest.bodyJsonUnsafe({
-                text: "hello",
-                sessionId: "alchemy-e2e-utterance",
-              }),
-            ),
-          );
-          expect(body.sessionId).toBe("alchemy-e2e-utterance");
-          expect(body.contentType).toContain("text/plain");
-        }),
-      { timeout: 120_000 },
-    );
-  });
-});
+    describe("RecognizeUtterance", () => {
+      test.provider(
+        "recognizes a text utterance and returns response metadata",
+        () =>
+          Effect.gen(function* () {
+            const body = yield* call(
+              HttpClientRequest.post(`${baseUrl}/utterance`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({
+                  text: "hello",
+                  sessionId: "alchemy-e2e-utterance",
+                }),
+              ),
+            );
+            expect(body.sessionId).toBe("alchemy-e2e-utterance");
+            expect(body.contentType).toContain("text/plain");
+          }),
+        { timeout: 120_000 },
+      );
+    });
+  },
+);

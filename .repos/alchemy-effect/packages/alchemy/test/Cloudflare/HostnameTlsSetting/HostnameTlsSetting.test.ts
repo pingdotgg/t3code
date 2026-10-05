@@ -88,6 +88,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hostnametlssetting",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): there is no account-wide
@@ -139,7 +147,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hostnametlssetting",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!acmZoneId || !acmHostname)(
@@ -231,5 +246,12 @@ test.provider.skipIf(!acmZoneId || !acmHostname)(
         );
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hostnametlssetting",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

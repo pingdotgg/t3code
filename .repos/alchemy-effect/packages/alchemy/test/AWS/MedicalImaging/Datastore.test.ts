@@ -23,6 +23,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:medicalimaging", "live"] },
 );
 
 // Deletion is async (DELETING → gone); poll bounded until the store no
@@ -109,5 +110,8 @@ test.provider.skipIf(!process.env.AWS_TEST_MEDICAL_IMAGING)(
       yield* assertDatastoreGone(datastore.datastoreId);
     }),
   // async create (a few minutes) + tag update + async delete, one test.
-  { timeout: 1_200_000 },
+  {
+    tags: ["provider:aws", "provider:aws:medicalimaging", "live"],
+    timeout: 1_200_000,
+  },
 );

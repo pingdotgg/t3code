@@ -7,8 +7,8 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as Sse from "effect/unstable/encoding/Sse";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as Sse from "effect/encoding/Sse";
+import * as HttpClient from "effect/http/HttpClient";
 import { Gateway } from "./fixtures/Gateway.ts";
 import LanguageModelTestWorker from "./fixtures/LanguageModelWorker.ts";
 
@@ -100,7 +100,15 @@ test(
     // `other` / `error`.
     expect(body.finishReason).toBe("stop");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -140,7 +148,15 @@ test(
     expect(text.length).toBeGreaterThan(0);
     expect(finish).toBeDefined();
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -195,7 +211,15 @@ test(
     expect(parts.filter((p) => p.type === "text-start")).toHaveLength(1);
     expect(parts.filter((p) => p.type === "text-end")).toHaveLength(1);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.skipIf(!process.env.DEBUG_RAW_STREAM)(
@@ -238,7 +262,15 @@ test.skipIf(!process.env.DEBUG_RAW_STREAM)(
     print(yield* toolRes.text);
     print("\n=== end tool stream ===\n");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -271,7 +303,15 @@ test(
     // report the model's real "length" reason even for this short prompt.
     expect(["stop", "length"]).toContain(finish?.reason);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -303,7 +343,15 @@ test(
     const total = deltas.map((p) => p.delta ?? "").join("").length;
     expect(total).toBeGreaterThan(20);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 // `persisted chat survives across DO invocations` exercises the
@@ -350,7 +398,15 @@ test.skip(
     expect(b2.text.toLowerCase()).toContain("sam");
     expect(b2.turns).toBeGreaterThanOrEqual(4);
   }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test(
@@ -405,7 +461,15 @@ test(
     expect(result.result.temperatureF).toBe(72);
     expect(result.result.condition).toBe("sunny");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -464,7 +528,15 @@ test(
     }
     expect(parts[parts.length - 1]?.type).toBe("finish");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -509,7 +581,15 @@ test(
     expect(typeof args.city).toBe("string");
     expect(args.city!.toLowerCase()).toContain("portland");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -575,5 +655,13 @@ test(
     print("--- live stream end ---\n");
     expect(collected.length).toBeGreaterThan(0);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

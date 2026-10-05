@@ -64,6 +64,9 @@ test.provider.skipIf(entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:cloudforceone", "live"],
+  },
 );
 
 // Poll the account list until the config id disappears — there is no
@@ -138,23 +141,31 @@ test.provider.skipIf(!entitled)(
       // Destroy again — delete is idempotent (typed ScanConfigNotFound).
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:cloudforceone", "live"],
+  },
 );
 
 // Read-only list assertion — always runs. On unentitled accounts the provider's
 // list() catches the typed `Unauthorized` (needs cfone.port_scan) and returns
 // [], so this stays green everywhere.
-test.provider("list returns an array of scan configs", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list returns an array of scan configs",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.CloudforceOne.ScanConfig,
-    );
-    const all = yield* provider.list();
-    expect(Array.isArray(all)).toBe(true);
+      const provider = yield* Provider.findProvider(
+        Cloudflare.CloudforceOne.ScanConfig,
+      );
+      const all = yield* provider.list();
+      expect(Array.isArray(all)).toBe(true);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:cloudforceone", "live"],
+  },
 );
 
 // Full enumeration — gated on the cfone.port_scan entitlement. Unlock with
@@ -181,4 +192,7 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:cloudforceone", "live"],
+  },
 );

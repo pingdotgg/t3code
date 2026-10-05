@@ -8,6 +8,7 @@
  * Transactions, streaming queries, and `updateValues` are not supported by this
  * driver.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type { D1Database, D1PreparedStatement, D1Result } from "@cloudflare/workers-types"
@@ -18,13 +19,13 @@ import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import { identity } from "effect/Function"
 import * as Layer from "effect/Layer"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import type * as Scope from "effect/Scope"
+import * as Client from "effect/sql/SqlClient"
+import type { Connection } from "effect/sql/SqlConnection"
+import { SqlError, UnknownError } from "effect/sql/SqlError"
+import * as Statement from "effect/sql/Statement"
 import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
-import { SqlError, UnknownError } from "effect/unstable/sql/SqlError"
-import * as Statement from "effect/unstable/sql/Statement"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
 const ATTR_DB_OPERATION_NAME = "db.operation.name"
@@ -36,6 +37,7 @@ const classifyError = (cause: unknown, message: string, operation: string) =>
 /**
  * Unique runtime identifier used to tag `D1Client` values.
  *
+ * @stability unstable
  * @category type IDs
  * @since 4.0.0
  */
@@ -44,6 +46,7 @@ export const TypeId: TypeId = "~@effect/sql-d1/D1Client"
 /**
  * Type-level literal for the `D1Client` runtime identifier.
  *
+ * @stability unstable
  * @category type IDs
  * @since 4.0.0
  */
@@ -52,6 +55,7 @@ export type TypeId = "~@effect/sql-d1/D1Client"
 /**
  * Cloudflare D1 SQL client service, extending `SqlClient` with its D1 configuration and no `updateValues` support.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -96,6 +100,7 @@ export interface D1Client extends Client.SqlClient {
  * Use to access or provide a Cloudflare D1 SQL client through the Effect
  * context.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -104,6 +109,7 @@ export const D1Client = Context.Service<D1Client>("@effect/sql-d1/D1Client")
 /**
  * Configuration for a Cloudflare D1 client, including the `D1Database`, prepared statement cache settings, span attributes, and query/result name transforms.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -192,6 +198,7 @@ const makeBatch = (options: {
 /**
  * Creates a scoped Cloudflare D1 SQL client. Prepared statements are cached, while transactions and streaming queries are not supported by this driver.
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -374,6 +381,7 @@ export const make = (
 /**
  * Creates a layer from a `Config`-wrapped D1 client configuration, providing both `D1Client` and `SqlClient`.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -394,6 +402,7 @@ export const layerConfig = (
 /**
  * Creates a layer from a concrete D1 client configuration, providing both `D1Client` and `SqlClient`.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

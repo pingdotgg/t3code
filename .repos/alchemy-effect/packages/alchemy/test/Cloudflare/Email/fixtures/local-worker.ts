@@ -1,8 +1,8 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import { remote } from "@/ProviderMode.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Dev-mode fixture with two `send_email` bindings side by side: the default

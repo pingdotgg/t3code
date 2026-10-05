@@ -136,6 +136,11 @@ export const enum InstanceEvent {
   ROLLBACK_STEP_FAILURE = 23,
   ROLLBACK_COMPLETE = 24,
   ROLLBACK_FAILED = 25,
+
+  WORKFLOW_RUNNING = 26,
+  WORKFLOW_PAUSED = 27,
+  WORKFLOW_WAITING_FOR_PAUSE = 28,
+  WORKFLOW_WAITING = 29,
 }
 
 export const enum InstanceTrigger {

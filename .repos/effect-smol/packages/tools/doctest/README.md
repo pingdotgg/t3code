@@ -7,15 +7,26 @@
 Install Vitest 5 (`>=5.0.0 <6.0.0`) and Vite `>=8.1.5 <9.0.0` alongside the package:
 
 ```sh
-npm install -D @effect/doctest@rc vitest@^5 vite@^8.1.5
+npm install -D @effect/doctest vitest@^5 vite@^8.1.5
 ```
 
 Vitest 5 supports Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`. Existing snippet markers and doctest configuration remain supported. When upgrading, import reporter types from `vitest/node`; JSON reports now default to a file, so configure `outputFile` explicitly when consuming the report. See the [Vitest migration guide](https://vitest.dev/guide/migration/) for upstream changes.
 
-## Documentation
+## Links
 
-- [Effect website](https://effect.website)
-- [API reference](https://effect.website/docs/v4/api/doctest)
+- [Website](https://effect.website): documentation, guides, and news.
+- [Reference](https://effect.website/docs/v4/api/doctest): API documentation for this package.
+- [Discord](https://discord.gg/effect-ts): ask questions, share what you're building, and talk to the core team.
+- [Community](https://effect.website/community-hub): meetups and events, or bring Effect to your own.
+- [Issues](https://github.com/Effect-TS/effect/issues): bug reports and feature requests.
+
+## Let's talk
+
+Whether your team is considering Effect, rolling it out, or already running it in production, we'd love to hear from you: what you're building, what works, and what you need from Effect next.
+
+- **Talk to the maintainers.** Introduce your team on [Discord](https://discord.gg/effect-ts) or email [contact@effectful.co](mailto:contact@effectful.co). We're happy to connect privately on Slack or Discord for feedback and help with adoption.
+- **Production support.** We're exploring how to better support teams running Effect in production. If your organization has specific support needs, let's discuss them.
+- **Adoption help.** Our [adoption partners](https://effect.website/adoption-partners) offer implementation, consulting, team extension, training, and commercial support.
 
 ## Usage
 

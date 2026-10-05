@@ -24,13 +24,13 @@ import { Credentials } from "@distilled.cloud/aws/Credentials";
 import { Region, type RegionName } from "@distilled.cloud/aws/Region";
 import * as ecr from "@distilled.cloud/aws/ecr";
 import * as eks from "@distilled.cloud/aws/eks";
-import { AwsClient } from "aws4fetch";
+import * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 import {
   ClusterAdapter,
   ClusterNotFoundError,
@@ -130,34 +130,18 @@ type EksAdapterDeps =
 const mintEksToken = Effect.fn(function* (clusterName: string, region: string) {
   const credentials = yield* yield* Credentials;
 
-  const client = new AwsClient({
+  const presigned = yield* SigV4.sign({
+    method: "GET",
+    url: `https://sts.${region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15&X-Amz-Expires=60`,
+    headers: { "x-k8s-aws-id": clusterName },
     accessKeyId: Redacted.value(credentials.accessKeyId),
-    secretAccessKey: Redacted.value(credentials.secretAccessKey),
-    sessionToken: credentials.sessionToken
-      ? Redacted.value(credentials.sessionToken)
-      : undefined,
+    secretAccessKey: credentials.secretAccessKey,
+    sessionToken: credentials.sessionToken,
     service: "sts",
     region,
+    signQuery: true,
+    allHeaders: true,
   });
-
-  const presigned = yield* Effect.tryPromise(() =>
-    client.sign(
-      new Request(
-        `https://sts.${region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15&X-Amz-Expires=60`,
-        {
-          headers: {
-            "x-k8s-aws-id": clusterName,
-          },
-        },
-      ),
-      {
-        aws: {
-          signQuery: true,
-          allHeaders: true,
-        },
-      },
-    ),
-  );
 
   return `k8s-aws-v1.${Buffer.from(presigned.url).toString("base64url")}`;
 });
@@ -256,6 +240,7 @@ export const makeEksServerBootstrap =
 import { BunServices } from "@effect/platform-bun";
 import { BunHttpServer } from "alchemy/Http";
 import { Stack } from "alchemy/Stack";
+import { Stage } from "alchemy/Stage";
 import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
 import { provideProcessTelemetry } from "alchemy/Telemetry";
 import * as Context from "effect/Context";
@@ -263,7 +248,7 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Credentials from "@distilled.cloud/aws/Credentials";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Region from "@distilled.cloud/aws/Region";
@@ -300,19 +285,23 @@ const program = tag.pipe(
     ),
   ),
   Effect.provide(
-    layer.pipe(Layer.provideMerge(Layer.effect(
-      Stack,
-      Effect.all([
-        Config.String("ALCHEMY_STACK_NAME"),
-        Config.String("ALCHEMY_STAGE")
-      ]).pipe(
-        Effect.map(([name, stage]) => ({
-          name,
-          stage,
-          bindings: {},
-          resources: {}
-        }))
-      )
+    layer.pipe(Layer.provideMerge(Layer.mergeAll(
+      Layer.effect(
+        Stack,
+        Effect.all([
+          Config.String("ALCHEMY_STACK_NAME"),
+          Config.String("ALCHEMY_STAGE")
+        ]).pipe(
+          Effect.map(([name, stage]) => ({
+            name,
+            stage,
+            bindings: {},
+            resources: {}
+          }))
+        )
+      ),
+      // Module-scope declarations shared with the Stack may read the stage.
+      Layer.effect(Stage, Config.String("ALCHEMY_STAGE")),
     )),
       Layer.provideMerge(Credentials.fromChain()),
       Layer.provideMerge(Region.fromEnv()),
@@ -348,6 +337,7 @@ export const makeEksJobBootstrap =
     `
 import { BunServices } from "@effect/platform-bun";
 import { Stack } from "alchemy/Stack";
+import { Stage } from "alchemy/Stage";
 import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
 import { provideProcessTelemetry } from "alchemy/Telemetry";
 import * as Context from "effect/Context";
@@ -355,7 +345,7 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Credentials from "@distilled.cloud/aws/Credentials";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Region from "@distilled.cloud/aws/Region";
@@ -385,19 +375,23 @@ const program = tag.pipe(
     ),
   ),
   Effect.provide(
-    layer.pipe(Layer.provideMerge(Layer.effect(
-      Stack,
-      Effect.all([
-        Config.String("ALCHEMY_STACK_NAME"),
-        Config.String("ALCHEMY_STAGE")
-      ]).pipe(
-        Effect.map(([name, stage]) => ({
-          name,
-          stage,
-          bindings: {},
-          resources: {}
-        }))
-      )
+    layer.pipe(Layer.provideMerge(Layer.mergeAll(
+      Layer.effect(
+        Stack,
+        Effect.all([
+          Config.String("ALCHEMY_STACK_NAME"),
+          Config.String("ALCHEMY_STAGE")
+        ]).pipe(
+          Effect.map(([name, stage]) => ({
+            name,
+            stage,
+            bindings: {},
+            resources: {}
+          }))
+        )
+      ),
+      // Module-scope declarations shared with the Stack may read the stage.
+      Layer.effect(Stage, Config.String("ALCHEMY_STAGE")),
     )),
       Layer.provideMerge(Credentials.fromChain()),
       Layer.provideMerge(Region.fromEnv()),

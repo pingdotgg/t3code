@@ -4,7 +4,7 @@ import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { KvNamespace } from "../../../dist/core/node/bindings/index.mjs";
 import * as WorkerProxy from "../../../dist/core/node/proxy/WorkerProxy.mjs";
 import * as Runtime from "../../../dist/core/node/Runtime.mjs";

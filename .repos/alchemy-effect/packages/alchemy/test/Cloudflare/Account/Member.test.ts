@@ -91,152 +91,164 @@ const pickTwoRoles = (accountId: string) =>
 // Read-only: enumerating account members sends no invites. The account
 // owner is always an accepted member, so `list()` must return a non-empty,
 // well-typed `Attributes[]` containing at least one accepted membership.
-test.provider("list enumerates the account members", (_stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the account members",
+  (_stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    const provider = yield* Provider.findProvider(Cloudflare.Account.Member);
-    const all = yield* provider.list().pipe(Effect.retry(forbiddenRetry));
+      const provider = yield* Provider.findProvider(Cloudflare.Account.Member);
+      const all = yield* provider.list().pipe(Effect.retry(forbiddenRetry));
 
-    expect(all.length).toBeGreaterThan(0);
-    // Every element is the exact `read` shape, scoped to this account.
-    for (const member of all) {
+      expect(all.length).toBeGreaterThan(0);
+      // Every element is the exact `read` shape, scoped to this account.
+      for (const member of all) {
+        expect(member.memberId).toBeTruthy();
+        expect(member.accountId).toEqual(accountId);
+        expect(typeof member.email).toBe("string");
+        expect(Array.isArray(member.roles)).toBe(true);
+      }
+      // The account owner is an accepted member.
+      expect(all.some((member) => member.status === "accepted")).toBe(true);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:account", "live"] },
+);
+
+test.provider(
+  "create member, update roles in place, delete",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+      yield* cleanupEmail(accountId, crudEmail);
+
+      const [roleA, roleB] = yield* pickTwoRoles(accountId);
+
+      const member = yield* stack.deploy(
+        Cloudflare.Account.Member("TestMember", {
+          email: crudEmail,
+          roles: [roleA.id],
+        }),
+      );
+
       expect(member.memberId).toBeTruthy();
       expect(member.accountId).toEqual(accountId);
-      expect(typeof member.email).toBe("string");
-      expect(Array.isArray(member.roles)).toBe(true);
-    }
-    // The account owner is an accepted member.
-    expect(all.some((member) => member.status === "accepted")).toBe(true);
-  }).pipe(logLevel),
+      expect(member.email.toLowerCase()).toEqual(crudEmail);
+      expect(member.status).toEqual("pending");
+      expect(member.roles.map((r) => r.id)).toEqual([roleA.id]);
+
+      // Out-of-band verify the invite exists with the assigned role.
+      const live = yield* getMember(accountId, member.memberId);
+      expect(live.email?.toLowerCase()).toEqual(crudEmail);
+      expect((live.roles ?? []).map((r) => r.id)).toEqual([roleA.id]);
+
+      // Swap the role — same email, so the membership is updated in place.
+      const updated = yield* stack.deploy(
+        Cloudflare.Account.Member("TestMember", {
+          email: crudEmail,
+          roles: [roleB.id],
+        }),
+      );
+      expect(updated.memberId).toEqual(member.memberId);
+      expect(updated.roles.map((r) => r.id)).toEqual([roleB.id]);
+
+      const liveUpdated = yield* getMember(accountId, member.memberId);
+      expect((liveUpdated.roles ?? []).map((r) => r.id)).toEqual([roleB.id]);
+
+      // Redeploying identical props is a no-op (same membership).
+      const noop = yield* stack.deploy(
+        Cloudflare.Account.Member("TestMember", {
+          email: crudEmail,
+          roles: [roleB.id],
+        }),
+      );
+      expect(noop.memberId).toEqual(member.memberId);
+
+      yield* stack.destroy();
+      yield* expectGone(accountId, member.memberId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:account", "live"] },
 );
 
-test.provider("create member, update roles in place, delete", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "replaces the member when the email changes",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* cleanupEmail(accountId, crudEmail);
+      yield* stack.destroy();
+      yield* cleanupEmail(accountId, replaceEmail);
+      yield* cleanupEmail(accountId, replacedEmail);
 
-    const [roleA, roleB] = yield* pickTwoRoles(accountId);
+      const [roleA] = yield* pickTwoRoles(accountId);
 
-    const member = yield* stack.deploy(
-      Cloudflare.Account.Member("TestMember", {
-        email: crudEmail,
-        roles: [roleA.id],
-      }),
-    );
+      const original = yield* stack.deploy(
+        Cloudflare.Account.Member("ReplaceMember", {
+          email: replaceEmail,
+          roles: [roleA.id],
+        }),
+      );
 
-    expect(member.memberId).toBeTruthy();
-    expect(member.accountId).toEqual(accountId);
-    expect(member.email.toLowerCase()).toEqual(crudEmail);
-    expect(member.status).toEqual("pending");
-    expect(member.roles.map((r) => r.id)).toEqual([roleA.id]);
+      // Changing the email re-invites: a fresh membership id, and the old
+      // invite is cancelled by the replacement's delete phase.
+      const replaced = yield* stack.deploy(
+        Cloudflare.Account.Member("ReplaceMember", {
+          email: replacedEmail,
+          roles: [roleA.id],
+        }),
+      );
 
-    // Out-of-band verify the invite exists with the assigned role.
-    const live = yield* getMember(accountId, member.memberId);
-    expect(live.email?.toLowerCase()).toEqual(crudEmail);
-    expect((live.roles ?? []).map((r) => r.id)).toEqual([roleA.id]);
+      expect(replaced.memberId).not.toEqual(original.memberId);
+      expect(replaced.email.toLowerCase()).toEqual(replacedEmail);
+      yield* expectGone(accountId, original.memberId);
 
-    // Swap the role — same email, so the membership is updated in place.
-    const updated = yield* stack.deploy(
-      Cloudflare.Account.Member("TestMember", {
-        email: crudEmail,
-        roles: [roleB.id],
-      }),
-    );
-    expect(updated.memberId).toEqual(member.memberId);
-    expect(updated.roles.map((r) => r.id)).toEqual([roleB.id]);
-
-    const liveUpdated = yield* getMember(accountId, member.memberId);
-    expect((liveUpdated.roles ?? []).map((r) => r.id)).toEqual([roleB.id]);
-
-    // Redeploying identical props is a no-op (same membership).
-    const noop = yield* stack.deploy(
-      Cloudflare.Account.Member("TestMember", {
-        email: crudEmail,
-        roles: [roleB.id],
-      }),
-    );
-    expect(noop.memberId).toEqual(member.memberId);
-
-    yield* stack.destroy();
-    yield* expectGone(accountId, member.memberId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, replaced.memberId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:account", "live"] },
 );
 
-test.provider("replaces the member when the email changes", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "recreates after out-of-band delete",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* cleanupEmail(accountId, replaceEmail);
-    yield* cleanupEmail(accountId, replacedEmail);
+      yield* stack.destroy();
+      yield* cleanupEmail(accountId, healEmail);
 
-    const [roleA] = yield* pickTwoRoles(accountId);
+      const [roleA, roleB] = yield* pickTwoRoles(accountId);
 
-    const original = yield* stack.deploy(
-      Cloudflare.Account.Member("ReplaceMember", {
-        email: replaceEmail,
-        roles: [roleA.id],
-      }),
-    );
+      const member = yield* stack.deploy(
+        Cloudflare.Account.Member("HealMember", {
+          email: healEmail,
+          roles: [roleA.id],
+        }),
+      );
 
-    // Changing the email re-invites: a fresh membership id, and the old
-    // invite is cancelled by the replacement's delete phase.
-    const replaced = yield* stack.deploy(
-      Cloudflare.Account.Member("ReplaceMember", {
-        email: replacedEmail,
-        roles: [roleA.id],
-      }),
-    );
+      // Cancel the invite out-of-band. A redeploy with identical props is a
+      // planner no-op, so change the role to force reconcile — it must
+      // observe the member as missing and re-invite instead of failing.
+      yield* accounts
+        .deleteMember({ accountId, memberId: member.memberId })
+        .pipe(Effect.retry(forbiddenRetry));
 
-    expect(replaced.memberId).not.toEqual(original.memberId);
-    expect(replaced.email.toLowerCase()).toEqual(replacedEmail);
-    yield* expectGone(accountId, original.memberId);
+      const healed = yield* stack.deploy(
+        Cloudflare.Account.Member("HealMember", {
+          email: healEmail,
+          roles: [roleB.id],
+        }),
+      );
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, replaced.memberId);
-  }).pipe(logLevel),
-);
+      expect(healed.memberId).not.toEqual(member.memberId);
+      expect(healed.roles.map((r) => r.id)).toEqual([roleB.id]);
 
-test.provider("recreates after out-of-band delete", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+      const live = yield* getMember(accountId, healed.memberId);
+      expect((live.roles ?? []).map((r) => r.id)).toEqual([roleB.id]);
 
-    yield* stack.destroy();
-    yield* cleanupEmail(accountId, healEmail);
-
-    const [roleA, roleB] = yield* pickTwoRoles(accountId);
-
-    const member = yield* stack.deploy(
-      Cloudflare.Account.Member("HealMember", {
-        email: healEmail,
-        roles: [roleA.id],
-      }),
-    );
-
-    // Cancel the invite out-of-band. A redeploy with identical props is a
-    // planner no-op, so change the role to force reconcile — it must
-    // observe the member as missing and re-invite instead of failing.
-    yield* accounts
-      .deleteMember({ accountId, memberId: member.memberId })
-      .pipe(Effect.retry(forbiddenRetry));
-
-    const healed = yield* stack.deploy(
-      Cloudflare.Account.Member("HealMember", {
-        email: healEmail,
-        roles: [roleB.id],
-      }),
-    );
-
-    expect(healed.memberId).not.toEqual(member.memberId);
-    expect(healed.roles.map((r) => r.id)).toEqual([roleB.id]);
-
-    const live = yield* getMember(accountId, healed.memberId);
-    expect((live.roles ?? []).map((r) => r.id)).toEqual([roleB.id]);
-
-    yield* stack.destroy();
-    yield* expectGone(accountId, healed.memberId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, healed.memberId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:account", "live"] },
 );

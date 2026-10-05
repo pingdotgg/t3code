@@ -140,5 +140,13 @@ test.provider(
         ),
       );
     }),
-  { timeout: 360_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:route53profiles",
+      "provider:aws:route53resolver",
+      "live",
+    ],
+    timeout: 360_000,
+  },
 );

@@ -23,6 +23,7 @@ export interface RetrieveTaxSettingsRequest extends GetTaxSettingsRequest {}
  * ```
  *
  * @binding
+ * @product Tax
  */
 export interface RetrieveTaxSettings extends Binding.Service<
   RetrieveTaxSettings,

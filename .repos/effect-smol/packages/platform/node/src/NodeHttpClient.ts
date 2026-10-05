@@ -12,6 +12,16 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { flow } from "effect/Function"
+import * as Cookies from "effect/http/Cookies"
+import * as Headers from "effect/http/Headers"
+import type * as Body from "effect/http/HttpBody"
+import * as Client from "effect/http/HttpClient"
+import * as Error from "effect/http/HttpClientError"
+import type { HttpClientRequest } from "effect/http/HttpClientRequest"
+import * as Response from "effect/http/HttpClientResponse"
+import type { HttpClientResponse } from "effect/http/HttpClientResponse"
+import * as IncomingMessage from "effect/http/HttpIncomingMessage"
+import * as UrlParams from "effect/http/UrlParams"
 import * as Inspectable from "effect/Inspectable"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -19,16 +29,6 @@ import { type Pipeable, pipeArguments } from "effect/Pipeable"
 import type * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import * as Cookies from "effect/unstable/http/Cookies"
-import * as Headers from "effect/unstable/http/Headers"
-import type * as Body from "effect/unstable/http/HttpBody"
-import * as Client from "effect/unstable/http/HttpClient"
-import * as Error from "effect/unstable/http/HttpClientError"
-import type { HttpClientRequest } from "effect/unstable/http/HttpClientRequest"
-import * as Response from "effect/unstable/http/HttpClientResponse"
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse"
-import * as IncomingMessage from "effect/unstable/http/HttpIncomingMessage"
-import * as UrlParams from "effect/unstable/http/UrlParams"
 import * as Http from "node:http"
 import * as Https from "node:https"
 import { Readable } from "node:stream"
@@ -73,7 +73,7 @@ export {
    * @since 4.0.0
    */
   RequestInit
-} from "effect/unstable/http/FetchHttpClient"
+} from "effect/http/FetchHttpClient"
 
 // -----------------------------------------------------------------------------
 // Undici
@@ -83,6 +83,7 @@ export {
  * Service tag for the Undici `Dispatcher` used by the Undici-backed HTTP
  * client.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -96,6 +97,7 @@ const loadUndici = Effect.promise(() => import("./Undici.ts"))
  * Acquires a new Undici `Agent` dispatcher and destroys it when the enclosing
  * scope is finalized.
  *
+ * @stability unstable
  * @category resource management
  * @since 4.0.0
  */
@@ -107,6 +109,7 @@ export const makeDispatcher: Effect.Effect<Undici.Dispatcher, never, Scope.Scope
 /**
  * Provides the `Dispatcher` service using a scoped Undici `Agent`.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -116,6 +119,7 @@ export const layerDispatcher: Layer.Layer<Dispatcher> = Layer.effect(Dispatcher)
  * Provides the `Dispatcher` service from Undici's process-global dispatcher,
  * without creating or owning a new agent.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -127,6 +131,7 @@ export const dispatcherLayerGlobal: Layer.Layer<Dispatcher> = Layer.effect(Dispa
  * Fiber reference containing default Undici request options applied to requests
  * sent by `makeUndici`.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -140,6 +145,7 @@ export const UndiciOptions = Context.Reference<Partial<Undici.Dispatcher.Request
  * `Dispatcher`, converts Effect HTTP bodies to Undici bodies, and maps
  * transport and decode failures to `HttpClientError`.
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -350,6 +356,7 @@ class UndiciResponse extends Inspectable.Class implements HttpClientResponse, Pi
  * Provides an Undici-backed `HttpClient` using the current `Dispatcher`
  * service.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -363,6 +370,7 @@ export const layerUndiciNoDispatcher: Layer.Layer<
  * Provides an Undici-backed `HttpClient` together with a scoped default
  * Undici `Agent` dispatcher.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

@@ -29,6 +29,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:iotwireless", "live"] },
 );
 
 // The IAM role IoT Wireless assumes to deliver uplinks to the rule/topic.
@@ -226,7 +227,15 @@ test.provider(
       );
       expect(deviceProfileError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:iotwireless",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // Deterministic fabricated radio identities — devices and gateways can be
@@ -409,5 +418,13 @@ test.provider.skipIf(!process.env.AWS_TEST_IOT_WIRELESS)(
       );
       expect(gatewayError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:iotwireless",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

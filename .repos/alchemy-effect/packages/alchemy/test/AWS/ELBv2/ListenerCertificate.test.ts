@@ -148,5 +148,14 @@ test.provider(
         Effect.ensuring(deleteCertBestEffort(defaultCertArn)),
       );
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:acm",
+      "provider:aws:ec2",
+      "provider:aws:elbv2",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

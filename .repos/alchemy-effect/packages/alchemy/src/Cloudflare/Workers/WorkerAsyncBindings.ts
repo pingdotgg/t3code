@@ -31,14 +31,26 @@ import { isStream as isPipelinesStream } from "../Pipelines/Stream.ts";
 import { isQueue } from "../Queues/Queue.ts";
 import { maybeQueueShim } from "../Queues/QueueShim.ts";
 import { isBucket } from "../R2/Bucket.ts";
+import {
+  bindS3Credentials,
+  isS3Credentials,
+  resolveBucket,
+} from "../R2/S3CredentialsBinding.ts";
 import { isSecret } from "../SecretsStore/Secret.ts";
 import { isStream } from "../Stream/Stream.ts";
 import { isIndex } from "../Vectorize/VectorizeIndex.ts";
 import { isVpcService } from "../VpcService/VpcService.ts";
 import type { VpcServiceLookup } from "../VpcService/VpcServiceLookup.ts";
 import { isDispatchNamespace } from "../WorkersForPlatforms/DispatchNamespace.ts";
-import { isWorkflowLike, WorkflowResource } from "../Workflows/Workflow.ts";
-import { makeWorkflowName } from "../Workflows/WorkflowName.ts";
+import {
+  isWorkflowLike,
+  WorkflowResource,
+  type WorkflowBinding,
+} from "../Workflows/Workflow.ts";
+import {
+  asScriptNameOutput,
+  makeWorkflowName,
+} from "../Workflows/WorkflowName.ts";
 import { isAI } from "./AI.ts";
 import { isAssets } from "./Assets.ts";
 import { isBinding as isWorkerOnlyBinding } from "./Binding.ts";
@@ -68,6 +80,8 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
   resource: Worker,
   props: InputProps<WorkerProps<WorkerBindingProps>>,
 ) {
+  if (globalThis.__ALCHEMY_RUNTIME__) return;
+
   // Access enrollment (`access` prop): push this Worker's
   // `worker`/`preview_worker` destinations onto the application's binding
   // contract. The application deploys with — and converges on — every
@@ -121,6 +135,9 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
       ],
     });
   }
+  const env: Record<string, unknown> = props.assets
+    ? { ASSETS: { kind: "Cloudflare.Workers.Assets" } }
+    : {};
   if (props.env) {
     for (const bindingName in props.env) {
       // @ts-expect-error
@@ -133,7 +150,21 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
       // resolution below — yielding the Container class would resolve its
       // *started instance* tag, which only exists inside a Durable Object.
       if (isContainerDecl(bindingEff)) {
+        env[bindingName] = bindingEff;
         yield* bindContainerClass(resource, bindingName, bindingEff);
+        continue;
+      }
+      // `Cloudflare.R2.S3Credentials` is also an Effect (its Effect-native
+      // form resolves to a runtime accessor): bind its deploy-time half under
+      // the env key instead of yielding it.
+      if (isS3Credentials(bindingEff)) {
+        env[bindingName] = bindingEff;
+        yield* bindS3Credentials(
+          resource,
+          bindingName,
+          yield* resolveBucket(bindingEff.bucket),
+          bindingEff.access,
+        );
         continue;
       }
       // Bindings can be passed as a plain resource value, an Effect that
@@ -146,6 +177,7 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
           ? yield* bindingEff as Effect.Effect<unknown>
           : bindingEff
       ) as WorkerBindingResource;
+      env[bindingName] = binding;
 
       // Queue producer bindings may need the dev-mode remote-producer shim
       // (a LOCAL worker binding a LIVE queue): `maybeQueueShim` registers
@@ -199,7 +231,8 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
         if (isWorkflowLike(binding)) {
           const className = binding.className ?? binding.name;
           const scriptName = binding.scriptName ?? resource.workerName;
-          const workflowName = makeWorkflowName(scriptName, className);
+          const workflowName =
+            binding.workflowName ?? makeWorkflowName(scriptName, className);
           resolvedBindingMeta = {
             ...resolvedBindingMeta,
             workflowName,
@@ -207,17 +240,46 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
 
           // A locally-hosted Workflow (no `scriptName`) must be registered
           // with Cloudflare via `putWorkflow` once the host Worker exists.
-          // Cross-script references are binding-only; both sides derive the
-          // same physical workflow name from the host script and class.
-          if (!binding.scriptName) {
-            yield* WorkflowResource(binding.name, {
-              workflowName,
-              className,
-              scriptName: resource.workerName,
-              limits: binding.limits,
-              schedules: binding.schedules,
-            });
+          // Cross-script references are binding-only; both sides use the
+          // explicit physical name when supplied, or derive the same default
+          // from the host script and class.
+          const workflow = binding.scriptName
+            ? undefined
+            : yield* WorkflowResource(binding.name, {
+                workflowName: binding.workflowName,
+                className,
+                scriptName:
+                  binding.workflowName === undefined
+                    ? resource.workerName
+                    : undefined,
+                limits: binding.limits,
+                schedules: binding.schedules,
+              });
+          if (workflow) {
+            // Host linkage must not block the named identity's adoption probe.
+            if (binding.workflowName !== undefined) {
+              yield* workflow.bind`${resource}`({
+                scriptName: resource.workerName,
+              });
+            }
+            resolvedBindingMeta = {
+              ...resolvedBindingMeta,
+              workflowName: binding.workflowName ?? workflow.workflowName,
+            };
           }
+
+          // Local outputs depend on registration and preserve deployed identity.
+          env[bindingName] = {
+            kind: binding.kind,
+            name: binding.name,
+            className,
+            workflowName: workflow
+              ? workflow.workflowName
+              : Output.asOutput(workflowName),
+            scriptName: workflow
+              ? workflow.scriptName
+              : asScriptNameOutput(scriptName),
+          } satisfies WorkflowBinding;
         }
 
         yield* resource.bind`${bindingName}`({
@@ -243,6 +305,9 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
         return yield* Effect.die(`Unknown binding type: ${bindingName}`);
       }
     }
+  }
+  if (resource.Props?.isExternal === true) {
+    Object.assign(resource, { env });
   }
 });
 

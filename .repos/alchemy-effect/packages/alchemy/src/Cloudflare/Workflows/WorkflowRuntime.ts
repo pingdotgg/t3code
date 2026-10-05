@@ -45,7 +45,7 @@ export class WorkflowStepContext extends Context.Service<
 export class WorkflowStep extends Context.Service<
   WorkflowStep,
   {
-    do<T>(options: WorkflowTaskOptions<T, any, any>): Effect.Effect<T>;
+    do<T, E>(options: WorkflowTaskOptions<T, any, any, E>): Effect.Effect<T, E>;
     sleep(name: string, duration: string | number): Effect.Effect<void>;
     sleepUntil(name: string, timestamp: Date | number): Effect.Effect<void>;
     waitForEvent<T>(

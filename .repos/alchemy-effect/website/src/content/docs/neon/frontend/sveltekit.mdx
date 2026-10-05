@@ -1,0 +1,84 @@
+---
+title: SvelteKit
+description: Package SvelteKit SSR and prerendered assets as a Neon Function Fetch artifact.
+sidebar:
+  order: 5
+---
+
+`Neon.Website.SvelteKit` packages SvelteKit's server handler and assets for a
+Node 24 Fetch entry on Neon Functions. The Node adapter supplies a handler, not a
+listening production server; no container or S3 hosting is provisioned.
+
+## Prepare the app
+
+Start from a compatible SvelteKit app or the
+[runnable SvelteKit example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-sveltekit).
+This integration targets the Kit v3 plugin configuration shape. Configure
+[deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep `sveltekit()` in `vite.config.*`, without your own adapter. For Kit v3, use
+plugin configuration or the resource's serializable `kit` overrides rather than
+a `svelte.config.js` file. Alchemy injects the deployment adapter.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonSvelteKit",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.SvelteKit("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+SvelteKit handles SSR, endpoints, and form actions; prerendered pages and client
+assets are packaged alongside it. Use SvelteKit's `$env/static/private` or
+`$env/dynamic/private` as appropriate for build-time versus runtime values. Public
+environment modules expose values to the browser; never put backend secrets there.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run each separately, with `destroy` for cleanup. Dev runs the native SvelteKit/Vite
+server with HMR and returns a local URL, without an implicit Neon Project or
+Function. Append `.pipe(Alchemy.remote())` to the Website Effect to opt into live
+deployment during dev.
+
+Without scope, live deploy creates an Ohio Project. Pass either `project` or
+`branch` to reuse a backend; use Ohio when adding storage. See
+[scope and credentials](/neon/frontend/vite#scope-and-credentials), including the
+difference between account keys and branch service tokens.
+
+:::caution[Deployment limits]
+Complete live framework acceptance remains unverified. In Neon probes, updated
+deployment metadata has not guaranteed new code/env at the Function URL. Native
+dev is not a production-runtime test. No CDN or durable framework cache is added,
+and custom-domain registration does not validate TLS. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [SvelteKit API](/providers/neon/website/sveltekit)
+- [Runnable SvelteKit example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-sveltekit)

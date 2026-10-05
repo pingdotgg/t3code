@@ -1,22 +1,6 @@
-import * as railway from "@distilled.cloud/railway";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-
-/** Known throttling responses and transport failures safe for read-only callers to retry. */
-export const isRailwayTransient = (error: unknown): boolean =>
-  railway.isErrorTag(error, [
-    "RailwayRateLimited",
-    "RailwayOperationInProgress",
-  ]) ||
-  (error instanceof railway.GraphQLTransportError &&
-    (error.status === 429 ||
-      error.status === 502 ||
-      error.status === 503 ||
-      error.status === 504));
-
-/** Space bulk read retries without exceeding the factory retry window. */
-export const conservativeSpacing = Schedule.spaced("5 seconds");
 
 const projectAndEnvironmentCreateGate = Semaphore.makeUnsafe(1);
 
@@ -25,7 +9,11 @@ const projectAndEnvironmentCreateGate = Semaphore.makeUnsafe(1);
  * window. Serialize these calls and retry a typed rejection once after 31s.
  * Other mutation failures propagate so an ambiguous create is never replayed.
  */
-export const waitOutCreateRateLimit = <A, E, R>(
+export const waitOutCreateRateLimit = <
+  A,
+  E extends { readonly _tag: string },
+  R,
+>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Semaphore.withPermits(
@@ -34,7 +22,7 @@ export const waitOutCreateRateLimit = <A, E, R>(
   )(
     effect.pipe(
       Effect.retry({
-        while: (error) => railway.isErrorTag(error, "RailwayRateLimited"),
+        while: (error) => error._tag === "RailwayRateLimited",
         times: 1,
         schedule: Schedule.spaced("31 seconds"),
       }),

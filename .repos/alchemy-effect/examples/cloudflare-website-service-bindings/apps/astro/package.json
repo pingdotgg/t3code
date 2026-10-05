@@ -1,0 +1,12 @@
+{
+  "name": "service-binding-astro",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "astro": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

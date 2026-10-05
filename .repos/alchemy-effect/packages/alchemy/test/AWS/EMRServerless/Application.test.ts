@@ -18,13 +18,16 @@ const RELEASE_LABEL = "emr-7.5.0";
 
 // Ungated typed-error probe: proves the distilled error union carries the
 // not-found tag the read/observe/delete paths depend on.
-test.provider("typed error semantics on a nonexistent application", () =>
-  Effect.gen(function* () {
-    const error = yield* Effect.flip(
-      emr.getApplication({ applicationId: "00abcdefabcdef01" }),
-    );
-    expect(error._tag).toBe("ResourceNotFoundException");
-  }),
+test.provider(
+  "typed error semantics on a nonexistent application",
+  () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        emr.getApplication({ applicationId: "00abcdefabcdef01" }),
+      );
+      expect(error._tag).toBe("ResourceNotFoundException");
+    }),
+  { tags: ["provider:aws", "provider:aws:emrserverless", "live"] },
 );
 
 // Full ungated lifecycle: an application in the CREATED state is free (billing
@@ -98,7 +101,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertApplicationGone(created.applicationId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:emrserverless", "live"],
+    timeout: 240_000,
+  },
 );
 
 // Live JobRun (SparkPi from the EMR image itself — no S3 assets needed).
@@ -177,7 +183,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertApplicationGone(app.applicationId);
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:emrserverless",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );
 
 const assertApplicationGone = (applicationId: string) =>

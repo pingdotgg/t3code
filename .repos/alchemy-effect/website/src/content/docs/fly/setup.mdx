@@ -13,7 +13,7 @@ a Fly organization, and an API token stored in a profile.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 22+
 - A [Fly.io](https://fly.io) account
 - [Docker](https://docs.docker.com/get-docker/) for
   [Services](/fly/compute/services) (Alchemy builds and pushes an
@@ -25,8 +25,9 @@ a Fly organization, and an API token stored in a profile.
 
 Sign in at [fly.io/dashboard](https://fly.io/dashboard). A personal
 org is created with the account. Tokens are scoped to an org — the
-org slug is what `Fly.App` uses when you omit `orgSlug` (Alchemy
-reads it from the current token).
+org slug is where Services create their Apps, and what `Fly.App`
+uses when you omit `orgSlug` (Alchemy reads it from the current
+token).
 
 ## Generate an API token
 
@@ -136,7 +137,7 @@ Fly has no object-storage state backend of its own, so pick one of:
 
 ## Next steps
 
-- [Tutorial part 1](/fly/tutorial/part-1) — deploy your first App.
+- [Tutorial part 1](/fly/tutorial/part-1) — deploy your first Service.
 - [Sprites](/fly/compute/sprites) — an Effect program that
   hibernates. No Docker.
 - [Fly overview](/fly) — the map of resources and guides.

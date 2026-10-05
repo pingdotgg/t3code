@@ -256,5 +256,8 @@ test.provider(
         remainingPlans.some((p) => p.backupPlanId === deployed.planId),
       ).toBe(false);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:backup", "provider:aws:iam", "live"],
+    timeout: 240_000,
+  },
 );

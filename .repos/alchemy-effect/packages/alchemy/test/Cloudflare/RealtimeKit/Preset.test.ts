@@ -152,7 +152,10 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, v1.appId, v1.presetId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -201,5 +204,8 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(deployed.accountId, deployed.appId, deployed.presetId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );

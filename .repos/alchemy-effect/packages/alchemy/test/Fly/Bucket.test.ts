@@ -7,7 +7,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import BucketApi, {
   BucketIp,
   BucketSite,
@@ -137,7 +137,7 @@ test.provider(
       const gone = yield* waitUntilBucketGone(created.addOnId, created.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:bucket", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -175,7 +175,7 @@ test.provider(
       const gone = yield* waitUntilBucketGone(replaced.addOnId, replaced.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:bucket", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -183,18 +183,6 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-
-      // Create the bucket first so Tigris credentials are persisted on
-      // attributes. Same-plan Service reconcile otherwise runs before
-      // Data is ready and GraphQL list omits `environment`.
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          const app = yield* BucketSite;
-          const bucket = yield* Data;
-          const ip = yield* BucketIp;
-          return { app, bucket, ip };
-        }),
-      );
 
       const out = yield* stack.deploy(
         Effect.gen(function* () {
@@ -269,7 +257,18 @@ test.provider(
       const appGone = yield* waitUntilAppGone(out.app.appName);
       expect(appGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:bucket",
+      "provider:fly:ipassignment",
+      "provider:fly:machine",
+      "provider:fly:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 const sanitizeReplaceName = (name: string): string => {

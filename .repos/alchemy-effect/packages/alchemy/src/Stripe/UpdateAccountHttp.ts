@@ -8,6 +8,7 @@ import { UpdateAccount } from "./UpdateAccount.ts";
  * Function or Worker Effect.
  *
  * @layer
+ * @product Account
  * @provides Stripe.UpdateAccount
  */
 export const UpdateAccountHttp = Layer.effect(

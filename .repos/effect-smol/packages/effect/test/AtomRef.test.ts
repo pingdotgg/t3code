@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { AtomRef } from "effect/unstable/reactivity"
+import { AtomRef } from "effect/reactivity"
 
 describe("AtomRef", () => {
   it("notifies each subscribed listener once when a listener resubscribes itself", () => {

@@ -13,15 +13,26 @@ export const destroy = ({
   stage,
   dev,
   scope,
+  include,
+  exclude,
 }: {
   stack: StackEffect<CompiledStack, ConfigError, Stage | AlchemyContext>;
   stage: string;
   dev?: boolean;
   /** See {@link evalStack} — when set, scoped resources outlive `destroy`. */
   scope?: Scope.Scope;
+  /** Destroy always operates on the full stack. */
+  include?: never;
+  exclude?: never;
 }) =>
-  evalStack(
-    stack,
-    (stack) => Plan.destroy(stack).pipe(Effect.flatMap(Apply.apply)),
-    { stage, dev, scope },
-  );
+  include !== undefined || exclude !== undefined
+    ? Effect.die(
+        new Plan.InvalidResourceSelection({
+          message: "Filtered destroy is not supported.",
+        }),
+      )
+    : evalStack(
+        stack,
+        (stack) => Plan.destroy(stack).pipe(Effect.flatMap(Apply.apply)),
+        { stage, dev, scope },
+      );

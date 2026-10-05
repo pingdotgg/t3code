@@ -7,7 +7,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import ElastiCacheTestFunctionLive, {
   ElastiCacheTestFunction,
   FixtureCache,
@@ -28,6 +28,7 @@ test.provider(
       );
       expect(error._tag).toBe("ServerlessCacheNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:elasticache", "live"] },
 );
 
 const SNAPSHOT_NAME = "alchemy-elasticache-fixture-snap";
@@ -167,7 +168,16 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertCacheDeleted(cache.serverlessCacheName);
     }),
   // create (~2 min) + lambda deploy (~1 min) + delete initiation, one test.
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:elasticache",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );
 
 // Deletion is verified as INITIATED (status `deleting`, which is

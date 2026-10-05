@@ -8,7 +8,8 @@ import type { Postgres } from "./Postgres.ts";
 /**
  * Bind a {@link Postgres} cluster to a Fly {@link Service} and obtain
  * the Effect-native connection strings for `Drizzle.Postgres` /
- * `SQL.Postgres`.
+ * `SQL.Postgres`. Alchemy transports the cluster's connection URIs
+ * automatically; callers do not configure connection-string env vars.
  *
  * `ConnectPostgres` is the Context tag, the type, and the callable —
  * `yield* Fly.ConnectPostgres(Db)`. Provide {@link ConnectPostgresHttp}.
@@ -26,6 +27,7 @@ import type { Postgres } from "./Postgres.ts";
  * ```
  *
  * @binding
+ * @product Postgres
  */
 export interface ConnectPostgres extends Binding.Service<
   ConnectPostgres,

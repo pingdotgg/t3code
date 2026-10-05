@@ -23,6 +23,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:mwaa", "live"] },
 );
 
 // Resolve two subnets from the account's default VPC in distinct Availability
@@ -191,7 +192,17 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertEnvironmentDeleted(environment.environmentName);
     }),
   // create (~20-30 min) + destroy initiation, one test.
-  { timeout: 4_200_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:mwaa",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 4_200_000,
+  },
 );
 
 // Deletion is verified as INITIATED (status DELETING, irreversible) or fully

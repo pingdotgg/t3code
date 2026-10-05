@@ -201,7 +201,7 @@ it.live(
         ).toBe(0);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "provider:github", "local"], exclusive: true },
 );
 
 it.live(
@@ -242,7 +242,7 @@ it.live(
         ).toEqual({ label: "production" });
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -284,7 +284,7 @@ it.live(
         ).toBe("{not-json");
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -405,5 +405,5 @@ it.live(
         });
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );

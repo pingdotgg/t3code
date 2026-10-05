@@ -1,6 +1,6 @@
 // Measures HttpApiGroup.Endpoints extraction from one type-only group with 500 endpoints.
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Group } from "./_grouped-api-types.ts"
 
 Schema.String

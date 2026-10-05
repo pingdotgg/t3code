@@ -58,10 +58,10 @@ const BigDecimalProto: Omit<BigDecimal, "value" | "scale" | "normalized"> = {
   [TypeId]: TypeId,
   [Hash.symbol](this: BigDecimal): number {
     const normalized = normalize(this)
-    return Hash.combine(Hash.hash(normalized.value), Hash.number(normalized.scale))
+    return Hash.combine(Hash.string(String(normalized.value)), Hash.number(normalized.scale))
   },
   [Equal.symbol](this: BigDecimal, that: unknown): boolean {
-    return isBigDecimal(that) && equals(this, that)
+    return isBigDecimal(that) && compare(this, that) === 0
   },
   toString(this: BigDecimal) {
     return `BigDecimal(${format(this)})`
@@ -146,6 +146,12 @@ export const make = (value: bigint, scale: number): BigDecimal => {
   return o
 }
 
+const makeNormalized = (value: bigint, scale: number): BigDecimal => {
+  const o = make(value, scale)
+  o.normalized = o
+  return o
+}
+
 /**
  * Internal function used to create pre-normalized `BigDecimal`s.
  *
@@ -156,9 +162,7 @@ export const makeNormalizedUnsafe = (value: bigint, scale: number): BigDecimal =
     throw new RangeError("Value must be normalized")
   }
 
-  const o = make(value, scale)
-  o.normalized = o
-  return o
+  return makeNormalized(value, scale)
 }
 
 const bigint0 = BigInt(0)
@@ -168,7 +172,7 @@ const bigint2 = BigInt(2)
 const bigint5 = BigInt(5)
 const bigint_5 = BigInt(-5)
 const bigint10 = BigInt(10)
-const zero = makeNormalizedUnsafe(bigint0, 0)
+const zero = makeNormalized(bigint0, 0)
 const one = makeNormalizedUnsafe(bigint1, 0)
 
 /**
@@ -202,23 +206,9 @@ export const normalize = (self: BigDecimal): BigDecimal => {
       self.normalized = zero
     } else {
       const digits = `${self.value}`
-
-      let trail = 0
-      for (let i = digits.length - 1; i >= 0; i--) {
-        if (digits[i] === "0") {
-          trail++
-        } else {
-          break
-        }
-      }
-
-      if (trail === 0) {
-        self.normalized = self
-      }
-
-      const value = BigInt(digits.substring(0, digits.length - trail))
-      const scale = self.scale - trail
-      self.normalized = makeNormalizedUnsafe(value, scale)
+      let end = digits.length
+      while (digits[end - 1] === "0") end--
+      self.normalized = makeNormalized(BigInt(digits.slice(0, end)), self.scale - (digits.length - end))
     }
   }
 
@@ -649,12 +639,7 @@ const compareMagnitude = (self: BigDecimal, that: BigDecimal): Ordering => {
   if (exponentDifference !== bigint0) return exponentDifference < bigint0 ? -1 : 1
 
   const length = Math.max(selfDigits.length, thatDigits.length)
-  for (let i = 0; i < length; i++) {
-    const selfDigit = i < selfDigits.length ? selfDigits.charCodeAt(i) : 48
-    const thatDigit = i < thatDigits.length ? thatDigits.charCodeAt(i) : 48
-    if (selfDigit !== thatDigit) return selfDigit < thatDigit ? -1 : 1
-  }
-  return 0
+  return order.String(selfDigits.padEnd(length, "0"), thatDigits.padEnd(length, "0"))
 }
 
 const compare = (self: BigDecimal, that: BigDecimal): Ordering => {
@@ -1407,27 +1392,12 @@ export const format = (n: BigDecimal): string => {
   }
 
   const negative = normalized.value < bigint0
-  const absolute = negative ? `${normalized.value}`.substring(1) : `${normalized.value}`
-
-  let before: string
-  let after: string
-
-  if (normalized.scale >= absolute.length) {
-    before = "0"
-    after = "0".repeat(normalized.scale - absolute.length) + absolute
-  } else {
-    const location = absolute.length - normalized.scale
-    if (location > absolute.length) {
-      const zeros = location - absolute.length
-      before = `${absolute}${"0".repeat(zeros)}`
-      after = ""
-    } else {
-      after = absolute.slice(location)
-      before = absolute.slice(0, location)
-    }
-  }
-
-  const complete = after === "" ? before : `${before}.${after}`
+  const absolute = `${negative ? -normalized.value : normalized.value}`
+  const digits = normalized.scale > 0
+    ? absolute.padStart(normalized.scale + 1, "0")
+    : absolute.padEnd(absolute.length - normalized.scale, "0")
+  const point = digits.length - normalized.scale
+  const complete = normalized.scale > 0 ? `${digits.slice(0, point)}.${digits.slice(point)}` : digits
   return negative ? `-${complete}` : complete
 }
 
@@ -1457,17 +1427,12 @@ export const toExponential = (n: BigDecimal): string => {
   }
 
   const normalized = normalize(n)
-  const digits = `${abs(normalized).value}`
-  const head = digits.slice(0, 1)
-  const tail = digits.slice(1)
-
-  let output = `${isNegative(normalized) ? "-" : ""}${head}`
-  if (tail !== "") {
-    output += `.${tail}`
-  }
-
+  const digits = `${normalized.value}`
+  const point = normalized.value < bigint0 ? 2 : 1
+  const head = digits.slice(0, point)
+  const tail = digits.slice(point)
   const exp = tail.length - normalized.scale
-  return `${output}e${exp >= 0 ? "+" : ""}${exp}`
+  return `${head}${tail === "" ? "" : `.${tail}`}e${exp >= 0 ? "+" : ""}${exp}`
 }
 
 /**

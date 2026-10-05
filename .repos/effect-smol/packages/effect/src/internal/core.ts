@@ -113,7 +113,7 @@ export const EffectProto = {
 }
 
 /** @internal */
-export const isEffect = (u: unknown): u is Effect.Effect<any, any, any> => hasProperty(u, EffectTypeId)
+export const isEffect = (u: unknown): u is Effect.Effect<unknown, unknown, unknown> => hasProperty(u, EffectTypeId)
 
 /** @internal */
 export const isExit = (u: unknown): u is Exit.Exit<unknown, unknown> => hasProperty(u, ExitTypeId)
@@ -278,6 +278,48 @@ export class Fail<E> extends ReasonBase<"Fail"> implements Cause.Fail<E> {
 export const causeFromReasons = <E>(
   reasons: ReadonlyArray<Cause.Reason<E>>
 ): Cause.Cause<E> => new CauseImpl(reasons)
+
+const dedupeReasons = <E>(
+  self: ReadonlyArray<Cause.Reason<E>>,
+  that: ReadonlyArray<Cause.Reason<E>>
+): Array<Cause.Reason<E>> => {
+  // Avoid importing Array.ts into the core bundle.
+  // Snapshot both arrays before invoking user-defined hash or equality methods.
+  const buckets = new Map<number, Array<Cause.Reason<E>>>()
+  const out: Array<Cause.Reason<E>> = []
+  for (const reason of self.concat(that)) {
+    const hash = Hash.hash(reason)
+    const bucket = buckets.get(hash)
+    if (bucket === undefined) {
+      buckets.set(hash, [reason])
+    } else if (bucket.some((previous) => Equal.equals(previous, reason))) {
+      continue
+    } else {
+      bucket.push(reason)
+    }
+    out.push(reason)
+  }
+  return out
+}
+
+/** @internal */
+export const causeCombine: {
+  <E2>(that: Cause.Cause<E2>): <E>(self: Cause.Cause<E>) => Cause.Cause<E | E2>
+  <E, E2>(self: Cause.Cause<E>, that: Cause.Cause<E2>): Cause.Cause<E | E2>
+} = dual(
+  2,
+  <E, E2>(self: Cause.Cause<E>, that: Cause.Cause<E2>): Cause.Cause<E | E2> => {
+    if (self.reasons.length === 0) {
+      return that as Cause.Cause<E | E2>
+    } else if (that.reasons.length === 0) {
+      return self as Cause.Cause<E | E2>
+    }
+    const newCause = new CauseImpl<E | E2>(
+      dedupeReasons<E | E2>(self.reasons, that.reasons)
+    )
+    return Equal.equals(self, newCause) ? self : newCause
+  }
+)
 
 /** @internal */
 export const causeEmpty: Cause.Cause<never> = new CauseImpl([])
@@ -546,8 +588,20 @@ export const exitFailCause: <E>(cause: Cause.Cause<E>) => Exit.Exit<never, E> = 
       annotated = true
     }
     let cont = fiber.getCont(contE)
-    while (fiber.interruptible && fiber._interruptedCause && cont) {
-      cont = fiber.getCont(contE)
+    const interruptedCause = fiber._interruptedCause
+    if (interruptedCause && fiber.interruptible) {
+      // Drop typed failures only when interruption skips a recovery handler.
+      // Interruptibility-restoration continuations have no identifier.
+      let skippedHandler = false
+      while (cont && fiber.interruptible) {
+        skippedHandler ||= identifier in cont
+        cont = fiber.getCont(contE)
+      }
+      if (skippedHandler) {
+        cause = causeFromReasons(cause.reasons.filter((reason) => reason._tag !== "Fail"))
+      }
+      cause = causeCombine(cause, interruptedCause)
+      annotated = true
     }
     return cont
       ? cont[contE](cause, fiber, annotated ? undefined : this)

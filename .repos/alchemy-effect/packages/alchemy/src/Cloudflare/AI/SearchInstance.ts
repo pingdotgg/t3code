@@ -21,7 +21,7 @@ export type SearchInstanceSourceType = "r2" | "web-crawler";
 /**
  * Generation model used to answer AI Search queries.
  */
-export type Model = Exclude<
+export type SearchModel = Exclude<
   NonNullable<aisearch.CreateInstanceRequest["aiSearchModel"]>,
   ""
 >;
@@ -148,7 +148,7 @@ export type SearchInstanceProps = {
    * Generation model used to answer AI Search queries.
    * @default service default
    */
-  aiSearchModel?: Model;
+  aiSearchModel?: SearchModel;
   /**
    * Whether to rewrite the user query before retrieval.
    * @default false
@@ -157,7 +157,7 @@ export type SearchInstanceProps = {
   /**
    * Model used to rewrite queries when `rewriteQuery` is enabled.
    */
-  rewriteModel?: Model;
+  rewriteModel?: SearchModel;
   /**
    * Whether custom chunking settings are applied during indexing.
    */
@@ -480,8 +480,8 @@ export type SearchInstance = Resource<
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
- * import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import { HttpServerRequest } from "effect/http/HttpServerRequest";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * export default class Api extends Cloudflare.Worker<Api>()(
  *   "api",

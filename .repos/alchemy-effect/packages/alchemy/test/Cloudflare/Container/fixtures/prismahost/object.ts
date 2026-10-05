@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { PrismaHostConnection } from "./db.ts";
 
 class PrismaHostContainer extends Cloudflare.Container<PrismaHostContainer>()(

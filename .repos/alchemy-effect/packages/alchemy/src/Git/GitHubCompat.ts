@@ -31,12 +31,12 @@
  * compute content diffs; fetch blobs and diff client-side).
  */
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Base64 } from "effect/encoding";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { RuntimeContext } from "../RuntimeContext.ts";
 import type { RegistryEntry } from "./RegistryObject.ts";
 import type {
@@ -542,7 +542,7 @@ export const gitHubCompatRoutes = (options: GitHubCompatOptions) => {
             path,
             sha: file.oid,
             url: `${repoUrl}/contents/${path}`,
-            content: Encoding.encodeBase64(file.content),
+            content: Base64.encode(file.content),
           });
         }),
       ),

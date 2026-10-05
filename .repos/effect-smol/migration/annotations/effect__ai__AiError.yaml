@@ -1,6 +1,6 @@
 "@effect/ai/AiError#AiError":
   replacement: "AiError.AiError"
-  note: "Moved to effect/unstable/ai/AiError and redesigned from a union of separately tagged errors into one AiError wrapper with a semantic reason. Construct it with AiError.make({ module, method, reason }) and match error.reason rather than the old top-level tags."
+  note: "Moved to effect/ai/AiError and redesigned from a union of separately tagged errors into one AiError wrapper with a semantic reason. Construct it with AiError.make({ module, method, reason }) and match error.reason rather than the old top-level tags."
 "@effect/ai/AiError#HttpRequestError":
   replacement: "AiError.make + AiError.NetworkError"
   note: "Replace the old top-level request error with an AiError whose reason is NetworkError. NetworkError.fromRequestError converts a v4 HttpClientError.RequestError."
@@ -21,4 +21,4 @@
   note: "UnknownError is now a semantic reason rather than a top-level error. Put module and method on AiError.make and inspect reason._tag when handling the outer AiError."
 "@effect/ai/AiError#HttpRequestDetails":
   replacement: "AiError.HttpRequestDetails"
-  note: "Retained in effect/unstable/ai/AiError and also re-exported as Response.HttpRequestDetails. Hash is an optional string instead of Option, headers may contain Redacted strings, and method includes TRACE."
+  note: "Retained in effect/ai/AiError and also re-exported as Response.HttpRequestDetails. Hash is an optional string instead of Option, headers may contain Redacted strings, and method includes TRACE."

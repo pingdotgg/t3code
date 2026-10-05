@@ -12,7 +12,7 @@ import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Prisma from "alchemy/Prisma";
 import * as SQL from "alchemy/SQL/Postgres";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const project = yield* Prisma.Project("app", { createDatabase: false });
 const postgres = yield* Prisma.Postgres("db", { project });

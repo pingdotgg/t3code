@@ -1,7 +1,7 @@
 import { DenoClusterSocket } from "@effect/platform-deno"
 import { assert, describe, it } from "@effect/vitest"
 import { BigDecimal, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, PrimaryKey, Schema } from "effect"
-import type { Sharding } from "effect/unstable/cluster"
+import type { Sharding } from "effect/cluster"
 import {
   ClusterSchema,
   Entity,
@@ -11,8 +11,8 @@ import {
   RunnerStorage,
   ShardingConfig,
   SocketRunner
-} from "effect/unstable/cluster"
-import { Rpc, RpcSerialization } from "effect/unstable/rpc"
+} from "effect/cluster"
+import { Rpc, RpcSerialization } from "effect/rpc"
 
 class TestPayload extends Schema.Class<TestPayload>("TestPayload")({
   id: Schema.String,

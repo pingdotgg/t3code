@@ -10,9 +10,9 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import Stack from "./fixtures/stack.ts";
 
 type Equal<A, B> =
@@ -39,23 +39,27 @@ const bucket = {
   FQN: "Api/Uploads",
 } as PrismaBucket;
 
-describe("Prisma bucket binding identity", () => {
-  it("derives a stable bucket key logical id per bucket and access level", () => {
-    expect(bucketAccessKeyLogicalId(bucket, "Read")).toBe(
-      "UploadsReadBucketAccessKey",
-    );
-    expect(bucketAccessKeyLogicalId(bucket, "Write")).toBe(
-      "UploadsWriteBucketAccessKey",
-    );
-    expect(bucketAccessKeyLogicalId(bucket, "ReadWrite")).toBe(
-      "UploadsReadWriteBucketAccessKey",
-    );
-    // Stable across calls: the deployed bundle has to derive the same id.
-    expect(bucketAccessKeyLogicalId(bucket, "Read")).toBe(
-      bucketAccessKeyLogicalId({ LogicalId: "Uploads" }, "Read"),
-    );
-  });
-});
+describe(
+  "Prisma bucket binding identity",
+  { tags: ["unit", "provider:prisma", "provider:prisma:bucket", "local"] },
+  () => {
+    it("derives a stable bucket key logical id per bucket and access level", () => {
+      expect(bucketAccessKeyLogicalId(bucket, "Read")).toBe(
+        "UploadsReadBucketAccessKey",
+      );
+      expect(bucketAccessKeyLogicalId(bucket, "Write")).toBe(
+        "UploadsWriteBucketAccessKey",
+      );
+      expect(bucketAccessKeyLogicalId(bucket, "ReadWrite")).toBe(
+        "UploadsReadWriteBucketAccessKey",
+      );
+      // Stable across calls: the deployed bundle has to derive the same id.
+      expect(bucketAccessKeyLogicalId(bucket, "Read")).toBe(
+        bucketAccessKeyLogicalId({ LogicalId: "Uploads" }, "Read"),
+      );
+    });
+  },
+);
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Prisma.providers(),
@@ -91,6 +95,7 @@ if (wantsLive && !hasLiveCredentials) {
         ].join(" "),
       ),
     ),
+    { tags: ["provider:prisma", "provider:prisma:bucket", "live"] },
   );
 }
 
@@ -337,27 +342,39 @@ const exercise = (label: string, writeBase: string, readBase: string) =>
  * The stack lives in `fixtures/stack.ts` so it can also be inspected
  * directly, e.g. `alchemy logs --tail --stage test --config ./test/Prisma/fixtures/stack.ts`.
  */
-describe.skipIf(!runLive)("Prisma bucket binding over deployed hosts", () => {
-  const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
-    timeout: HOOK_TIMEOUT,
-  });
+describe.skipIf(!runLive)(
+  "Prisma bucket binding over deployed hosts",
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:bucket",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "live",
+    ],
+  },
+  () => {
+    const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
+      timeout: HOOK_TIMEOUT,
+    });
 
-  test(
-    "write + read across separate compute apps",
-    Effect.gen(function* () {
-      const out = yield* stack;
-      yield* exercise("bind", out.write, out.read);
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
+    test(
+      "write + read across separate compute apps",
+      Effect.gen(function* () {
+        const out = yield* stack;
+        yield* exercise("bind", out.write, out.read);
+      }).pipe(logLevel),
+      { timeout: TEST_TIMEOUT },
+    );
 
-  test(
-    "read-write round-trip in one compute app",
-    Effect.gen(function* () {
-      const out = yield* stack;
-      yield* exercise("rw-bind", out.readWrite, out.readWrite);
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
-});
+    test(
+      "read-write round-trip in one compute app",
+      Effect.gen(function* () {
+        const out = yield* stack;
+        yield* exercise("rw-bind", out.readWrite, out.readWrite);
+      }).pipe(logLevel),
+      { timeout: TEST_TIMEOUT },
+    );
+  },
+);

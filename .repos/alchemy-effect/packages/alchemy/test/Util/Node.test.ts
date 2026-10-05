@@ -3,7 +3,7 @@ import { describe, expect, test } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
 
-describe("Node utilities", () => {
+describe("Node utilities", { tags: ["unit", "local"] }, () => {
   test("checkout .ts entries get the dev-mode hooks", () => {
     for (const entry of [
       "/repo/packages/alchemy/src/Cloudflare/Local.ts",

@@ -6,8 +6,43 @@ import {
   HEADER_PROXY_SHARED_SECRET,
 } from "../../globals/ProxyHeaders.shared.ts";
 import { localRuntimeLayer, startTestWorker } from "../helpers/runtime.ts";
+import { getFixture } from "../helpers/fixture.ts";
+import { PATH_MODULE_RUNNER_INIT } from "../../globals/EntryOptions.shared.ts";
 
 layer(localRuntimeLayer, { excludeTestServices: true })((it) => {
+  it.effect(
+    "routes only the module-runner init path directly past assets",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startTestWorker({
+          name: "module-runner-routing",
+          compatibilityDate: "2026-03-10",
+          compatibilityFlags: [],
+          bindings: [],
+          assets: {
+            directory: getFixture("assets"),
+            runWorkerFirst: ["/api/*"],
+            notFoundHandling: "single-page-application",
+          },
+          modules: [
+            {
+              name: "main.js",
+              type: "ESModule",
+              content: `export default { fetch() { return new Response("worker"); } };`,
+            },
+          ],
+        });
+        expect(yield* worker.fetchText(PATH_MODULE_RUNNER_INIT)).toBe("worker");
+        for (const pathname of [
+          "/dashboard",
+          "/__vite_module_runner/init",
+          `${PATH_MODULE_RUNNER_INIT}/other`,
+          "/cdn-cgi/alchemy/other",
+        ]) {
+          expect(yield* worker.fetchText(pathname)).toBe("<h1>home</h1>\n");
+        }
+      }),
+  );
   it.effect(
     "preserves the proxy URL, Host, body and path across runtime restarts",
     () =>

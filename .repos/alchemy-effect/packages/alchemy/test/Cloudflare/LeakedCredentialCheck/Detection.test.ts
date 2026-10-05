@@ -35,67 +35,80 @@ const resolveZoneId = Effect.gen(function* () {
   return zone.id;
 });
 
-describe.sequential("LeakedCredentialDetection", () => {
-  // Canonical `list()` test (zone-scoped collection): there is no account-wide
-  // enumeration API for custom detections, so `list()` fans out over every
-  // zone via `listAllZones` and exhaustively paginates the per-zone list,
-  // skipping zones whose LCC toggle is off (typed
-  // `LeakedCredentialChecksDisabled`) or that 403 (`Forbidden`).
-  //
-  // On the standard testing account no zone has detections (quota is zero),
-  // so the result is a well-typed empty array. When an entitled zone is
-  // supplied, deploy a detection and assert it appears in the result.
-  test.provider("list enumerates custom detections across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
+describe.sequential(
+  "LeakedCredentialDetection",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:leakedcredentialcheck",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    // Canonical `list()` test (zone-scoped collection): there is no account-wide
+    // enumeration API for custom detections, so `list()` fans out over every
+    // zone via `listAllZones` and exhaustively paginates the per-zone list,
+    // skipping zones whose LCC toggle is off (typed
+    // `LeakedCredentialChecksDisabled`) or that 403 (`Forbidden`).
+    //
+    // On the standard testing account no zone has detections (quota is zero),
+    // so the result is a well-typed empty array. When an entitled zone is
+    // supplied, deploy a detection and assert it appears in the result.
+    test.provider(
+      "list enumerates custom detections across all zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-      yield* stack.destroy();
+          yield* stack.destroy();
 
-      const provider = yield* Provider.findProvider(
-        Cloudflare.LeakedCredentialCheck.LeakedCredentialDetection,
-      );
+          const provider = yield* Provider.findProvider(
+            Cloudflare.LeakedCredentialCheck.LeakedCredentialDetection,
+          );
 
-      if (detectionZoneId) {
-        const usernameExpr =
-          'lookup_json_string(http.request.body.raw, "user")';
-        const passwordExpr =
-          'lookup_json_string(http.request.body.raw, "pass")';
+          if (detectionZoneId) {
+            const usernameExpr =
+              'lookup_json_string(http.request.body.raw, "user")';
+            const passwordExpr =
+              'lookup_json_string(http.request.body.raw, "pass")';
 
-        const detection = yield* stack.deploy(
-          Effect.gen(function* () {
-            const check =
-              yield* Cloudflare.LeakedCredentialCheck.LeakedCredentialCheck(
-                "Lcc",
-                {
-                  zoneId: detectionZoneId,
-                  enabled: true,
-                },
-              );
-            return yield* Cloudflare.LeakedCredentialCheck.LeakedCredentialDetection(
-              "ListDetection",
-              {
-                zoneId: check.zoneId,
-                username: usernameExpr,
-                password: passwordExpr,
-              },
+            const detection = yield* stack.deploy(
+              Effect.gen(function* () {
+                const check =
+                  yield* Cloudflare.LeakedCredentialCheck.LeakedCredentialCheck(
+                    "Lcc",
+                    {
+                      zoneId: detectionZoneId,
+                      enabled: true,
+                    },
+                  );
+                return yield* Cloudflare.LeakedCredentialCheck.LeakedCredentialDetection(
+                  "ListDetection",
+                  {
+                    zoneId: check.zoneId,
+                    username: usernameExpr,
+                    password: passwordExpr,
+                  },
+                );
+              }),
             );
-          }),
-        );
 
-        const all = yield* provider.list();
-        expect(all.some((d) => d.detectionId === detection.detectionId)).toBe(
-          true,
-        );
-      } else {
-        // Read-only assertion: the result is a well-typed array (empty on the
-        // unentitled standard account). `zoneId` is resolved to prove the
-        // standing test zone exists in the enumeration scope.
-        expect(zoneId).toBeTruthy();
-        const all = yield* provider.list();
-        expect(Array.isArray(all)).toBe(true);
-      }
+            const all = yield* provider.list();
+            expect(
+              all.some((d) => d.detectionId === detection.detectionId),
+            ).toBe(true);
+          } else {
+            // Read-only assertion: the result is a well-typed array (empty on the
+            // unentitled standard account). `zoneId` is resolved to prove the
+            // standing test zone exists in the enumeration scope.
+            expect(zoneId).toBeTruthy();
+            const all = yield* provider.list();
+            expect(Array.isArray(all)).toBe(true);
+          }
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+    );
+  },
+);

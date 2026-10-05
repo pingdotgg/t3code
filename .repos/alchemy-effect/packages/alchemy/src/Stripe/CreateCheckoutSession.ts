@@ -33,6 +33,7 @@ import type { RuntimeContext } from "../RuntimeContext.ts";
  * ```
  *
  * @binding
+ * @product Checkout
  */
 export interface CreateCheckoutSession extends Binding.Service<
   CreateCheckoutSession,

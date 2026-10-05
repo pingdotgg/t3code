@@ -43,5 +43,14 @@ test(
     expect(body.id).toMatch(/^prod_/);
     expect(body.name).toEqual("Alchemy Bound Product");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:stripe",
+      "provider:stripe:product",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

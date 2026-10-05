@@ -148,7 +148,7 @@ const ipv6Bits = (address: string) => {
     .join("");
 };
 
-describe("canonicalCidr", () => {
+describe("canonicalCidr", { tags: ["unit", "local"] }, () => {
   test("preserves undefined", () => {
     expect(canonicalCidr(undefined)).toBeUndefined();
   });

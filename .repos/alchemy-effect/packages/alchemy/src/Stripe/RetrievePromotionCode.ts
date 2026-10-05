@@ -24,6 +24,7 @@ export interface RetrievePromotionCodeRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Product
  */
 export interface RetrievePromotionCode extends Binding.Service<
   RetrievePromotionCode,

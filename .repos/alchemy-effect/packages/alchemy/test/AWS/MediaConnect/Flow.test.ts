@@ -24,6 +24,7 @@ test.provider(
       );
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:mediaconnect", "live"] },
 );
 
 // Deletion is initiated by the provider and verified as fully gone here;
@@ -157,5 +158,8 @@ test.provider.skipIf(!process.env.AWS_TEST_MEDIACONNECT)(
       yield* assertFlowGone(flow.flowArn);
     }),
   // create + 2 in-place updates + delete-until-gone.
-  { timeout: 900_000 },
+  {
+    tags: ["provider:aws", "provider:aws:mediaconnect", "live"],
+    timeout: 900_000,
+  },
 );

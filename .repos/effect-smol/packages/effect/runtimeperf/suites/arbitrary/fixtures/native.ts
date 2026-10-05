@@ -1,8 +1,8 @@
+import * as Arbitrary from "effect/Arbitrary"
 import * as Effect from "effect/Effect"
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import * as TestSchema from "effect/testing/TestSchema"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import assert from "node:assert/strict"
 import {
   makeBigDecimalSchema,
@@ -387,6 +387,34 @@ export const checkPass100 = () => {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {
       assert.deepEqual(result, { _tag: "Passed", runs: 100, discards: 0 })
+    }
+  }
+}
+
+export const arrayCheckPass100 = () => {
+  const arbitrary = Arbitrary.schema(Schema.Array(Schema.Int))
+  const program = Arbitrary.checkEffect(arbitrary, () => true, { runs: 100, seed, size: 50 })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (result: Arbitrary.CheckResult<ReadonlyArray<number>, never>) => {
+      assert.deepEqual(result, { _tag: "Passed", runs: 100, discards: 0 })
+    }
+  }
+}
+
+export const arrayCheckFalsifyAndShrink = () => {
+  const arbitrary = Arbitrary.schema(Schema.Array(Schema.Literals([8, 27, 0, 1])))
+  const property = (values: ReadonlyArray<number>) => !(values.includes(27) && values.indexOf(0) > values.indexOf(27))
+  const program = Arbitrary.checkEffect(arbitrary, property, { runs: 1, seed: 1967, size: 4 })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (result: Arbitrary.CheckResult<ReadonlyArray<number>, never>) => {
+      assert.equal(result._tag, "Falsified")
+      if (result._tag !== "Falsified") return
+      assert.deepEqual(result.initialInput, [8, 27, 0, 1])
+      // Both revisions must preserve the failure; the regression test checks the new, smaller result.
+      assert.equal(property(result.shrunkInput), false)
+      assert.ok(result.shrunkInput.length <= 3)
     }
   }
 }

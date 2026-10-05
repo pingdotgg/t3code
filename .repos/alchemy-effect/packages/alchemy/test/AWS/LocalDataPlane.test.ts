@@ -63,4 +63,5 @@ test.provider(
       expect(duals).toBeGreaterThan(100);
       expect(missing).toEqual([]);
     }),
+  { tags: ["provider:aws", "local"] },
 );

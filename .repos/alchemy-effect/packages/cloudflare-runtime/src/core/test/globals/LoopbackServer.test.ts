@@ -1,6 +1,6 @@
 import { expect, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as LoopbackServer from "../../globals/LoopbackServer.ts";
 
 layer(LoopbackServer.LoopbackServerLive)((it) => {

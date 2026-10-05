@@ -24,6 +24,7 @@ export interface RetrievePaymentLinkRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Checkout
  */
 export interface RetrievePaymentLink extends Binding.Service<
   RetrievePaymentLink,

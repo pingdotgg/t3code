@@ -176,7 +176,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -221,7 +229,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -297,7 +313,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -352,5 +376,13 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

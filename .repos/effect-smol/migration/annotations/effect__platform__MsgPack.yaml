@@ -1,5 +1,5 @@
 "@effect/platform/MsgPack":
-  replacement: "effect/unstable/encoding/SchemaBinary"
+  replacement: "effect/encoding/SchemaBinary"
   note: "MessagePack support was removed. Schema-aware encode, decode, and duplex now live on SchemaBinary. Untyped MessagePack of unknown values has no replacement."
 "@effect/platform/MsgPack#duplex":
   replacement: "SchemaBinary.duplex"

@@ -9,34 +9,38 @@ import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-describe("AWS.CloudFront.KeyValueStore", () => {
-  test.provider(
-    "list enumerates the deployed key value store",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.CloudFront.KeyValueStore",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    test.provider(
+      "list enumerates the deployed key value store",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* KeyValueStore("ListKeyValueStore", {
-              comment: "list",
-            });
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* KeyValueStore("ListKeyValueStore", {
+                comment: "list",
+              });
+            }),
+          );
 
-        const provider = yield* Provider.findProvider(KeyValueStore);
-        const all = yield* provider.list();
+          const provider = yield* Provider.findProvider(KeyValueStore);
+          const all = yield* provider.list();
 
-        expect(
-          all.some((s) => s.keyValueStoreId === deployed.keyValueStoreId),
-        ).toBe(true);
+          expect(
+            all.some((s) => s.keyValueStoreId === deployed.keyValueStoreId),
+          ).toBe(true);
 
-        yield* stack.destroy();
-        yield* assertKeyValueStoreDeleted(deployed.keyValueStoreName);
-      }),
-    { timeout: 300_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertKeyValueStoreDeleted(deployed.keyValueStoreName);
+        }),
+      { timeout: 300_000 },
+    );
+  },
+);
 
 const assertKeyValueStoreDeleted = (name: string) =>
   cloudfront.describeKeyValueStore({ Name: name }).pipe(

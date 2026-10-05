@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { strictEqual } from "@effect/vitest/utils"
-import { Effect, Exit, identity, pipe, Ref, Scope, ScopedRef } from "effect"
+import { Effect, Exit, Fiber, identity, Latch, pipe, Ref, Scope, ScopedRef } from "effect"
 import * as Counter from "./utils/counter.ts"
 
 describe("ScopedRef", () => {
@@ -72,6 +72,21 @@ describe("ScopedRef", () => {
       strictEqual(acquired, 3)
       strictEqual(released, 3)
     }))
+  it.effect("owner finalizers registered after the ref still see a live value after set", () =>
+    Effect.gen(function*() {
+      const log: Array<string> = []
+      const resource = (n: number) =>
+        Effect.acquireRelease(Effect.succeed(n), () => Effect.sync(() => log.push("release " + n)))
+      const owner = yield* Scope.make()
+      const ref = yield* ScopedRef.fromAcquire(resource(1)).pipe(Scope.provide(owner))
+      yield* Scope.addFinalizer(
+        owner,
+        Effect.flatMap(ScopedRef.get(ref), (n) => Effect.sync(() => log.push("use " + n)))
+      )
+      yield* ScopedRef.set(ref, resource(2))
+      yield* Scope.close(owner, Exit.void)
+      assert.deepStrictEqual(log, ["release 1", "use 2", "release 2"])
+    }))
   it.effect("keeps the current resource when replacement acquisition fails", () =>
     Effect.gen(function*() {
       let released = false
@@ -118,6 +133,24 @@ describe("ScopedRef", () => {
       strictEqual(yield* Ref.get(oldReleased), 1)
       strictEqual(yield* Ref.get(replacementAcquired), 1)
       strictEqual(yield* Ref.get(replacementReleased), 1)
+    }))
+  it.effect("a set in flight when the owning scope closes releases its value", () =>
+    Effect.gen(function*() {
+      const released = yield* Ref.make<Array<number>>([])
+      const owner = yield* Scope.make()
+      const ref = yield* ScopedRef.make(() => 0).pipe(Scope.provide(owner))
+      const gate = yield* Latch.make()
+      const setter = yield* Effect.forkDetach(
+        ScopedRef.set(
+          ref,
+          Effect.acquireRelease(gate.await.pipe(Effect.as(1)), (n) => Ref.update(released, (xs) => [...xs, n]))
+        ),
+        { startImmediately: true }
+      )
+      yield* Scope.close(owner, Exit.void)
+      yield* gate.open
+      yield* Fiber.await(setter)
+      assert.deepStrictEqual(yield* Ref.get(released), [1])
     }))
   it.effect("fromAcquire tracks the initial resource through replacement and scope close", () =>
     Effect.gen(function*() {

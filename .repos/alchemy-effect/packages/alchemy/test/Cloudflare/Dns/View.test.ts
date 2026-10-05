@@ -69,7 +69,15 @@ test.provider.skipIf(internalDnsEntitled)(
       ).pipe(Effect.flip);
       expect(error._tag).toEqual("InternalDnsNotAvailable");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // The list endpoint (GET) is enumerable on any account; on unentitled
@@ -88,7 +96,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!internalDnsEntitled)(
@@ -112,7 +123,15 @@ test.provider.skipIf(!internalDnsEntitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!internalDnsEntitled)(
@@ -161,5 +180,13 @@ test.provider.skipIf(!internalDnsEntitled)(
       // Re-running destroy is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

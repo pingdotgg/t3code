@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { DrizzleV0LayoutError } from "./Format.ts";
-import { DRIZZLE_DIR_PATTERN } from "./Records.ts";
+import { DRIZZLE_DIR_PATTERN } from "./Utils.ts";
 
 /**
  * The on-disk layout of a migrations directory. `directory` covers both

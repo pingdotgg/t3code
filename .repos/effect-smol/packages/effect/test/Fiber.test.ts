@@ -24,28 +24,45 @@ describe("Fiber", () => {
     assert.deepStrictEqual(observed, [1, 2])
   })
 
+  it("stops notifying an observer once it is removed", () => {
+    const fiber = Effect.runFork(Effect.never)
+    const observed: Array<number> = []
+    const cancels = [0, 1, 2].map((index) => fiber.addObserver(() => observed.push(index)))
+    cancels[1]()
+    cancels[1]()
+
+    fiber.interruptUnsafe()
+
+    assert.deepStrictEqual(observed, [0, 2])
+  })
+
   describe("joinAll", () => {
+    it.effect("leaves other joins running when one is interrupted", () =>
+      Effect.gen(function*() {
+        const latch = Latch.makeUnsafe()
+        const fibers = yield* Effect.forEach(
+          [1, 2],
+          (n) => Effect.forkChild(Effect.as(latch.await, n), { startImmediately: true })
+        )
+        const interrupted = yield* Fiber.joinAll(fibers).pipe(Effect.forkChild({ startImmediately: true }))
+        const kept = yield* Fiber.joinAll(fibers).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Fiber.interrupt(interrupted)
+        yield* latch.open
+        assert.deepStrictEqual(yield* Fiber.join(kept), [1, 2])
+      }))
+
     it.effect("cleans up observers on interruption", () =>
       Effect.gen(function*() {
-        const fiber = yield* Effect.forkChild(Effect.never)
-        let cleaned = 0
-        const tracked = new Proxy(fiber, {
-          get(target, property, receiver) {
-            if (property !== "addObserver") return Reflect.get(target, property, receiver)
-            return (observer: Parameters<typeof target.addObserver>[0]) => {
-              const cancel = target.addObserver(observer)
-              return () => {
-                cleaned++
-                cancel()
-              }
-            }
-          }
-        })
-        const joinFiber = yield* Fiber.joinAll([tracked]).pipe(
-          Effect.forkChild({ startImmediately: true })
-        )
+        const fibers = yield* Effect.forEach([0, 1], () => Effect.forkChild(Effect.never))
+        const observerCounts = () =>
+          fibers.map((fiber) =>
+            (fiber as unknown as { readonly _observers: ReadonlyArray<unknown> | undefined })._observers?.length ?? 0
+          )
+        const before = observerCounts()
+        const joinFiber = yield* Fiber.joinAll(fibers).pipe(Effect.forkChild({ startImmediately: true }))
+        assert.deepStrictEqual(observerCounts(), before.map((count) => count + 1))
         yield* Fiber.interrupt(joinFiber)
-        assert.strictEqual(cleaned, 1)
+        assert.deepStrictEqual(observerCounts(), before)
       }))
   })
 

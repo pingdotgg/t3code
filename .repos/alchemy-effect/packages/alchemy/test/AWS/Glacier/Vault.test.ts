@@ -26,6 +26,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:glacier", "live"] },
 );
 
 // Ungated entitlement probe: AWS rejects the vault-based S3 Glacier API on
@@ -50,6 +51,7 @@ test.provider(
         .deleteVault({ accountId: "-", vaultName })
         .pipe(Effect.catchTag("ResourceNotFoundException", () => Effect.void));
     }),
+  { tags: ["provider:aws", "provider:aws:glacier", "live"] },
 );
 
 class VaultStillExists extends Data.TaggedError("VaultStillExists")<{
@@ -235,7 +237,10 @@ test.provider.skipIf(!process.env.AWS_TEST_GLACIER)(
       yield* stack.destroy();
       yield* assertVaultDeleted(step1.vault.vaultName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:glacier", "provider:aws:sns", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider.skipIf(!process.env.AWS_TEST_GLACIER)(
@@ -295,7 +300,7 @@ test.provider.skipIf(!process.env.AWS_TEST_GLACIER)(
       yield* stack.destroy();
       yield* assertVaultDeleted(step1.vaultName);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:glacier", "live"], timeout: 240_000 },
 );
 
 test.provider.skipIf(!process.env.AWS_TEST_GLACIER)(
@@ -332,5 +337,5 @@ test.provider.skipIf(!process.env.AWS_TEST_GLACIER)(
       yield* stack.destroy();
       yield* assertVaultDeleted(renamed.vaultName);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:glacier", "live"], timeout: 240_000 },
 );

@@ -487,6 +487,8 @@ interface Overlay {
 }
 
 const MaxDepth = 8
+// Keep small bases cheap to read; larger bases are worth copying only after
+// enough fall-throughs to amortize the copy.
 const FlattenAfterBaseHits = 8
 
 const makeImpl = <Services>(
@@ -538,7 +540,7 @@ const lookup = (self: Context<any>, key: string): unknown => {
   // base on every fiber cache refresh, which would flatten every short-lived
   // request context and reintroduce the O(services) per-request cost
   if (value === undefined && !impl.base.has(key)) return notFound
-  if (impl.overlay && ++impl.baseHits >= FlattenAfterBaseHits) {
+  if (impl.overlay && ++impl.baseHits >= impl.base.size && impl.baseHits >= FlattenAfterBaseHits) {
     impl.base = flatten(impl)
     impl.overlay = undefined
     impl.depth = 0

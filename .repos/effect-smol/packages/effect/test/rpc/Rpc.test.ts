@@ -1,9 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Context, Effect, Exit, Option, Schema } from "effect"
-import { Headers } from "effect/unstable/http"
-import { Rpc, RpcGroup } from "effect/unstable/rpc"
-import { RequestId } from "effect/unstable/rpc/RpcMessage"
-import * as RpcSchema from "effect/unstable/rpc/RpcSchema"
+import { Headers } from "effect/http"
+import { Rpc, RpcGroup } from "effect/rpc"
+import { RequestId } from "effect/rpc/RpcMessage"
+import * as RpcSchema from "effect/rpc/RpcSchema"
 
 const TestGroup = RpcGroup.make(
   Rpc.make("one"),
@@ -51,6 +51,18 @@ describe("Rpc", () => {
     assert(Exit.isFailure(roundTripped))
     const defect = Cause.squash(roundTripped.cause)
     assert.deepStrictEqual(defect, error)
+  })
+
+  it("JSON-encoded interrupt exits use null for a missing fiberId", () => {
+    const codec = Schema.toCodecJson(Rpc.exitSchema(Rpc.make("probe")))
+    const encoded = Schema.encodeSync(codec)(Exit.interrupt())
+
+    assert.deepStrictEqual(encoded, {
+      _tag: "Failure",
+      cause: [{ _tag: "Interrupt", fiberId: null }]
+    })
+    assert.deepStrictEqual(Schema.decodeSync(codec)(encoded), Exit.interrupt())
+    assert.deepStrictEqual(Schema.encodeSync(codec)(Schema.decodeSync(codec)(encoded)), encoded)
   })
 
   it("RpcSchema.getStreamSchemas returns Option", () => {

@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:mq", "live"] },
 );
 
 const assertBrokerGone = (brokerId: string) =>
@@ -103,5 +104,5 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertBrokerGone(broker.brokerId);
     }),
   // create (~5-10 min) + delete (~3-5 min) + poll budget.
-  { timeout: 1_200_000 },
+  { tags: ["provider:aws", "provider:aws:mq", "live"], timeout: 1_200_000 },
 );

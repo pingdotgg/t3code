@@ -77,5 +77,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertActivityDeleted(activity.activityArn);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:stepfunctions", "live"],
+    timeout: 120_000,
+  },
 );

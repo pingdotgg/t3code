@@ -24,6 +24,7 @@ export interface RetrievePaymentMethodConfigurationRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Payment Methods
  */
 export interface RetrievePaymentMethodConfiguration extends Binding.Service<
   RetrievePaymentMethodConfiguration,

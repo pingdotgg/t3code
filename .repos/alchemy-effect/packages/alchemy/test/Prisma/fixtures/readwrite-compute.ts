@@ -4,8 +4,8 @@ import {
   ReadWriteBucketBinding,
 } from "@/Prisma/ReadWriteBucket.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { TestBucket, TestProject } from "./bucket.ts";
 import { readRoutes } from "./read-routes.ts";
 import { writeRoutes } from "./write-routes.ts";

@@ -1,3 +1,4 @@
+import { formatPlanPreview } from "./Plan.ts";
 /**
  * Line-oriented reporter for non-interactive terminals and CI.
  *
@@ -208,6 +209,14 @@ const onEvent = (
   state: ReporterState,
 ): Effect.Effect<void> => {
   switch (event._tag) {
+    case "PlanPreview":
+      return Effect.sync(() => finishCollect(state)).pipe(
+        Effect.andThen(write(formatPlanPreview(event.phases))),
+      );
+    case "PlanPhaseStart":
+      return write(
+        `\nPlan phase ${event.phase}/${event.phases}: ${event.tests} tests`,
+      );
     case "CollectStart":
       state.collectTotal = event.files.length;
       state.collectStartedAt = Date.now();
@@ -362,9 +371,16 @@ export const printSummary = (
     }
     const parts = [
       summary.failed > 0 ? red(`${summary.failed} failed`) : green("0 failed"),
-      green(`${summary.passed} passed`),
+      ...(summary.dryRun ? [] : [green(`${summary.passed} passed`)]),
       ...(summary.skipped > 0 ? [yellow(`${summary.skipped} skipped`)] : []),
       ...(summary.todo > 0 ? [yellow(`${summary.todo} todo`)] : []),
+      ...(summary.plan
+        ? [
+            `${summary.plan.found} found`,
+            `${summary.plan.selected} selected by plan`,
+            yellow(`${summary.plan.excluded} excluded by plan`),
+          ]
+        : []),
     ];
     yield* write(
       `\n${bold("Tests:")} ${parts.join(dim(" | "))} ${dim(`(${summary.files} files, ${formatDuration(summary.durationMs)})`)}`,

@@ -367,6 +367,9 @@ function* dumpSql(
         if (cell === null) {
           return "NULL";
         } else if (cellType === "number") {
+          if (!Number.isFinite(cell)) {
+            return (cell as number) > 0 ? "9e999" : "-9e999";
+          }
           return cell;
         } else if (cellType === "string") {
           return outputQuotedEscapedString(cell);

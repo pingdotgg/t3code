@@ -2,6 +2,7 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import {
   AuthError,
   getAuthProvider,
@@ -14,6 +15,7 @@ import {
   ProfileStore,
   SuppressMissingProviderConfig,
 } from "./Profile.ts";
+import { UserFacingError } from "../UserFacingError.ts";
 import { loadConfigProvider } from "../Util/ConfigProvider.ts";
 
 /**
@@ -117,6 +119,56 @@ export const resolveProviderConfig = <
       source: "profile" as const,
     };
   });
+
+/**
+ * Defer an effect that a layer hands out as its service value. The effect
+ * runs on first use, outside the layer build, so the services it needs are
+ * captured now and provided to it. Building the layer then never runs the
+ * effect, e.g. never requires a configured profile.
+ */
+export const deferUntilFirstUse = <A, E, R>(resolve: Effect.Effect<A, E, R>) =>
+  Effect.map(Effect.context<R>(), (context) =>
+    resolve.pipe(Effect.provideContext(context)),
+  );
+
+/**
+ * A provider's credentials could not be resolved when a cloud operation first
+ * needed them: no profile, the provider is not configured in it, or the
+ * stored credentials can no longer be read or refreshed.
+ */
+export class CredentialsUnavailable extends Schema.TaggedError<CredentialsUnavailable>()(
+  "CredentialsUnavailable",
+  {
+    provider: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  readonly [UserFacingError] = true;
+}
+
+/**
+ * Credential services are `Effect<Config>` with no error channel, so a
+ * failed resolution can only leave them as a defect. Die with
+ * {@link CredentialsUnavailable} so the engine can tell it apart from a
+ * provider crash and fail the operation with `CredentialsRequired`.
+ */
+export const orDieCredentialsUnavailable =
+  (provider: string) =>
+  <A, E extends { readonly message: string }, R>(
+    self: Effect.Effect<A, E, R>,
+  ) =>
+    self.pipe(
+      Effect.mapError(
+        (cause) =>
+          new CredentialsUnavailable({
+            provider,
+            message: cause.message,
+            cause,
+          }),
+      ),
+      Effect.orDie,
+    );
 
 /** Let an explicit profile override configured selection without disturbing other keys. */
 export const withProfileOverride = (

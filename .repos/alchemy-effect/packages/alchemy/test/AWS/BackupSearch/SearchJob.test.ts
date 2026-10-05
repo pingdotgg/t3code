@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:backupsearch", "live"] },
 );
 
 test.provider(
@@ -36,6 +37,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:backupsearch", "live"] },
 );
 
 test.provider(
@@ -50,6 +52,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:backupsearch", "live"] },
 );
 
 test.provider(
@@ -64,13 +67,17 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:backupsearch", "live"] },
 );
 
-test.provider("listSearchJobs succeeds on an account-level scan", () =>
-  Effect.gen(function* () {
-    const page = yield* backupsearch.listSearchJobs({ MaxResults: 10 });
-    expect(Array.isArray(page.SearchJobs)).toBe(true);
-  }),
+test.provider(
+  "listSearchJobs succeeds on an account-level scan",
+  () =>
+    Effect.gen(function* () {
+      const page = yield* backupsearch.listSearchJobs({ MaxResults: 10 });
+      expect(Array.isArray(page.SearchJobs)).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:backupsearch", "live"] },
 );
 
 // Search jobs CANNOT be deleted — the API is Start/Stop/Get/List only, and
@@ -187,5 +194,8 @@ test.provider.skipIf(!process.env.AWS_TEST_BACKUP_SEARCH)(
       // and age out server-side within ~7 days.)
       Effect.ensuring(stopLeakedSearchJobs),
     ),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:backupsearch", "live"],
+    timeout: 120_000,
+  },
 );

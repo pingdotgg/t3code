@@ -103,7 +103,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertPolicyDeleted(identity.emailIdentity, policy.policyName);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iam", "provider:aws:ses", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -158,5 +161,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertPolicyDeleted(second.emailIdentity, "alchemy-test-policy-b");
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iam", "provider:aws:ses", "live"],
+    timeout: 120_000,
+  },
 );

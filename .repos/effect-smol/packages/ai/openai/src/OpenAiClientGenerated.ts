@@ -1,4 +1,5 @@
 /**
+ * @stability unstable
  * @since 4.0.0
  */
 import * as Array from "effect/Array"
@@ -7,12 +8,12 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { identity } from "effect/Function"
 import * as Function from "effect/Function"
+import * as Headers from "effect/http/Headers"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
 import * as Redacted from "effect/Redacted"
-import * as Headers from "effect/unstable/http/Headers"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as Generated from "./Generated.ts"
 import { OpenAiConfig } from "./OpenAiConfig.ts"
 
@@ -24,6 +25,7 @@ import { OpenAiConfig } from "./OpenAiConfig.ts"
  * Service identifier for the generated OpenAI client.
  *
  * @since 4.0.0
+ * @stability unstable
  * @category service
  */
 export class OpenAiClientGenerated extends Context.Service<OpenAiClientGenerated, Generated.OpenAiClient>()(
@@ -38,6 +40,7 @@ export class OpenAiClientGenerated extends Context.Service<OpenAiClientGenerated
  * Options for configuring the generated OpenAI client.
  *
  * @since 4.0.0
+ * @stability unstable
  * @category options
  */
 export type Options = {
@@ -87,6 +90,7 @@ const withRedactedHeaders = Effect.updateService(
  * Creates a generated OpenAI client service with the given options.
  *
  * @since 4.0.0
+ * @stability unstable
  * @category constructors
  */
 export const make = Effect.fnUntraced(
@@ -140,6 +144,7 @@ export const make = Effect.fnUntraced(
  * Creates a layer for the generated OpenAI client with the given options.
  *
  * @since 4.0.0
+ * @stability unstable
  * @category layers
  */
 export const layer = (options: Options): Layer.Layer<OpenAiClientGenerated, never, HttpClient.HttpClient> =>
@@ -150,6 +155,7 @@ export const layer = (options: Options): Layer.Layer<OpenAiClientGenerated, neve
  * configuration via Effect's `Config` module.
  *
  * @since 4.0.0
+ * @stability unstable
  * @category layers
  */
 export const layerConfig = (options?: {

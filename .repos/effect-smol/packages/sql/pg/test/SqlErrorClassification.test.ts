@@ -1,6 +1,6 @@
 import { classifySqlState } from "@effect/sql-pg/internal/sqlError"
 import { assert, describe, it } from "@effect/vitest"
-import type * as SqlError from "effect/unstable/sql/SqlError"
+import type * as SqlError from "effect/sql/SqlError"
 
 const queryFailureReason = (cause: unknown) => {
   const code = typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"

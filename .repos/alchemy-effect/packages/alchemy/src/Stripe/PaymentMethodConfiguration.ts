@@ -356,6 +356,7 @@ export type PaymentMethodConfiguration = Resource<
  * ```
  *
  * @resource
+ * @product Payment Methods
  */
 export const PaymentMethodConfiguration = Resource<PaymentMethodConfiguration>(
   "Stripe.PaymentMethodConfiguration",

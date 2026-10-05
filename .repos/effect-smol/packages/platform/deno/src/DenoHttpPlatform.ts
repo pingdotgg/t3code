@@ -15,10 +15,10 @@ import * as NodeHttpCompression from "@effect/platform-node-shared/NodeHttpCompr
 import { contentType } from "@std/media-types"
 import { extname } from "@std/path"
 import { ByteSliceStream } from "@std/streams"
+import * as Etag from "effect/http/Etag"
+import * as Platform from "effect/http/HttpPlatform"
+import * as Response from "effect/http/HttpServerResponse"
 import * as Layer from "effect/Layer"
-import * as Etag from "effect/unstable/http/Etag"
-import * as Platform from "effect/unstable/http/HttpPlatform"
-import * as Response from "effect/unstable/http/HttpServerResponse"
 import * as DenoFileSystem from "./DenoFileSystem.ts"
 
 // gzip and deflate use the native CompressionStream, which does not expose a
@@ -88,7 +88,8 @@ export const make = Platform.make({
     return Response.raw(body, {
       headers: {
         ...headers,
-        "content-type": file.type,
+        "content-type": headers["content-type"] ??
+          (file.type === "" ? contentType(extname(file.name)) ?? "application/octet-stream" : file.type),
         "content-length": contentLength.toString()
       },
       status,

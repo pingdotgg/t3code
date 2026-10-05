@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
-import * as Worker from "effect/unstable/workers/Worker"
-import { WorkerError, WorkerUnknownError } from "effect/unstable/workers/WorkerError"
+import * as Worker from "effect/workers/Worker"
+import { WorkerError, WorkerUnknownError } from "effect/workers/WorkerError"
 
 /**
  * Provides the Bun `WorkerPlatform` together with a `Worker.Spawner` created

@@ -104,7 +104,10 @@ test.provider(
       const gone = yield* waitUntilGone(created.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:product", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -134,7 +137,10 @@ test.provider(
       const gone = yield* waitUntilGone(deployed.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:product", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -167,5 +173,13 @@ test.provider(
       expect(archived.id).toEqual(created.product.id);
       expect(archived.active).toEqual(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:price",
+      "provider:stripe:product",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

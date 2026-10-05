@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { MinimumLogLevel } from "effect/References";
 import * as Scope from "effect/Scope";
-import { layer as fetchHttpClientLayer } from "effect/unstable/http/FetchHttpClient";
+import { layer as fetchHttpClientLayer } from "effect/http/FetchHttpClient";
 import { registerLambdaExtension } from "../../AWS/Lambda/RuntimeExtension.ts";
 import { reifyBoundConfigProvider } from "../../Runtime.ts";
 import { entrypointLayer, entrypointTag, stackFromEnv } from "./Process.ts";

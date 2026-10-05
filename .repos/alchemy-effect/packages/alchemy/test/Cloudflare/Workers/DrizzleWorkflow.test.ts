@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "./fixtures/drizzle-workflow/stack.ts";
 import type { Widget } from "./fixtures/drizzle-workflow/schema.ts";
 
@@ -112,7 +112,19 @@ test(
     expect(last.output?.widget).toMatchObject({ id: 1, name: "widget-1" });
     expect(last.output?.inserted).toMatchObject({ id: 1, name: "widget-1" });
   }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "provider:neon",
+      "provider:neon:branch",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );
 
 /**
@@ -166,5 +178,17 @@ test(
       expect(body.rowCount).toBeTypeOf("number");
     }
   }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "provider:neon",
+      "provider:neon:branch",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

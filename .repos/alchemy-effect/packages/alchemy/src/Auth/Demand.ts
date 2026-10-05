@@ -54,7 +54,8 @@ import {
   ProfileStore,
   SuppressMissingProviderConfig,
 } from "./Profile.ts";
-import { resolveProviderConfig } from "./Resolve.ts";
+import { CredentialsUnavailable, resolveProviderConfig } from "./Resolve.ts";
+import { UserFacingError } from "../UserFacingError.ts";
 
 /** Why a plan row demands live (cloud) credentials during a dev run. */
 export type CredentialDemandReason =
@@ -97,7 +98,32 @@ export class CredentialsRequired extends Data.TaggedError(
   resources: string[];
   /** Short summary of why the credentials are needed. */
   reason: string;
-}> {}
+}> {
+  readonly [UserFacingError] = true;
+}
+
+/**
+ * Live providers resolve credentials lazily, on their first cloud call, and
+ * a failed resolution leaves the credential service as a
+ * {@link CredentialsUnavailable} defect. Applied around every provider
+ * lifecycle call, this fails the operation with {@link CredentialsRequired}
+ * naming the resource instead of treating it as a provider crash.
+ */
+export const failCredentialsRequired =
+  (fqn: string) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.catchDefect(self, (defect) =>
+      defect instanceof CredentialsUnavailable
+        ? Effect.fail(
+            new CredentialsRequired({
+              provider: defect.provider,
+              resources: [fqn],
+              reason: "runs against the real cloud",
+              message: defect.message,
+            }),
+          )
+        : Effect.die(defect),
+    );
 
 const describeReason = (reason: CredentialDemandReason): string => {
   switch (reason) {

@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("NoSuchRetentionConfigurationException");
     }),
+  { tags: ["provider:aws", "provider:aws:config", "live"] },
 );
 
 const observeRetention = config.describeRetentionConfigurations({}).pipe(
@@ -86,5 +87,5 @@ test.provider(
         expect(afterDestroy).toBeUndefined();
       }).pipe(Effect.ensuring(restorePrior(prior)));
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:config", "live"], timeout: 120_000 },
 );

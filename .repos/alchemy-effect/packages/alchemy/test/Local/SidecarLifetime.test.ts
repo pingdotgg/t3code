@@ -74,5 +74,5 @@ it.live(
       yield* spawn("sidecar-lifetime-b");
       yield* handle.close;
     }),
-  { timeout: 60_000 },
+  { tags: ["local"], timeout: 60_000 },
 );

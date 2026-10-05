@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as CliOutput from "effect/unstable/cli/CliOutput";
-import type * as Prompt from "effect/unstable/cli/Prompt";
+import * as CliOutput from "effect/cli/CliOutput";
+import type * as Prompt from "effect/cli/Prompt";
 import type { Cli } from "../Report.ts";
 import { CliKit } from "./CliKit/CliKit.ts";
 import { LoggingCli } from "./LoggingCli.ts";

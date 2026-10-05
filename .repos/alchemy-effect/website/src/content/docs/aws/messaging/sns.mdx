@@ -60,7 +60,7 @@ execution role:
 import * as AWS from "alchemy/AWS";
 import * as SNS from "alchemy/AWS/SNS";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Orders } from "./topic.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(

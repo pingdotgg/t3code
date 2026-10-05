@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:grafana", "live"] },
 );
 
 class WorkspaceStillExists extends Data.TaggedError("WorkspaceStillExists")<{
@@ -97,5 +98,5 @@ test.provider.skipIf(!process.env.AWS_TEST_GRAFANA)(
       yield* stack.destroy();
       yield* assertWorkspaceDeleted(created.workspaceId);
     }),
-  { timeout: 600_000 },
+  { tags: ["provider:aws", "provider:aws:grafana", "live"], timeout: 600_000 },
 );

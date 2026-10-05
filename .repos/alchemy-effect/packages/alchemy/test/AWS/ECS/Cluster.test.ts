@@ -12,38 +12,41 @@ const { test } = Test.make({ providers: AWS.providers() });
 // cluster, resolve the provider from context via the typed `findProvider`, call
 // `list()`, and assert the deployed cluster appears in the exhaustively-
 // paginated result (listClusters -> describeClusters hydration).
-test.provider("list enumerates the deployed cluster", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed cluster",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const cluster = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cluster("ListCluster", {
-          clusterName: "alchemy-test-ecs-cluster-list",
-        });
-      }),
-    );
+      const cluster = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cluster("ListCluster", {
+            clusterName: "alchemy-test-ecs-cluster-list",
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cluster);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cluster);
+      const all = yield* provider.list();
 
-    expect(all.some((c) => c.clusterArn === cluster.clusterArn)).toBe(true);
+      expect(all.some((c) => c.clusterArn === cluster.clusterArn)).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Out-of-band gone-proof: a deleted cluster is INACTIVE (or absent).
-    const after = yield* ecs.describeClusters({
-      clusters: ["alchemy-test-ecs-cluster-list"],
-    });
-    expect((after.clusters ?? []).some((c) => c.status === "ACTIVE")).toBe(
-      false,
-    );
+      // Out-of-band gone-proof: a deleted cluster is INACTIVE (or absent).
+      const after = yield* ecs.describeClusters({
+        clusters: ["alchemy-test-ecs-cluster-list"],
+      });
+      expect((after.clusters ?? []).some((c) => c.status === "ACTIVE")).toBe(
+        false,
+      );
 
-    // ECS can keep the terminal INACTIVE record discoverable for a while.
-    // Provider inventory (and therefore nuke) must treat it as deleted.
-    const afterList = yield* provider.list();
-    expect(afterList.some((c) => c.clusterArn === cluster.clusterArn)).toBe(
-      false,
-    );
-  }),
+      // ECS can keep the terminal INACTIVE record discoverable for a while.
+      // Provider inventory (and therefore nuke) must treat it as deleted.
+      const afterList = yield* provider.list();
+      expect(afterList.some((c) => c.clusterArn === cluster.clusterArn)).toBe(
+        false,
+      );
+    }),
+  { tags: ["provider:aws", "provider:aws:ecs", "live"] },
 );

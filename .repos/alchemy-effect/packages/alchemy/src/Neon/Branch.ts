@@ -1,5 +1,10 @@
 import {
   createProjectBranch,
+  createProjectEndpoint,
+  deleteProjectEndpoint,
+  getProject,
+  listProjectBranchEndpoints,
+  updateProjectEndpoint,
   deleteProjectBranch,
   getConnectionURI,
   getProjectBranch,
@@ -10,8 +15,11 @@ import {
   type ListProjectsResponse,
   updateProjectBranch,
 } from "@distilled.cloud/neon";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
+import { OwnedBySomeoneElse, Unowned } from "../AdoptPolicy.ts";
 import { isResolved } from "../Diff.ts";
 import { createPhysicalName } from "../PhysicalName.ts";
 import * as Provider from "../Provider.ts";
@@ -23,11 +31,11 @@ import {
   stampedOf,
   type MigrationsInput,
 } from "../SQL/Migrations/index.ts";
-import { hashImports, hashMigrations, readSqlFile } from "../SQL/SqlFile.ts";
+import { hashImports, readSqlFile } from "../SQL/SqlFile.ts";
 import { recordsEqual } from "../Util/equal.ts";
 import { runPgMigrations, runSql } from "./Migrations.ts";
 import { parsePostgresOrigin, type PostgresOrigin } from "./PostgresOrigin.ts";
-import { type Project, waitForOperations } from "./Project.ts";
+import { DeletionPending, type Project, waitForOperations } from "./Project.ts";
 import type { Providers } from "./Providers.ts";
 
 export type BranchSource = Project | { projectId: string };
@@ -38,9 +46,13 @@ export type ParentBranchSource =
   | { name: string };
 
 export type BranchEndpointConfig = {
+  /** Endpoint access mode. A branch has exactly one read-write endpoint. */
   type: "read_only" | "read_write";
+  /** Minimum compute units. Removing this setting restores the project default. */
   autoscalingLimitMinCu?: number;
+  /** Maximum compute units. Removing this setting restores the project default. */
   autoscalingLimitMaxCu?: number;
+  /** Idle timeout in seconds; 0 selects the plan default and -1 disables suspension. */
   suspendTimeoutSeconds?: number;
 };
 
@@ -89,8 +101,10 @@ export type BranchProps = {
    */
   expiresAt?: string;
   /**
-   * Endpoints to create for the branch. At least one `read-write` endpoint
-   * is required to connect to the branch.
+   * Compute endpoints owned by this branch. Exactly one `read_write` endpoint
+   * is required for the connection outputs. Settings update in place; removing
+   * a setting restores the project default and removing an endpoint deletes it.
+   * Do not independently manage endpoints on a branch managed by this resource.
    *
    * @default [{ type: "read_write" }]
    */
@@ -116,17 +130,29 @@ export type Branch = Resource<
   "Neon.Branch",
   BranchProps,
   {
+    /** Neon branch identifier. */
     branchId: string;
+    /** Observed branch name. */
     branchName: string;
+    /** Owning project identifier. */
     projectId: string;
+    /** Parent branch identifier, when present. */
     parentBranchId: string | undefined;
+    /** Parent log sequence number used for the fork. */
     parentLsn: string | undefined;
+    /** Parent timestamp used for the fork. */
     parentTimestamp: string | undefined;
+    /** Whether the fork copied data or only schema. */
     initSource: "schema-only" | "parent-data" | undefined;
+    /** Whether deletion and mutation protection is enabled. */
     protected: boolean;
+    /** Whether this is the project's current default branch. */
     default: boolean;
+    /** Automatic expiration timestamp, when configured. */
     expiresAt: string | undefined;
+    /** Database selected for connection outputs and migrations. */
     databaseName: string;
+    /** Observed owner of the selected database. */
     roleName: string;
     /** Postgres connection URI for the branch's primary database. */
     connectionUri: string;
@@ -144,9 +170,13 @@ export type Branch = Resource<
      * origin when local workers bypass Hyperdrive and connect directly.
      */
     pooledOrigin: PostgresOrigin;
+    /** Directory of the applied SQL migrations. */
     migrationsDir: string | undefined;
+    /** Migration bookkeeping table. */
     migrationsTable: string | undefined;
+    /** Applied migration content hashes. */
     migrationsHashes: Record<string, string>;
+    /** Applied SQL import content hashes. */
     importHashes: Record<string, string>;
   },
   never,
@@ -196,6 +226,7 @@ export type Branch = Resource<
  * @see https://neon.tech/docs/manage/branches/
  *
  * @resource
+ * @product Branch
  */
 export const Branch = Resource<Branch>("Neon.Branch");
 
@@ -226,23 +257,38 @@ export const BranchProvider = () =>
         return { action: "replace" } as const;
       }
       if (!isResolved(news)) return undefined;
+      const replacement = {
+        action: "replace",
+        deleteFirst:
+          news.name !== undefined &&
+          news.name === (output?.branchName ?? olds.name) &&
+          oldProjectId === newProjectId,
+      } as const;
       if (
-        news.parentLsn !== undefined &&
-        output?.parentLsn !== news.parentLsn
+        olds.parentLsn !== news.parentLsn ||
+        olds.parentTimestamp !== news.parentTimestamp ||
+        (olds.initSource ?? "parent-data") !==
+          (news.initSource ?? "parent-data")
       ) {
-        return { action: "replace" } as const;
+        return replacement;
       }
-      if (
-        news.parentTimestamp !== undefined &&
-        output?.parentTimestamp !== news.parentTimestamp
-      ) {
-        return { action: "replace" } as const;
-      }
-      if (
-        output?.initSource !== undefined &&
-        output.initSource !== (news.initSource ?? "parent-data")
-      ) {
-        return { action: "replace" } as const;
+      if (output && news.parentBranch) {
+        const parent = yield* resolveParentBranchId(
+          news.parentBranch as ParentBranchSource,
+          output.projectId,
+        );
+        // Schema-only branches are roots; the source is a creation input,
+        // not an observed parent relationship.
+        const previousParent =
+          news.initSource === "schema-only"
+            ? yield* resolveParentBranchId(
+                olds.parentBranch as ParentBranchSource | undefined,
+                output.projectId,
+              )
+            : output.parentBranchId;
+        if (parent !== previousParent) return replacement;
+      } else if (output && olds.parentBranch && !news.parentBranch) {
+        return replacement;
       }
       const oldName =
         output?.branchName ?? (yield* createBranchName(id, olds.name));
@@ -274,16 +320,9 @@ export const BranchProvider = () =>
           project_id: output.projectId,
           branch_id: output.branchId,
         }).pipe(
-          Effect.map(({ branch }) => ({
-            ...output,
-            branchName: branch.name,
-            protected: branch.protected,
-            default: branch.default,
-            expiresAt: branch.expires_at,
-            pooledOrigin:
-              output.pooledOrigin ??
-              parsePostgresOrigin(output.pooledConnectionUri),
-          })),
+          Effect.flatMap(({ branch }) =>
+            hydrateBranch(output.projectId, branch, output),
+          ),
           Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
         );
       }
@@ -295,145 +334,140 @@ export const BranchProvider = () =>
         return undefined;
       }
       const name = yield* createBranchName(id, olds.name);
-      const matches = yield* findBranchByName(projectId, name);
+      // The whole project may already be gone (out-of-band deletion); the
+      // branch is gone with it, so recovery observes an absent branch.
+      const matches = yield* findBranchByName(projectId, name).pipe(
+        Effect.catchTag("NotFound", () => Effect.succeed([])),
+      );
+      if (matches.length > 1)
+        return yield* new BranchStateError({ reason: "Ambiguous branch name" });
       const match = matches[0];
       if (!match) return undefined;
-      const dbs = yield* listProjectBranchDatabases({
-        project_id: projectId,
-        branch_id: match.id,
-      });
-      const db = dbs.databases[0];
-      if (!db) return undefined;
-      const conn = yield* fetchConnection(
-        projectId,
-        match.id,
-        db.name,
-        db.owner_name,
-      );
-      return {
-        branchId: match.id,
-        branchName: match.name,
-        projectId,
-        parentBranchId: match.parent_id,
-        parentLsn: match.parent_lsn,
-        parentTimestamp: match.parent_timestamp,
-        initSource: match.init_source as
-          | "schema-only"
-          | "parent-data"
-          | undefined,
-        protected: match.protected,
-        default: match.default,
-        expiresAt: match.expires_at,
-        databaseName: db.name,
-        roleName: db.owner_name,
-        connectionUri: conn.uri,
-        pooledConnectionUri: conn.pooled,
-        origin: parsePostgresOrigin(conn.uri),
-        pooledOrigin: parsePostgresOrigin(conn.pooled),
-        migrationsDir: (olds && migrationsInputOf(olds))?.dir,
-        migrationsTable: (olds && migrationsInputOf(olds))?.table,
-        migrationsHashes: {},
-        importHashes: {},
-      };
+      const attrs = yield* hydrateBranch(projectId, match);
+      return attrs && Unowned(attrs);
     }),
     reconcile: Effect.fn(function* ({ id, news, output }) {
-      // Prefer the deployed name: regenerating would target a different
-      // resource if the generator's output for this id ever drifts. An
-      // explicit `news.name` still renames the branch in place.
+      const projectId = yield* resolveProjectId(news.project as BranchSource);
       const newName =
         news.name ??
         output?.branchName ??
-        (yield* createBranchName(id, news.name));
-
-      // Ensure — when no prior output exists we create the branch;
-      // otherwise sync the mutable scalar fields on the existing
-      // branch via updateProjectBranch.
-      const branchInfo = output
-        ? yield* updateProjectBranch({
-            project_id: output.projectId,
-            branch_id: output.branchId,
-            branch: {
-              name: newName !== output.branchName ? newName : undefined,
-              protected: news.protected,
-              expires_at: news.expiresAt ?? null,
-            },
-          }).pipe(
-            Effect.map((r) => ({
-              branchId: output.branchId,
-              branchName: r.branch.name,
-              projectId: output.projectId,
-              parentBranchId: output.parentBranchId,
-              parentLsn: output.parentLsn,
-              parentTimestamp: output.parentTimestamp,
-              initSource: output.initSource,
-              protected: r.branch.protected,
-              default: output.default,
-              expiresAt: r.branch.expires_at,
-              databaseName: output.databaseName,
-              roleName: output.roleName,
-              connectionUri: output.connectionUri,
-              pooledConnectionUri: output.pooledConnectionUri,
-              origin: output.origin,
-              pooledOrigin:
-                output.pooledOrigin ??
-                parsePostgresOrigin(output.pooledConnectionUri),
-            })),
-          )
-        : yield* Effect.gen(function* () {
-            const projectId = resolveProjectId(news.project as BranchSource);
-            const parentBranchId = yield* resolveParentBranchId(
-              news.parentBranch as ParentBranchSource | undefined,
-              projectId,
+        (yield* createBranchName(id, undefined));
+      const endpoints = news.endpoints ?? [{ type: "read_write" as const }];
+      if (
+        endpoints.filter((endpoint) => endpoint.type === "read_write")
+          .length !== 1
+      ) {
+        return yield* new BranchStateError({
+          reason:
+            "Branch requires exactly one read_write endpoint for its connection outputs",
+        });
+      }
+      // Approval of a cached branch never authorizes a different same-name ID.
+      const authorize = (
+        branch: ListProjectBranchesResponse["branches"][number],
+      ): Effect.Effect<
+        ListProjectBranchesResponse["branches"][number],
+        OwnedBySomeoneElse
+      > =>
+        projectId === output?.projectId && branch.id === output.branchId
+          ? Effect.succeed(branch)
+          : Effect.fail(
+              new OwnedBySomeoneElse({
+                message: `Neon branch "${newName}" requires explicit adoption`,
+                resourceType: "Neon.Branch",
+                logicalId: id,
+                physicalName: branch.id,
+              }),
             );
-            const created = yield* createProjectBranch({
+      let observed =
+        output?.branchId && output.projectId === projectId
+          ? yield* getProjectBranch({
               project_id: projectId,
-              branch: {
-                name: newName,
-                parent_id: parentBranchId,
-                parent_lsn: news.parentLsn,
-                parent_timestamp: news.parentTimestamp,
-                init_source: news.initSource,
-                protected: news.protected,
-                expires_at: news.expiresAt,
-              },
-              endpoints: buildEndpoints(news.endpoints),
-            });
-            yield* waitForOperations(created.operations);
-
-            const db = created.databases[0];
-            if (!db) {
-              return yield* Effect.die(
-                `Neon branch ${created.branch.id} created with no databases`,
-              );
-            }
-            const conn = yield* fetchConnection(
-              projectId,
-              created.branch.id,
-              db.name,
-              db.owner_name,
-            );
-            return {
-              branchId: created.branch.id,
-              branchName: created.branch.name,
-              projectId: created.branch.project_id,
-              parentBranchId: created.branch.parent_id,
-              parentLsn: created.branch.parent_lsn,
-              parentTimestamp: created.branch.parent_timestamp,
-              initSource: created.branch.init_source as
-                | "schema-only"
-                | "parent-data"
-                | undefined,
-              protected: created.branch.protected,
-              default: created.branch.default,
-              expiresAt: created.branch.expires_at,
-              databaseName: db.name,
-              roleName: db.owner_name,
-              connectionUri: conn.uri,
-              pooledConnectionUri: conn.pooled,
-              origin: parsePostgresOrigin(conn.uri),
-              pooledOrigin: parsePostgresOrigin(conn.pooled),
-            };
+              branch_id: output.branchId,
+            }).pipe(
+              Effect.map(({ branch }) => branch),
+              Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+            )
+          : undefined;
+      if (!observed) {
+        const matches = yield* findBranchByName(projectId, newName);
+        if (matches.length > 1)
+          return yield* new BranchStateError({
+            reason: "Ambiguous branch name",
           });
+        observed = matches[0] ? yield* authorize(matches[0]) : undefined;
+      }
+      if (!observed) {
+        const parentBranchId = yield* resolveParentBranchId(
+          news.parentBranch as ParentBranchSource | undefined,
+          projectId,
+        );
+        const created = yield* createProjectBranch({
+          project_id: projectId,
+          branch: {
+            name: newName,
+            parent_id: parentBranchId,
+            parent_lsn: news.parentLsn,
+            parent_timestamp: news.parentTimestamp,
+            init_source: news.initSource,
+            protected: news.protected,
+            expires_at: news.expiresAt,
+          },
+          endpoints: buildEndpoints(endpoints),
+        }).pipe(
+          Effect.catchTag("Conflict", (error) =>
+            findBranchByName(projectId, newName).pipe(
+              Effect.flatMap(
+                Effect.fn(function* (matches) {
+                  if (matches.length !== 1) return yield* Effect.fail(error);
+                  const branch = yield* authorize(matches[0]!);
+                  return { branch, operations: [] };
+                }),
+              ),
+            ),
+          ),
+        );
+        yield* waitForOperations(created.operations);
+        observed = created.branch;
+      }
+      if (
+        observed.name !== newName ||
+        observed.protected !== (news.protected ?? false) ||
+        observed.expires_at !== news.expiresAt
+      ) {
+        const updated = yield* updateProjectBranch({
+          project_id: projectId,
+          branch_id: observed.id,
+          branch: {
+            name: observed.name !== newName ? newName : undefined,
+            protected:
+              observed.protected !== (news.protected ?? false)
+                ? (news.protected ?? false)
+                : undefined,
+            expires_at:
+              observed.expires_at !== news.expiresAt
+                ? (news.expiresAt ?? null)
+                : undefined,
+          },
+        });
+        yield* waitForOperations(updated.operations);
+      }
+      yield* syncEndpoints(projectId, observed.id, endpoints);
+      const current = yield* getProjectBranch({
+        project_id: projectId,
+        branch_id: observed.id,
+      });
+      const branchInfo = yield* hydrateBranch(
+        projectId,
+        current.branch,
+        output?.branchId === observed.id ? output : undefined,
+      );
+      if (!branchInfo)
+        return yield* new BranchStateError({
+          reason: "Branch has no database or connection endpoint",
+        });
+      const previous =
+        branchInfo.branchId === output?.branchId ? output : undefined;
 
       const connectionUri = Redacted.make(branchInfo.connectionUri);
       const migrationsInput = migrationsInputOf(news);
@@ -441,7 +475,7 @@ export const BranchProvider = () =>
         ? yield* runPgMigrations({
             connectionUri,
             input: migrationsInput,
-            stamped: stampedOf(output),
+            stamped: stampedOf(previous),
           })
         : undefined;
       const importHashes = news.importFiles?.length
@@ -449,21 +483,55 @@ export const BranchProvider = () =>
             connectionUri,
             news.importFiles,
             yield* rootDir,
-            output?.importHashes ?? {},
+            previous?.importHashes ?? {},
           )
         : {};
 
       return {
         ...branchInfo,
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output: previous,
+        }),
         importHashes,
       };
     }),
     delete: Effect.fn(function* ({ output }) {
-      yield* deleteProjectBranch({
+      yield* Effect.gen(function* () {
+        const { branch } = yield* getProjectBranch({
+          project_id: output.projectId,
+          branch_id: output.branchId,
+        });
+        if (branch.protected) {
+          const updated = yield* updateProjectBranch({
+            project_id: output.projectId,
+            branch_id: output.branchId,
+            branch: { protected: false },
+          });
+          yield* waitForOperations(updated.operations);
+        }
+        const deleted = yield* deleteProjectBranch({
+          project_id: output.projectId,
+          branch_id: output.branchId,
+        });
+        yield* waitForOperations(deleted.operations);
+      }).pipe(Effect.catchTag("NotFound", () => Effect.void));
+      yield* getProjectBranch({
         project_id: output.projectId,
         branch_id: output.branchId,
-      }).pipe(Effect.catchTag("NotFound", () => Effect.void));
+      }).pipe(
+        Effect.flatMap(() =>
+          Effect.fail(new DeletionPending({ resourceId: output.branchId })),
+        ),
+        Effect.catchTag("NotFound", () => Effect.void),
+        Effect.retry({
+          while: (error) => error._tag === "NeonDeletionPending",
+          schedule: Schedule.spaced("2 seconds"),
+          times: 8,
+        }),
+        Effect.timeout("20 seconds"),
+      );
     }),
     // Parent fan-out: branches are scoped to a project, and there is no
     // account-wide branch enumeration API. Enumerate every project, then
@@ -533,13 +601,16 @@ const listAllBranches = (projectId: string) =>
 const hydrateBranch = (
   projectId: string,
   branch: ListProjectBranchesResponse["branches"][number],
+  previous?: Branch["Attributes"],
 ) =>
   Effect.gen(function* () {
     const dbs = yield* listProjectBranchDatabases({
       project_id: projectId,
       branch_id: branch.id,
     });
-    const db = dbs.databases[0];
+    const db =
+      dbs.databases.find((db) => db.name === previous?.databaseName) ??
+      dbs.databases[0];
     if (!db) return undefined;
     const conn = yield* fetchConnection(
       projectId,
@@ -554,10 +625,13 @@ const hydrateBranch = (
       parentBranchId: branch.parent_id,
       parentLsn: branch.parent_lsn,
       parentTimestamp: branch.parent_timestamp,
-      initSource: branch.init_source as
-        | "schema-only"
-        | "parent-data"
-        | undefined,
+      initSource:
+        branch.init_source === "parent-schema" ||
+        branch.init_source === "schema-only"
+          ? "schema-only"
+          : branch.init_source === "parent-data"
+            ? "parent-data"
+            : undefined,
       protected: branch.protected,
       default: branch.default,
       expiresAt: branch.expires_at,
@@ -567,10 +641,10 @@ const hydrateBranch = (
       pooledConnectionUri: conn.pooled,
       origin: parsePostgresOrigin(conn.uri),
       pooledOrigin: parsePostgresOrigin(conn.pooled),
-      migrationsDir: undefined,
-      migrationsTable: undefined,
-      migrationsHashes: {},
-      importHashes: {},
+      migrationsDir: previous?.migrationsDir,
+      migrationsTable: previous?.migrationsTable,
+      migrationsHashes: previous?.migrationsHashes ?? {},
+      importHashes: previous?.importHashes ?? {},
     };
     return attributes;
   }).pipe(
@@ -603,18 +677,22 @@ const findBranchByName = (projectId: string, name: string) =>
   });
 
 const maybeResolveProjectId = (source: BranchSource): string | undefined => {
-  if (source && "projectId" in source && source.projectId) {
-    return source.projectId as unknown as string;
+  if (source && "projectId" in source && typeof source.projectId === "string") {
+    return source.projectId;
   }
   return undefined;
 };
 
-const resolveProjectId = (source: BranchSource): string => {
+const resolveProjectId = (source: BranchSource) => {
   const projectId = maybeResolveProjectId(source);
-  if (projectId) return projectId;
-  throw new Error(
-    "Invalid Neon project source: must be a Project or { projectId }",
-  );
+  return projectId
+    ? Effect.succeed(projectId)
+    : Effect.fail(
+        new BranchStateError({
+          reason:
+            "Invalid Neon project source: must be a Project or { projectId }",
+        }),
+      );
 };
 
 const resolveParentBranchId = (
@@ -623,25 +701,113 @@ const resolveParentBranchId = (
 ) =>
   Effect.gen(function* () {
     if (!source) return undefined as string | undefined;
-    if ("branchId" in source && source.branchId) {
-      return source.branchId as unknown as string;
+    if ("branchId" in source && typeof source.branchId === "string") {
+      if (
+        "projectId" in source &&
+        typeof source.projectId === "string" &&
+        source.projectId !== projectId
+      ) {
+        return yield* new BranchStateError({
+          reason: "Parent branch belongs to another project",
+        });
+      }
+      return source.branchId;
     }
     if ("name" in source && source.name) {
       const matches = yield* findBranchByName(projectId, source.name);
       if (matches.length === 0) {
-        return yield* Effect.die(
-          `Parent branch "${source.name}" not found in project ${projectId}`,
-        );
+        return yield* new BranchStateError({
+          reason: `Parent branch "${source.name}" not found in project ${projectId}`,
+        });
       }
       if (matches.length > 1) {
-        return yield* Effect.die(
-          `Multiple branches with name "${source.name}" in project ${projectId}`,
-        );
+        return yield* new BranchStateError({
+          reason: `Multiple branches with name "${source.name}" in project ${projectId}`,
+        });
       }
       return matches[0]!.id;
     }
     return undefined as string | undefined;
   });
+
+export class BranchStateError extends Data.TaggedError("NeonBranchStateError")<{
+  reason: string;
+}> {}
+
+const syncEndpoints = Effect.fn(function* (
+  projectId: string,
+  branchId: string,
+  desired: BranchEndpointConfig[],
+) {
+  const { project } = yield* getProject({ project_id: projectId });
+  const defaults = project.default_endpoint_settings ?? {};
+  const { endpoints } = yield* listProjectBranchEndpoints({
+    project_id: projectId,
+    branch_id: branchId,
+  });
+  const remaining = [...endpoints].sort((a, b) => a.id.localeCompare(b.id));
+  for (const config of desired) {
+    const index = remaining.findIndex(
+      (endpoint) => endpoint.type === config.type,
+    );
+    let observed = index < 0 ? undefined : remaining.splice(index, 1)[0];
+    const settings = {
+      autoscaling_limit_min_cu:
+        config.autoscalingLimitMinCu ??
+        defaults.autoscaling_limit_min_cu ??
+        0.25,
+      autoscaling_limit_max_cu:
+        config.autoscalingLimitMaxCu ?? defaults.autoscaling_limit_max_cu ?? 2,
+      suspend_timeout_seconds:
+        config.suspendTimeoutSeconds ?? defaults.suspend_timeout_seconds ?? 0,
+    };
+    if (!observed) {
+      const created = yield* createProjectEndpoint({
+        project_id: projectId,
+        endpoint: { branch_id: branchId, type: config.type, ...settings },
+      }).pipe(
+        Effect.catchTag("Conflict", (error) =>
+          listProjectBranchEndpoints({
+            project_id: projectId,
+            branch_id: branchId,
+          }).pipe(
+            Effect.flatMap(({ endpoints }) => {
+              const matches = endpoints.filter(
+                (endpoint) => endpoint.type === "read_write",
+              );
+              return config.type === "read_write" && matches.length === 1
+                ? Effect.succeed({ endpoint: matches[0]!, operations: [] })
+                : Effect.fail(error);
+            }),
+          ),
+        ),
+      );
+      yield* waitForOperations(created.operations);
+      observed = created.endpoint;
+    }
+    if (
+      observed.autoscaling_limit_min_cu !== settings.autoscaling_limit_min_cu ||
+      observed.autoscaling_limit_max_cu !== settings.autoscaling_limit_max_cu ||
+      observed.suspend_timeout_seconds !== settings.suspend_timeout_seconds
+    ) {
+      const updated = yield* updateProjectEndpoint({
+        project_id: projectId,
+        endpoint_id: observed.id,
+        endpoint: settings,
+      });
+      yield* waitForOperations(updated.operations);
+    }
+  }
+  for (const endpoint of remaining) {
+    yield* deleteProjectEndpoint({
+      project_id: projectId,
+      endpoint_id: endpoint.id,
+    }).pipe(
+      Effect.flatMap(({ operations }) => waitForOperations(operations)),
+      Effect.catchTag("NotFound", () => Effect.void),
+    );
+  }
+});
 
 const buildEndpoints = (endpoints: BranchEndpointConfig[] | undefined) => {
   const list = endpoints ?? [{ type: "read_write" as const }];

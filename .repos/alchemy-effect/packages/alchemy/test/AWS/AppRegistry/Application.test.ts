@@ -41,6 +41,7 @@ test.provider.skipIf(!gated)(
         expect(error.message).toContain("maintenance mode");
       }
     }),
+  { tags: ["provider:aws", "provider:aws:appregistry", "live"] },
 );
 
 class ApplicationStillExists extends Data.TaggedError(
@@ -124,5 +125,8 @@ test.provider.skipIf(gated)(
       yield* stack.destroy();
       yield* assertApplicationGone(replaced.applicationId);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:appregistry", "live"],
+    timeout: 180_000,
+  },
 );

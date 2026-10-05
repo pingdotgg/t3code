@@ -117,172 +117,186 @@ const listWorkerRedirectRules = Effect.fn(function* (
   );
 });
 
-describe.concurrent("Cloudflare.Worker urls & domain", () => {
-  test.provider(
-    "rejects a hostname playing more than one role",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.concurrent(
+  "Cloudflare.Worker urls & domain",
+  { tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"] },
+  () => {
+    test.provider(
+      "rejects a hostname playing more than one role",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const error = yield* stack
-          .deploy(
+          const error = yield* stack
+            .deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.Worker("OverlapWorker", {
+                  script: script("overlap"),
+                  domain: {
+                    name: "app.example.com",
+                    aliases: ["app.example.com"],
+                  },
+                });
+              }),
+            )
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(WorkerDomainConfigError);
+          expect(String(error)).toContain("one role");
+
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 120_000 },
+    );
+
+    const customDomainZone =
+      process.env.CLOUDFLARE_TEST_WORKER_DOMAIN_ZONE_NAME;
+    test.provider.skipIf(!customDomainZone)(
+      "redirect hostnames 301 to the canonical name and stay out of urls",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const suffix =
+            process.env.PULL_REQUEST ?? process.env.USER ?? "local";
+          const mainHost = `alchemy-rdr-a-${suffix}.${customDomainZone}`;
+          const oldHost = `alchemy-rdr-b-${suffix}.${customDomainZone}`;
+          const aliasHost = `alchemy-rdr-c-${suffix}.${customDomainZone}`;
+
+          yield* stack.destroy();
+
+          const deploy = (domain: {
+            name: string;
+            aliases?: string[];
+            redirects?: string[];
+          }) =>
+            stack.deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.Worker("RedirectWorker", {
+                  script: script("redirect-target"),
+                  domain,
+                });
+              }),
+            );
+
+          const worker = yield* deploy({
+            name: mainHost,
+            aliases: [aliasHost],
+            redirects: [oldHost],
+          });
+
+          // All three roles resolve into the domain output; the redirect
+          // hostname serves nothing, so it must not appear in `urls`.
+          expect(worker.domain).toEqual({
+            name: mainHost,
+            aliases: [aliasHost],
+            redirects: [oldHost],
+          });
+          expect(worker.url).toEqual(`https://${mainHost}`);
+          expect(worker.urls.slice(0, 2)).toEqual([
+            `https://${mainHost}`,
+            `https://${aliasHost}`,
+          ]);
+          expect(worker.urls.some((u) => u.includes(oldHost))).toBe(false);
+          // workers.dev stays on by default and ranks after the domain.
+          expect(worker.urls[worker.urls.length - 1]).toMatch(
+            /\.workers\.dev$/,
+          );
+
+          // Our tagged rule exists in the zone's shared entrypoint — one for
+          // the redirect host, none for the alias (aliases serve, not 301).
+          const zone = yield* findZoneByName({
+            accountId,
+            name: customDomainZone!,
+          });
+          expect(zone).toBeDefined();
+          expect(
+            yield* listWorkerRedirectRules(zone!.id, worker.workerName),
+          ).toEqual([
+            `alchemy:worker:${worker.workerName}:redirect:${oldHost}`,
+          ]);
+
+          // The canonical domain AND the alias serve the Worker; the
+          // redirect host 301s with path and query preserved — and never
+          // invokes the Worker. Confirm DNS over DoH before the first fetch
+          // (see waitForDns).
+          yield* waitForDns(mainHost);
+          yield* waitForDns(aliasHost);
+          yield* waitForDns(oldHost);
+          yield* expectUrlContains(worker.url!, "redirect-target", {
+            label: "canonical domain serves the worker",
+            timeout: "120 seconds",
+          });
+          yield* expectUrlContains(`https://${aliasHost}`, "redirect-target", {
+            label: "alias serves the worker",
+            timeout: "120 seconds",
+          });
+          yield* expectRedirect(
+            `https://${oldHost}/hello?x=1`,
+            `https://${mainHost}/hello?x=1`,
+          );
+
+          // Removing the redirect cleans our rule and detaches nothing else.
+          const updated = yield* deploy({ name: mainHost });
+          expect(updated.domain).toEqual({
+            name: mainHost,
+            aliases: [],
+            redirects: [],
+          });
+          expect(
+            yield* listWorkerRedirectRules(zone!.id, updated.workerName),
+          ).toEqual([]);
+
+          // Re-add, then destroy — teardown must remove the rule too.
+          const readded = yield* deploy({
+            name: mainHost,
+            redirects: [oldHost],
+          });
+          expect(
+            yield* listWorkerRedirectRules(zone!.id, readded.workerName),
+          ).toHaveLength(1);
+          yield* stack.destroy();
+          expect(
+            yield* listWorkerRedirectRules(zone!.id, readded.workerName),
+          ).toEqual([]);
+          yield* waitForWorkerToBeDeleted(readded.workerName, accountId);
+        }).pipe(logLevel),
+      {
+        tags: ["provider:cloudflare:ruleset", "provider:cloudflare:zone"],
+        timeout: 540_000,
+      },
+    );
+
+    test.provider.skipIf(!customDomainZone)(
+      "domain string shorthand resolves to { name }",
+      (stack) =>
+        Effect.gen(function* () {
+          const suffix =
+            process.env.PULL_REQUEST ?? process.env.USER ?? "local";
+          const host = `alchemy-shorthand-${suffix}.${customDomainZone}`;
+
+          yield* stack.destroy();
+
+          const worker = yield* stack.deploy(
             Effect.gen(function* () {
-              return yield* Cloudflare.Worker("OverlapWorker", {
-                script: script("overlap"),
-                domain: {
-                  name: "app.example.com",
-                  aliases: ["app.example.com"],
-                },
-              });
-            }),
-          )
-          .pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkerDomainConfigError);
-        expect(String(error)).toContain("one role");
-
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
-
-  const customDomainZone = process.env.CLOUDFLARE_TEST_WORKER_DOMAIN_ZONE_NAME;
-  test.provider.skipIf(!customDomainZone)(
-    "redirect hostnames 301 to the canonical name and stay out of urls",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const suffix = process.env.PULL_REQUEST ?? process.env.USER ?? "local";
-        const mainHost = `alchemy-rdr-a-${suffix}.${customDomainZone}`;
-        const oldHost = `alchemy-rdr-b-${suffix}.${customDomainZone}`;
-        const aliasHost = `alchemy-rdr-c-${suffix}.${customDomainZone}`;
-
-        yield* stack.destroy();
-
-        const deploy = (domain: {
-          name: string;
-          aliases?: string[];
-          redirects?: string[];
-        }) =>
-          stack.deploy(
-            Effect.gen(function* () {
-              return yield* Cloudflare.Worker("RedirectWorker", {
-                script: script("redirect-target"),
-                domain,
+              return yield* Cloudflare.Worker("ShorthandWorker", {
+                script: script("shorthand"),
+                domain: host,
+                workersDev: false,
               });
             }),
           );
 
-        const worker = yield* deploy({
-          name: mainHost,
-          aliases: [aliasHost],
-          redirects: [oldHost],
-        });
+          expect(worker.domain).toEqual({
+            name: host,
+            aliases: [],
+            redirects: [],
+          });
+          expect(worker.url).toEqual(`https://${host}`);
+          expect(worker.urls).toEqual([`https://${host}`]);
 
-        // All three roles resolve into the domain output; the redirect
-        // hostname serves nothing, so it must not appear in `urls`.
-        expect(worker.domain).toEqual({
-          name: mainHost,
-          aliases: [aliasHost],
-          redirects: [oldHost],
-        });
-        expect(worker.url).toEqual(`https://${mainHost}`);
-        expect(worker.urls.slice(0, 2)).toEqual([
-          `https://${mainHost}`,
-          `https://${aliasHost}`,
-        ]);
-        expect(worker.urls.some((u) => u.includes(oldHost))).toBe(false);
-        // workers.dev stays on by default and ranks after the domain.
-        expect(worker.urls[worker.urls.length - 1]).toMatch(/\.workers\.dev$/);
-
-        // Our tagged rule exists in the zone's shared entrypoint — one for
-        // the redirect host, none for the alias (aliases serve, not 301).
-        const zone = yield* findZoneByName({
-          accountId,
-          name: customDomainZone!,
-        });
-        expect(zone).toBeDefined();
-        expect(
-          yield* listWorkerRedirectRules(zone!.id, worker.workerName),
-        ).toEqual([`alchemy:worker:${worker.workerName}:redirect:${oldHost}`]);
-
-        // The canonical domain AND the alias serve the Worker; the
-        // redirect host 301s with path and query preserved — and never
-        // invokes the Worker. Confirm DNS over DoH before the first fetch
-        // (see waitForDns).
-        yield* waitForDns(mainHost);
-        yield* waitForDns(aliasHost);
-        yield* waitForDns(oldHost);
-        yield* expectUrlContains(worker.url!, "redirect-target", {
-          label: "canonical domain serves the worker",
-          timeout: "120 seconds",
-        });
-        yield* expectUrlContains(`https://${aliasHost}`, "redirect-target", {
-          label: "alias serves the worker",
-          timeout: "120 seconds",
-        });
-        yield* expectRedirect(
-          `https://${oldHost}/hello?x=1`,
-          `https://${mainHost}/hello?x=1`,
-        );
-
-        // Removing the redirect cleans our rule and detaches nothing else.
-        const updated = yield* deploy({ name: mainHost });
-        expect(updated.domain).toEqual({
-          name: mainHost,
-          aliases: [],
-          redirects: [],
-        });
-        expect(
-          yield* listWorkerRedirectRules(zone!.id, updated.workerName),
-        ).toEqual([]);
-
-        // Re-add, then destroy — teardown must remove the rule too.
-        const readded = yield* deploy({
-          name: mainHost,
-          redirects: [oldHost],
-        });
-        expect(
-          yield* listWorkerRedirectRules(zone!.id, readded.workerName),
-        ).toHaveLength(1);
-        yield* stack.destroy();
-        expect(
-          yield* listWorkerRedirectRules(zone!.id, readded.workerName),
-        ).toEqual([]);
-        yield* waitForWorkerToBeDeleted(readded.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 540_000 },
-  );
-
-  test.provider.skipIf(!customDomainZone)(
-    "domain string shorthand resolves to { name }",
-    (stack) =>
-      Effect.gen(function* () {
-        const suffix = process.env.PULL_REQUEST ?? process.env.USER ?? "local";
-        const host = `alchemy-shorthand-${suffix}.${customDomainZone}`;
-
-        yield* stack.destroy();
-
-        const worker = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Worker("ShorthandWorker", {
-              script: script("shorthand"),
-              domain: host,
-              workersDev: false,
-            });
-          }),
-        );
-
-        expect(worker.domain).toEqual({
-          name: host,
-          aliases: [],
-          redirects: [],
-        });
-        expect(worker.url).toEqual(`https://${host}`);
-        expect(worker.urls).toEqual([`https://${host}`]);
-
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 240_000 },
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 240_000 },
+    );
+  },
+);

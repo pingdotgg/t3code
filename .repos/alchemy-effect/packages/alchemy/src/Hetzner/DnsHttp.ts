@@ -1,6 +1,6 @@
 import { Credentials } from "@distilled.cloud/hetzner";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import type { RuntimeContext } from "../RuntimeContext.ts";
 import type { Zone } from "./Zone.ts";
 

@@ -2,8 +2,8 @@
 
 import { Framework } from "@alchemy.run/frontend-frameworks/core";
 import * as Effect from "effect/Effect";
-import * as Command from "effect/unstable/cli/Command";
-import * as Flag from "effect/unstable/cli/Flag";
+import * as Command from "effect/cli/Command";
+import * as Flag from "effect/cli/Flag";
 import * as Options from "./Options.ts";
 import * as Runtime from "./Runtime.ts";
 import * as Server from "./Server.ts";

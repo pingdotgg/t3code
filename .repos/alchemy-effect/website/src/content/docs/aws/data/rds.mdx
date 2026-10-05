@@ -221,7 +221,7 @@ HTTP:
 import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database, DatabaseAurora } from "./database.ts";
 import { NetworkLive } from "./network.ts";
 
@@ -307,6 +307,14 @@ Transactions and batches follow the same shape:
 and `RollbackTransaction`, each with a matching `*Http` layer.
 
 ## Where next
+
+- [Drizzle + Aurora PostgreSQL](/aws/data/drizzle-aurora) — a standalone Lambda
+  application with IAM database authentication, verified TLS, and controlled schema setup.
+- [Drizzle + Aurora DSQL](/aws/data/drizzle-dsql) — a different database with a
+  public IAM-authenticated endpoint, no Aurora PostgreSQL cluster or VPC required.
+
+- [SQL databases](/sql/databases) — database engines, connection paths, and client choices.
+
 
 - [VPC & networking](/aws/networking) — the `Network` helper and
   the primitives underneath it.

@@ -32,28 +32,31 @@ const assertRepositoryDeleted = Effect.fn(function* (repositoryName: string) {
 // repository, resolve the provider from context via the typed `findProvider`,
 // call `list()`, and assert the deployed repository appears in the
 // exhaustively-paginated result.
-test.provider("list enumerates the deployed repository", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed repository",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const repo = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Repository("ListRepository", {
-          repositoryName: "alchemy-test-ecr-repo-list",
-        });
-      }),
-    );
+      const repo = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Repository("ListRepository", {
+            repositoryName: "alchemy-test-ecr-repo-list",
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Repository);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Repository);
+      const all = yield* provider.list();
 
-    expect(all.some((r) => r.repositoryName === repo.repositoryName)).toBe(
-      true,
-    );
+      expect(all.some((r) => r.repositoryName === repo.repositoryName)).toBe(
+        true,
+      );
 
-    yield* stack.destroy();
-    yield* assertRepositoryDeleted(repo.repositoryName);
-  }),
+      yield* stack.destroy();
+      yield* assertRepositoryDeleted(repo.repositoryName);
+    }),
+  { tags: ["provider:aws", "provider:aws:ecr", "live"] },
 );
 
 test.provider(
@@ -89,7 +92,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertRepositoryDeleted(updated.repositoryName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ecr", "live"], timeout: 120_000 },
 );
 
 const repositoryPolicy: PolicyDocument = {
@@ -162,5 +165,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertRepositoryDeleted(repo.repositoryName);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ecr", "provider:aws:iam", "live"],
+    timeout: 120_000,
+  },
 );

@@ -150,6 +150,7 @@ export type TerminalReader = Resource<
  * ```
  *
  * @resource
+ * @product Terminal
  */
 export const TerminalReader = Resource<TerminalReader>("Stripe.TerminalReader");
 

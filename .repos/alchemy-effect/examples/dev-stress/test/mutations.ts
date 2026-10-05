@@ -54,8 +54,8 @@ export const reportFunctionSource = (marker: string) =>
   `import * as Effect from "effect/Effect";\n` +
   `import * as Layer from "effect/Layer";\n` +
   `import * as Stream from "effect/Stream";\n` +
-  `import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";\n` +
-  `import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";\n` +
+  `import { HttpServerRequest } from "effect/http/HttpServerRequest";\n` +
+  `import * as HttpServerResponse from "effect/http/HttpServerResponse";\n` +
   `\n` +
   `/** Added to (and later removed from) the stack while dev is running. */\n` +
   `export default class ReportFunction extends Lambda.Function<ReportFunction>()(\n` +
@@ -170,8 +170,8 @@ export const lambdaArchiveRoutes =
 export const secondImageSource = (marker: string) =>
   `import * as AWS from "alchemy/AWS";\n` +
   `import * as Effect from "effect/Effect";\n` +
-  `import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";\n` +
-  `import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";\n` +
+  `import { HttpServerRequest } from "effect/http/HttpServerRequest";\n` +
+  `import * as HttpServerResponse from "effect/http/HttpServerResponse";\n` +
   `\n` +
   `export const WorkerImageBuildRole = AWS.IAM.Role("StressWorkerVmBuildRole");\n` +
   `\n` +

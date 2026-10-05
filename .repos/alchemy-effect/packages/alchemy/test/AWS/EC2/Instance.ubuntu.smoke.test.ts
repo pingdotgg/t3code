@@ -3,7 +3,7 @@ import * as Test from "./VpcTest.ts";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import TestUbuntuInstance from "./fixtures/ubuntu-instance.ts";
 import { assertInstanceTerminated } from "./Gone.ts";
 
@@ -80,5 +80,5 @@ test.provider.skipIf(!!process.env.FAST)(
       // Zero-orphan proof: the (billed) instance reached a terminal state.
       yield* assertInstanceTerminated(instanceId);
     }),
-  { timeout: 1_200_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 1_200_000 },
 );

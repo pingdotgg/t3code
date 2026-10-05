@@ -83,7 +83,10 @@ test.provider(
       const liveAfter = yield* getLiveSubdomain;
       expect(liveAfter).toEqual(liveBefore);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (account-scoped singleton): the workers.dev
@@ -113,5 +116,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 120_000,
+  },
 );

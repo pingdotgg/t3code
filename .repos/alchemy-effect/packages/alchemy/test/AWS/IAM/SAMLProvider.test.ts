@@ -10,37 +10,41 @@ import { testPrivateKey, testSamlMetadataDocument } from "./fixtures.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-describe("AWS.IAM.SAMLProvider", () => {
-  test.provider("list enumerates the deployed SAML provider", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.destroy();
+describe(
+  "AWS.IAM.SAMLProvider",
+  { tags: ["provider:aws", "provider:aws:iam", "live"] },
+  () => {
+    test.provider("list enumerates the deployed SAML provider", (stack) =>
+      Effect.gen(function* () {
+        yield* stack.destroy();
 
-      const deployed = yield* stack.deploy(
-        Effect.gen(function* () {
-          return yield* SAMLProvider("ListResource", {
-            samlMetadataDocument: testSamlMetadataDocument,
-            // Redacted prop — unwrapped to the wire private key at create.
-            assertionEncryptionMode: "Allowed",
-            addPrivateKey: Redacted.make(testPrivateKey),
-          });
-        }),
-      );
+        const deployed = yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* SAMLProvider("ListResource", {
+              samlMetadataDocument: testSamlMetadataDocument,
+              // Redacted prop — unwrapped to the wire private key at create.
+              assertionEncryptionMode: "Allowed",
+              addPrivateKey: Redacted.make(testPrivateKey),
+            });
+          }),
+        );
 
-      expect(deployed.assertionEncryptionMode).toBe("Allowed");
+        expect(deployed.assertionEncryptionMode).toBe("Allowed");
 
-      const provider = yield* Provider.findProvider(SAMLProvider);
-      const all = yield* provider.list();
+        const provider = yield* Provider.findProvider(SAMLProvider);
+        const all = yield* provider.list();
 
-      expect(
-        all.some((x) => x.samlProviderArn === deployed.samlProviderArn),
-      ).toBe(true);
+        expect(
+          all.some((x) => x.samlProviderArn === deployed.samlProviderArn),
+        ).toBe(true);
 
-      yield* stack.destroy();
+        yield* stack.destroy();
 
-      const deleted = yield* IAM.getSAMLProvider({
-        SAMLProviderArn: deployed.samlProviderArn,
-      }).pipe(Effect.option);
-      expect(deleted._tag).toBe("None");
-    }),
-  );
-});
+        const deleted = yield* IAM.getSAMLProvider({
+          SAMLProviderArn: deployed.samlProviderArn,
+        }).pipe(Effect.option);
+        expect(deleted._tag).toBe("None");
+      }),
+    );
+  },
+);

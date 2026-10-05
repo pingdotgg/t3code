@@ -69,7 +69,7 @@ export type AnthropicRateLimitMetadata = AnthropicErrorMetadata & {
   readonly tokensReset: string | null
 }
 
-declare module "effect/unstable/ai/AiError" {
+declare module "effect/ai/AiError" {
   /**
    * Anthropic metadata attached to `RateLimitError` values.
    *

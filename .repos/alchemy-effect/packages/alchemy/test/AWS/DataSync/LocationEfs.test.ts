@@ -37,7 +37,7 @@ test.provider(
         expect(err._tag).toBe("LocationNotFound");
       }
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:datasync", "live"], timeout: 60_000 },
 );
 
 // The live lifecycle requires an EFS file system + mount target; the mount
@@ -101,5 +101,14 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       const gone = yield* waitUntilLocationGone(arn);
       expect(gone).toBe(true);
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:datasync",
+      "provider:aws:ec2",
+      "provider:aws:efs",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

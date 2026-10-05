@@ -1,0 +1,168 @@
+---
+title: Astro
+description: Deploy Astro SSR or a fully static site to Prisma Compute with Prisma.Website.Astro, running on Bun with native Astro dev locally.
+sidebar:
+  order: 11
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.Astro` builds an [Astro](https://astro.build) project
+with the shared Node target and runs it on **Bun in Prisma Compute**.
+Assets are served first, then the Astro SSR handler. Fully static
+output uses a static-file server on the same Compute runtime. Both
+paths upload a `tar.gz` artifact, not a container image.
+
+## Install
+
+Install the build-time integration in your Astro project. The resource
+loads its `/astro` and `/astro/node` exports:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure Astro
+
+Your `astro.config.*` loads natively, including integrations and Vite
+plugins. Do not declare an `adapter`: Alchemy injects the Node-target
+adapter and rejects a conflicting adapter. The deployed runtime is Bun,
+not a Node container.
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.Astro("Website");
+```
+
+Pass `rootDir` when `package.json` is not at `.`. Omit `project` to
+create a database-less Prisma project on live deploy, or pass an
+existing project.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyAstroSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages render on demand by default. A page with
+`export const prerender = true` is generated at build time and served
+as a file. `site.url` is the Compute endpoint on deploy.
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.Astro("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+`env` accepts strings or `Redacted` values. It is applied before build
+and dev and passed to Compute as process environment, not Worker bindings.
+
+## Read the environment in server code
+
+```astro
+---
+// src/pages/index.astro
+const greeting = process.env.GREETING ?? "hello";
+---
+
+<h1>{greeting}</h1>
+```
+
+Server-rendered pages read the Bun process environment. Astro inlines
+`PUBLIC_*` values at build time, so keep secrets out of those keys.
+
+## Fully static sites
+
+```typescript
+export const Website = Prisma.Website.Astro("Website", {
+  astro: { output: "static" },
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+Every page is prerendered. There is no Astro request handler, but
+**Compute still runs the static-file server**. This is not a CDN-only
+deployment. `assets.notFoundHandling` applies to static output:
+`"404-page"` serves `404.html` for misses; `"single-page-application"`
+returns the index page with status 200.
+
+## Astro configuration
+
+Keep integrations and plugins in your native config:
+
+```typescript
+// astro.config.ts
+import { defineConfig } from "astro/config";
+import react from "@astrojs/react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  site: "https://blog.example.com",
+  integrations: [react()],
+  vite: { plugins: [tailwindcss()] },
+});
+```
+
+The `astro` bag holds deploy-specific overrides:
+
+```typescript
+export const Website = Prisma.Website.Astro("Website", {
+  astro: { site: "https://preview.example.com" },
+});
+```
+
+Alchemy owns `adapter` and defaults `output` to `"server"`, even when
+the file sets another output. Select static output on the resource.
+The bag also exposes `base`, `srcDir`, `publicDir`, `outDir`, and
+`trailingSlash`.
+
+## Local dev
+
+`bun alchemy dev` starts Astro's own server with HMR; the Website
+creates no Prisma resources. `site.url` is the local address.
+`.pipe(Alchemy.remote())` opts into the live deployment during dev.
+
+## Custom domain
+
+```typescript
+export const Website = Prisma.Website.Astro("Website", {
+  domain: "app.example.com",
+});
+```
+
+`Prisma.CustomDomain` requires the app to be on the project's current
+default branch. Configure its returned `dnsRecords` yourself and verify
+status before routing traffic. See
+[Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [Astro API](/providers/prisma/website/astro).
+- [Astro example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-astro).
+- [Static sites](/prisma/frontend/static-site) and [Websites](/prisma/frontend/websites).
+- [Compute apps](/prisma/compute/apps) and [Setup](/prisma/setup).

@@ -1,0 +1,148 @@
+---
+title: Private networking
+description: Prepare AWS PrivateLink endpoints, register them with Neon, enable private DNS, and verify database access.
+---
+
+Neon Private Networking routes database connections through AWS PrivateLink.
+Alchemy's `OrganizationVPCEndpoint` and `ProjectVPCEndpoint` manage Neon
+registrations and associations; they do not provision AWS endpoints, change DNS,
+or block public connections. Complete [Setup](/neon/setup) and review
+[governance ownership](/neon/governance) before changing a shared network.
+
+## Obtain access and choose the region
+
+Use an existing Neon organization with Private Networking entitlement and an
+organization-admin deployment identity. Confirm the current plan requirements in
+[Neon's Private Networking guide](https://neon.com/docs/guides/neon-private-networking).
+If the feature is unavailable, use the project's **Settings → Network Security**
+page to request a trial where offered, or contact Neon. An API key does not grant
+plan entitlement.
+
+The AWS client application, VPC endpoint, and Neon project must use the same
+supported AWS region. Copy the organization ID from Organization Settings and
+verify the project's region before creating endpoints. This guide concerns
+Postgres traffic, not a private network for Function, Auth, storage, or AI URLs.
+Check each service's network limitations before combining it with a restricted
+database; [Neon Auth](https://neon.com/docs/auth/overview) currently documents
+Private Networking restrictions.
+
+## Create the AWS endpoints
+
+Open **AWS VPC → Endpoints → Create endpoint** in the client's region. Follow
+Neon's [endpoint creation instructions](https://neon.com/docs/guides/neon-private-networking#create-an-aws-vpc-endpoint):
+
+1. Use the VPC where the database client runs.
+2. Copy the current endpoint service names for that region from Neon's guide and
+   verify each service in AWS. Regions can require multiple endpoints; use the
+   complete current list rather than copying an old service ID from an example.
+3. Select the intended subnets and security groups. Allow the database traffic
+   required by your client under your organization's network policy.
+4. Leave private DNS disabled until the endpoint is registered with Neon.
+5. Create the endpoints and retain their `vpce-...` IDs. These are endpoint IDs,
+   not the `vpc-...` ID of the network.
+
+AWS endpoint charges are separate from Neon. Obtain approval before provisioning
+and retain the AWS resource ownership information for later cleanup.
+
+## Register each endpoint with Neon
+
+Inside your stack, register an endpoint that you created in AWS:
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const network = yield* Neon.OrganizationVPCEndpoint("PrivateNetwork", {
+  orgId: "org-example",
+  regionId: "aws-us-east-2",
+  vpcEndpointId: "vpce-0123456789abcdef0",
+  label: "Application network",
+});
+```
+
+Repeat for each endpoint required by the region. Let Alchemy create the Neon
+registration; registering it manually first creates an existing resource that
+requires explicit adoption. For an already registered endpoint, review its
+ownership and use resource-scoped `Alchemy.adopt(true)` only when intentionally
+taking over label management. Adopted registrations are preserved on destroy.
+
+:::caution[Unregistration is irreversible for this endpoint ID]
+Destroying a newly owned Neon registration unregisters the endpoint. Neon prevents
+that endpoint from being registered again in the same organization. A replacement
+requires a new AWS endpoint. Use a disposable endpoint for lifecycle experiments,
+not an existing production endpoint.
+:::
+
+## Enable private DNS in AWS
+
+After the Neon registration succeeds, select each AWS endpoint and choose
+**Modify private DNS name → Enable for this endpoint**. Confirm the VPC and
+client resolver use the intended private DNS configuration. The order matters:
+Neon must recognize the endpoint before private DNS is enabled.
+
+## Associate the project
+
+Use the project and organization registration in the same organization and region:
+
+```typescript
+const access = yield* Neon.ProjectVPCEndpoint("PrivateAccess", {
+  project,
+  endpoint: network,
+  label: "Application access",
+});
+```
+
+Repeat the association for all applicable regional endpoints. This manages the
+project's endpoint restriction, not its public-connectivity setting. Existing
+associations require intentional scoped adoption; other associations remain
+untouched. The database connection string does not change.
+
+## Verify from inside the VPC
+
+From the actual client host inside the VPC, resolve the database hostname copied
+from the Neon connection string:
+
+```sh
+nslookup "$NEON_DATABASE_HOST"
+```
+
+Confirm the result is the private address of the intended endpoint, not merely
+that DNS returned an address. Then connect with the normal database URL and run
+a small query using your existing SQL client. Test every client subnet that must
+work. A connection from your laptop over the public internet does not verify
+PrivateLink.
+
+If resolution or connection fails, check region, endpoint registration, private
+DNS, VPC DNS settings, security groups, and the regional endpoint-service list
+before changing database credentials.
+
+## Decide whether to block public connections
+
+Private connectivity does not automatically disable the public database path.
+If policy requires it, first verify the private path and arrange a recovery path
+with the network administrator. Then follow Neon's
+[public-access restriction procedure](https://neon.com/docs/guides/neon-private-networking#restrict-public-internet-access).
+
+`Neon.Project` does not currently expose `block_public_connections`; this is a
+separate, deliberate Console/API/CLI setting rather than a property of either
+endpoint resource. Confirm its effect on Auth and other integrations before
+changing it. Test that private clients still connect and that a client outside
+the permitted network is denied. Record who owns this setting so another tool
+does not silently reverse it.
+
+## Remove or restore the configuration safely
+
+Agree on the desired network posture before removing a restriction. Removing the
+last project association can broaden connectivity; unregistering the organization
+endpoint can prevent clients from reconnecting.
+
+Remove dependent project associations before an owned organization registration.
+Alchemy restores adopted labels and preserves adopted registrations/associations;
+it removes newly owned ones. AWS endpoints and private DNS remain separately
+managed and must be retired by their owner only after traffic has moved. Retain
+state until both access checks and intended cleanup are confirmed.
+
+## Related guides
+
+- [Organization governance](/neon/governance) — IDs, permissions, adoption, and restoration.
+- [State and recovery](/neon/guides/state-recovery) — interrupted operations and retained state.
+- [Neon Private Networking](https://neon.com/docs/guides/neon-private-networking) — current service names and entitlement requirements.

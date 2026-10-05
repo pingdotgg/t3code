@@ -1,6 +1,6 @@
 import type { APIError } from "better-auth";
 import * as Data from "effect/Data";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * better-call stows the response headers accumulated by the endpoint

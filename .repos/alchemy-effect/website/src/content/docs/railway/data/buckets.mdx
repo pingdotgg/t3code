@@ -44,7 +44,7 @@ Bind `PutObject` / `GetObject` in the Service's constructor. Provide the matchin
 `*Http` layers.
 
 ```typescript
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends Railway.Service<Api>()(
   "Api",

@@ -88,7 +88,10 @@ test.provider(
         baselineDnsLogAll,
       );
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (account singleton): there is no enumeration API
@@ -115,5 +118,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"],
+    timeout: 120_000,
+  },
 );

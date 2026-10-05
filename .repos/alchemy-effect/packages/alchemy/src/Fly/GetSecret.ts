@@ -14,7 +14,9 @@ import type { Secret } from "./Secret.ts";
  *
  * ### Read a secret
  * Bind the client in init. Call it from `fetch` or an Action body.
- * Provide {@link GetSecretHttp}.
+ * Provide {@link GetSecretHttp}. Alchemy transports the bound App name,
+ * secret name, and deployment's org token automatically. There is no
+ * need to configure `FLY_SECRET_*` environment variables.
  *
  * Fly only returns plaintext from a Machine in the same App. From a
  * deploy-time Action you get metadata (name, digest, timestamps).
@@ -38,6 +40,7 @@ import type { Secret } from "./Secret.ts";
  * ```
  *
  * @binding
+ * @product Secret
  */
 export interface GetSecret extends Binding.Service<
   GetSecret,

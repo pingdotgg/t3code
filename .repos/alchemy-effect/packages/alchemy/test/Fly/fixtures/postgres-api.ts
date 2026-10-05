@@ -2,8 +2,8 @@ import * as Fly from "@/Fly";
 import * as Drizzle from "@/Drizzle/Postgres.ts";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const POSTGRES_PORT = 3000;
 
@@ -39,6 +39,7 @@ export default class PostgresApi extends Fly.Service<PostgresApi>()(
   Effect.gen(function* () {
     const conn = yield* Fly.ConnectPostgres(Db);
     const db = yield* Drizzle.Postgres(conn.connectionString);
+    const direct = yield* Drizzle.Postgres(conn.directConnectionString);
 
     return {
       fetch: Effect.gen(function* () {
@@ -47,7 +48,8 @@ export default class PostgresApi extends Fly.Service<PostgresApi>()(
         if (path === "/ping") {
           return yield* HttpServerResponse.json({ ok: true });
         }
-        const result = yield* Effect.result(db.execute("select 1 as ok"));
+        const client = path === "/direct" ? direct : db;
+        const result = yield* Effect.result(client.execute("select 1 as ok"));
         if (Result.isFailure(result)) {
           const error = result.failure;
           return yield* HttpServerResponse.json(
@@ -62,7 +64,7 @@ export default class PostgresApi extends Fly.Service<PostgresApi>()(
           );
         }
         const rows = result.success;
-        if (path === "/health" || path === "/") {
+        if (path === "/health" || path === "/direct" || path === "/") {
           return yield* HttpServerResponse.json({ rows });
         }
         return yield* HttpServerResponse.json({ rows }, { status: 404 });

@@ -8,9 +8,9 @@
  * sides relative to the merge base) — a conflicting PR is a typed 409, the
  * server never writes conflict markers.
  */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as Schema from "effect/Schema";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import {
   BranchMissing,
   MergeConflict,

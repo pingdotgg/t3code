@@ -99,5 +99,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertSubscriptionGone(deployed.subscriptionArn);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:costexplorer", "live"],
+    timeout: 120_000,
+  },
 );

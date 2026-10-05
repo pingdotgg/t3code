@@ -38,6 +38,7 @@ export default Alchemy.Stack(
     const effectWorker = yield* VectorizeEffectWorker;
 
     return {
+      indexName: index.indexName,
       asyncWorkerUrl: asyncWorker.url.as<string>(),
       effectWorkerUrl: effectWorker.url.as<string>(),
     };

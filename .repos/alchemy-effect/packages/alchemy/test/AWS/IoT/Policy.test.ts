@@ -23,56 +23,60 @@ const assertPolicyGone = (policyName: string) =>
     }),
   );
 
-describe.sequential("AWS.IoT.Policy", () => {
-  test.provider(
-    "creates a policy, updates the document to a new default version, and deletes it",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.sequential(
+  "AWS.IoT.Policy",
+  { tags: ["provider:aws", "provider:aws:iot", "live"] },
+  () => {
+    test.provider(
+      "creates a policy, updates the document to a new default version, and deletes it",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const created = yield* stack.deploy(
-          Effect.gen(function* () {
-            const policy = yield* Policy("DevicePolicy", {
-              policyDocument: {
-                Version: "2012-10-17",
-                Statement: [
-                  { Effect: "Allow", Action: "iot:Connect", Resource: "*" },
-                ],
-              },
-            });
-            return { policyName: policy.policyName };
-          }),
-        );
+          const created = yield* stack.deploy(
+            Effect.gen(function* () {
+              const policy = yield* Policy("DevicePolicy", {
+                policyDocument: {
+                  Version: "2012-10-17",
+                  Statement: [
+                    { Effect: "Allow", Action: "iot:Connect", Resource: "*" },
+                  ],
+                },
+              });
+              return { policyName: policy.policyName };
+            }),
+          );
 
-        const observed = yield* iot.getPolicy({
-          policyName: created.policyName,
-        });
-        expect(observed.policyDocument).toContain("iot:Connect");
-        const firstVersion = observed.defaultVersionId;
+          const observed = yield* iot.getPolicy({
+            policyName: created.policyName,
+          });
+          expect(observed.policyDocument).toContain("iot:Connect");
+          const firstVersion = observed.defaultVersionId;
 
-        // Update the document — creates a new default version.
-        yield* stack.deploy(
-          Effect.gen(function* () {
-            yield* Policy("DevicePolicy", {
-              policyDocument: {
-                Version: "2012-10-17",
-                Statement: [
-                  { Effect: "Allow", Action: "iot:Connect", Resource: "*" },
-                  { Effect: "Allow", Action: "iot:Publish", Resource: "*" },
-                ],
-              },
-            });
-          }),
-        );
-        const updated = yield* iot.getPolicy({
-          policyName: created.policyName,
-        });
-        expect(updated.policyDocument).toContain("iot:Publish");
-        expect(updated.defaultVersionId).not.toEqual(firstVersion);
+          // Update the document — creates a new default version.
+          yield* stack.deploy(
+            Effect.gen(function* () {
+              yield* Policy("DevicePolicy", {
+                policyDocument: {
+                  Version: "2012-10-17",
+                  Statement: [
+                    { Effect: "Allow", Action: "iot:Connect", Resource: "*" },
+                    { Effect: "Allow", Action: "iot:Publish", Resource: "*" },
+                  ],
+                },
+              });
+            }),
+          );
+          const updated = yield* iot.getPolicy({
+            policyName: created.policyName,
+          });
+          expect(updated.policyDocument).toContain("iot:Publish");
+          expect(updated.defaultVersionId).not.toEqual(firstVersion);
 
-        yield* stack.destroy();
-        yield* assertPolicyGone(created.policyName);
-      }),
-    { timeout: 180_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertPolicyGone(created.policyName);
+        }),
+      { timeout: 180_000 },
+    );
+  },
+);

@@ -2,7 +2,7 @@ import cloudflareVitePlugin from "../plugin.ts";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vite from "vite";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 /**
  * A Worker whose default entrypoint reaches the Worker's own exports, so a test
@@ -92,7 +92,7 @@ async function startDevServer(source: string) {
     }
   };
 
-  return { greet, write };
+  return { greet, write, server };
 }
 
 /** Polls until the dev server has restarted the Worker for the new exports. */
@@ -110,6 +110,42 @@ async function greetEventually(
 }
 
 describe("Worker export detection", () => {
+  test("recreates Vite environments after a crash and still applies HMR", async () => {
+    vi.stubEnv("ALCHEMY_WORKERD_V8_FLAGS", "--max-old-space-size=64");
+    cleanups.push(async () => {
+      vi.unstubAllEnvs();
+    });
+    const source = (message: string) => `
+      const hog = [];
+      export default {
+        fetch(request) {
+          if (new URL(request.url).searchParams.get("entrypoint") === "crash") {
+            for (;;) hog.push(new Array(1_000_000).fill("crash"));
+          }
+          return new Response("${message}");
+        }
+      };
+    `;
+    const { greet, write, server } = await startDevServer(source("before"));
+    expect(await greet("")).toEqual({ status: 200, body: "before" });
+
+    for (let crash = 0; crash < 2; crash++) {
+      const previousEnvironment = server.environments.ssr;
+      expect((await greet("crash")).status).not.toBe(200);
+      await expect
+        .poll(() => server.environments.ssr, { timeout: 10_000, interval: 250 })
+        .not.toBe(previousEnvironment);
+      await expect
+        .poll(() => greet(""), { timeout: 10_000, interval: 250 })
+        .toEqual({ status: 200, body: "before" });
+    }
+
+    await write(source("after"));
+    await expect
+      .poll(() => greet(""), { timeout: 10_000, interval: 250 })
+      .toEqual({ status: 200, body: "after" });
+  }, 60_000);
+
   test("exports named entrypoints that are not declared in the plugin options", async () => {
     const { greet } = await startDevServer(worker(["NamedEntrypoint"]));
 

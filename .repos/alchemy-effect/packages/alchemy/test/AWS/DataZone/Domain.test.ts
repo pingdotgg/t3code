@@ -115,5 +115,8 @@ test.provider(
       );
       expect(roleGone).toBe(true);
     }),
-  { timeout: 480_000 },
+  {
+    tags: ["provider:aws", "provider:aws:datazone", "provider:aws:iam", "live"],
+    timeout: 480_000,
+  },
 );

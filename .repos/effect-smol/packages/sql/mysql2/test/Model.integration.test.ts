@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import { Cause, Effect, Schema } from "effect"
-import { Model } from "effect/unstable/schema"
-import { SqlClient, SqlModel, SqlResolver } from "effect/unstable/sql"
+import { Model } from "effect/schema"
+import { SqlClient, SqlModel, SqlResolver } from "effect/sql"
 import { MysqlContainer } from "./utils.ts"
 
 class User extends Model.Class<User>("User")({

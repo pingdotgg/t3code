@@ -8,6 +8,6 @@ export const GetSecretValueHttp = Layer.effect(
   makeSecretHttpBinding({
     tag: "AWS.SecretsManager.GetSecretValue",
     operation: secretsmanager.getSecretValue,
-    actions: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+    actions: ["secretsmanager:GetSecretValue"],
   }),
 );

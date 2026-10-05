@@ -60,6 +60,7 @@ test.provider(
       // Keep the destroy bookend so the harness state stays clean.
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:web3", "live"] },
 );
 
 // Deploy a real universal-path Web3 hostname + content list and assert
@@ -111,5 +112,13 @@ test.provider.skipIf(!web3Entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:web3",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

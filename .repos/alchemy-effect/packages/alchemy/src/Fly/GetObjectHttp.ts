@@ -8,6 +8,7 @@ import { GetObject } from "./GetObject.ts";
  * `getObject` against the Tigris endpoint with the bucket's credentials.
  *
  * @layer
+ * @product Bucket
  * @provides Fly.GetObject
  */
 export const GetObjectHttp = Layer.effect(

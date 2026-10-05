@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { Done } from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -209,6 +210,113 @@ describe.each(watcherModes)(
           Effect.provide(sharedServices),
         );
         expect(resolved).toEqual(registryServiceMap(scriptName));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.live(
+      "publishes complete entries atomically during creation and replacement",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          let publishedPath: string;
+          let previous: string | undefined;
+          const observedFs = FileSystem.FileSystem.of({
+            ...fs,
+            writeFileString: (file, content, options) =>
+              fs.writeFileString(file, content, options).pipe(
+                Effect.tap(() =>
+                  Effect.gen(function* () {
+                    // Inspect the public file after the bytes are written, before rename.
+                    const published = yield* fs
+                      .readFileString(publishedPath)
+                      .pipe(Effect.orElseSucceed(() => undefined));
+                    expect(published).toBe(previous);
+                  }),
+                ),
+              ),
+          });
+          const registryServices = Registry.RegistryLive.pipe(
+            Layer.provideMerge(Paths.PathsLive),
+            Layer.provide(configProvider({ fileSystemSupportsWatcher })),
+            Layer.provide(Layer.succeed(FileSystem.FileSystem)(observedFs)),
+          );
+          yield* Effect.gen(function* () {
+            const directory = yield* Paths.state("alchemy", "registry");
+            publishedPath = path.join(directory, "atomic-write.json");
+            const registry = yield* Registry.Registry;
+            const entry = registryEntry("atomic-write");
+            yield* registry.write(entry);
+            previous = JSON.stringify(entry, null, 2);
+            expect(yield* fs.readFileString(publishedPath)).toBe(previous);
+            const replacement = {
+              ...entry,
+              debugPortAddress: "127.0.0.1:23456",
+            };
+            yield* registry.write(replacement);
+            expect(JSON.parse(yield* fs.readFileString(publishedPath))).toEqual(
+              replacement,
+            );
+            expect(yield* fs.readDirectory(directory)).toEqual([
+              "atomic-write.json",
+            ]);
+          }).pipe(Effect.provide(registryServices));
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("a partial external write does not stop registry updates", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({
+          prefix: "cloudflare-runtime-test",
+        });
+        const partialRead = yield* Deferred.make<void>();
+        const entry = registryEntry("partial-write");
+        const subscriber = subscriberEntry(entry.scriptName);
+        const observedFs = FileSystem.FileSystem.of({
+          ...fs,
+          readFileString: (path, encoding) =>
+            fs
+              .readFileString(path, encoding)
+              .pipe(
+                Effect.tap((content) =>
+                  content === "{"
+                    ? Deferred.succeed(partialRead, undefined)
+                    : Effect.void,
+                ),
+              ),
+        });
+        const registryServices = Registry.RegistryLive.pipe(
+          Layer.provideMerge(Paths.PathsLive),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                CLOUDFLARE_RUNTIME_HOME: home,
+                CLOUDFLARE_RUNTIME_FILE_SYSTEM_SUPPORTS_WATCHER:
+                  fileSystemSupportsWatcher,
+              }),
+            ),
+          ),
+          Layer.provide(Layer.succeed(FileSystem.FileSystem)(observedFs)),
+        );
+        yield* Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const directory = yield* Paths.state("alchemy", "registry");
+          const entryPath = path.join(directory, `${entry.scriptName}.json`);
+          const registry = yield* Registry.Registry;
+          const queue = yield* Queue.unbounded<ResolvedTargetMap, Done<void>>();
+          yield* registry
+            .subscribe([subscriber])
+            .pipe(Stream.runIntoQueue(queue), Effect.forkScoped);
+          expect(yield* Queue.take(queue)).toEqual({});
+          // Another process can expose an empty/truncated file before its write completes.
+          yield* fs.writeFileString(entryPath, "{");
+          yield* Deferred.await(partialRead);
+          yield* fs.writeFileString(entryPath, JSON.stringify(entry));
+          expect(
+            yield* Queue.take(queue).pipe(Effect.timeout("3 seconds")),
+          ).toEqual(registryServiceMap(entry.scriptName));
+        }).pipe(Effect.provide(registryServices));
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 

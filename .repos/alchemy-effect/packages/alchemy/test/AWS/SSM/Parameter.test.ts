@@ -127,7 +127,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertParameterDeleted(parameter.parameterName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ssm", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -175,7 +175,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertParameterDeleted(parameter.parameterName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ssm", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -218,7 +218,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertParameterDeleted(parameter.parameterName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ssm", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -261,5 +261,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertParameterDeleted("/alchemy-test/ssm/path-param-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ssm", "live"], timeout: 120_000 },
 );

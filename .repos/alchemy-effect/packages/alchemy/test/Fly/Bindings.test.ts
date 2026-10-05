@@ -6,9 +6,10 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import type { HttpClientError } from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import BindingsApi from "./fixtures/bindings-api.ts";
 import {
   BoxKey,
@@ -71,14 +72,14 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
 });
 
 const retryTransient = {
-  while: (e: { _tag?: string; status?: number }) =>
+  while: (e: NotReady | HttpClientError) =>
     e._tag === "NotReady" &&
     (e.status === 0 ||
       e.status === 404 ||
       e.status === 502 ||
       e.status === 503),
-  schedule: Schedule.exponential("500 millis"),
-  times: 20,
+  schedule: Schedule.spaced("2 seconds"),
+  times: 8,
 } as const;
 
 /** Decode the body, turning any non-200 (or undecodable body) into `NotReady`. */
@@ -105,6 +106,7 @@ const getJson = (path: string) =>
       }),
       Effect.flatMap(readJson),
       Effect.retry(retryTransient),
+      Effect.timeout("45 seconds"),
     );
   });
 
@@ -122,109 +124,142 @@ const postJson = (path: string, body: unknown) =>
       }),
       Effect.flatMap(readJson),
       Effect.retry(retryTransient),
+      Effect.timeout("45 seconds"),
     );
   });
 
-describe("Fly Bindings", () => {
-  test(
-    "fixture is reachable over fly.dev",
-    Effect.gen(function* () {
-      const out = yield* stack;
-      expect(out.url).toContain(".fly.dev");
-      expect(out.ip).toEqual(expect.any(String));
-      const body = (yield* getJson("/health")) as {
-        ok: boolean;
-        hasToken?: boolean;
-        hasAppName?: boolean;
-        hasSecretName?: boolean;
-      };
-      expect(body.ok).toEqual(true);
-      expect(body.hasToken).toEqual(true);
-      expect(body.hasAppName).toEqual(true);
-      expect(body.hasSecretName).toEqual(true);
-    }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
-
-  describe("GetSecret", () => {
+describe(
+  "Fly Bindings",
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:ipassignment",
+      "provider:fly:secret",
+      "provider:fly:secretkey",
+      "provider:fly:service",
+      "provider:fly:sprite",
+      "live",
+    ],
+  },
+  () => {
     test(
-      "reads the App secret from the Service",
+      "fixture is reachable over fly.dev",
       Effect.gen(function* () {
         const out = yield* stack;
-        const body = (yield* getJson("/secret")) as {
+        expect(out.url).toContain(".fly.dev");
+        expect(out.ip).toEqual(expect.any(String));
+        const body = (yield* getJson("/health")) as {
           ok: boolean;
-          name: string;
-          hasValue: boolean;
+          appName?: string;
+          secretName?: string;
+          hasFlySecretMarkerEnv?: boolean;
+          hasToken?: boolean;
         };
         expect(body.ok).toEqual(true);
-        expect(body.name).toEqual(out.secretName);
-        expect(body.name).toEqual(SECRET_NAME);
-        expect(body.hasValue).toEqual(true);
+        expect(body.appName).toEqual(out.appName);
+        expect(body.secretName).toEqual(out.secretName);
+        expect(body.hasToken).toEqual(true);
+        expect(body.hasFlySecretMarkerEnv).toEqual(false);
       }).pipe(logLevel),
-      { timeout: 60_000 },
+      { timeout: 120_000 },
     );
-  });
 
-  describe("ListSecrets", () => {
-    test(
-      "lists secrets on the App from the Service",
-      Effect.gen(function* () {
-        const out = yield* stack;
-        const body = (yield* getJson("/secrets")) as { names: string[] };
-        expect(body.names).toContain(out.secretName);
-      }).pipe(logLevel),
-      { timeout: 60_000 },
-    );
-  });
+    describe("Exec", () => {
+      test(
+        "executes on a Sprite from the Service",
+        Effect.gen(function* () {
+          const body = (yield* getJson("/sprite")) as {
+            stdout: string;
+            exitCode: number;
+          };
+          expect(body.stdout.trim()).toEqual("sprite-runtime-binding");
+          expect(body.exitCode).toEqual(0);
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
 
-  describe("WriteSecret", () => {
-    test(
-      "creates a secret from the Service",
-      Effect.gen(function* () {
-        const created = (yield* postJson("/secret", {
-          name: "BINDING_CREATED",
-          value: "from-fixture",
-        })) as { ok: boolean; name: string };
-        expect(created.ok).toEqual(true);
-        const listed = (yield* getJson("/secrets")) as { names: string[] };
-        expect(listed.names).toContain("BINDING_CREATED");
-      }).pipe(logLevel),
-      { timeout: 60_000 },
-    );
-  });
+    describe("GetSecret", () => {
+      test(
+        "reads the App secret from the Service",
+        Effect.gen(function* () {
+          const out = yield* stack;
+          const body = (yield* getJson("/secret")) as {
+            ok: boolean;
+            name: string;
+            hasValue: boolean;
+          };
+          expect(body.ok).toEqual(true);
+          expect(body.name).toEqual(out.secretName);
+          expect(body.name).toEqual(SECRET_NAME);
+          expect(body.hasValue).toEqual(true);
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
 
-  describe("Encrypt", () => {
-    test(
-      "encrypts and decrypts on the Service",
-      Effect.gen(function* () {
-        const enc = (yield* postJson("/encrypt", { text: PLAINTEXT })) as {
-          ciphertext: string;
-        };
-        expect(enc.ciphertext.length).toBeGreaterThan(0);
-        const dec = (yield* postJson("/decrypt", {
-          ciphertext: enc.ciphertext,
-        })) as { text: string };
-        expect(dec.text).toEqual(PLAINTEXT);
-      }).pipe(logLevel),
-      { timeout: 60_000 },
-    );
-  });
+    describe("ListSecrets", () => {
+      test(
+        "lists secrets on the App from the Service",
+        Effect.gen(function* () {
+          const out = yield* stack;
+          const body = (yield* getJson("/secrets")) as { names: string[] };
+          expect(body.names).toContain(out.secretName);
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
 
-  describe("Sign", () => {
-    test(
-      "signs and verifies on the Service",
-      Effect.gen(function* () {
-        const signed = (yield* postJson("/sign", { text: PLAINTEXT })) as {
-          signature: string;
-        };
-        expect(signed.signature.length).toBeGreaterThan(0);
-        const checked = (yield* postJson("/verify", {
-          text: PLAINTEXT,
-          signature: signed.signature,
-        })) as { valid: boolean };
-        expect(checked.valid).toEqual(true);
-      }).pipe(logLevel),
-      { timeout: 60_000 },
-    );
-  });
-});
+    describe("WriteSecret", () => {
+      test(
+        "creates a secret from the Service",
+        Effect.gen(function* () {
+          const created = (yield* postJson("/secret", {
+            name: "BINDING_CREATED",
+            value: "from-fixture",
+          })) as { ok: boolean; name: string };
+          expect(created.ok).toEqual(true);
+          const listed = (yield* getJson("/secrets")) as { names: string[] };
+          expect(listed.names).toContain("BINDING_CREATED");
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
+
+    describe("Encrypt", () => {
+      test(
+        "encrypts and decrypts on the Service",
+        Effect.gen(function* () {
+          const enc = (yield* postJson("/encrypt", { text: PLAINTEXT })) as {
+            ciphertext: string;
+          };
+          expect(enc.ciphertext.length).toBeGreaterThan(0);
+          const dec = (yield* postJson("/decrypt", {
+            ciphertext: enc.ciphertext,
+          })) as { text: string };
+          expect(dec.text).toEqual(PLAINTEXT);
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
+
+    describe("Sign", () => {
+      test(
+        "signs and verifies on the Service",
+        Effect.gen(function* () {
+          const signed = (yield* postJson("/sign", { text: PLAINTEXT })) as {
+            signature: string;
+          };
+          expect(signed.signature.length).toBeGreaterThan(0);
+          const checked = (yield* postJson("/verify", {
+            text: PLAINTEXT,
+            signature: signed.signature,
+          })) as { valid: boolean };
+          expect(checked.valid).toEqual(true);
+        }).pipe(logLevel),
+        { timeout: 60_000 },
+      );
+    });
+  },
+);

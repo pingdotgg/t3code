@@ -133,9 +133,35 @@ export const StreamKeyProvider = () =>
               : undefined;
           if (streamKey === undefined) return undefined;
           const attrs = yield* toAttrs(streamKey);
-          return (yield* hasAlchemyTags(id, toTagRecord(streamKey.tags)))
-            ? attrs
-            : Unowned(attrs);
+          const tags = toTagRecord(streamKey.tags);
+          if (yield* hasAlchemyTags(id, tags)) return attrs;
+          // CreateChannel provisions an untagged default key before the
+          // engine can resolve this resource's channelArn. It belongs to the
+          // channel lifecycle, so an owned channel may claim its default key.
+          // Keys carrying user or ownership tags still require explicit adoption.
+          if (
+            output === undefined &&
+            olds?.channelArn !== undefined &&
+            Object.keys(tags).length === 0
+          ) {
+            const response = yield* ivs
+              .getChannel({ arn: olds.channelArn })
+              .pipe(
+                retryWhileThrottled,
+                Effect.catchTag("ResourceNotFoundException", () =>
+                  Effect.succeed(undefined),
+                ),
+              );
+            const channelTags = toTagRecord(response?.channel?.tags);
+            const channelId = channelTags["alchemy::id"];
+            if (
+              channelId !== undefined &&
+              (yield* hasAlchemyTags(channelId, channelTags))
+            ) {
+              return attrs;
+            }
+          }
+          return Unowned(attrs);
         }),
 
         diff: Effect.fn(function* ({ news, olds }) {

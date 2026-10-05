@@ -117,5 +117,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertTransformerGone(replaced.transformerId);
     }),
-  { timeout: 150_000 },
+  { tags: ["provider:aws", "provider:aws:b2bi", "live"], timeout: 150_000 },
 );

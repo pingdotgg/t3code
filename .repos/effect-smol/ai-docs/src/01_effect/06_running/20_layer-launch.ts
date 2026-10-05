@@ -5,7 +5,7 @@
  */
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerResponse } from "effect/http"
 import { createServer } from "node:http"
 
 // Build a tiny HTTP app with a health-check endpoint.

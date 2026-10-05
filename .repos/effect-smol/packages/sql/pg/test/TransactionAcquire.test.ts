@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { assert, it } from "@effect/vitest"
 import { Effect } from "effect"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import { Duplex } from "node:stream"
 
 it.effect("withTransaction surfaces stream factory failures instead of defecting", () =>

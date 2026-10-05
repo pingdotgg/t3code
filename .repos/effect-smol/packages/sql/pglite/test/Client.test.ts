@@ -2,7 +2,7 @@ import { PgliteClient } from "@effect/sql-pglite"
 import { assert, describe, layer } from "@effect/vitest"
 import * as Pglite from "@electric-sql/pglite"
 import { Effect, Exit, Layer, Queue, Scope } from "effect"
-import { SqlClient } from "effect/unstable/sql/SqlClient"
+import { SqlClient } from "effect/sql/SqlClient"
 
 const ClientLayer = PgliteClient.layer()
 

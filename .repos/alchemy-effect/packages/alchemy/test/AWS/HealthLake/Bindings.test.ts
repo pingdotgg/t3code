@@ -7,7 +7,7 @@ import * as s3 from "@distilled.cloud/aws/s3";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import HealthLakeTestFunctionLive, {
   HealthLakeTestFunction,
   IMPORT_PREFIX,
@@ -30,112 +30,116 @@ const NONEXISTENT_JOB = "0123456789abcdef0123456789abcdef";
 // gated behind the 15-30 minute data store provisioning.
 // ---------------------------------------------------------------------------
 
-describe("HealthLake job operations (typed-error probes)", () => {
-  test.provider(
-    "describeFHIRImportJob on a nonexistent datastore fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          healthlake.describeFHIRImportJob({
-            DatastoreId: NONEXISTENT_DATASTORE,
-            JobId: NONEXISTENT_JOB,
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+describe(
+  "HealthLake job operations (typed-error probes)",
+  { tags: ["provider:aws", "provider:aws:healthlake", "live"] },
+  () => {
+    test.provider(
+      "describeFHIRImportJob on a nonexistent datastore fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            healthlake.describeFHIRImportJob({
+              DatastoreId: NONEXISTENT_DATASTORE,
+              JobId: NONEXISTENT_JOB,
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "describeFHIRExportJob on a nonexistent datastore fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          healthlake.describeFHIRExportJob({
-            DatastoreId: NONEXISTENT_DATASTORE,
-            JobId: NONEXISTENT_JOB,
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "describeFHIRExportJob on a nonexistent datastore fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            healthlake.describeFHIRExportJob({
+              DatastoreId: NONEXISTENT_DATASTORE,
+              JobId: NONEXISTENT_JOB,
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "listFHIRImportJobs on a nonexistent datastore fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          healthlake.listFHIRImportJobs({
-            DatastoreId: NONEXISTENT_DATASTORE,
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "listFHIRImportJobs on a nonexistent datastore fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            healthlake.listFHIRImportJobs({
+              DatastoreId: NONEXISTENT_DATASTORE,
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "listFHIRExportJobs on a nonexistent datastore fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          healthlake.listFHIRExportJobs({
-            DatastoreId: NONEXISTENT_DATASTORE,
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "listFHIRExportJobs on a nonexistent datastore fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            healthlake.listFHIRExportJobs({
+              DatastoreId: NONEXISTENT_DATASTORE,
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "startFHIRExportJob on a nonexistent datastore fails with a typed tag",
-    () =>
-      Effect.gen(function* () {
-        const { accountId } = yield* AWSEnvironment.current;
-        const error = yield* Effect.flip(
-          healthlake.startFHIRExportJob({
-            DatastoreId: NONEXISTENT_DATASTORE,
-            DataAccessRoleArn: `arn:aws:iam::${accountId}:role/alchemy-probe-nonexistent`,
-            OutputDataConfig: {
-              S3Configuration: {
-                S3Uri: "s3://alchemy-probe-nonexistent/export/",
-                KmsKeyId: `arn:aws:kms:us-east-1:${accountId}:key/00000000-0000-0000-0000-000000000000`,
+    test.provider(
+      "startFHIRExportJob on a nonexistent datastore fails with a typed tag",
+      () =>
+        Effect.gen(function* () {
+          const { accountId } = yield* AWSEnvironment.current;
+          const error = yield* Effect.flip(
+            healthlake.startFHIRExportJob({
+              DatastoreId: NONEXISTENT_DATASTORE,
+              DataAccessRoleArn: `arn:aws:iam::${accountId}:role/alchemy-probe-nonexistent`,
+              OutputDataConfig: {
+                S3Configuration: {
+                  S3Uri: "s3://alchemy-probe-nonexistent/export/",
+                  KmsKeyId: `arn:aws:kms:us-east-1:${accountId}:key/00000000-0000-0000-0000-000000000000`,
+                },
               },
-            },
-          }),
-        );
-        expect([
-          "ResourceNotFoundException",
-          "ValidationException",
-          "AccessDeniedException",
-        ]).toContain(error._tag);
-      }),
-  );
+            }),
+          );
+          expect([
+            "ResourceNotFoundException",
+            "ValidationException",
+            "AccessDeniedException",
+          ]).toContain(error._tag);
+        }),
+    );
 
-  test.provider(
-    "startFHIRImportJob on a nonexistent datastore fails with a typed tag",
-    () =>
-      Effect.gen(function* () {
-        const { accountId } = yield* AWSEnvironment.current;
-        const error = yield* Effect.flip(
-          healthlake.startFHIRImportJob({
-            DatastoreId: NONEXISTENT_DATASTORE,
-            DataAccessRoleArn: `arn:aws:iam::${accountId}:role/alchemy-probe-nonexistent`,
-            InputDataConfig: { S3Uri: "s3://alchemy-probe-nonexistent/in/" },
-            JobOutputDataConfig: {
-              S3Configuration: {
-                S3Uri: "s3://alchemy-probe-nonexistent/out/",
-                KmsKeyId: `arn:aws:kms:us-east-1:${accountId}:key/00000000-0000-0000-0000-000000000000`,
+    test.provider(
+      "startFHIRImportJob on a nonexistent datastore fails with a typed tag",
+      () =>
+        Effect.gen(function* () {
+          const { accountId } = yield* AWSEnvironment.current;
+          const error = yield* Effect.flip(
+            healthlake.startFHIRImportJob({
+              DatastoreId: NONEXISTENT_DATASTORE,
+              DataAccessRoleArn: `arn:aws:iam::${accountId}:role/alchemy-probe-nonexistent`,
+              InputDataConfig: { S3Uri: "s3://alchemy-probe-nonexistent/in/" },
+              JobOutputDataConfig: {
+                S3Configuration: {
+                  S3Uri: "s3://alchemy-probe-nonexistent/out/",
+                  KmsKeyId: `arn:aws:kms:us-east-1:${accountId}:key/00000000-0000-0000-0000-000000000000`,
+                },
               },
-            },
-          }),
-        );
-        expect([
-          "ResourceNotFoundException",
-          "ValidationException",
-          "AccessDeniedException",
-        ]).toContain(error._tag);
-      }),
-  );
-});
+            }),
+          );
+          expect([
+            "ResourceNotFoundException",
+            "ValidationException",
+            "AccessDeniedException",
+          ]).toContain(error._tag);
+        }),
+    );
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Full runtime fixture: a Lambda bound to all six job bindings against a live
@@ -272,5 +276,16 @@ test.provider.skipIf(!process.env.AWS_TEST_HEALTHLAKE)(
       }).pipe(Effect.ensuring(sharedStack.destroy().pipe(Effect.orDie)));
     }),
   // data store create (~15-30 min) + import + export + delete wait, one test.
-  { timeout: 5_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:healthlake",
+      "provider:aws:iam",
+      "provider:aws:kms",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 5_400_000,
+  },
 );

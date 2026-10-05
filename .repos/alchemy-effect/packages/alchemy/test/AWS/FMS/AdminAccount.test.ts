@@ -39,7 +39,7 @@ test.provider(
         expect(result.failure._tag).toBe("ResourceNotFoundException");
       }
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:fms", "live"], timeout: 60_000 },
 );
 
 // Full live lifecycle. FMS requires the caller to be the AWS Organizations
@@ -104,5 +104,5 @@ test.provider.skipIf(!process.env.AWS_TEST_FMS)(
       );
       expect(after?.AdminAccount).toBeUndefined();
     }),
-  { timeout: 1_500_000 },
+  { tags: ["provider:aws", "provider:aws:fms", "live"], timeout: 1_500_000 },
 );

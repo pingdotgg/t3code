@@ -6,7 +6,7 @@ import {
 import { describe, expect, it } from "alchemy-test";
 import * as Redacted from "effect/Redacted";
 
-describe("packEnvValue / unpackEnvValue", () => {
+describe("packEnvValue / unpackEnvValue", { tags: ["unit", "local"] }, () => {
   it("stores a plain string verbatim (no quote characters on the wire)", () => {
     // #1243: a queue name must reach the env binding bare so raw readers
     // (dashboard, MessageBatch.queue comparisons) see the real name.

@@ -1,0 +1,194 @@
+---
+title: Production Auth
+description: Configure trusted origins, SMTP, OAuth callbacks, and verification before launching Managed Better Auth.
+---
+
+Prepare external email and OAuth services before taking Managed Better Auth to
+production. Alchemy configures Neon; it does not create an OAuth application at
+GitHub/Google or verify an email-sending domain for your SMTP provider. Start with
+[Setup](/neon/setup) and Neon's
+[production checklist](https://neon.com/docs/auth/production-checklist).
+
+The snippets below run inside a stack and refer to an existing `branch`.
+Configure an Alchemy-owned Auth instance through code; avoid managing the same
+settings independently in the Console. An existing or inherited Auth integration
+requires deliberate, resource-scoped adoption and review of its users and settings.
+
+## Set the application name
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const auth = yield* Neon.Auth("Auth", {
+  branch,
+  name: "Example App",
+});
+```
+
+The name appears in user-facing Auth messages. Keep the logical resource ID
+stable when adding the settings below.
+
+## Register the production origin
+
+```typescript
+const origin = yield* Neon.AuthTrustedDomain("AppOrigin", {
+  auth,
+  domain: "https://app.example.com",
+});
+```
+
+Use the application's exact origin, including scheme and port when applicable,
+not an OAuth callback path. Declare each intended production origin separately.
+A trusted origin is neither a DNS record nor a Function custom domain; set up the
+latter using [Custom domains](/neon/guides/custom-domains).
+
+## Prepare an email sender
+
+In your email provider, verify the sender/domain and complete its required DNS
+verification before configuring Neon. Obtain the SMTP host, port, username,
+password, and approved sender address. Store the password in your deployment
+secret configuration as `AUTH_SMTP_PASSWORD`; keep it out of browser environment
+variables and source control.
+
+Neon's shared SMTP service is intended for development. Production delivery and
+verification links require your own provider; see
+[Neon's email-provider requirements](https://neon.com/docs/auth/production-checklist#email-provider).
+Use the port and credentials supplied by that provider rather than assuming a
+particular SMTP transport.
+
+## Configure SMTP
+
+Add the email provider to the existing Auth declaration:
+
+```diff lang="typescript"
++import * as Config from "effect/Config";
+
+ const auth = yield* Neon.Auth("Auth", {
+   branch,
+   name: "Example App",
++  emailProvider: {
++    type: "standard",
++    host: "smtp.example.com",
++    port: 587,
++    username: "smtp-user",
++    password: yield* Config.Redacted("AUTH_SMTP_PASSWORD"),
++    sender_email: "auth@example.com",
++    sender_name: "Example App",
++  },
+ });
+```
+
+Replace the SMTP example values with the verified provider settings. The password
+is redacted in the resource properties; protect the state store that retains it.
+
+## Enable email verification
+
+```diff lang="typescript"
+ const auth = yield* Neon.Auth("Auth", {
+   branch,
+   name: "Example App",
++  emailAndPassword: {
++    enabled: true,
++    require_email_verification: true,
++  },
+   emailProvider: {
+```
+
+This requires verification for email/password sign-in. It does not verify existing
+mailboxes for you. Test receipt and completion of the verification flow with a
+fresh test user after deploying.
+
+## Disable localhost access
+
+```diff lang="typescript"
+ const auth = yield* Neon.Auth("Auth", {
+   branch,
+   name: "Example App",
++  allowLocalhost: false,
+```
+
+Keep local development on a separate branch with its own explicit settings.
+Removing the property is not the same as setting it to `false`: unspecified Auth
+settings are preserved, and removal of previously managed settings can require an
+explicit reset value.
+
+## Register an OAuth application
+
+If you use social sign-in, create your own OAuth application at the provider.
+For example, follow GitHub's
+[OAuth app instructions](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app).
+Keep its client secret in deployment secret configuration as
+`GITHUB_CLIENT_SECRET`.
+
+In Neon, select the project's intended branch and open **Settings → Auth → OAuth
+providers**. The provider configuration dialog shows the exact authorization
+callback URL. Copy it to the OAuth provider's allowed redirect configuration;
+use the dialog to inspect the URL, while leaving Alchemy responsible for saving
+the Neon provider configuration.
+
+The callback has this shape:
+
+```text
+{NEON_AUTH_BASE_URL}/callback/github
+```
+
+Use the branch's Auth base URL, not the Function URL or application homepage.
+The app's `callbackURL` is a different value: it is where the user lands after
+Auth completes, and its origin must be trusted. See
+[Neon's OAuth guide](https://neon.com/docs/auth/guides/setup-oauth) for Google,
+GitHub, and Vercel instructions, including consent-screen publication and provider
+verification requirements.
+
+## Bind the OAuth credentials
+
+```typescript
+const github = yield* Neon.AuthOAuthProvider("GitHub", {
+  auth,
+  provider: "github",
+  clientId: "your-oauth-client-id",
+  clientSecret: yield* Config.Redacted("GITHUB_CLIENT_SECRET"),
+});
+```
+
+Neon-managed development credentials are not a production identity for your
+application. An already configured provider requires scoped adoption before
+Alchemy manages it. Each preview branch has a different Auth URL; register its
+callback separately and use a separate OAuth application when the provider only
+allows one callback. Never redirect preview sign-ins through production Auth as
+a shortcut.
+
+## Verify the complete sign-in flow
+
+Use the real production hostname with a designated test user:
+
+1. Sign up and receive the verification email. Confirm an unverified account
+   cannot bypass the verification requirement.
+2. Complete verification and sign in. Refresh and confirm the session behaves as
+   expected.
+3. Request a password reset and follow the email back to the intended origin.
+4. If OAuth is enabled, sign in through the provider and confirm both redirects:
+   provider → branch Auth callback → application.
+5. Sign out and verify protected requests are rejected. Account for the expiry of
+   already-issued JWTs; session revocation is not necessarily immediate JWT invalidation.
+6. Confirm an untrusted origin and localhost are rejected by production Auth.
+
+Functions still need application-level authentication and authorization. Validate
+JWT signatures, issuer, audience where applicable, and expiry; Data API calls
+must carry the end user's token and be governed by SQL grants and row-level
+security. A trusted origin does not protect a public Function by itself.
+
+## Troubleshoot before launch
+
+| Symptom | Check |
+| --- | --- |
+| OAuth `redirect_uri_mismatch` | The provider's redirect is the selected branch's Auth URL plus `/callback/<provider>`, not the app's post-login URL |
+| Sign-in only works for the OAuth app owner | Provider testing mode, approved test users, consent-screen publication, and verification |
+| Email missing or rejected | Verified sender, SMTP credentials/port, provider delivery logs, spam folder, and rate limits |
+| Redirect rejected | Exact application origin in trusted domains, correct branch, and no production dependency on localhost |
+| Auth was disabled outside Alchemy | Preserve `neon_auth` and state; use [State and recovery](/neon/guides/state-recovery) rather than dropping user data to re-enable it |
+
+## Related guides
+
+- [Setup](/neon/setup) — credential and account prerequisites.
+- [Auth reference](/providers/neon/auth) — supported settings and lifecycle.
+- [Upload tutorial](/neon/tutorial) — development application and its production limits.

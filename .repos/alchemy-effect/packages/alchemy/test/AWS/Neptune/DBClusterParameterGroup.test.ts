@@ -111,5 +111,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(group.dbClusterParameterGroupName);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:neptune", "live"], timeout: 240_000 },
 );

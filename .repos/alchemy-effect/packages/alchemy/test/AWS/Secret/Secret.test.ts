@@ -6,7 +6,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import SecretsTestFunctionLive, {
   CONFIG_SECRET_ENV_KEY,
   LITERAL_SECRET_VALUE,
@@ -91,7 +91,7 @@ test(
       value: LITERAL_SECRET_VALUE,
     });
   }).pipe(logLevel),
-  { timeout: 45_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 45_000 },
 );
 
 test(
@@ -109,7 +109,7 @@ test(
       value: CONFIG_SECRET_VALUE,
     });
   }).pipe(logLevel),
-  { timeout: 45_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 45_000 },
 );
 
 test(
@@ -124,7 +124,7 @@ test(
     };
     expect(body).toEqual({ type: "string", value: STRING_VAR_VALUE });
   }).pipe(logLevel),
-  { timeout: 45_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 45_000 },
 );
 
 test(
@@ -139,7 +139,7 @@ test(
     };
     expect(body).toEqual({ type: "number", value: NUMBER_VAR_VALUE });
   }).pipe(logLevel),
-  { timeout: 45_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 45_000 },
 );
 
 test(
@@ -154,5 +154,5 @@ test(
     };
     expect(body).toEqual({ type: "object", value: OBJECT_VAR_VALUE });
   }).pipe(logLevel),
-  { timeout: 45_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 45_000 },
 );

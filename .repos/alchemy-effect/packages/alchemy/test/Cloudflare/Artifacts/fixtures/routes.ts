@@ -1,6 +1,6 @@
 import type { ReadWriteNamespaceClient } from "@/Cloudflare/Artifacts/ReadWriteNamespace.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared routes that exercise every method of {@link ReadWriteNamespaceClient} over

@@ -1,22 +1,20 @@
 import { NodeHttpServer, NodeSocket, NodeSocketServer } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Ref, Schedule, Schema, Stream } from "effect"
-import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/unstable/cluster"
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
-import type * as NetAddress from "effect/unstable/net/NetAddress"
-import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
-import { SocketServer } from "effect/unstable/socket"
+import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/cluster"
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http"
+import type * as NetAddress from "effect/net/NetAddress"
+import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
+import { SocketServer } from "effect/socket"
 import { e2eSuite, UsersClient } from "./fixtures/rpc-e2e.ts"
 import { RpcLayer, User } from "./fixtures/rpc-schemas.ts"
 
 describe("RpcServer", () => {
   // http ndjson
-  const HttpProtocol = RpcServer.layerProtocolHttp({ path: "/rpc" }).pipe(
-    Layer.provide(HttpRouter.layer)
-  )
-  const HttpNdjsonServer = RpcLayer.pipe(
-    Layer.provideMerge(HttpProtocol),
-    Layer.provide(HttpRouter.serve(HttpProtocol, { disableListenLog: true, disableLogger: true }))
+  const HttpProtocol = RpcServer.layerProtocolHttp({ path: "/rpc" })
+  const HttpNdjsonServer = HttpRouter.serve(
+    RpcLayer.pipe(Layer.provideMerge(HttpProtocol)),
+    { disableListenLog: true, disableLogger: true }
   )
   const HttpNdjsonClient = UsersClient.layer.pipe(
     Layer.provide(
@@ -53,12 +51,10 @@ describe("RpcServer", () => {
   )
 
   // websocket
-  const WsProtocol = RpcServer.layerProtocolWebsocket({ path: "/rpc" }).pipe(
-    Layer.provide(HttpRouter.layer)
-  )
-  const HttpWsServer = RpcLayer.pipe(
-    Layer.provideMerge(WsProtocol),
-    Layer.provide(HttpRouter.serve(WsProtocol, { disableListenLog: true, disableLogger: true }))
+  const WsProtocol = RpcServer.layerProtocolWebsocket({ path: "/rpc" })
+  const HttpWsServer = HttpRouter.serve(
+    RpcLayer.pipe(Layer.provideMerge(WsProtocol)),
+    { disableListenLog: true, disableLogger: true }
   )
   const HttpWsClient = UsersClient.layer.pipe(
     Layer.provide(RpcClient.layerProtocolSocket()),

@@ -113,6 +113,7 @@ test.provider.skipIf(!!process.env.FAST)(
         yield* waitForZoneToBeDeleted(zone.zoneId);
       }),
     ),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider.skipIf(!!process.env.FAST)(
@@ -144,6 +145,7 @@ test.provider.skipIf(!!process.env.FAST)(
         yield* waitForZoneToBeDeleted(zone.zoneId);
       }),
     ),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider.skipIf(!!process.env.FAST)(
@@ -212,6 +214,7 @@ test.provider.skipIf(!!process.env.FAST)(
         yield* waitForZoneToBeDeleted(existing.id);
       }),
     ),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // Standing test zone — always present in the testing account.
@@ -244,6 +247,7 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 const waitForZoneToBeDeleted = Effect.fn(function* (zoneId: string) {

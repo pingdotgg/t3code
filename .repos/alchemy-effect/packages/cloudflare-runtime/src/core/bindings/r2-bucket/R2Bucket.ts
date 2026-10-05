@@ -9,6 +9,12 @@ const R2BucketWorker = {
       "#cloudflare-runtime-core-worker/bindings/r2-bucket/R2Bucket.worker",
     ),
 };
+const R2BucketS3Worker = {
+  worker: () =>
+    loadInternalWorker(
+      "#cloudflare-runtime-core-worker/bindings/r2-bucket/R2BucketS3.worker",
+    ),
+};
 import * as Storage from "../../globals/Storage.ts";
 import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
@@ -19,12 +25,16 @@ import { ConfigError } from "../../RuntimeError.shared.ts";
 import type * as WorkerdConfig from "../../workerd/Config.ts";
 import type {
   R2BucketProps,
+  R2S3Bucket,
   R2ServiceProps,
+  S3Credentials,
 } from "./R2BucketOptions.shared.ts";
 import {
   BINDING_R2_BLOBS,
   BINDING_R2_ENABLE_CONTROL_ENDPOINTS,
   BINDING_R2_OBJECT,
+  BINDING_R2_S3_BUCKETS,
+  BINDING_R2_S3_UPSTREAM,
   R2_OBJECT_CLASS_NAME,
   SERVICE_R2,
   SERVICE_R2_STORAGE,
@@ -38,12 +48,23 @@ export class R2Bucket extends Plugin.Service<
      * when at least one binding exists) and resolve the service designator
      * the binding should target: the shared `r2` service, with the bucket
      * name carried via designator props.
+     *
+     * Buckets registered with `s3Credentials` are also served over the local
+     * S3-compatible endpoint (`/cdn-cgi/local/r2/s3/{bucketName}`).
      */
     readonly register: (
       props: R2ServiceProps,
+      options?: { readonly s3Credentials?: S3Credentials },
     ) => Effect.Effect<WorkerdConfig.ServiceDesignator>;
   }
 >()("cloudflare-runtime/plugin/R2Bucket") {}
+
+const r2Designator = (
+  props: R2ServiceProps,
+): WorkerdConfig.ServiceDesignator => ({
+  name: SERVICE_R2,
+  props: { json: JSON.stringify(props) },
+});
 
 export const R2BucketLive = Layer.effect(
   R2Bucket,
@@ -83,23 +104,78 @@ export const R2BucketLive = Layer.effect(
       } satisfies WorkerdConfig.Service;
     });
 
+    /**
+     * The S3-compatible endpoint, a fetch middleware after `plugin:entry`
+     * (which restores the client-facing URL and Host that SigV4 signs).
+     * Each exposed bucket is an ordinary `r2Bucket` binding onto the shared
+     * `r2` service.
+     */
+    const makeS3Middleware = (s3Buckets: ReadonlyMap<string, S3Credentials>) =>
+      Effect.gen(function* () {
+        const buckets: Record<string, R2S3Bucket> = {};
+        const bindings: Array<WorkerdConfig.Worker_Binding> = [];
+        let index = 0;
+        for (const [bucketName, credentials] of s3Buckets) {
+          const binding = `BUCKET_${index++}`;
+          buckets[bucketName] = { binding, credentials };
+          bindings.push({
+            name: binding,
+            r2Bucket: r2Designator({ bucketName }),
+          });
+        }
+        return {
+          name: "r2:s3",
+          worker: {
+            compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+            modules: formatInternalWorkerModules(
+              yield* Effect.promise(R2BucketS3Worker.worker),
+            ),
+            bindings: [
+              { name: BINDING_R2_S3_BUCKETS, json: JSON.stringify(buckets) },
+              ...bindings,
+            ],
+          },
+          upstreamBindingName: BINDING_R2_S3_UPSTREAM,
+          order: 1,
+        } satisfies Plugin.Middleware;
+      });
+
     return R2Bucket.of(
       Effect.sync(() => {
         let used = false;
+        const s3Buckets = new Map<string, S3Credentials>();
+        const s3Conflicts = new Set<string>();
 
         return {
           api: {
-            register: (props) =>
+            register: (props, options) =>
               Effect.sync(() => {
                 used = true;
-                return {
-                  name: SERVICE_R2,
-                  props: { json: JSON.stringify(props) },
-                };
+                const credentials = options?.s3Credentials;
+                if (credentials !== undefined) {
+                  const existing = s3Buckets.get(props.bucketName);
+                  if (
+                    existing !== undefined &&
+                    (existing.accessKeyId !== credentials.accessKeyId ||
+                      existing.secretAccessKey !== credentials.secretAccessKey)
+                  ) {
+                    s3Conflicts.add(props.bucketName);
+                  }
+                  s3Buckets.set(props.bucketName, credentials);
+                }
+                return r2Designator(props);
               }),
           },
           defer: Effect.gen(function* () {
             if (!used) return {};
+            if (s3Conflicts.size > 0) {
+              return yield* new ConfigError({
+                subtag: "R2Bucket",
+                message: `R2 bucket(s) ${[...s3Conflicts].map((name) => `"${name}"`).join(", ")} were bound with different S3 credentials.`,
+                hint: "Use the same `s3Credentials` for every binding of a bucket.",
+                detail: { buckets: [...s3Conflicts] },
+              });
+            }
             const storageService = yield* makeStorageService;
             const r2Service: WorkerdConfig.Service = {
               name: SERVICE_R2,
@@ -140,7 +216,11 @@ export const R2BucketLive = Layer.effect(
                 ],
               },
             };
-            return { services: [storageService, r2Service] };
+            return {
+              services: [storageService, r2Service],
+              middlewares:
+                s3Buckets.size > 0 ? [yield* makeS3Middleware(s3Buckets)] : [],
+            };
           }),
         };
       }),
@@ -155,11 +235,19 @@ export const R2BucketLive = Layer.effect(
  * Data is persisted under `{storage}/r2`, keyed by the bucket id, so bindings
  * with the same `id` share data (including across workers and restarts when
  * disk-backed storage is configured).
+ *
+ * With `s3Credentials`, the bucket is also served over the local
+ * S3-compatible endpoint at `{worker url}/cdn-cgi/local/r2/s3/{id}` —
+ * SigV4-authenticated with those credentials, so S3 clients and presigned
+ * URLs (e.g. browser uploads) work against the local bucket.
  */
 export const local = (props: R2BucketProps): BindingHook<R2Bucket> =>
   Plugin.use(R2Bucket, (r2) =>
     Effect.map(
-      r2.api.register({ bucketName: props.id ?? props.binding }),
+      r2.api.register(
+        { bucketName: props.id ?? props.binding },
+        { s3Credentials: props.s3Credentials },
+      ),
       (service): WorkerdConfig.Worker_Binding => ({
         name: props.binding,
         r2Bucket: service,

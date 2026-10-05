@@ -13,12 +13,29 @@ export const SPINNER_FRAMES = [
   "⠏",
 ];
 
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Pauses of at least this long are a demo holding a finished frame. */
+const HOLD_MS = 2000;
+
+/**
+ * Timeline pause for the scripted terminal demos. With reduced motion the
+ * script fast-forwards to its first finished frame and stays there: short
+ * steps resolve immediately and the first hold never resolves.
+ */
+export const sleep = (ms: number) =>
+  prefersReducedMotion()
+    ? ms >= HOLD_MS
+      ? new Promise<void>(() => {})
+      : Promise.resolve()
+    : new Promise<void>((r) => setTimeout(r, ms));
 
 export function useSpinner(active: boolean, intervalMs = 80): string {
   const [i, setI] = useState(0);
   useEffect(() => {
-    if (!active) return;
+    if (!active || prefersReducedMotion()) return;
     const t = setInterval(
       () => setI((v) => (v + 1) % SPINNER_FRAMES.length),
       intervalMs,

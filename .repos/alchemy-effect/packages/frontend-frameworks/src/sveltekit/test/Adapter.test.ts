@@ -21,10 +21,10 @@ describe("generateWorkerShim", () => {
 
   it("imports the server and manifest through real relative paths", () => {
     expect(shim).toContain(
-      `import { Server } from "./../output/server/index.js";`,
+      `import { server } from "./../output/server/index.js";`,
     );
     expect(shim).toContain(
-      `import { manifest, prerendered, base_path } from "./../cloudflare-tmp/manifest.js";`,
+      `import { assets, app_path, prerendered, base_path, routes } from "./../cloudflare-tmp/manifest.js";`,
     );
   });
 
@@ -98,7 +98,7 @@ describe("generateWorkerShim", () => {
     it("probes kit's route patterns with the base path stripped", () => {
       expect(spa).toContain("path.slice(base_path.length) || '/'");
       expect(spa).toContain("route.pattern.test(path)");
-      expect(spa).toContain("manifest._.routes");
+      expect(spa).toContain("for (const route of routes)");
     });
 
     it("defers through the configured assets binding", () => {

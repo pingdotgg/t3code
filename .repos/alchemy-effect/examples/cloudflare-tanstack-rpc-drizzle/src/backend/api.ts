@@ -3,7 +3,7 @@ import * as Drizzle from "alchemy/Drizzle/Postgres";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { RpcSerialization, RpcServer } from "effect/rpc";
 import { Hyperdrive } from "./database.ts";
 import { Todo, TodoNotFound, TodoRpcs } from "./rpc.ts";
 import { relations, Todos } from "./schema.ts";

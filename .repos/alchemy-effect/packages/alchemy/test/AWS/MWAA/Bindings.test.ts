@@ -5,7 +5,7 @@ import * as mwaa from "@distilled.cloud/aws/mwaa";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import MWAATestFunctionLive, { MWAATestFunction } from "./bindings-handler.ts";
 
 const testOptions = { providers: AWS.providers() };
@@ -24,44 +24,48 @@ const NONEXISTENT_ENVIRONMENT = "alchemy-mwaa-nonexistent-probe";
 // 20-30 minute environment provisioning.
 // ---------------------------------------------------------------------------
 
-describe("MWAA data-plane operations (typed-error probes)", () => {
-  test.provider(
-    "createCliToken on a nonexistent environment fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          mwaa.createCliToken({ Name: NONEXISTENT_ENVIRONMENT }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+describe(
+  "MWAA data-plane operations (typed-error probes)",
+  { tags: ["provider:aws", "provider:aws:mwaa", "live"] },
+  () => {
+    test.provider(
+      "createCliToken on a nonexistent environment fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            mwaa.createCliToken({ Name: NONEXISTENT_ENVIRONMENT }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "createWebLoginToken on a nonexistent environment fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          mwaa.createWebLoginToken({ Name: NONEXISTENT_ENVIRONMENT }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "createWebLoginToken on a nonexistent environment fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            mwaa.createWebLoginToken({ Name: NONEXISTENT_ENVIRONMENT }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "invokeRestApi on a nonexistent environment fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          mwaa.invokeRestApi({
-            Name: NONEXISTENT_ENVIRONMENT,
-            Method: "GET",
-            Path: "/dags",
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
-});
+    test.provider(
+      "invokeRestApi on a nonexistent environment fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            mwaa.invokeRestApi({
+              Name: NONEXISTENT_ENVIRONMENT,
+              Method: "GET",
+              Path: "/dags",
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Full runtime fixture: a Lambda bound to all four MWAA bindings against a
@@ -149,5 +153,16 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       }).pipe(Effect.ensuring(sharedStack.destroy().pipe(Effect.orDie)));
     }),
   // environment create (~20-30 min) + binding checks + destroy initiation.
-  { timeout: 5_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:mwaa",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 5_400_000,
+  },
 );

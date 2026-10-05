@@ -13,5 +13,6 @@ export * from "./SsrSite.ts";
 export * from "./StaticSite.ts";
 export * from "./SvelteKit.ts";
 export * from "./TanStackStart.ts";
+export * from "./Vinext.ts";
 export * from "./Vite.ts";
 export * from "./Waku.ts";

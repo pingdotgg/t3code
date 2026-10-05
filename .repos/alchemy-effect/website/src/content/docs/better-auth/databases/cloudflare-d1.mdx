@@ -1,0 +1,93 @@
+---
+title: Cloudflare D1
+description: Deploy a Better Auth Worker with a native D1 database and automatic schema migrations.
+---
+
+This example creates a D1 database and a Worker serving Better Auth at `/api/auth`. It includes the auth configuration, database layer, and stack; no tutorial files are required.
+
+## Install
+
+```sh
+bun add @alchemy.run/better-auth better-auth@^1.7.5 kysely
+```
+
+`kysely` is the SQL adapter peer; D1 needs no separate database driver. Configure Cloudflare credentials through an [Alchemy profile](/environments/profiles) before deployment.
+
+## Define the Worker
+
+```typescript title="src/worker.ts"
+import { BetterAuth } from "@alchemy.run/better-auth";
+import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+const AuthDb = Cloudflare.D1.Database("AuthDb");
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"] },
+  },
+  Effect.gen(function* () {
+    const auth = yield* BetterAuth({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+    });
+    return { fetch: auth.fetch };
+  }).pipe(Effect.provide(CloudflareD1(AuthDb))),
+) {}
+```
+
+`CloudflareD1` registers the native Worker binding and supplies Better Auth's database service. This auth-only Worker forwards every request to Better Auth; endpoints live under `/api/auth`.
+
+## Define the stack
+
+```typescript title="alchemy.run.ts"
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "BetterAuthD1",
+  {
+    providers: Cloudflare.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url.as<string>() };
+  }),
+);
+```
+
+Omitting `secret` provisions and binds a stable signing secret automatically. Preserve and protect the local `.alchemy` state directory across deployments.
+
+## Deploy or develop locally
+
+```sh
+bunx alchemy deploy
+```
+
+Deployment creates D1 and applies the auth schema through its HTTP API before updating the Worker. Requests use the native binding and never run migrations.
+
+```sh
+bunx alchemy dev
+```
+
+Development uses the local D1 simulator, including migrations; use the URL printed by Alchemy. The Worker still runs in workerd, so replacing this layer with Bun's `SQLite` is not supported.
+
+## Verify the endpoint
+
+Set `AUTH_ORIGIN` to the URL printed by Alchemy, then request the session endpoint:
+
+```sh
+curl -i "$AUTH_ORIGIN/api/auth/get-session"
+```
+
+## Transaction and migration limits
+
+D1 has no interactive transactions; plugins requiring them, including SCIM in Better Auth 1.7, need a different database. Automatic migrations are additive, not a data-transfer or destructive schema-migration tool.
+
+For existing applications, preserve the signing secret and review the [1.6 to 1.7 upgrade guide](/better-auth/upgrades/from-1-6-to-1-7). See [configuration](/better-auth/guides/configuration) for production origins, [migrations](/better-auth/guides/migrations) for schema ownership, and the [`CloudflareD1` reference](/providers/betterauth/cloudflared1) for layer options.

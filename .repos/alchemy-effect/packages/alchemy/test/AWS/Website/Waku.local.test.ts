@@ -26,79 +26,83 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("AWS.Website.Waku local", () => {
-  test.provider(
-    "dev runs Waku's own dev server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe(
+  "AWS.Website.Waku local",
+  { tags: ["provider:aws", "provider:aws:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs Waku's own dev server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-waku-aws-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-waku-aws-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.Waku("WakuSite", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.Waku("WakuSite", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        // The site is the framework's own dev server: a localhost URL and
-        // no cloud rows at all (proof no AWS call ran).
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(
-          /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
-        );
-        expect(deployed.site.distribution).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
-        expect(deployed.site.bucket).toBeUndefined();
+          // The site is the framework's own dev server: a localhost URL and
+          // no cloud rows at all (proof no AWS call ran).
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(
+            /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
+          );
+          expect(deployed.site.distribution).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
+          expect(deployed.site.bucket).toBeUndefined();
 
-        // SSR page served by the waku dev server (native HMR toolchain).
-        yield* expectUrlContains(`${url}/`, "WAKU_AWS_PAGE_MARKER", {
-          timeout: "120 seconds",
-          label: "dev SSR home page",
-        });
-        // API route (waku's `_api` pattern) through the dev server.
-        yield* expectUrlContains(
-          `${url}/echo?echo=dev`,
-          "WAKU_AWS_API_MARKER",
-          {
-            label: "API route (dev)",
-          },
-        );
-        yield* expectUrlContains(`${url}/echo?echo=dev`, "dev", {
-          label: "API route query echo (dev)",
-        });
+          // SSR page served by the waku dev server (native HMR toolchain).
+          yield* expectUrlContains(`${url}/`, "WAKU_AWS_PAGE_MARKER", {
+            timeout: "120 seconds",
+            label: "dev SSR home page",
+          });
+          // API route (waku's `_api` pattern) through the dev server.
+          yield* expectUrlContains(
+            `${url}/echo?echo=dev`,
+            "WAKU_AWS_API_MARKER",
+            {
+              label: "API route (dev)",
+            },
+          );
+          yield* expectUrlContains(`${url}/echo?echo=dev`, "dev", {
+            label: "API route query echo (dev)",
+          });
 
-        // ── HMR: edit the API route in place. The stack is NOT re-applied —
-        // waku's vite dev rebuild must pick the change up and serve it
-        // through the same URL ───────────────────────────────────────────
-        const echoPath = path.join(rootDir, "src/pages/_api/echo.ts");
-        const echo = yield* fs.readFileString(echoPath);
-        yield* fs.writeFileString(
-          echoPath,
-          echo.replaceAll("WAKU_AWS_API_MARKER", "WAKU_AWS_API_MARKER_V2"),
-        );
-        yield* expectUrlContains(
-          `${url}/echo?echo=dev`,
-          "WAKU_AWS_API_MARKER_V2",
-          { timeout: "90 seconds", label: "API route after HMR edit" },
-        );
-        // The route still round-trips its query after the reload.
-        yield* expectUrlContains(`${url}/echo?echo=post-hmr`, "post-hmr", {
-          label: "API route query echo after HMR edit",
-        });
+          // ── HMR: edit the API route in place. The stack is NOT re-applied —
+          // waku's vite dev rebuild must pick the change up and serve it
+          // through the same URL ───────────────────────────────────────────
+          const echoPath = path.join(rootDir, "src/pages/_api/echo.ts");
+          const echo = yield* fs.readFileString(echoPath);
+          yield* fs.writeFileString(
+            echoPath,
+            echo.replaceAll("WAKU_AWS_API_MARKER", "WAKU_AWS_API_MARKER_V2"),
+          );
+          yield* expectUrlContains(
+            `${url}/echo?echo=dev`,
+            "WAKU_AWS_API_MARKER_V2",
+            { timeout: "90 seconds", label: "API route after HMR edit" },
+          );
+          // The route still round-trips its query after the reload.
+          yield* expectUrlContains(`${url}/echo?echo=post-hmr`, "post-hmr", {
+            label: "API route query echo after HMR edit",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 600_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 600_000 },
+    );
+  },
+);

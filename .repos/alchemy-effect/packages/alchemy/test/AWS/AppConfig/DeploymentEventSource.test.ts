@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import AppConfigEventsTestFunctionLive, {
   AppConfigEventsTestFunction,
 } from "./fixtures/events-handler";
@@ -87,81 +87,97 @@ const awaitCompleteEvent = (deploymentNumber: number) =>
     }),
   );
 
-describe("AppConfig DeploymentEventSource", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "AppConfig event source setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
-
-      yield* Effect.logInfo(
-        "AppConfig event source setup: deploying app -> env -> extension -> Lambda",
-      );
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* AppConfigEventsTestFunction;
-        }).pipe(Effect.provide(AppConfigEventsTestFunctionLive)),
-      );
-
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      // Readiness probe — fresh function URLs take seconds to serve 200s.
-      yield* HttpClient.get(`${baseUrl}/ping`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({
-          schedule: Schedule.max([
-            Schedule.fixed("2 seconds"),
-            Schedule.recurs(75),
-          ]),
-        }),
-      );
-    }),
-    { timeout: 300_000 },
-  );
-  afterAll(sharedStack.destroy(), { timeout: 300_000 });
-
-  test.provider(
-    "deployment notifications invoke the Lambda through the extension",
-    () =>
+describe(
+  "AppConfig DeploymentEventSource",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:appconfig",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
       Effect.gen(function* () {
-        // AppConfig notifications are fire-and-forget. The first invocation
-        // can be lost while the freshly-created AppConfig invoke role is
-        // propagating; waiting longer for that same notification cannot make
-        // it reappear. Retry the whole bounded start+observe cycle so each
-        // attempt emits a fresh action-point notification.
-        const observed = yield* Effect.gen(function* () {
-          const started = yield* startDeployment;
-          const deploymentNumber = started.deploymentNumber;
-          if (deploymentNumber === undefined) {
-            return yield* Effect.fail(
-              new DeploymentRequestFailed({
-                status: 200,
-                body: "StartDeployment response omitted DeploymentNumber",
-              }),
-            );
-          }
-          return {
-            deploymentNumber,
-            event: yield* awaitCompleteEvent(deploymentNumber),
-          };
-        }).pipe(
-          Effect.retry({
-            while: (error) => error._tag === "DeploymentEventPending",
-            schedule: Schedule.fixed("5 seconds"),
-            times: 3,
-          }),
+        yield* Effect.logInfo(
+          "AppConfig event source setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
+
+        yield* Effect.logInfo(
+          "AppConfig event source setup: deploying app -> env -> extension -> Lambda",
+        );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* AppConfigEventsTestFunction;
+          }).pipe(Effect.provide(AppConfigEventsTestFunctionLive)),
         );
 
-        expect(observed.deploymentNumber).toBeGreaterThan(0);
-        expect(observed.event.InvocationId).toBeTruthy();
-        expect(observed.event.DeploymentNumber).toBe(observed.deploymentNumber);
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        // Readiness probe — fresh function URLs take seconds to serve 200s.
+        yield* HttpClient.get(`${baseUrl}/ping`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(75),
+            ]),
+          }),
+        );
       }),
-    { timeout: 120_000 },
-  );
-});
+      { timeout: 300_000 },
+    );
+    afterAll(sharedStack.destroy(), { timeout: 300_000 });
+
+    test.provider(
+      "deployment notifications invoke the Lambda through the extension",
+      () =>
+        Effect.gen(function* () {
+          // AppConfig notifications are fire-and-forget. The first invocation
+          // can be lost while the freshly-created AppConfig invoke role is
+          // propagating; waiting longer for that same notification cannot make
+          // it reappear. Retry the whole bounded start+observe cycle so each
+          // attempt emits a fresh action-point notification.
+          const observed = yield* Effect.gen(function* () {
+            const started = yield* startDeployment;
+            const deploymentNumber = started.deploymentNumber;
+            if (deploymentNumber === undefined) {
+              return yield* Effect.fail(
+                new DeploymentRequestFailed({
+                  status: 200,
+                  body: "StartDeployment response omitted DeploymentNumber",
+                }),
+              );
+            }
+            return {
+              deploymentNumber,
+              event: yield* awaitCompleteEvent(deploymentNumber),
+            };
+          }).pipe(
+            Effect.retry({
+              while: (error) => error._tag === "DeploymentEventPending",
+              schedule: Schedule.fixed("5 seconds"),
+              times: 3,
+            }),
+          );
+
+          expect(observed.deploymentNumber).toBeGreaterThan(0);
+          expect(observed.event.InvocationId).toBeTruthy();
+          expect(observed.event.DeploymentNumber).toBe(
+            observed.deploymentNumber,
+          );
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

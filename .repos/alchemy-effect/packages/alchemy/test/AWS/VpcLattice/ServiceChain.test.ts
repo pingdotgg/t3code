@@ -239,5 +239,13 @@ test.provider(
       // region) — always tear the stack down.
       Effect.ensuring(Effect.ignore(stack.destroy())),
     ),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:vpclattice",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

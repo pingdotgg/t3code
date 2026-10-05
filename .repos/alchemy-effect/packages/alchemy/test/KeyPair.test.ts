@@ -26,7 +26,7 @@ const assertPemKeyPair = (attrs: {
   NodeCrypto.createPublicKey(attrs.publicKey);
 };
 
-describe("Alchemy.KeyPair", () => {
+describe("Alchemy.KeyPair", { tags: ["unit", "local"] }, () => {
   test.provider("mints an ed25519 keypair by default", (stack) =>
     Effect.gen(function* () {
       const attrs = yield* stack.deploy(

@@ -5,8 +5,8 @@ import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import LogEventSinkFunctionLive, {
   LogEventSinkFunction,
 } from "./sink-handler.ts";
@@ -182,5 +182,8 @@ test.provider(
         ),
       ).toBe(false);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "provider:aws:logs", "live"],
+    timeout: 240_000,
+  },
 );

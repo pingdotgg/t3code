@@ -29,6 +29,16 @@ const TEST_TIMEOUT = 240_000;
  */
 describe.skipIf(!process.env.PLANETSCALE_TEST)(
   "local container reaches PlanetScale Postgres",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:container",
+      "provider:cloudflare:worker",
+      "provider:planetscale",
+      "provider:planetscale:postgres",
+      "live",
+    ],
+  },
   () => {
     const stack = beforeAll(deploy(PlanetscaleHostStack), {
       timeout: HOOK_TIMEOUT,

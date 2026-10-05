@@ -1,0 +1,13 @@
+{
+  "name": "service-binding-octane",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@octanejs/adapter-cloudflare": "catalog:",
+    "@octanejs/vite-plugin": "catalog:",
+    "octane": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {}
+}

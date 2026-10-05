@@ -24,6 +24,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 // Ungated typed-error probe for the finspace-data (data-plane) SDK. The data
@@ -40,6 +41,7 @@ test.provider(
       );
       expect(error._tag).toBe("AccessDeniedException");
     }),
+  { tags: ["provider:aws", "provider:aws:finspace", "live"] },
 );
 
 // Deletion is verified as INITIATED (irreversible) or fully gone — full
@@ -121,5 +123,8 @@ test.provider.skipIf(!process.env.AWS_TEST_FINSPACE)(
       yield* assertEnvironmentDeleting(env.environmentId);
     }),
   // environment create (~20 min) + update + delete, one test.
-  { timeout: 3_000_000 },
+  {
+    tags: ["provider:aws", "provider:aws:finspace", "live"],
+    timeout: 3_000_000,
+  },
 );

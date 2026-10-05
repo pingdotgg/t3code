@@ -2,8 +2,8 @@ import * as BrowserPersistence from "@effect/platform-browser/BrowserPersistence
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
+import * as Persistence from "effect/persistence/Persistence"
 import { TestClock } from "effect/testing"
-import * as Persistence from "effect/unstable/persistence/Persistence"
 import { indexedDB as fakeIndexedDb } from "fake-indexeddb"
 
 const defaultDatabase = "effect_persistence"

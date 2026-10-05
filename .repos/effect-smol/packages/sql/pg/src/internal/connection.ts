@@ -1,6 +1,6 @@
 import type * as Effect from "effect/Effect"
 import type * as Scope from "effect/Scope"
-import type { SqlError } from "effect/unstable/sql/SqlError"
+import type { SqlError } from "effect/sql/SqlError"
 
 /** @internal */
 export const internalsKey = "~@effect/sql-pg/PgConnection/internals" as const
@@ -10,8 +10,8 @@ export interface ConnectionInternals {
   /** The pool item identity: the unpinned base connection. */
   readonly base: object
   readonly deadError: () => SqlError | undefined
-  /** Fired once when the connection dies outside its own scope release. */
-  readonly fatalHooks: Set<() => void>
+  /** Fired when a pool must stop reusing the connection. */
+  readonly retireHooks: Set<() => void>
   /**
    * Installed by a multiplexed pool so that pinning the session also takes it
    * out of shared circulation for as long as the pin lasts. Every route to an

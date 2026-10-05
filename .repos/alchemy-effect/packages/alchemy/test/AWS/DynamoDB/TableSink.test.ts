@@ -5,8 +5,8 @@ import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import { TableSinkFunction, TableSinkFunctionLive } from "./sink-handler";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -166,5 +166,13 @@ test.provider(
       yield* stack.destroy();
       yield* assertTableIsDeleted(tableName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:dynamodb",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

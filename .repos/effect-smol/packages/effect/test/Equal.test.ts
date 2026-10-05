@@ -3,7 +3,7 @@ import * as Equal from "effect/Equal"
 import * as Hash from "effect/Hash"
 import * as HashMap from "effect/HashMap"
 import * as Option from "effect/Option"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 class Key implements Equal.Equal, Hash.Hash {
   constructor(readonly group: string) {}
@@ -18,6 +18,114 @@ class Key implements Equal.Equal, Hash.Hash {
 }
 
 describe("Equal.equals", () => {
+  it("does not cache an equality found through a provisional circular pair", () => {
+    interface Child {
+      parent?: Parent
+    }
+
+    class Parent implements Hash.Hash {
+      constructor(readonly child: Child, readonly x: number, readonly y: number) {}
+
+      [Hash.symbol](): number {
+        return 0
+      }
+    }
+
+    const p: Child = {}
+    const q: Child = {}
+    const a = new Parent(p, 1, 2)
+    const b = new Parent(q, 2, 1)
+    p.parent = a
+    q.parent = b
+
+    expect(Equal.equals(a, b)).toBe(false)
+    expect(Equal.equals(p, q)).toBe(false)
+  })
+
+  describe("cyclic values", () => {
+    class GraphNode implements Hash.Hash {
+      v: number
+      a: unknown = undefined
+      b: unknown = undefined
+      constructor(v: number) {
+        this.v = v
+      }
+      [Hash.symbol](): number {
+        return 0
+      }
+    }
+
+    type Spec = ReadonlyArray<{ readonly v: number; readonly a: number; readonly b: number }>
+
+    const graph = (spec: Spec): Array<GraphNode> => {
+      const nodes = spec.map(({ v }) => new GraphNode(v))
+      spec.forEach(({ a, b }, i) => {
+        nodes[i].a = nodes[a]
+        nodes[i].b = nodes[b]
+      })
+      return nodes
+    }
+
+    it("does not let an earlier comparison change a later result", () => {
+      const [, n2] = graph([{ v: 1, a: 1, b: 0 }, { v: 1, a: 0, b: 0 }])
+      const [m0, m1] = graph([{ v: 1, a: 1, b: 1 }, { v: 1, a: 1, b: 0 }])
+      Equal.equals(n2, m1)
+      assert.isTrue(Equal.equals({ w: n2, k: 1 }, { w: m0, k: 1 }))
+    })
+
+    it("assumes cycles equal pair by pair", () => {
+      const [loop] = graph([{ v: 0, a: 0, b: 0 }])
+      const [, entry] = graph([{ v: 0, a: 0, b: 0 }, { v: 0, a: 0, b: 0 }])
+      assert.isTrue(Equal.equals(loop, entry))
+      const [, p1] = graph([{ v: 1, a: 0, b: 0 }, { v: 0, a: 0, b: 0 }])
+      const [, q1] = graph([{ v: 1, a: 1, b: 0 }, { v: 0, a: 0, b: 0 }])
+      assert.isFalse(Equal.equals(p1, q1))
+    })
+
+    it("agrees with bisimilarity on random cyclic graphs", () => {
+      // Compute the greatest bisimulation by eliminating invalid pairs.
+      const bisimilar = (left: Spec, right: Spec): ReadonlyArray<ReadonlyArray<boolean>> => {
+        const related = left.map((l) => right.map((r) => l.v === r.v))
+        let changed = true
+        while (changed) {
+          changed = false
+          left.forEach((l, i) =>
+            right.forEach((r, j) => {
+              if (related[i][j] && !(related[l.a][r.a] && related[l.b][r.b])) {
+                related[i][j] = false
+                changed = true
+              }
+            })
+          )
+        }
+        return related
+      }
+      let seed = 1
+      const random = (n: number): number => {
+        seed = (Math.imul(seed, 1103515245) + 12345) >>> 0
+        return (seed >>> 16) % n
+      }
+      const randomSpec = (): Spec => {
+        const size = 1 + random(4)
+        return Array.from({ length: size }, () => ({ v: random(2), a: random(size), b: random(size) }))
+      }
+      const disagreements: Array<string> = []
+      for (let run = 0; run < 500; run++) {
+        const left = randomSpec()
+        const right = randomSpec()
+        const expected = bisimilar(left, right)
+        for (let x = 0; x < left.length; x++) {
+          for (let y = 0; y < right.length; y++) {
+            if (Equal.equals(graph(left)[x], graph(right)[y]) !== expected[x][y]) {
+              disagreements.push(`${JSON.stringify(left)}[${x}] vs ${JSON.stringify(right)}[${y}]`)
+            }
+          }
+        }
+      }
+      assert.deepStrictEqual(disagreements, [])
+    })
+  })
+
   describe("plain objects", () => {
     it("should return true for structurally identical objects (structural equality)", () => {
       const obj1 = { a: 1, b: 2 }
@@ -355,6 +463,29 @@ describe("Equal.equals", () => {
       const point1 = new CustomPoint(1, 2)
       const point2 = new CustomPoint(1, 2)
       expect(Equal.equals(point1, point2)).toBe(true)
+    })
+
+    it("clears visited state when a custom Equal throws", () => {
+      let throws = true
+      class Flaky implements Equal.Equal {
+        constructor(readonly id: number) {}
+
+        [Equal.symbol](that: Equal.Equal): boolean {
+          if (throws) throw new Error("boom")
+          return that instanceof Flaky && this.id === that.id
+        }
+
+        [Hash.symbol](): number {
+          return 0
+        }
+      }
+
+      const x = { k: new Flaky(1) }
+      const y = { k: new Flaky(2) }
+      assert.throws(() => Equal.equals(x, y))
+      throws = false
+      assert.isFalse(Equal.equals(x, y))
+      assert.isTrue(Equal.equals(x, { k: new Flaky(1) }))
     })
   })
 
@@ -710,6 +841,29 @@ describe("Equal.equals", () => {
       assert.deepStrictEqual([setResult, mapResult], [false, false])
     })
 
+    it("matches colliding Map and Set entries independent of insertion order", () => {
+      expect(Equal.equals(
+        new Set([new Key("x"), new Key("y")]),
+        new Set([new Key("y"), new Key("x")])
+      )).toBe(true)
+      expect(Equal.equals(
+        new Map([[new Key("x"), 1], [new Key("y"), 2]]),
+        new Map([[new Key("y"), 2], [new Key("x"), 1]])
+      )).toBe(true)
+    })
+
+    it("matches cyclic values in colliding Map entries", () => {
+      const left: { self?: unknown } = {}
+      const right: { self?: unknown } = {}
+      left.self = left
+      right.self = right
+
+      expect(Equal.equals(
+        new Map<Key, unknown>([[new Key("x"), left], [new Key("y"), 1]]),
+        new Map<Key, unknown>([[new Key("y"), 1], [new Key("x"), right]])
+      )).toBe(true)
+    })
+
     it("should handle objects containing maps and sets", () => {
       const obj1 = {
         map: new Map([["a", 1], ["b", 2]]),
@@ -828,6 +982,21 @@ describe("Equal.equals", () => {
   })
 
   describe("byReferenceUnsafe", () => {
+    it("uses reference hashing after a structural hash was cached", () => {
+      const obj = { value: 1 }
+      const structuralHash = Hash.structure(obj)
+      assert.notStrictEqual(structuralHash, 0)
+      assert.strictEqual(Hash.hash(obj), structuralHash)
+
+      const random = vi.spyOn(Math, "random").mockReturnValue(0)
+      try {
+        Equal.byReferenceUnsafe(obj)
+        assert.strictEqual(Hash.hash(obj), 0)
+      } finally {
+        random.mockRestore()
+      }
+    })
+
     it("should allow objects to opt out of structural equality without proxy", () => {
       const obj1 = { a: 1, b: 2 }
       const obj2 = { a: 1, b: 2 }

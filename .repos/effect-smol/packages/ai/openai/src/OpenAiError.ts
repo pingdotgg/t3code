@@ -58,7 +58,7 @@ export type OpenAiRateLimitMetadata = OpenAiErrorMetadata & {
   readonly resetTokens: string | null
 }
 
-declare module "effect/unstable/ai/AiError" {
+declare module "effect/ai/AiError" {
   /**
    * OpenAI metadata attached to `RateLimitError` values.
    *

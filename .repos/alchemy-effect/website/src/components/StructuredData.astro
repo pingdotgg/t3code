@@ -13,8 +13,8 @@ const organizationId = new URL("/#organization", site).href;
 
 const SOCIAL_PROFILES = {
   github: "https://github.com/alchemy-run/alchemy",
-  x: "https://x.com/alchemy_run",
-  discord: "https://discord.gg/jwKw8dBJdN",
+  x: new URL("/twitter", site).href,
+  discord: new URL("/discord", site).href,
   npm: "https://www.npmjs.com/package/alchemy",
 } as const;
 

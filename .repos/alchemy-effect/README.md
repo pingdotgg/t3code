@@ -8,11 +8,11 @@
 
 [![npm](https://img.shields.io/npm/v/alchemy?style=flat-square&color=3f5a2a&label=alchemy)](https://www.npmjs.com/package/alchemy)
 [![license](https://img.shields.io/badge/license-Apache%202.0-3f5a2a?style=flat-square)](./LICENSE)
-[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/jwKw8dBJdN)
+[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://alchemy.run/discord)
 
 **Infrastructure-as-Effects** — cloud infrastructure and application logic as a single, type-safe [Effect](https://effect.website) program.
 
-[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/tutorial/part-1) · [Examples](./examples) · [Discord](https://discord.gg/jwKw8dBJdN)
+[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/tutorial/part-1) · [Examples](./examples) · [Discord](https://alchemy.run/discord)
 
 </div>
 
@@ -93,7 +93,7 @@ dependencies or breaking conventions.
 - [Examples](./examples) — runnable projects on AWS and Cloudflare
 - [llms.txt](https://alchemy.run/llms.txt) — agent-ready documentation index
 
-> **alchemy** is in alpha. Expect breaking changes. Come hang in our [Discord](https://discord.gg/jwKw8dBJdN).
+> **alchemy** is in alpha. Expect breaking changes. Come hang in our [Discord](https://alchemy.run/discord).
 
 ## Credits
 

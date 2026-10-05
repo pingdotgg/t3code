@@ -1,8 +1,8 @@
 import type { WriteQueueClient } from "@/Cloudflare/Queues/WriteQueue.ts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /** Producer accepted the message(s). */
 const accepted = HttpServerResponse.json({ ok: true }, { status: 202 });

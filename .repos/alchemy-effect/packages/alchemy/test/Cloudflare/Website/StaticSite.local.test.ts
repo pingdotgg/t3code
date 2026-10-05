@@ -48,199 +48,209 @@ const htmlPage = (marker: string) => `<!doctype html>
 
 // Tests are independent (per-test scratch stacks, private fixture clones),
 // so run them concurrently; suites are sequential by default.
-describe.concurrent("StaticSite dev", () => {
-  /**
-   * The `dev.command` path: `alchemy dev` skips the build entirely and spawns
-   * the command as a long-lived child in the sidecar (`Command.Dev`). The URL
-   * the child prints to stdout becomes the site's `url`, and the Worker opts
-   * out of local emulation (`dev: { mode: "external" }`) — the dev server IS
-   * the site.
-   */
-  test.provider(
-    "StaticSite dev: dev.command serves the site through the external dev server",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe.concurrent(
+  "StaticSite dev",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+    ],
+  },
+  () => {
+    /**
+     * The `dev.command` path: `alchemy dev` skips the build entirely and spawns
+     * the command as a long-lived child in the sidecar (`Command.Dev`). The URL
+     * the child prints to stdout becomes the site's `url`, and the Worker opts
+     * out of local emulation (`dev: { mode: "external" }`) — the dev server IS
+     * the site.
+     */
+    test.provider(
+      "StaticSite dev: dev.command serves the site through the external dev server",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const cwd = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-staticsite-dev-cmd-",
-          tempRoot,
-          entries: ["src", "build.sh", "serve.mjs", ".gitignore"],
-        });
+          const cwd = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-staticsite-dev-cmd-",
+            tempRoot,
+            entries: ["src", "build.sh", "serve.mjs", ".gitignore"],
+          });
 
-        const marker = "staticsite-dev-command-marker";
-        yield* fs.writeFileString(
-          path.join(cwd, "src", "index.html"),
-          htmlPage(marker),
-        );
+          const marker = "staticsite-dev-command-marker";
+          yield* fs.writeFileString(
+            path.join(cwd, "src", "index.html"),
+            htmlPage(marker),
+          );
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.StaticSite("DevCmdSite", {
-              ...staticSiteProps(cwd),
-              dev: {
-                command: "bun serve.mjs",
-                env: { DEV_MARKER: "staticsite-dev-env-marker" },
-              },
-            });
-          }),
-        );
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.StaticSite("DevCmdSite", {
+                ...staticSiteProps(cwd),
+                dev: {
+                  command: "bun serve.mjs",
+                  env: { DEV_MARKER: "staticsite-dev-env-marker" },
+                },
+              });
+            }),
+          );
 
-        // The site's url is the dev server's own localhost address,
-        // extracted from the child's stdout.
-        expect(site.url).toBeDefined();
-        expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
+          // The site's url is the dev server's own localhost address,
+          // extracted from the child's stdout.
+          expect(site.url).toBeDefined();
+          expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
 
-        // Content serves through the dev server straight from `src/`.
-        yield* expectUrlContains(`${site.url!}/`, marker, {
-          timeout: "60 seconds",
-          label: "dev.command index",
-        });
-        yield* expectUrlContains(`${site.url!}/index.html`, marker, {
-          timeout: "30 seconds",
-          label: "dev.command explicit path",
-        });
-
-        // `dev.env` reached the spawned child process.
-        yield* expectUrlContains(
-          `${site.url!}/__dev-env`,
-          "staticsite-dev-env-marker",
-          {
+          // Content serves through the dev server straight from `src/`.
+          yield* expectUrlContains(`${site.url!}/`, marker, {
+            timeout: "60 seconds",
+            label: "dev.command index",
+          });
+          yield* expectUrlContains(`${site.url!}/index.html`, marker, {
             timeout: "30 seconds",
-            label: "dev.command env passthrough",
-          },
-        );
+            label: "dev.command explicit path",
+          });
 
-        // The build command was skipped — `dist/` was never produced.
-        expect(yield* fs.exists(path.join(cwd, "dist"))).toBe(false);
+          // `dev.env` reached the spawned child process.
+          yield* expectUrlContains(
+            `${site.url!}/__dev-env`,
+            "staticsite-dev-env-marker",
+            {
+              timeout: "30 seconds",
+              label: "dev.command env passthrough",
+            },
+          );
 
-        // No cloud Worker was created (external dev mode still records the
-        // real worker name in its stub attributes).
-        expect(site.workerName).toBeDefined();
-        expect(yield* findWorker(site.workerName, accountId)).toBeUndefined();
+          // The build command was skipped — `dist/` was never produced.
+          expect(yield* fs.exists(path.join(cwd, "dist"))).toBe(false);
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
+          // No cloud Worker was created (external dev mode still records the
+          // real worker name in its stub attributes).
+          expect(site.workerName).toBeDefined();
+          expect(yield* findWorker(site.workerName, accountId)).toBeUndefined();
 
-  /**
-   * Without `dev.command`, a dev run falls back to build mode: the build
-   * command runs (producing `dist/`) and the Worker serves the built assets
-   * from a local simulator — the `url` is a localhost dev-proxy address and
-   * no cloud Worker exists.
-   */
-  test.provider(
-    "StaticSite dev: without dev.command the build runs and a local Worker serves the assets",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { tags: ["live"], timeout: 300_000 },
+    );
 
-        yield* stack.destroy();
+    /**
+     * Without `dev.command`, a dev run falls back to build mode: the build
+     * command runs (producing `dist/`) and the Worker serves the built assets
+     * from a local simulator — the `url` is a localhost dev-proxy address and
+     * no cloud Worker exists.
+     */
+    test.provider(
+      "StaticSite dev: without dev.command the build runs and a local Worker serves the assets",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        const cwd = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-staticsite-dev-build-",
-          tempRoot,
-          entries: ["src", "build.sh", ".gitignore"],
-        });
+          yield* stack.destroy();
 
-        const marker = "staticsite-dev-build-marker";
-        yield* fs.writeFileString(
-          path.join(cwd, "src", "index.html"),
-          htmlPage(marker),
-        );
+          const cwd = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-staticsite-dev-build-",
+            tempRoot,
+            entries: ["src", "build.sh", ".gitignore"],
+          });
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.StaticSite(
-              "DevBuildSite",
-              staticSiteProps(cwd),
-            );
-          }),
-        );
+          const marker = "staticsite-dev-build-marker";
+          yield* fs.writeFileString(
+            path.join(cwd, "src", "index.html"),
+            htmlPage(marker),
+          );
 
-        // Local identity: the url points at the local dev proxy.
-        expect(site.url).toBeDefined();
-        expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.StaticSite(
+                "DevBuildSite",
+                staticSiteProps(cwd),
+              );
+            }),
+          );
 
-        // The build ran — `dist/` exists with the built page.
-        expect(yield* fs.exists(path.join(cwd, "dist", "index.html"))).toBe(
-          true,
-        );
+          // Local identity: the url points at the local dev proxy.
+          expect(site.url).toBeDefined();
+          expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
 
-        // The built assets serve through the local Worker simulator.
-        yield* expectUrlContains(`${site.url!}/index.html`, marker, {
-          timeout: "60 seconds",
-          label: "dev build-mode assets",
-        });
+          // The build ran — `dist/` exists with the built page.
+          expect(yield* fs.exists(path.join(cwd, "dist", "index.html"))).toBe(
+            true,
+          );
 
-        // No cloud Worker was created.
-        expect(yield* findWorker(site.workerName, accountId)).toBeUndefined();
+          // The built assets serve through the local Worker simulator.
+          yield* expectUrlContains(`${site.url!}/index.html`, marker, {
+            timeout: "60 seconds",
+            label: "dev build-mode assets",
+          });
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
+          // No cloud Worker was created.
+          expect(yield* findWorker(site.workerName, accountId)).toBeUndefined();
 
-  /**
-   * `Alchemy.remote()` opts the whole site OUT of local emulation: even in a
-   * dev run, the build executes and the Worker deploys to real Cloudflare.
-   * Destroy deletes the cloud Worker (the state row is stamped live).
-   */
-  test.provider(
-    "StaticSite dev: Alchemy.remote() deploys the real Worker and destroy removes it",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { tags: ["live"], timeout: 300_000 },
+    );
 
-        yield* stack.destroy();
+    /**
+     * `Alchemy.remote()` opts the whole site OUT of local emulation: even in a
+     * dev run, the build executes and the Worker deploys to real Cloudflare.
+     * Destroy deletes the cloud Worker (the state row is stamped live).
+     */
+    test.provider(
+      "StaticSite dev: Alchemy.remote() deploys the real Worker and destroy removes it",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        const cwd = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-staticsite-dev-remote-",
-          tempRoot,
-          entries: ["src", "build.sh", ".gitignore"],
-        });
+          yield* stack.destroy();
 
-        const marker = "staticsite-dev-remote-marker";
-        yield* fs.writeFileString(
-          path.join(cwd, "src", "index.html"),
-          htmlPage(marker),
-        );
+          const cwd = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-staticsite-dev-remote-",
+            tempRoot,
+            entries: ["src", "build.sh", ".gitignore"],
+          });
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.StaticSite(
-              "RemoteSite",
-              staticSiteProps(cwd),
-            ).pipe(Alchemy.remote());
-          }),
-        );
+          const marker = "staticsite-dev-remote-marker";
+          yield* fs.writeFileString(
+            path.join(cwd, "src", "index.html"),
+            htmlPage(marker),
+          );
 
-        // Real identity: a non-local URL and a Worker that exists on
-        // Cloudflare.
-        expect(site.url).toBeDefined();
-        expect(site.url).not.toMatch(/^http:\/\/localhost/);
-        yield* expectWorkerExists(site.workerName, accountId);
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.StaticSite(
+                "RemoteSite",
+                staticSiteProps(cwd),
+              ).pipe(Alchemy.remote());
+            }),
+          );
 
-        // The real workers.dev URL serves the built assets.
-        yield* expectUrlContains(`${site.url!}/index.html`, marker, {
-          timeout: "120 seconds",
-          label: "remote() site marker",
-        });
+          // Real identity: a non-local URL and a Worker that exists on
+          // Cloudflare.
+          expect(site.url).toBeDefined();
+          expect(site.url).not.toMatch(/^http:\/\/localhost/);
+          yield* expectWorkerExists(site.workerName, accountId);
 
-        yield* stack.destroy();
+          // The real workers.dev URL serves the built assets.
+          yield* expectUrlContains(`${site.url!}/index.html`, marker, {
+            timeout: "120 seconds",
+            label: "remote() site marker",
+          });
 
-        // The cloud Worker is gone after destroy (stamped-mode delete).
-        yield* waitForWorkerToBeDeleted(site.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
-});
+          yield* stack.destroy();
+
+          // The cloud Worker is gone after destroy (stamped-mode delete).
+          yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+        }).pipe(logLevel),
+      { tags: ["live"], timeout: 300_000 },
+    );
+  },
+);

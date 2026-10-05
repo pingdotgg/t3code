@@ -16,193 +16,237 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create, update, delete vpc service", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, delete vpc service",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const { tunnel, service } = yield* stack.deploy(
-      Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
-          ingress: [{ service: "http://localhost:8080" }],
-          adopt: true,
-        });
-        const service = yield* Cloudflare.VpcService.VpcService("VpcSvc", {
-          httpPort: 8080,
-          host: {
-            hostname: "localhost",
-            resolverNetwork: { tunnelId: tunnel.tunnelId },
-          },
-          adopt: true,
-        });
-        return { tunnel, service };
-      }),
-    );
+      const { tunnel, service } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
+            ingress: [{ service: "http://localhost:8080" }],
+            adopt: true,
+          });
+          const service = yield* Cloudflare.VpcService.VpcService("VpcSvc", {
+            httpPort: 8080,
+            host: {
+              hostname: "localhost",
+              resolverNetwork: { tunnelId: tunnel.tunnelId },
+            },
+            adopt: true,
+          });
+          return { tunnel, service };
+        }),
+      );
 
-    expect(service.serviceId).toBeDefined();
-    expect(service.serviceType).toEqual("http");
-    expect(service.httpPort).toEqual(8080);
-    expect(service.host).toMatchObject({
-      hostname: "localhost",
-      resolverNetwork: { tunnelId: tunnel.tunnelId },
-    });
+      expect(service.serviceId).toBeDefined();
+      expect(service.serviceType).toEqual("http");
+      expect(service.httpPort).toEqual(8080);
+      expect(service.host).toMatchObject({
+        hostname: "localhost",
+        resolverNetwork: { tunnelId: tunnel.tunnelId },
+      });
 
-    const fetched = yield* connectivity.getDirectoryService({
-      accountId,
-      serviceId: service.serviceId,
-    });
-    expect(fetched.serviceId).toEqual(service.serviceId);
-    expect(fetched.httpPort).toEqual(8080);
+      const fetched = yield* connectivity.getDirectoryService({
+        accountId,
+        serviceId: service.serviceId,
+      });
+      expect(fetched.serviceId).toEqual(service.serviceId);
+      expect(fetched.httpPort).toEqual(8080);
 
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
-          ingress: [{ service: "http://localhost:8080" }],
-          adopt: true,
-        });
-        return yield* Cloudflare.VpcService.VpcService("VpcSvc", {
-          httpPort: 3000,
-          httpsPort: 3001,
-          host: {
-            hostname: "localhost",
-            resolverNetwork: { tunnelId: tunnel.tunnelId },
-          },
-          adopt: true,
-        });
-      }),
-    );
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
+            ingress: [{ service: "http://localhost:8080" }],
+            adopt: true,
+          });
+          return yield* Cloudflare.VpcService.VpcService("VpcSvc", {
+            httpPort: 3000,
+            httpsPort: 3001,
+            host: {
+              hostname: "localhost",
+              resolverNetwork: { tunnelId: tunnel.tunnelId },
+            },
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(updated.serviceId).toEqual(service.serviceId);
-    expect(updated.httpPort).toEqual(3000);
-    expect(updated.httpsPort).toEqual(3001);
+      expect(updated.serviceId).toEqual(service.serviceId);
+      expect(updated.httpPort).toEqual(3000);
+      expect(updated.httpsPort).toEqual(3001);
 
-    const fetchedUpdated = yield* connectivity.getDirectoryService({
-      accountId,
-      serviceId: service.serviceId,
-    });
-    expect(fetchedUpdated.httpPort).toEqual(3000);
-    expect(fetchedUpdated.httpsPort).toEqual(3001);
+      const fetchedUpdated = yield* connectivity.getDirectoryService({
+        accountId,
+        serviceId: service.serviceId,
+      });
+      expect(fetchedUpdated.httpPort).toEqual(3000);
+      expect(fetchedUpdated.httpsPort).toEqual(3001);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForServiceToBeDeleted(service.serviceId, accountId);
-  }).pipe(logLevel),
+      yield* waitForServiceToBeDeleted(service.serviceId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:connectivity",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:vpcservice",
+      "live",
+    ],
+  },
 );
 
-test.provider("create vpc service with ipv4 host", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create vpc service with ipv4 host",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const service = yield* stack.deploy(
-      Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel.Tunnel("Ipv4Tunnel", {
-          ingress: [{ service: "http://localhost:8080" }],
-          adopt: true,
-        });
-        return yield* Cloudflare.VpcService.VpcService("Ipv4Svc", {
-          httpPort: 8080,
-          host: {
-            ipv4: "192.168.1.100",
-            network: { tunnelId: tunnel.tunnelId },
-          },
-          adopt: true,
-        });
-      }),
-    );
+      const service = yield* stack.deploy(
+        Effect.gen(function* () {
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel("Ipv4Tunnel", {
+            ingress: [{ service: "http://localhost:8080" }],
+            adopt: true,
+          });
+          return yield* Cloudflare.VpcService.VpcService("Ipv4Svc", {
+            httpPort: 8080,
+            host: {
+              ipv4: "192.168.1.100",
+              network: { tunnelId: tunnel.tunnelId },
+            },
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(service.host).toMatchObject({
-      ipv4: "192.168.1.100",
-    });
-    expect("ipv6" in service.host).toBe(false);
+      expect(service.host).toMatchObject({
+        ipv4: "192.168.1.100",
+      });
+      expect("ipv6" in service.host).toBe(false);
 
-    const fetched = yield* connectivity.getDirectoryService({
-      accountId,
-      serviceId: service.serviceId,
-    });
-    expect((fetched.host as { ipv4?: string }).ipv4).toEqual("192.168.1.100");
+      const fetched = yield* connectivity.getDirectoryService({
+        accountId,
+        serviceId: service.serviceId,
+      });
+      expect((fetched.host as { ipv4?: string }).ipv4).toEqual("192.168.1.100");
 
-    yield* stack.destroy();
-    yield* waitForServiceToBeDeleted(service.serviceId, accountId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* waitForServiceToBeDeleted(service.serviceId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:connectivity",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:vpcservice",
+      "live",
+    ],
+  },
 );
 
 // TODO: re-enable once distilled ships the union-ordering fix
 // (alchemy-run/distilled#232) — on @distilled.cloud/cloudflare@0.16.3 the
 // dual-stack host variant comes after the ipv4-only variant in the request
 // schema's Schema.Union, so `ipv6` is silently stripped on encode.
-test.provider.skip("create vpc service with dual-stack host", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider.skip(
+  "create vpc service with dual-stack host",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const service = yield* stack.deploy(
-      Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel.Tunnel("DualStackTunnel", {
-          ingress: [{ service: "http://localhost:8080" }],
-          adopt: true,
-        });
-        return yield* Cloudflare.VpcService.VpcService("DualStackSvc", {
-          httpPort: 8080,
-          host: {
-            ipv4: "192.168.1.101",
-            ipv6: "2001:db8::1",
-            network: { tunnelId: tunnel.tunnelId },
-          },
-          adopt: true,
-        });
-      }),
-    );
+      const service = yield* stack.deploy(
+        Effect.gen(function* () {
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel("DualStackTunnel", {
+            ingress: [{ service: "http://localhost:8080" }],
+            adopt: true,
+          });
+          return yield* Cloudflare.VpcService.VpcService("DualStackSvc", {
+            httpPort: 8080,
+            host: {
+              ipv4: "192.168.1.101",
+              ipv6: "2001:db8::1",
+              network: { tunnelId: tunnel.tunnelId },
+            },
+            adopt: true,
+          });
+        }),
+      );
 
-    expect(service.host).toMatchObject({
-      ipv4: "192.168.1.101",
-      ipv6: "2001:db8::1",
-    });
+      expect(service.host).toMatchObject({
+        ipv4: "192.168.1.101",
+        ipv6: "2001:db8::1",
+      });
 
-    yield* stack.destroy();
-    yield* waitForServiceToBeDeleted(service.serviceId, accountId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* waitForServiceToBeDeleted(service.serviceId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:connectivity",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:vpcservice",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates the deployed vpc service", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed vpc service",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const service = yield* stack.deploy(
-      Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel.Tunnel("ListTunnel", {
-          ingress: [{ service: "http://localhost:8080" }],
-          adopt: true,
-        });
-        return yield* Cloudflare.VpcService.VpcService("ListSvc", {
-          httpPort: 8080,
-          host: {
-            hostname: "localhost",
-            resolverNetwork: { tunnelId: tunnel.tunnelId },
-          },
-          adopt: true,
-        });
-      }),
-    );
+      const service = yield* stack.deploy(
+        Effect.gen(function* () {
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel("ListTunnel", {
+            ingress: [{ service: "http://localhost:8080" }],
+            adopt: true,
+          });
+          return yield* Cloudflare.VpcService.VpcService("ListSvc", {
+            httpPort: 8080,
+            host: {
+              hostname: "localhost",
+              resolverNetwork: { tunnelId: tunnel.tunnelId },
+            },
+            adopt: true,
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.VpcService.VpcService,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.VpcService.VpcService,
+      );
+      const all = yield* provider.list();
 
-    const found = all.find((s) => s.serviceId === service.serviceId);
-    expect(found).toBeDefined();
-    expect(found?.serviceName).toEqual(service.serviceName);
-    expect(found?.accountId).toEqual(accountId);
+      const found = all.find((s) => s.serviceId === service.serviceId);
+      expect(found).toBeDefined();
+      expect(found?.serviceName).toEqual(service.serviceName);
+      expect(found?.accountId).toEqual(accountId);
 
-    yield* stack.destroy();
-    yield* waitForServiceToBeDeleted(service.serviceId, accountId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* waitForServiceToBeDeleted(service.serviceId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:connectivity",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:vpcservice",
+      "live",
+    ],
+  },
 );
 
 const waitForServiceToBeDeleted = Effect.fn(function* (

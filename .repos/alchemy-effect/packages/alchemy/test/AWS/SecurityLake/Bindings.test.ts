@@ -6,7 +6,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import SecurityLakeBindingsFunctionLive, {
   SecurityLakeBindingsFunction,
 } from "./bindings-handler";
@@ -38,6 +38,7 @@ test.provider(
         ]).toContain(result.failure._tag);
       }
     }),
+  { tags: ["provider:aws", "provider:aws:securitylake", "live"] },
 );
 
 test.provider(
@@ -55,6 +56,7 @@ test.provider(
         ]).toContain(result.failure._tag);
       }
     }),
+  { tags: ["provider:aws", "provider:aws:securitylake", "live"] },
 );
 
 const sharedStack = Core.scratchStack(testOptions, "SecurityLakeBindings");
@@ -64,78 +66,94 @@ let baseUrl: string;
 const get = (path: string) =>
   HttpClient.get(`${baseUrl}${path}`).pipe(Effect.flatMap((r) => r.json));
 
-describe("SecurityLake Bindings (E2E)", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      if (!RUN_LIVE) return;
-      yield* Effect.logInfo("SecurityLake E2E setup: destroying previous run");
-      yield* sharedStack.destroy();
+describe(
+  "SecurityLake Bindings (E2E)",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:securitylake",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        if (!RUN_LIVE) return;
+        yield* Effect.logInfo(
+          "SecurityLake E2E setup: destroying previous run",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo(
-        "SecurityLake E2E setup: deploying data lake + Lambda",
-      );
-      const { functionUrl } = yield* sharedStack.deploy(
+        yield* Effect.logInfo(
+          "SecurityLake E2E setup: deploying data lake + Lambda",
+        );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* SecurityLakeBindingsFunction;
+          }).pipe(Effect.provide(SecurityLakeBindingsFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        // Readiness probe — fresh function URLs take seconds to serve 200s.
+        yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(60),
+            ]),
+          }),
+        );
+      }),
+      { timeout: 600_000 },
+    );
+    afterAll(
+      Effect.gen(function* () {
+        if (!RUN_LIVE) return;
+        yield* sharedStack.destroy();
+      }),
+      { timeout: 600_000 },
+    );
+
+    test.provider.skipIf(!RUN_LIVE)(
+      "both capabilities initialize in the runtime",
+      () =>
         Effect.gen(function* () {
-          return yield* SecurityLakeBindingsFunction;
-        }).pipe(Effect.provide(SecurityLakeBindingsFunctionLive)),
-      );
-
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      // Readiness probe — fresh function URLs take seconds to serve 200s.
-      yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({
-          schedule: Schedule.max([
-            Schedule.fixed("2 seconds"),
-            Schedule.recurs(60),
-          ]),
+          const response = (yield* get("/bindings")) as { bound: string[] };
+          expect(response.bound).toHaveLength(2);
         }),
-      );
-    }),
-    { timeout: 600_000 },
-  );
-  afterAll(
-    Effect.gen(function* () {
-      if (!RUN_LIVE) return;
-      yield* sharedStack.destroy();
-    }),
-    { timeout: 600_000 },
-  );
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "both capabilities initialize in the runtime",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/bindings")) as { bound: string[] };
-        expect(response.bound).toHaveLength(2);
-      }),
-  );
+    test.provider.skipIf(!RUN_LIVE)(
+      "ListDataLakeExceptions grant + call round-trips from the Lambda",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/exceptions")) as { count: number };
+          expect(response.count).toBeGreaterThanOrEqual(0);
+        }),
+    );
 
-  test.provider.skipIf(!RUN_LIVE)(
-    "ListDataLakeExceptions grant + call round-trips from the Lambda",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/exceptions")) as { count: number };
-        expect(response.count).toBeGreaterThanOrEqual(0);
-      }),
-  );
-
-  test.provider.skipIf(!RUN_LIVE)(
-    "GetDataLakeSources grant + call round-trips from the Lambda",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/sources")) as {
-          dataLakeArn: string | undefined;
-          count: number;
-        };
-        expect(response.dataLakeArn).toContain(":securitylake:");
-        expect(response.count).toBeGreaterThanOrEqual(0);
-      }),
-  );
-});
+    test.provider.skipIf(!RUN_LIVE)(
+      "GetDataLakeSources grant + call round-trips from the Lambda",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/sources")) as {
+            dataLakeArn: string | undefined;
+            count: number;
+          };
+          expect(response.dataLakeArn).toContain(":securitylake:");
+          expect(response.count).toBeGreaterThanOrEqual(0);
+        }),
+    );
+  },
+);

@@ -1,0 +1,8 @@
+# Fold Prisma's generated artifacts in diffs (same marks as
+# `prisma orm init` scaffolds). migrations/app/**/migration.ts stays
+# unmarked — it is the human editing surface for placeholder backfills.
+src/prisma/generated/contract.json linguist-generated
+src/prisma/generated/contract.d.ts linguist-generated
+migrations/app/**/ops.json linguist-generated
+migrations/app/**/migration.json linguist-generated
+migrations/snapshots/** linguist-generated

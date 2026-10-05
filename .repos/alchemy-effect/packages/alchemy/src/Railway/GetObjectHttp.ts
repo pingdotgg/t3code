@@ -8,6 +8,7 @@ import { GetObject } from "./GetObject.ts";
  * `getObject` against the Railway endpoint with the bucket's credentials.
  *
  * @layer
+ * @product Bucket
  * @provides Railway.GetObject
  */
 export const GetObjectHttp = Layer.effect(

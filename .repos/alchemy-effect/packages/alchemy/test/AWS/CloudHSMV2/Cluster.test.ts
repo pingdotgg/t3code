@@ -22,6 +22,7 @@ test.provider(
       });
       expect(response.Clusters ?? []).toHaveLength(0);
     }),
+  { tags: ["provider:aws", "provider:aws:cloudhsmv2", "live"] },
 );
 
 // Ungated typed-error probe: prove the distilled union carries the not-found
@@ -35,6 +36,7 @@ test.provider(
       );
       expect(error._tag).toBe("CloudHsmResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:cloudhsmv2", "live"] },
 );
 
 // Resolve two default-for-AZ subnets (distinct AZs) from the default VPC.
@@ -153,5 +155,13 @@ test.provider.skipIf(!process.env.AWS_TEST_CLOUDHSM)(
       yield* assertClusterDeleting(cluster.clusterId);
     }),
   // HSM create (~10-20 min) + HSM delete wait + cluster delete, one test.
-  { timeout: 2_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudhsmv2",
+      "provider:aws:ec2",
+      "live",
+    ],
+    timeout: 2_400_000,
+  },
 );

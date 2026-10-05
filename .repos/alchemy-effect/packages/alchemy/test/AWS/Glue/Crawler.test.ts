@@ -36,91 +36,102 @@ const crawlerRole = () =>
     ],
   });
 
-test.provider("create, update, delete Glue crawler definition", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create, update, delete Glue crawler definition",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const created = yield* stack.deploy(
-      Effect.gen(function* () {
-        const database = yield* Database("CrawlerDb", {});
-        const bucket = yield* Bucket("CrawlerBucket", { forceDestroy: true });
-        const role = yield* crawlerRole();
-        const crawler = yield* Crawler("EventsCrawler", {
-          role: role.roleArn,
-          databaseName: database.databaseName,
-          targets: {
-            s3Targets: [
-              { path: Output.interpolate`s3://${bucket.bucketName}/data/` },
-            ],
-          },
-          tablePrefix: "raw_",
-          tags: { Environment: "test" },
-        });
-        return { database, bucket, crawler };
-      }),
-    );
+      const created = yield* stack.deploy(
+        Effect.gen(function* () {
+          const database = yield* Database("CrawlerDb", {});
+          const bucket = yield* Bucket("CrawlerBucket", { forceDestroy: true });
+          const role = yield* crawlerRole();
+          const crawler = yield* Crawler("EventsCrawler", {
+            role: role.roleArn,
+            databaseName: database.databaseName,
+            targets: {
+              s3Targets: [
+                { path: Output.interpolate`s3://${bucket.bucketName}/data/` },
+              ],
+            },
+            tablePrefix: "raw_",
+            tags: { Environment: "test" },
+          });
+          return { database, bucket, crawler };
+        }),
+      );
 
-    expect(created.crawler.crawlerName).toBeDefined();
-    expect(created.crawler.crawlerArn).toContain(
-      `:crawler/${created.crawler.crawlerName}`,
-    );
+      expect(created.crawler.crawlerName).toBeDefined();
+      expect(created.crawler.crawlerArn).toContain(
+        `:crawler/${created.crawler.crawlerName}`,
+      );
 
-    // out-of-band verification
-    const observed = yield* getCrawler(created.crawler.crawlerName);
-    expect(observed?.Name).toEqual(created.crawler.crawlerName);
-    expect(observed?.DatabaseName).toEqual(created.database.databaseName);
-    expect(observed?.TablePrefix).toEqual("raw_");
-    expect(observed?.Targets?.S3Targets?.[0]?.Path).toEqual(
-      `s3://${created.bucket.bucketName}/data/`,
-    );
+      // out-of-band verification
+      const observed = yield* getCrawler(created.crawler.crawlerName);
+      expect(observed?.Name).toEqual(created.crawler.crawlerName);
+      expect(observed?.DatabaseName).toEqual(created.database.databaseName);
+      expect(observed?.TablePrefix).toEqual("raw_");
+      expect(observed?.Targets?.S3Targets?.[0]?.Path).toEqual(
+        `s3://${created.bucket.bucketName}/data/`,
+      );
 
-    // tags (crawlers ARE ARN-taggable)
-    const tags = yield* glue.getTags({
-      ResourceArn: created.crawler.crawlerArn,
-    });
-    expect(tags.Tags?.["alchemy::id"]).toBeDefined();
-    expect(tags.Tags?.Environment).toEqual("test");
+      // tags (crawlers ARE ARN-taggable)
+      const tags = yield* glue.getTags({
+        ResourceArn: created.crawler.crawlerArn,
+      });
+      expect(tags.Tags?.["alchemy::id"]).toBeDefined();
+      expect(tags.Tags?.Environment).toEqual("test");
 
-    // update: description + schedule
-    yield* stack.deploy(
-      Effect.gen(function* () {
-        const database = yield* Database("CrawlerDb", {});
-        const bucket = yield* Bucket("CrawlerBucket", { forceDestroy: true });
-        const role = yield* crawlerRole();
-        const crawler = yield* Crawler("EventsCrawler", {
-          role: role.roleArn,
-          databaseName: database.databaseName,
-          description: "crawls the events prefix",
-          targets: {
-            s3Targets: [
-              { path: Output.interpolate`s3://${bucket.bucketName}/data/` },
-            ],
-          },
-          tablePrefix: "raw_",
-          schedule: "cron(0 12 * * ? *)",
-          schemaChangePolicy: {
-            updateBehavior: "UPDATE_IN_DATABASE",
-            deleteBehavior: "DEPRECATE_IN_DATABASE",
-          },
-          tags: { Environment: "test" },
-        });
-        return { crawler };
-      }),
-    );
+      // update: description + schedule
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          const database = yield* Database("CrawlerDb", {});
+          const bucket = yield* Bucket("CrawlerBucket", { forceDestroy: true });
+          const role = yield* crawlerRole();
+          const crawler = yield* Crawler("EventsCrawler", {
+            role: role.roleArn,
+            databaseName: database.databaseName,
+            description: "crawls the events prefix",
+            targets: {
+              s3Targets: [
+                { path: Output.interpolate`s3://${bucket.bucketName}/data/` },
+              ],
+            },
+            tablePrefix: "raw_",
+            schedule: "cron(0 12 * * ? *)",
+            schemaChangePolicy: {
+              updateBehavior: "UPDATE_IN_DATABASE",
+              deleteBehavior: "DEPRECATE_IN_DATABASE",
+            },
+            tags: { Environment: "test" },
+          });
+          return { crawler };
+        }),
+      );
 
-    const reobserved = yield* getCrawler(created.crawler.crawlerName);
-    expect(reobserved?.Description).toEqual("crawls the events prefix");
-    expect(reobserved?.Schedule?.ScheduleExpression).toEqual(
-      "cron(0 12 * * ? *)",
-    );
-    expect(reobserved?.SchemaChangePolicy?.UpdateBehavior).toEqual(
-      "UPDATE_IN_DATABASE",
-    );
+      const reobserved = yield* getCrawler(created.crawler.crawlerName);
+      expect(reobserved?.Description).toEqual("crawls the events prefix");
+      expect(reobserved?.Schedule?.ScheduleExpression).toEqual(
+        "cron(0 12 * * ? *)",
+      );
+      expect(reobserved?.SchemaChangePolicy?.UpdateBehavior).toEqual(
+        "UPDATE_IN_DATABASE",
+      );
 
-    yield* stack.destroy();
-    const gone = yield* getCrawler(created.crawler.crawlerName);
-    expect(gone).toBeUndefined();
-  }),
+      yield* stack.destroy();
+      const gone = yield* getCrawler(created.crawler.crawlerName);
+      expect(gone).toBeUndefined();
+    }),
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:glue",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
 );
 
 // A live crawl takes ~2-4 minutes end to end — gated behind AWS_TEST_SLOW=1.
@@ -179,5 +190,14 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
 
       yield* stack.destroy();
     }),
-  { timeout: 360_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:glue",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 360_000,
+  },
 );

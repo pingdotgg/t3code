@@ -42,7 +42,7 @@ test.provider(
         );
       expect(result).toBe("missing");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:s3control", "live"], timeout: 60_000 },
 );
 
 // Multi-Region Access Point provisioning is asynchronous and can consume the
@@ -82,5 +82,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       );
       expect(afterDestroy).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3", "provider:aws:s3control", "live"],
+    timeout: 240_000,
+  },
 );

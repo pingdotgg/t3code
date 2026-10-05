@@ -46,6 +46,13 @@ export interface VocsProps<
   assets?: AssetsConfig;
 }
 
+// These options are inspected while constructing the Worker. Resolve them in
+// the outer props Effect; pass-through properties can remain deferred Inputs.
+type VocsInput<Bindings extends WorkerBindingProps> = InputProps<
+  VocsProps<Bindings>,
+  "assets"
+>;
+
 /**
  * A Cloudflare Worker deployed from a [Vocs](https://vocs.dev) documentation project.
  *
@@ -137,8 +144,8 @@ export const Vocs: {
     <const Bindings extends WorkerBindingProps = {}, Req = never>(
       id: string,
       propsEff?:
-        | InputProps<VocsProps<Bindings>>
-        | Effect.Effect<InputProps<VocsProps<Bindings>>, never, Req>,
+        | VocsInput<Bindings>
+        | Effect.Effect<VocsInput<Bindings>, never, Req>,
     ): Effect.Effect<Self, never, Req | Providers> & {
       new (): Worker<{
         [
@@ -150,8 +157,8 @@ export const Vocs: {
   <const Bindings extends WorkerBindingProps = {}, Req = never>(
     id: string,
     propsEff?:
-      | InputProps<VocsProps<Bindings>>
-      | Effect.Effect<InputProps<VocsProps<Bindings>>, never, Req>,
+      | VocsInput<Bindings>
+      | Effect.Effect<VocsInput<Bindings>, never, Req>,
   ): Effect.Effect<
     Worker<{
       [
@@ -161,9 +168,19 @@ export const Vocs: {
     never,
     Req | Providers
   >;
-} = ((id?: any, propsEff?: any) =>
+} = (<const Bindings extends WorkerBindingProps = {}, Req = never>(
+  id?: string,
+  propsEff?:
+    | VocsInput<Bindings>
+    | Effect.Effect<VocsInput<Bindings>, never, Req>,
+) =>
   id === undefined
-    ? (id: string, propsEff: any) => effectClass(Vocs(id, propsEff))
+    ? <const Bindings extends WorkerBindingProps = {}, Req = never>(
+        id: string,
+        propsEff?:
+          | VocsInput<Bindings>
+          | Effect.Effect<VocsInput<Bindings>, never, Req>,
+      ) => effectClass(Vocs(id, propsEff))
     : Worker(
         id,
         Effect.map(

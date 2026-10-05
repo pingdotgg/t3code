@@ -2,6 +2,8 @@
 
 [Better Auth](https://better-auth.com) for [alchemy](https://alchemy.run) — an Effect-native wrapper plus a pluggable database layer per platform.
 
+Follow the [six-part tutorial](https://alchemy.run/better-auth/tutorial/part-1) to build browser sign-in, Effect HTTP API middleware, and GitHub authentication. See [sign-in providers](https://alchemy.run/better-auth/sign-in-providers) and [database guides](https://alchemy.run/better-auth/databases) for other integrations.
+
 ```typescript
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
@@ -229,14 +231,18 @@ Effect.gen(function* () {
 
 ## Drizzle
 
-Bring your own Drizzle database via Better Auth's official `drizzleAdapter` (optional peer `drizzle-orm`). Schema is yours — generate it with `npx @better-auth/cli generate`; there is no automatic migration for this layer.
+Bring your own Drizzle database via Better Auth's Relations v2 `drizzleAdapter` (optional peers `drizzle-orm` and `@better-auth/drizzle-adapter`). Schema is yours — there is no automatic migration for this layer. Configure the CLI's auth instance with `@better-auth/drizzle-adapter/relations-v2`, then run `npx auth@1.7.5 generate --config ./auth.cli.ts`. Passing `--adapter drizzle` selects the legacy generator instead of the configured adapter.
 
 ```typescript
 import { Drizzle } from "@alchemy.run/better-auth/Drizzle";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./auth-schema.ts";
+import { relations } from "./app-schema.ts";
 
-const db = drizzle(pool, { schema });
+const db = drizzle({
+  client: pool,
+  relations: { ...relations, ...schema.authRelations },
+});
 
 Effect.gen(function* () {
   const auth = yield* BetterAuth({ emailAndPassword: { enabled: true } });
@@ -262,10 +268,12 @@ const result = yield* auth.api
 
 ## Migrations
 
-Every SQL layer migrates automatically during `alchemy deploy` via an internal alchemy Action:
+SQL layers with migration support apply schema changes during `alchemy deploy` via an internal alchemy Action:
 
 - runs **only at apply** (never at plan, never inside the deployed runtime — the migration code is dead-code-eliminated from bundles),
-- re-runs only when the auth schema (plugins, additional fields) or the target database changes,
-- is additive and idempotent (`CREATE TABLE` / `ADD COLUMN` on what's missing).
+- re-runs only when the auth schema (plugins, additional fields, indexes) or the target database changes,
+- applies missing tables, columns, and indexes through Better Auth's migrator; unsafe schema changes surface as `BetterAuthMigrationError`.
 
-Opt out with `migrate: false` and manage the schema yourself (`npx @better-auth/cli generate`). Multiple `BetterAuth` instances in one stack: give each a distinct `id` to disambiguate the secret + migration resources.
+For a direct **1.6 → 1.7.5+** upgrade, the core account schema is unchanged: no `issuer` column or identity backfill is needed. Keep the same auth secret and upgrade Better Auth's synchronized packages together. Microsoft identifiers, legacy OIDC/MCP clients, SCIM, and device codes can require manual preparation; Alchemy does not rewrite identities or convert plugin data. See the [upgrade guide](https://alchemy.run/better-auth/upgrades/from-1-6-to-1-7) before deploying an existing database.
+
+Opt out with `migrate: false` and manage the schema yourself (`npx auth@1.7.5 generate`). Multiple `BetterAuth` instances in one stack: give each a distinct `id` to disambiguate the secret + migration resources.

@@ -186,40 +186,60 @@ test.provider(
 
       yield* expectLockdownGone(zoneId, initial.lockdownId);
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): `list()` fans out over
 // every zone via `listAllZones`, exhaustively paginates each zone's lockdown
 // rules, and hydrates them into the `read` Attributes shape. Deploy a rule and
 // assert it appears in the enumerated result.
-test.provider("list enumerates the deployed lockdown rule", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates the deployed lockdown rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeLockdowns(zoneId, [URL_LIST]);
+      yield* stack.destroy();
+      yield* purgeLockdowns(zoneId, [URL_LIST]);
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.Lockdown("ListLockdown", {
-          zoneId,
-          urls: [URL_LIST],
-          configurations: [{ target: "ip", value: IP_LIST }],
-          description: "alchemy lockdown list test",
-        }).pipe(adopt(true));
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.Lockdown("ListLockdown", {
+            zoneId,
+            urls: [URL_LIST],
+            configurations: [{ target: "ip", value: IP_LIST }],
+            description: "alchemy lockdown list test",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Firewall.Lockdown);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Firewall.Lockdown,
+      );
+      const all = yield* provider.list();
 
-    expect(all.some((r) => r.lockdownId === deployed.lockdownId)).toBe(true);
-    const found = all.find((r) => r.lockdownId === deployed.lockdownId);
-    expect(found?.zoneId).toEqual(zoneId);
-    expect(found?.urls).toEqual([URL_LIST]);
+      expect(all.some((r) => r.lockdownId === deployed.lockdownId)).toBe(true);
+      const found = all.find((r) => r.lockdownId === deployed.lockdownId);
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.urls).toEqual([URL_LIST]);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectLockdownGone(zoneId, deployed.lockdownId);
-  }).pipe(logLevel),
+      yield* expectLockdownGone(zoneId, deployed.lockdownId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );

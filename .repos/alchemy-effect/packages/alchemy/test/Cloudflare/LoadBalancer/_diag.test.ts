@@ -17,5 +17,8 @@ test.provider(
       expect(Array.isArray(all)).toBe(true);
       yield* stack.destroy();
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"],
+    timeout: 60_000,
+  },
 );

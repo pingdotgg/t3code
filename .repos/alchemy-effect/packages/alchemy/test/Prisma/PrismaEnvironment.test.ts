@@ -41,126 +41,132 @@ const testLayer = (
   );
 };
 
-describe("PrismaEnvironment", () => {
-  it.effect("resolves stored credentials and API base URL from config", () =>
-    Effect.gen(function* () {
-      const env = yield* PrismaEnvironment;
+describe(
+  "PrismaEnvironment",
+  { tags: ["unit", "provider:prisma", "local"] },
+  () => {
+    it.effect("resolves stored credentials and API base URL from config", () =>
+      Effect.gen(function* () {
+        const env = yield* PrismaEnvironment;
 
-      expect(env.type).toBe("serviceToken");
-      expect(env.source).toEqual({ type: "stored" });
-      expect(Redacted.value(env.serviceToken)).toBe("test-token");
-      expect(env.baseUrl).toBe("https://control-plane.prisma.test");
-    }).pipe(
-      Effect.provide(
-        testLayer(
-          { PRISMA_API_URL: "https://control-plane.prisma.test" },
-          { storedToken: "test-token" },
-        ),
-      ),
-    ),
-  );
-
-  it.effect("prefers PRISMA_API_URL over PRISMA_MANAGEMENT_API_URL", () =>
-    Effect.gen(function* () {
-      const env = yield* PrismaEnvironment;
-
-      expect(env.baseUrl).toBe("https://api-url.prisma.test");
-    }).pipe(
-      Effect.provide(
-        testLayer(
-          {
-            PRISMA_API_URL: "https://api-url.prisma.test",
-            PRISMA_MANAGEMENT_API_URL: "https://management-url.prisma.test",
-          },
-          { storedToken: "test-token" },
-        ),
-      ),
-    ),
-  );
-
-  it.effect("resolves stored profile credentials", () =>
-    Effect.gen(function* () {
-      const env = yield* PrismaEnvironment;
-
-      expect(env.type).toBe("serviceToken");
-      expect(env.source).toEqual({ type: "stored" });
-      expect(Redacted.value(env.serviceToken)).toBe("stored-token");
-      expect(env.baseUrl).toBe("https://api.prisma.io");
-    }).pipe(
-      Effect.provide(
-        testLayer(
-          {},
-          {
-            storedToken: "stored-token",
-          },
-        ),
-      ),
-    ),
-  );
-
-  it.effect("allows HTTP only for loopback Management API URLs", () =>
-    Effect.gen(function* () {
-      const env = yield* PrismaEnvironment;
-      expect(env.baseUrl).toBe("http://127.0.0.1:8787");
-    }).pipe(
-      Effect.provide(
-        testLayer(
-          { PRISMA_API_URL: "http://127.0.0.1:8787/" },
-          { storedToken: "test-token" },
-        ),
-      ),
-    ),
-  );
-
-  it.effect("rejects insecure remote Management API URLs", () =>
-    Effect.gen(function* () {
-      const exit = yield* PrismaEnvironment.pipe(
+        expect(env.type).toBe("serviceToken");
+        expect(env.source).toEqual({ type: "stored" });
+        expect(Redacted.value(env.serviceToken)).toBe("test-token");
+        expect(env.baseUrl).toBe("https://control-plane.prisma.test");
+      }).pipe(
         Effect.provide(
           testLayer(
-            { PRISMA_API_URL: "http://management.prisma.test" },
+            { PRISMA_API_URL: "https://control-plane.prisma.test" },
             { storedToken: "test-token" },
           ),
         ),
-        Effect.exit,
-      );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
-        expect(String(exit.cause)).toContain("must use HTTPS");
-      }
-    }),
-  );
+      ),
+    );
 
-  it.effect("rejects Management API URLs with credentials or path state", () =>
-    Effect.gen(function* () {
-      const credentialExit = yield* PrismaEnvironment.pipe(
+    it.effect("prefers PRISMA_API_URL over PRISMA_MANAGEMENT_API_URL", () =>
+      Effect.gen(function* () {
+        const env = yield* PrismaEnvironment;
+
+        expect(env.baseUrl).toBe("https://api-url.prisma.test");
+      }).pipe(
         Effect.provide(
           testLayer(
-            { PRISMA_API_URL: "https://token@api.prisma.test" },
+            {
+              PRISMA_API_URL: "https://api-url.prisma.test",
+              PRISMA_MANAGEMENT_API_URL: "https://management-url.prisma.test",
+            },
             { storedToken: "test-token" },
           ),
         ),
-        Effect.exit,
-      );
-      expect(credentialExit._tag).toBe("Failure");
-      if (credentialExit._tag === "Failure") {
-        expect(String(credentialExit.cause)).toContain(
-          "must not contain credentials",
+      ),
+    );
+
+    it.effect("resolves stored profile credentials", () =>
+      Effect.gen(function* () {
+        const env = yield* PrismaEnvironment;
+
+        expect(env.type).toBe("serviceToken");
+        expect(env.source).toEqual({ type: "stored" });
+        expect(Redacted.value(env.serviceToken)).toBe("stored-token");
+        expect(env.baseUrl).toBe("https://api.prisma.io");
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            {},
+            {
+              storedToken: "stored-token",
+            },
+          ),
+        ),
+      ),
+    );
+
+    it.effect("allows HTTP only for loopback Management API URLs", () =>
+      Effect.gen(function* () {
+        const env = yield* PrismaEnvironment;
+        expect(env.baseUrl).toBe("http://127.0.0.1:8787");
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            { PRISMA_API_URL: "http://127.0.0.1:8787/" },
+            { storedToken: "test-token" },
+          ),
+        ),
+      ),
+    );
+
+    it.effect("rejects insecure remote Management API URLs", () =>
+      Effect.gen(function* () {
+        const exit = yield* PrismaEnvironment.pipe(
+          Effect.provide(
+            testLayer(
+              { PRISMA_API_URL: "http://management.prisma.test" },
+              { storedToken: "test-token" },
+            ),
+          ),
+          Effect.exit,
         );
-      }
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(String(exit.cause)).toContain("must use HTTPS");
+        }
+      }),
+    );
 
-      const pathExit = yield* PrismaEnvironment.pipe(
-        Effect.provide(
-          testLayer(
-            { PRISMA_API_URL: "https://api.prisma.test/proxy" },
-            { storedToken: "test-token" },
-          ),
-        ),
-        Effect.exit,
-      );
-      expect(pathExit._tag).toBe("Failure");
-      if (pathExit._tag === "Failure") {
-        expect(String(pathExit.cause)).toContain("must be an origin");
-      }
-    }),
-  );
-});
+    it.effect(
+      "rejects Management API URLs with credentials or path state",
+      () =>
+        Effect.gen(function* () {
+          const credentialExit = yield* PrismaEnvironment.pipe(
+            Effect.provide(
+              testLayer(
+                { PRISMA_API_URL: "https://token@api.prisma.test" },
+                { storedToken: "test-token" },
+              ),
+            ),
+            Effect.exit,
+          );
+          expect(credentialExit._tag).toBe("Failure");
+          if (credentialExit._tag === "Failure") {
+            expect(String(credentialExit.cause)).toContain(
+              "must not contain credentials",
+            );
+          }
+
+          const pathExit = yield* PrismaEnvironment.pipe(
+            Effect.provide(
+              testLayer(
+                { PRISMA_API_URL: "https://api.prisma.test/proxy" },
+                { storedToken: "test-token" },
+              ),
+            ),
+            Effect.exit,
+          );
+          expect(pathExit._tag).toBe("Failure");
+          if (pathExit._tag === "Failure") {
+            expect(String(pathExit.cause)).toContain("must be an origin");
+          }
+        }),
+    );
+  },
+);

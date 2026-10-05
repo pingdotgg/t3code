@@ -211,7 +211,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertTemplateDeleted(template.id);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:fis", "provider:aws:iam", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -264,5 +267,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertTemplateDeleted(second.id);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:fis", "provider:aws:iam", "live"],
+    timeout: 120_000,
+  },
 );

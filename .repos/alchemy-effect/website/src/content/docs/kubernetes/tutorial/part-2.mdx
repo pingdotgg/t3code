@@ -1,0 +1,185 @@
+---
+title: "Part 2: Namespaces & Configuration"
+description: Create a Namespace with Kubernetes.Manifest, move the Deployment into it, and configure the app with environment variables and resource limits.
+sidebar:
+  order: 2
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+In [Part 1](/kubernetes/tutorial/part-1) you deployed podinfo into
+the `default` namespace. Now you'll give the app a namespace of its
+own, declared as a raw Kubernetes object. Then you'll configure the
+app from your program.
+
+## Declare a Namespace
+
+Anything that isn't a Deployment or a Job is a
+[`Kubernetes.Manifest`](/kubernetes/objects/manifests). A Manifest is
+a literal Kubernetes object, written exactly as you'd write it in
+YAML. Add a Namespace:
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const namespace = yield* Kubernetes.Manifest("Namespace", {
++    cluster,
++    manifest: {
++      apiVersion: "v1",
++      kind: "Namespace",
++      metadata: { name: "my-app" },
++    },
++  });
+
+  const web = yield* Kubernetes.Deployment("Web", {
+```
+
+Alchemy applies the object with server-side apply and tracks it like
+any other resource. Any kind works, such as `ConfigMap`, `Secret`,
+`StatefulSet`, `Ingress`, or a custom resource from a CRD.
+
+## Move the Deployment into it
+
+Point the Deployment at the new namespace:
+
+```diff lang="typescript"
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  name: "web",
++  namespace: namespace.name,
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  replicas: 2,
+  serviceType: "ClusterIP",
+});
+```
+
+`namespace.name` is an **Output**. It's a reference to the Manifest's
+attribute that resolves at deploy time. Passing it instead of the
+string `"my-app"` makes the Deployment depend on the Namespace, so
+Alchemy creates the Namespace first. Workload resources expect their
+namespace to exist already.
+
+## Configure the app
+
+podinfo shows the value of `PODINFO_UI_MESSAGE` in its response. Set
+it with `env`:
+
+```diff lang="typescript"
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  name: "web",
+  namespace: namespace.name,
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  replicas: 2,
+  serviceType: "ClusterIP",
++  env: {
++    PODINFO_UI_MESSAGE: "hello from alchemy",
++  },
+});
+```
+
+Every key in `env` becomes a container environment variable. Values
+can also be Outputs from other resources, such as a database URL or a
+bucket name. Alchemy resolves them before applying.
+
+## Set resource requests and limits
+
+Tell the scheduler what each pod needs:
+
+```diff lang="typescript"
+  env: {
+    PODINFO_UI_MESSAGE: "hello from alchemy",
+  },
++  resources: {
++    requests: { cpu: "10m", memory: "32Mi" },
++    limits: { memory: "64Mi" },
++  },
+});
+```
+
+`resources` maps directly onto the container's Kubernetes
+`resources` field and takes the usual Kubernetes quantities.
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]Namespace[/b] [d](Kubernetes.Manifest)[/d]
+[y]~[/y] [b]Web[/b] [d](Kubernetes.Deployment)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Namespace[/b] [d](Kubernetes.Manifest)[/d] [g]created[/g]
+[g]✓[/g] [b]Web[/b] [d](Kubernetes.Deployment)[/d] [y]updated[/y]
+{
+[s2]context: "kind-alchemy",
+[s2]namespace: "my-app",
+[s2]service: "web",
+}`} />
+
+The Namespace is created first. The Deployment update applies its
+objects into `my-app` and deletes the old ones from `default`.
+Alchemy records every object it applies, and anything that drops out
+of the desired set is pruned.
+
+## Verify it worked
+
+The `default` namespace is empty again, and the app runs in `my-app`:
+
+```sh
+kubectl --context kind-alchemy get deployments --all-namespaces | grep web
+kubectl --context kind-alchemy -n my-app rollout status deployment/web
+kubectl --context kind-alchemy -n my-app port-forward service/web 9898:9898
+```
+
+```sh
+curl -s localhost:9898 | grep message
+```
+
+```json
+  "message": "hello from alchemy",
+```
+
+## Change it again
+
+Edit the message and deploy:
+
+```diff lang="typescript"
+env: {
+-  PODINFO_UI_MESSAGE: "hello from alchemy",
++  PODINFO_UI_MESSAGE: "configured in TypeScript",
+},
+```
+
+The plan shows one update. Alchemy re-applies the Deployment and
+Kubernetes rolls the pods over to the new environment, one replica
+at a time.
+
+## Recap
+
+You now have:
+
+- A `my-app` Namespace declared as a raw manifest
+- The Deployment moved into it, ordered after the Namespace by an
+  Output reference
+- Environment variables and resource limits set from your program
+
+In [Part 3](/kubernetes/tutorial/part-3), you'll run one-off and
+scheduled work with `Kubernetes.Job`.

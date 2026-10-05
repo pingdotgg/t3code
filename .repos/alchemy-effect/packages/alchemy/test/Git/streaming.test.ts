@@ -17,7 +17,7 @@ const bytes = (n: number, seed = 1) => {
   return out;
 };
 
-describe("StreamingSource", () => {
+describe("StreamingSource", { tags: ["unit", "local"] }, () => {
   test("a read past what has arrived waits; in-slab reads are views", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {

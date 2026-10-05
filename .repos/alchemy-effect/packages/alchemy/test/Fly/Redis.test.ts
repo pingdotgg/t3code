@@ -4,9 +4,10 @@ import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import RedisApi, {
   Cache,
   REDIS_VALUE,
@@ -60,7 +61,7 @@ test.provider(
       expect(cheapest?.id).toEqual(expect.any(String));
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  { tags: ["provider:fly", "provider:fly:redis", "live"], timeout: 90_000 },
 );
 
 test.provider(
@@ -81,6 +82,7 @@ test.provider(
       expect(created.name.length).toBeGreaterThan(0);
       expect(created.primaryRegion).toEqual("iad");
       expect(created.planName).toEqual(expect.any(String));
+      expect(Redacted.isRedacted(created.url)).toEqual(true);
 
       const fetched = yield* Fly.findRedisAddOn({
         id: created.redisId,
@@ -107,6 +109,7 @@ test.provider(
       expect(updated.redisId).toEqual(created.redisId);
       expect(updated.name).toEqual(created.name);
       expect(updated.eviction).toEqual(true);
+      expect(Redacted.isRedacted(updated.url)).toEqual(true);
 
       const refetched = yield* Fly.findRedisAddOn({
         id: updated.redisId,
@@ -121,7 +124,7 @@ test.provider(
       const gone = yield* waitUntilRedisGone(created.redisId, created.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:redis", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -164,7 +167,7 @@ test.provider(
       const gone = yield* waitUntilRedisGone(replaced.redisId, replaced.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:redis", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -205,7 +208,7 @@ test.provider(
       const gone = yield* waitUntilRedisGone(replaced.redisId, replaced.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:redis", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -254,10 +257,13 @@ test.provider(
               ? res.json
               : Effect.fail(new Error(`api returned ${res.status}`)),
           ),
-          Effect.map((value) => value as { pong: boolean }),
+          Effect.map(
+            (value) => value as { pong: boolean; hasOutputUrl: boolean },
+          ),
         ),
       );
       expect(ping.pong).toEqual(true);
+      expect(ping.hasOutputUrl).toEqual(true);
 
       const written = yield* untilOk(
         HttpClient.get(`${deployed.api.url}/set`).pipe(
@@ -294,7 +300,18 @@ test.provider(
       const appGone = yield* waitUntilAppGone(deployed.app.appName);
       expect(appGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:ipassignment",
+      "provider:fly:machine",
+      "provider:fly:redis",
+      "provider:fly:service",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -322,5 +339,5 @@ test.provider(
       const gone = yield* waitUntilRedisGone(created.redisId, created.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:fly", "provider:fly:redis", "live"], timeout: 120_000 },
 );

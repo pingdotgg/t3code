@@ -15,7 +15,7 @@ import {
 } from "@/Schema";
 import * as S from "effect/Schema";
 
-describe("isStringSchema", () => {
+describe("isStringSchema", { tags: ["unit", "local"] }, () => {
   test("string", () => {
     expect(isStringSchema(S.String)).toBe(true);
   });
@@ -24,7 +24,7 @@ describe("isStringSchema", () => {
   });
 });
 
-describe("isNumberSchema", () => {
+describe("isNumberSchema", { tags: ["unit", "local"] }, () => {
   test("number", () => {
     expect(isNumberSchema(S.Number)).toBe(true);
   });
@@ -33,7 +33,7 @@ describe("isNumberSchema", () => {
   });
 });
 
-describe("isMapSchema", () => {
+describe("isMapSchema", { tags: ["unit", "local"] }, () => {
   test("map", () => {
     expect(isMapSchema(S.ReadonlyMap(S.String, S.String))).toBe(true);
   });
@@ -42,7 +42,7 @@ describe("isMapSchema", () => {
   });
 });
 
-describe("isRecordLikeSchema", () => {
+describe("isRecordLikeSchema", { tags: ["unit", "local"] }, () => {
   for (const [key, value] of Object.entries({
     map: S.ReadonlyMap(S.String, S.String),
     struct: S.Struct({
@@ -60,7 +60,7 @@ describe("isRecordLikeSchema", () => {
   }
 });
 
-describe("isListSchema", () => {
+describe("isListSchema", { tags: ["unit", "local"] }, () => {
   test("list", () => {
     expect(isListSchema(S.Array(S.String))).toBe(true);
   });
@@ -69,7 +69,7 @@ describe("isListSchema", () => {
   });
 });
 
-describe("isSetSchema", () => {
+describe("isSetSchema", { tags: ["unit", "local"] }, () => {
   test("set", () => {
     expect(isSetSchema(S.ReadonlySet(S.String))).toBe(true);
   });
@@ -80,7 +80,7 @@ describe("isSetSchema", () => {
   });
 });
 
-describe("isNullSchema", () => {
+describe("isNullSchema", { tags: ["unit", "local"] }, () => {
   test("null", () => {
     expect(isNullSchema(S.Null)).toBe(true);
   });
@@ -92,7 +92,7 @@ describe("isNullSchema", () => {
   });
 });
 
-describe("isUndefinedSchema", () => {
+describe("isUndefinedSchema", { tags: ["unit", "local"] }, () => {
   test("undefined", () => {
     expect(isUndefinedSchema(S.Undefined)).toBe(true);
   });
@@ -101,7 +101,7 @@ describe("isUndefinedSchema", () => {
   });
 });
 
-describe("isNullishSchema", () => {
+describe("isNullishSchema", { tags: ["unit", "local"] }, () => {
   test("null", () => {
     expect(isNullishSchema(S.Null)).toBe(true);
   });
@@ -113,7 +113,7 @@ describe("isNullishSchema", () => {
   });
 });
 
-describe("isBooleanSchema", () => {
+describe("isBooleanSchema", { tags: ["unit", "local"] }, () => {
   test("boolean", () => {
     expect(isBooleanSchema(S.Boolean)).toBe(true);
   });

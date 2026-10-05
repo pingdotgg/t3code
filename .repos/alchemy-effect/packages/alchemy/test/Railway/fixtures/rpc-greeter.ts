@@ -1,7 +1,7 @@
 import { Function } from "@/Railway/Function.ts";
 import { enableRailwayRpc } from "@/Railway/rpc-server.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Partition, Site } from "./rpc-shared.ts";
 
 export { Site };

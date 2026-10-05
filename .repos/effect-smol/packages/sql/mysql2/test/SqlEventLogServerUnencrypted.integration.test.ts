@@ -1,4 +1,4 @@
-import * as SqlEventLogServerUnencryptedStorageTest from "effect-test/unstable/eventlog/SqlEventLogServerUnencryptedStorageTest"
+import * as SqlEventLogServerUnencryptedStorageTest from "effect-test/eventlog/SqlEventLogServerUnencryptedStorageTest"
 import { MysqlContainer } from "./utils.ts"
 
 SqlEventLogServerUnencryptedStorageTest.suite(

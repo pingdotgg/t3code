@@ -5,7 +5,7 @@ import * as qapps from "@distilled.cloud/aws/qapps";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import QAppsTestFunctionLive, {
   QAppsTestFunction,
 } from "./bindings-handler.ts";
@@ -39,53 +39,57 @@ const TYPED_REJECTIONS = [
 // gated behind an entitled Q Business instance.
 // ---------------------------------------------------------------------------
 
-describe("QApps data-plane operations (typed-error probes)", () => {
-  const probes: Record<
-    string,
-    Effect.Effect<unknown, { _tag: string }, any>
-  > = {
-    startQAppSession: qapps.startQAppSession({
-      instanceId: NONEXISTENT_INSTANCE,
-      appId: NONEXISTENT_ID,
-      appVersion: 1,
-    }),
-    getQAppSession: qapps.getQAppSession({
-      instanceId: NONEXISTENT_INSTANCE,
-      sessionId: NONEXISTENT_ID,
-    }),
-    listQApps: qapps.listQApps({ instanceId: NONEXISTENT_INSTANCE }),
-    listCategories: qapps.listCategories({
-      instanceId: NONEXISTENT_INSTANCE,
-    }),
-    batchCreateCategory: qapps.batchCreateCategory({
-      instanceId: NONEXISTENT_INSTANCE,
-      categories: [{ title: "alchemy-probe" }],
-    }),
-    createLibraryItem: qapps.createLibraryItem({
-      instanceId: NONEXISTENT_INSTANCE,
-      appId: NONEXISTENT_ID,
-      appVersion: 1,
-      categories: [],
-    }),
-    describeQAppPermissions: qapps.describeQAppPermissions({
-      instanceId: NONEXISTENT_INSTANCE,
-      appId: NONEXISTENT_ID,
-    }),
-    predictQApp: qapps.predictQApp({ instanceId: NONEXISTENT_INSTANCE }),
-  };
+describe(
+  "QApps data-plane operations (typed-error probes)",
+  { tags: ["provider:aws", "provider:aws:qapps", "live"] },
+  () => {
+    const probes: Record<
+      string,
+      Effect.Effect<unknown, { _tag: string }, any>
+    > = {
+      startQAppSession: qapps.startQAppSession({
+        instanceId: NONEXISTENT_INSTANCE,
+        appId: NONEXISTENT_ID,
+        appVersion: 1,
+      }),
+      getQAppSession: qapps.getQAppSession({
+        instanceId: NONEXISTENT_INSTANCE,
+        sessionId: NONEXISTENT_ID,
+      }),
+      listQApps: qapps.listQApps({ instanceId: NONEXISTENT_INSTANCE }),
+      listCategories: qapps.listCategories({
+        instanceId: NONEXISTENT_INSTANCE,
+      }),
+      batchCreateCategory: qapps.batchCreateCategory({
+        instanceId: NONEXISTENT_INSTANCE,
+        categories: [{ title: "alchemy-probe" }],
+      }),
+      createLibraryItem: qapps.createLibraryItem({
+        instanceId: NONEXISTENT_INSTANCE,
+        appId: NONEXISTENT_ID,
+        appVersion: 1,
+        categories: [],
+      }),
+      describeQAppPermissions: qapps.describeQAppPermissions({
+        instanceId: NONEXISTENT_INSTANCE,
+        appId: NONEXISTENT_ID,
+      }),
+      predictQApp: qapps.predictQApp({ instanceId: NONEXISTENT_INSTANCE }),
+    };
 
-  for (const [name, probe] of Object.entries(probes)) {
-    test.provider(
-      `${name} against a nonexistent instance yields a typed error`,
-      () =>
-        Effect.gen(function* () {
-          const error = yield* Effect.flip(probe);
-          expect(TYPED_REJECTIONS).toContain(error._tag);
-        }),
-      { timeout: 60_000 },
-    );
-  }
-});
+    for (const [name, probe] of Object.entries(probes)) {
+      test.provider(
+        `${name} against a nonexistent instance yields a typed error`,
+        () =>
+          Effect.gen(function* () {
+            const error = yield* Effect.flip(probe);
+            expect(TYPED_REJECTIONS).toContain(error._tag);
+          }),
+        { timeout: 60_000 },
+      );
+    }
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Full runtime fixture: a Q App + a Lambda bound to six Q Apps bindings
@@ -170,5 +174,8 @@ test.provider.skipIf(!process.env.AWS_TEST_QAPPS)(
         expect(session.sessionId).toBeTruthy();
       }).pipe(Effect.ensuring(sharedStack.destroy().pipe(Effect.orDie)));
     }),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "provider:aws:qapps", "live"],
+    timeout: 600_000,
+  },
 );

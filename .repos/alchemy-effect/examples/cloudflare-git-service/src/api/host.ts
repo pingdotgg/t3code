@@ -3,13 +3,13 @@
  * the git server for everything else. `src/worker.ts` fronts it on the
  * website's origin.
  */
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Git from "alchemy/Git";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import { Auth, AuthDb } from "./auth.ts";
 import { HttpLive } from "./git.ts";
 

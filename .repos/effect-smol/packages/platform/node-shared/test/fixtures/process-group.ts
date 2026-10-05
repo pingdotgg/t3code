@@ -10,6 +10,7 @@ if (role === "leader") {
   spawn(process.execPath, [process.argv[1], "descendant", mode, marker], {
     stdio: ["ignore", "inherit", "inherit"]
   })
+  process.stdin.once("data", (data) => process.exit(data.toString().trim() === "exit 1" ? 1 : 0))
   setInterval(() => {}, 1_000)
 } else {
   if (mode === "exit-on-signal") {

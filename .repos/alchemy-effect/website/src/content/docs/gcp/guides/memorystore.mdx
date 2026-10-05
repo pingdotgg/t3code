@@ -1,0 +1,88 @@
+---
+title: Cache with Memorystore
+description: Bind a Memorystore Redis instance to a Cloud Run service over Direct VPC egress, and what to expect from create and destroy times.
+---
+
+Memorystore is managed Redis on a private IP. That private IP is the
+whole story: unlike Firestore or Pub/Sub, which a Cloud Run container
+reaches over the public `googleapis.com` endpoint, Redis is only
+reachable from inside your VPC. So a Memorystore binding needs two
+things a normal binding does not — VPC egress on the service, and
+patience while the instance is created.
+
+## The service
+
+```typescript
+export default class Cached extends GCP.Function<Cached>()(
+  "Cached",
+  {
+    main: import.meta.url,
+    location: "us-central1",
+    invokerIamDisabled: true,
+    template: {
+      vpcAccess: {
+        egress: "PRIVATE_RANGES_ONLY",
+        networkInterfaces: [{ network: "default", subnetwork: "default" }],
+      },
+    },
+  },
+  Effect.gen(function* () {
+    const cache = yield* GCP.Redis.Instance("Cache", { memorySizeGb: 1 });
+    const redis = yield* GCP.Redis.ReadWriteRedis(cache);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* redis.set("probe", "ok").pipe(Effect.orDie);
+        const cached = yield* redis.get("probe").pipe(Effect.orDie);
+        return yield* HttpServerResponse.json({ redis: cached });
+      }),
+    };
+  }).pipe(Effect.provide(GCP.Redis.ReadWriteRedisHttp)),
+) {}
+```
+
+`template.vpcAccess` with `PRIVATE_RANGES_ONLY` is Direct VPC egress:
+the revision gets an interface on the network, and traffic to private
+ranges goes through it while everything else still leaves normally.
+Without it the container cannot open a socket to the instance and
+every command times out.
+
+## The client is `alchemy/Redis`
+
+`ReadWriteRedis` returns the same RESP client the Fly and Upstash
+providers return, so `get`, `set`, `incr`, `expire`, and the rest
+behave identically no matter who runs the server. Two narrower
+bindings exist when you want least privilege at the call site:
+
+- `GCP.Redis.ReadRedis` / `ReadRedisHttp` — read commands only.
+- `GCP.Redis.WriteRedis` / `WriteRedisHttp` — write commands only.
+- `GCP.Redis.ReadWriteRedis` / `ReadWriteRedisHttp` — both.
+
+The binding needs no IAM role: RESP authenticates with the instance's
+AUTH string. Alchemy resolves the connection URL (private IP, port,
+AUTH string) when the instance reconciles and carries it to the runtime
+through the host's runtime context, keyed per instance — so the private
+IP is never something you paste in, and two instances bound to one host
+never collide.
+
+## Expect minutes, not seconds
+
+Creating a Memorystore instance takes several minutes; so does
+deleting one. That is Google's provisioning time, not Alchemy's. Two
+consequences worth knowing before you put this in a deploy loop:
+
+- Destroy waits out a `CREATING` instance and then retries `Conflict`
+  until the instance is actually gone, rather than failing on the
+  first race.
+- The repository's live tests keep this path behind `GCP_TEST_REDIS=1`
+  so the normal suite is not held up by a ten-minute resource.
+
+For a cache that has to come up with the service, size the instance
+once and leave it alone; treat it as slower-moving than the code
+deployed in front of it.
+
+## Next
+
+- [How bindings grant IAM](/gcp/guides/bindings).
+- [Serve an API on Cloud Run](/gcp/guides/cloud-run-api).
+- [Redis.Instance](/providers/gcp/redis/instance) reference.

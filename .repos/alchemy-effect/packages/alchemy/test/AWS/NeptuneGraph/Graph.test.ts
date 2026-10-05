@@ -4,8 +4,8 @@ import * as neptunegraph from "@distilled.cloud/aws/neptune-graph";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import NeptuneGraphTestFunctionLive, {
   FixtureGraph,
   NeptuneGraphTestFunction,
@@ -26,6 +26,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:neptunegraph", "live"] },
 );
 
 // The snapshot / import-task / export-task bindings address resources by
@@ -42,6 +43,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:neptunegraph", "live"] },
 );
 
 test.provider(
@@ -53,6 +55,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:neptunegraph", "live"] },
 );
 
 test.provider(
@@ -64,6 +67,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:neptunegraph", "live"] },
 );
 
 const assertGraphGone = (graphId: string) =>
@@ -220,5 +224,13 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertGraphGone(graph.graphId);
     }),
   // graph create (~5-10 min) + lambda deploy + delete-until-gone, one test.
-  { timeout: 1_500_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:neptunegraph",
+      "live",
+    ],
+    timeout: 1_500_000,
+  },
 );

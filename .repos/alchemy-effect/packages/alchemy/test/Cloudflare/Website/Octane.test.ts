@@ -10,8 +10,8 @@ import * as Path from "effect/Path";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as pathe from "pathe";
 import { cloneFixture } from "../Utils/Fixture.ts";
 import { expectUrlContains } from "../Utils/Http.ts";
@@ -110,132 +110,144 @@ const readNamespaceValue = Effect.fn(function* (options: {
 
 // Tests are independent (per-test scratch stacks, private fixture clones),
 // so run them concurrently; suites are sequential by default.
-describe.concurrent("Octane", () => {
-  test.provider(
-    "Octane: deploys SSR + bindings + static assets and memoizes unchanged rebuilds",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe.concurrent(
+  "Octane",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "Octane: deploys SSR + bindings + static assets and memoizes unchanged rebuilds",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-octane-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-octane-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const bindingMarker = "octane-binding-marker";
+          const bindingMarker = "octane-binding-marker";
 
-        const deploy = () =>
-          stack.deploy(
-            Effect.gen(function* () {
-              const siteKv = yield* Cloudflare.KV.Namespace("SiteKV");
-              const site = yield* Cloudflare.Website.Octane("OctaneSite", {
-                ...octaneProps(rootDir),
-                env: {
-                  TEST_BINDING: bindingMarker,
-                  SITE_KV: siteKv,
-                },
-              });
-              return { site, siteKv };
-            }),
+          const deploy = () =>
+            stack.deploy(
+              Effect.gen(function* () {
+                const siteKv = yield* Cloudflare.KV.Namespace("SiteKV");
+                const site = yield* Cloudflare.Website.Octane("OctaneSite", {
+                  ...octaneProps(rootDir),
+                  env: {
+                    TEST_BINDING: bindingMarker,
+                    SITE_KV: siteKv,
+                  },
+                });
+                return { site, siteKv };
+              }),
+            );
+
+          const { site: site1, siteKv } = yield* deploy();
+
+          expect(site1.url).toBeDefined();
+          expect(site1.hash?.input).toBeDefined();
+          yield* expectWorkerExists(site1.workerName, accountId);
+
+          // SSR page: the adapter-emitted worker renders on asset miss.
+          yield* expectUrlContains(`${site1.url!}/`, "OCTANE_PAGE_MARKER", {
+            timeout: "120 seconds",
+            label: "SSR home page",
+          });
+
+          // Server route: reads `context.platform` — the adapter-forwarded
+          // `{ env, ctx }` pair — proving bindings reach Octane's runtime
+          // contract.
+          const hello = yield* fetchJsonReady<{
+            marker: string;
+            binding: string | null;
+            hasWaitUntil: boolean;
+          }>(`${site1.url!}/api/hello`);
+          expect(hello.marker).toBe("api-route-ok");
+          expect(hello.binding).toBe(bindingMarker);
+          expect(hello.hasWaitUntil).toBe(true);
+
+          // KV binding: the worker's PUT lands in the real namespace and the
+          // worker's GET reads it back through the native binding.
+          const kvKey = "octane-live-key";
+          const kvValue = "octane-live-value";
+          expect(siteKv.namespaceId).toBeDefined();
+          const put = yield* putJsonReady<{ put: boolean; key: string }>(
+            `${site1.url!}/api/kv?key=${kvKey}&value=${kvValue}`,
+          );
+          expect(put.put).toBe(true);
+          const got = yield* fetchJsonReady<{
+            key: string;
+            value: string | null;
+          }>(`${site1.url!}/api/kv?key=${kvKey}`);
+          expect(got.value).toBe(kvValue);
+
+          // Out-of-band: the write is visible through the cloud KV API — the
+          // binding really targeted the namespace this stack provisioned.
+          const observed = yield* readNamespaceValue({
+            accountId,
+            namespaceId: siteKv.namespaceId,
+            keyName: kvKey,
+          });
+          expect(observed).toBe(kvValue);
+
+          // Static asset from `public/`, served asset-first.
+          yield* expectUrlContains(`${site1.url!}/robots.txt`, "User-agent", {
+            timeout: "60 seconds",
+            label: "static asset",
+          });
+
+          // ── deploy 2: no changes ⇒ the rebuild-free input hash matches and
+          // the deploy short-circuits without building ─────────────────────────
+          const { site: site2 } = yield* deploy();
+
+          expect(site2.hash?.input).toBeDefined();
+          expect(site2.hash?.input).toEqual(site1.hash?.input);
+          expect(site2.url).toBe(site1.url);
+
+          // ── deploy 3: edit the page ⇒ the input hash changes and the new
+          // content deploys. The edited marker is asserted on the *dynamic*
+          // SSR page (worker-rendered per request) — a changed static asset at
+          // the same URL can stay stale at a PoP far longer than a
+          // worker-version flip ────────────────────────────────────────────────
+          const appPath = path.join(rootDir, "src/App.tsx");
+          const app = yield* fs.readFileString(appPath);
+          yield* fs.writeFileString(
+            appPath,
+            app.replace("OCTANE_PAGE_MARKER", "OCTANE_PAGE_MARKER_V2"),
           );
 
-        const { site: site1, siteKv } = yield* deploy();
+          const { site: site3 } = yield* deploy();
 
-        expect(site1.url).toBeDefined();
-        expect(site1.hash?.input).toBeDefined();
-        yield* expectWorkerExists(site1.workerName, accountId);
+          expect(site3.hash?.input).toBeDefined();
+          expect(site3.hash?.input).not.toEqual(site1.hash?.input);
+          yield* expectUrlContains(`${site3.url!}/`, "OCTANE_PAGE_MARKER_V2", {
+            timeout: "180 seconds",
+            label: "SSR page after edit",
+          });
 
-        // SSR page: the adapter-emitted worker renders on asset miss.
-        yield* expectUrlContains(`${site1.url!}/`, "OCTANE_PAGE_MARKER", {
-          timeout: "120 seconds",
-          label: "SSR home page",
-        });
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
 
-        // Server route: reads `context.platform` — the adapter-forwarded
-        // `{ env, ctx }` pair — proving bindings reach Octane's runtime
-        // contract.
-        const hello = yield* fetchJsonReady<{
-          marker: string;
-          binding: string | null;
-          hasWaitUntil: boolean;
-        }>(`${site1.url!}/api/hello`);
-        expect(hello.marker).toBe("api-route-ok");
-        expect(hello.binding).toBe(bindingMarker);
-        expect(hello.hasWaitUntil).toBe(true);
-
-        // KV binding: the worker's PUT lands in the real namespace and the
-        // worker's GET reads it back through the native binding.
-        const kvKey = "octane-live-key";
-        const kvValue = "octane-live-value";
-        expect(siteKv.namespaceId).toBeDefined();
-        const put = yield* putJsonReady<{ put: boolean; key: string }>(
-          `${site1.url!}/api/kv?key=${kvKey}&value=${kvValue}`,
-        );
-        expect(put.put).toBe(true);
-        const got = yield* fetchJsonReady<{
-          key: string;
-          value: string | null;
-        }>(`${site1.url!}/api/kv?key=${kvKey}`);
-        expect(got.value).toBe(kvValue);
-
-        // Out-of-band: the write is visible through the cloud KV API — the
-        // binding really targeted the namespace this stack provisioned.
-        const observed = yield* readNamespaceValue({
-          accountId,
-          namespaceId: siteKv.namespaceId,
-          keyName: kvKey,
-        });
-        expect(observed).toBe(kvValue);
-
-        // Static asset from `public/`, served asset-first.
-        yield* expectUrlContains(`${site1.url!}/robots.txt`, "User-agent", {
-          timeout: "60 seconds",
-          label: "static asset",
-        });
-
-        // ── deploy 2: no changes ⇒ the rebuild-free input hash matches and
-        // the deploy short-circuits without building ─────────────────────────
-        const { site: site2 } = yield* deploy();
-
-        expect(site2.hash?.input).toBeDefined();
-        expect(site2.hash?.input).toEqual(site1.hash?.input);
-        expect(site2.url).toBe(site1.url);
-
-        // ── deploy 3: edit the page ⇒ the input hash changes and the new
-        // content deploys. The edited marker is asserted on the *dynamic*
-        // SSR page (worker-rendered per request) — a changed static asset at
-        // the same URL can stay stale at a PoP far longer than a
-        // worker-version flip ────────────────────────────────────────────────
-        const appPath = path.join(rootDir, "src/App.tsx");
-        const app = yield* fs.readFileString(appPath);
-        yield* fs.writeFileString(
-          appPath,
-          app.replace("OCTANE_PAGE_MARKER", "OCTANE_PAGE_MARKER_V2"),
-        );
-
-        const { site: site3 } = yield* deploy();
-
-        expect(site3.hash?.input).toBeDefined();
-        expect(site3.hash?.input).not.toEqual(site1.hash?.input);
-        yield* expectUrlContains(`${site3.url!}/`, "OCTANE_PAGE_MARKER_V2", {
-          timeout: "180 seconds",
-          label: "SSR page after edit",
-        });
-
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
-
-        // Destroy must also delete the stack-provisioned KV namespace.
-        yield* waitForNamespaceToBeDeleted(siteKv.namespaceId, accountId);
-      }).pipe(logLevel),
-    { timeout: 600_000 },
-  );
-});
+          // Destroy must also delete the stack-provisioned KV namespace.
+          yield* waitForNamespaceToBeDeleted(siteKv.namespaceId, accountId);
+        }).pipe(logLevel),
+      { timeout: 600_000 },
+    );
+  },
+);
 
 /**
  * GET `url` until it answers 200 with a JSON body (fresh workers.dev URLs

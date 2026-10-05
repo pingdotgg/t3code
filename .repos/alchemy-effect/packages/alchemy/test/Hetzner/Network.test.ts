@@ -1,7 +1,7 @@
 import * as Hetzner from "@/Hetzner";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
-import { Services } from "@distilled.cloud/hetzner";
+import * as networks from "@distilled.cloud/hetzner/networks";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -17,7 +17,7 @@ const logLevel = Effect.provideService(
 const hasHetznerCreds = !!process.env.HCLOUD_TOKEN;
 
 const waitUntilGone = (id: number) =>
-  Services.networks.getNetwork({ id }).pipe(
+  networks.getNetwork({ id }).pipe(
     Effect.as("found" as const),
     Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
@@ -66,7 +66,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(created.exposeRoutesToVswitch).toEqual(false);
       expect(created.labels).toMatchObject({ env: "test" });
 
-      const fetched = yield* Services.networks.getNetwork({
+      const fetched = yield* networks.getNetwork({
         id: created.networkId,
       });
       expect(fetched.network?.id).toEqual(created.networkId);
@@ -116,7 +116,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(updated.exposeRoutesToVswitch).toEqual(true);
       expect(updated.labels).toMatchObject({ env: "prod", role: "vpc" });
 
-      const refetched = yield* Services.networks.getNetwork({
+      const refetched = yield* networks.getNetwork({
         id: updated.networkId,
       });
       expect(refetched.network?.protection.delete).toEqual(true);
@@ -133,7 +133,15 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(created.networkId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:network",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds)(
@@ -177,7 +185,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(replaced.networkId).not.toEqual(created.networkId);
       expect(replaced.ipRange).toEqual("172.16.0.0/16");
 
-      const fetched = yield* Services.networks.getNetwork({
+      const fetched = yield* networks.getNetwork({
         id: replaced.networkId,
       });
       expect(fetched.network?.ip_range).toEqual("172.16.0.0/16");
@@ -190,7 +198,15 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(replaced.networkId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:network",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds)(
@@ -228,5 +244,13 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(deployed.networkId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:network",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -148,76 +148,80 @@ const DoubleBareStack = Alchemy.Stack(
   }),
 );
 
-describe("tagged platform resource yielded without its impl layer", () => {
-  test(
-    "fails fast, naming the class and its layer",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(MissingImplStack);
+describe(
+  "tagged platform resource yielded without its impl layer",
+  { tags: ["local"] },
+  () => {
+    test(
+      "fails fast, naming the class and its layer",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(MissingImplStack);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      const message = String(Exit.isFailure(exit) ? exit.cause : "");
-      expect(message).toContain("Test.PlatformWidget<BareWidget>");
-      expect(message).toContain("BareWidget.make(");
-      expect(message).toContain("Provide it to the Stack's program");
-      expect(message).toContain("Effect.provide([BareWidgetLive])");
-      // The provider must never be reached with undefined props.
-      expect(observed.ran).toBe(false);
-    }),
-    { timeout: 60_000 },
-  );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const message = String(Exit.isFailure(exit) ? exit.cause : "");
+        expect(message).toContain("Test.PlatformWidget<BareWidget>");
+        expect(message).toContain("BareWidget.make(");
+        expect(message).toContain("Provide it to the Stack's program");
+        expect(message).toContain("Effect.provide([BareWidgetLive])");
+        // The provider must never be reached with undefined props.
+        expect(observed.ran).toBe(false);
+      }),
+      { timeout: 60_000 },
+    );
 
-  test(
-    "still deploys when the .make(...) layer IS provided",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(ProvidedStack);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect((observed.news as any)?.name).toBe("provided");
-    }),
-    { timeout: 60_000 },
-  );
+    test(
+      "still deploys when the .make(...) layer IS provided",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(ProvidedStack);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect((observed.news as any)?.name).toBe("provided");
+      }),
+      { timeout: 60_000 },
+    );
 
-  test(
-    "still deploys a tag declared WITH props and no impl",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(ExternalStack);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect((observed.news as any)?.name).toBe("external");
-      expect((observed.news as any)?.isExternal).toBe(true);
-    }),
-    { timeout: 60_000 },
-  );
+    test(
+      "still deploys a tag declared WITH props and no impl",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(ExternalStack);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect((observed.news as any)?.name).toBe("external");
+        expect((observed.news as any)?.isExternal).toBe(true);
+      }),
+      { timeout: 60_000 },
+    );
 
-  test(
-    "still deploys a plain (non-tagged) instance",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(PlainStack);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect((observed.news as any)?.name).toBe("plain");
-    }),
-    { timeout: 60_000 },
-  );
+    test(
+      "still deploys a plain (non-tagged) instance",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(PlainStack);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect((observed.news as any)?.name).toBe("plain");
+      }),
+      { timeout: 60_000 },
+    );
 
-  test(
-    "a forward reference yielded before the layer builds still deploys",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(ForwardRefStack);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      // The provider must see the Layer's props, not the forward
-      // reference's `undefined`.
-      expect((observed.news as any)?.name).toBe("forward");
-    }),
-    { timeout: 60_000 },
-  );
+    test(
+      "a forward reference yielded before the layer builds still deploys",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(ForwardRefStack);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        // The provider must see the Layer's props, not the forward
+        // reference's `undefined`.
+        expect((observed.news as any)?.name).toBe("forward");
+      }),
+      { timeout: 60_000 },
+    );
 
-  test(
-    "yielding the bare tag twice registers once and still fails fast",
-    Effect.gen(function* () {
-      const exit = yield* runDeploy(DoubleBareStack);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const message = String(Exit.isFailure(exit) ? exit.cause : "");
-      expect(message).toContain("Test.PlatformWidget<DoubleBareWidget>");
-      expect(observed.ran).toBe(false);
-    }),
-    { timeout: 60_000 },
-  );
-});
+    test(
+      "yielding the bare tag twice registers once and still fails fast",
+      Effect.gen(function* () {
+        const exit = yield* runDeploy(DoubleBareStack);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const message = String(Exit.isFailure(exit) ? exit.cause : "");
+        expect(message).toContain("Test.PlatformWidget<DoubleBareWidget>");
+        expect(observed.ran).toBe(false);
+      }),
+      { timeout: 60_000 },
+    );
+  },
+);

@@ -18,6 +18,7 @@ import type { Inspectable } from "./Inspectable.ts"
 import { NodeInspectSymbol, toJson } from "./Inspectable.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import { pipeArguments } from "./Pipeable.ts"
+import { hasProperty } from "./Predicate.ts"
 import * as TxRef from "./TxRef.ts"
 import type { NoInfer } from "./Types.ts"
 
@@ -228,6 +229,25 @@ export const makeUnsafe = <A>(ref: TxRef.TxRef<Chunk.Chunk<A>>): TxChunk<A> => {
   txChunk.ref = ref
   return txChunk
 }
+
+/**
+ * Checks whether `u` is a `TxChunk<unknown>`.
+ *
+ * **Example** (Checking for transactional chunks)
+ *
+ * ```ts import.meta.vitest
+ * import { Chunk, TxChunk, TxRef } from "effect"
+ *
+ * const txChunk = TxChunk.makeUnsafe(TxRef.makeUnsafe(Chunk.empty<number>()))
+ *
+ * TxChunk.isTxChunk(txChunk) // => true
+ * TxChunk.isTxChunk(Chunk.empty()) // => false
+ * ```
+ *
+ * @category guards
+ * @since 4.0.0
+ */
+export const isTxChunk = (u: unknown): u is TxChunk<unknown> => hasProperty(u, TypeId)
 
 /**
  * Modifies the value of the `TxChunk` using the provided function.

@@ -12,4 +12,4 @@
   note: "The standalone streaming chunk schema was replaced by the decoded data type from Generated.ChatStreamingResponse."
 "@effect/ai-openrouter/OpenRouterClient#Service":
   replacement: "OpenRouterClient.Service"
-  note: "Still exported in v4; adapt to the regenerated client, revised request and response schemas, and the new streaming result tuple."
+  note: "Still exported in v4; adapt to the regenerated client, revised request and response schemas, and the new streaming result tuple. Custom service implementations and mocks must also provide createDecisions, returning an Effect of [decoded DecisionsResponse, HttpClientResponse] with AiError failures."

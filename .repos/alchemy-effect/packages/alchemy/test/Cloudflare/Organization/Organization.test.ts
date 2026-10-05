@@ -70,6 +70,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:organization", "live"] },
 );
 
 // Canonical `list()` test — ungated probe. `list()` enumerates every
@@ -108,6 +109,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:organization", "live"] },
 );
 
 // Gated live enumeration: on an entitled account, a deployed organization
@@ -137,7 +139,10 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:organization", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Poll until the organization is gone after destroy. Cloudflare answers
@@ -219,5 +224,8 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(v1.organizationId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:organization", "live"],
+    timeout: 120_000,
+  },
 );

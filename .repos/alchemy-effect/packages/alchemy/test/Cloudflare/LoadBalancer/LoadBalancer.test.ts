@@ -103,6 +103,14 @@ test.provider.skipIf(lbEnabled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:loadbalancer",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!lbEnabled)(
@@ -176,7 +184,15 @@ test.provider.skipIf(!lbEnabled)(
 
       yield* expectGone(zoneId, initial.lb.loadBalancerId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:loadbalancer",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test, ungated read-only half: load balancers are
@@ -210,7 +226,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Entitlement-gated half: with the Load Balancing subscription enabled,
@@ -258,5 +277,13 @@ test.provider.skipIf(!lbEnabled)(
 
       yield* expectGone(zoneId, deployed.lb.loadBalancerId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:loadbalancer",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

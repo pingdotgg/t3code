@@ -67,5 +67,8 @@ test.provider(
       const gone = yield* getKeyspace(created.keyspaceName);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:keyspaces", "live"],
+    timeout: 180_000,
+  },
 );

@@ -49,99 +49,112 @@ const vocsProps = (rootDir: string) => ({
   },
 });
 
-describe.concurrent("Vocs", () => {
-  test.provider(
-    "Vocs: deploys SSR, MDX, generated and public assets, and memoizes rebuilds",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe.concurrent(
+  "Vocs",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "Vocs: deploys SSR, MDX, generated and public assets, and memoizes rebuilds",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-vocs-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-vocs-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deploy = () =>
-          stack.deploy(Cloudflare.Website.Vocs("VocsSite", vocsProps(rootDir)));
+          const deploy = () =>
+            stack.deploy(
+              Cloudflare.Website.Vocs("VocsSite", vocsProps(rootDir)),
+            );
 
-        const site1 = yield* deploy();
+          const site1 = yield* deploy();
 
-        expect(site1.url).toBeDefined();
-        expect(site1.hash?.input).toBeDefined();
-        yield* expectWorkerExists(site1.workerName, accountId);
+          expect(site1.url).toBeDefined();
+          expect(site1.hash?.input).toBeDefined();
+          yield* expectWorkerExists(site1.workerName, accountId);
 
-        yield* expectUrlContains(`${site1.url!}/`, "Alchemy with Vocs", {
-          timeout: "120 seconds",
-          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-          label: "Vocs SSR shell and home page",
-        });
-        yield* expectUrlContains(`${site1.url!}/guide`, "Deployment guide", {
-          timeout: "60 seconds",
-          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-          label: "Vocs prerendered MDX guide",
-        });
-        yield* expectUrlContains(
-          `${site1.url!}/counter`,
-          "Interactive component",
-          {
+          yield* expectUrlContains(`${site1.url!}/`, "Alchemy with Vocs", {
+            timeout: "120 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+            label: "Vocs SSR shell and home page",
+          });
+          yield* expectUrlContains(`${site1.url!}/guide`, "Deployment guide", {
             timeout: "60 seconds",
             headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs MDX client-component page",
-          },
-        );
-        yield* expectUrlContains(
-          `${site1.url!}/hello.txt`,
-          "hello from the Vocs public directory",
-          {
-            timeout: "60 seconds",
-            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs public asset",
-          },
-        );
-        yield* expectUrlContains(
-          `${site1.url!}/llms.txt`,
-          "Alchemy with Vocs",
-          {
-            timeout: "60 seconds",
-            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs generated llms asset",
-          },
-        );
+            label: "Vocs prerendered MDX guide",
+          });
+          yield* expectUrlContains(
+            `${site1.url!}/counter`,
+            "Interactive component",
+            {
+              timeout: "60 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs MDX client-component page",
+            },
+          );
+          yield* expectUrlContains(
+            `${site1.url!}/hello.txt`,
+            "hello from the Vocs public directory",
+            {
+              timeout: "60 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs public asset",
+            },
+          );
+          yield* expectUrlContains(
+            `${site1.url!}/llms.txt`,
+            "Alchemy with Vocs",
+            {
+              timeout: "60 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs generated llms asset",
+            },
+          );
 
-        const site2 = yield* deploy();
-        expect(site2.hash?.input).toEqual(site1.hash?.input);
-        expect(site2.url).toBe(site1.url);
+          const site2 = yield* deploy();
+          expect(site2.hash?.input).toEqual(site1.hash?.input);
+          expect(site2.url).toBe(site1.url);
 
-        const pagePath = path.join(rootDir, "src/pages/index.mdx");
-        const page = yield* fs.readFileString(pagePath);
-        yield* fs.writeFileString(
-          pagePath,
-          page.replace(
-            "No Wrangler configuration or Vocs adapter setup is required.",
+          const pagePath = path.join(rootDir, "src/pages/index.mdx");
+          const page = yield* fs.readFileString(pagePath);
+          yield* fs.writeFileString(
+            pagePath,
+            page.replace(
+              "No Wrangler configuration or Vocs adapter setup is required.",
+              "This Vocs page was updated by a deployment.",
+            ),
+          );
+
+          const site3 = yield* deploy();
+          expect(site3.hash?.input).not.toEqual(site1.hash?.input);
+          yield* expectUrlContains(
+            `${site3.url!}/?__alchemy_cb=${Date.now()}`,
             "This Vocs page was updated by a deployment.",
-          ),
-        );
+            {
+              timeout: "180 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs page after source update",
+            },
+          );
 
-        const site3 = yield* deploy();
-        expect(site3.hash?.input).not.toEqual(site1.hash?.input);
-        yield* expectUrlContains(
-          `${site3.url!}/?__alchemy_cb=${Date.now()}`,
-          "This Vocs page was updated by a deployment.",
-          {
-            timeout: "180 seconds",
-            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs page after source update",
-          },
-        );
-
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
+  },
+);

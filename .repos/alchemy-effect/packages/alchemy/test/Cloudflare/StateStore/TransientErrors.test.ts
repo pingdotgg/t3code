@@ -7,8 +7,10 @@ import { makeHttpStateStore } from "@/State/HttpStateStore.ts";
 import type { StateStoreError } from "@/State/State.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 /**
  * Predicate coverage for the retry policies added in response to
@@ -59,74 +61,98 @@ const failingWrite = (stub: FetchStub): Effect.Effect<StateStoreError> =>
       .pipe(Effect.flip);
   }).pipe(Effect.provide(stubHttpClient(stub)), Effect.orDie);
 
-describe("isTransientBootstrapWriteError", () => {
-  it.live(
-    "retries 401 Unauthorized (token-binding propagation) but not other 4xx",
-    () =>
-      Effect.gen(function* () {
-        const unauthorized = yield* failingWrite(
-          async () => new Response(null, { status: 401 }),
-        );
-        expect(isTransientBootstrapWriteError(unauthorized)).toBe(true);
+describe(
+  "isTransientBootstrapWriteError",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:statestore",
+      "local",
+    ],
+  },
+  () => {
+    it.effect(
+      "retries 401 Unauthorized (token-binding propagation) but not other 4xx",
+      () =>
+        Effect.gen(function* () {
+          const unauthorized = yield* failingWrite(
+            async () => new Response(null, { status: 401 }),
+          );
+          expect(isTransientBootstrapWriteError(unauthorized)).toBe(true);
 
-        const badRequest = yield* failingWrite(
-          async () => new Response("no", { status: 400 }),
-        );
-        expect(isTransientBootstrapWriteError(badRequest)).toBe(false);
-      }),
-  );
+          const badRequest = yield* failingWrite(
+            async () => new Response("no", { status: 400 }),
+          );
+          expect(isTransientBootstrapWriteError(badRequest)).toBe(false);
+        }),
+    );
 
-  it.live(
-    "retries 404 (route propagation), 5xx (binding propagation) and transport failures",
-    () =>
-      Effect.gen(function* () {
-        for (const stub of [
-          async () => new Response("not found", { status: 404 }),
-          async () => new Response("secret unavailable", { status: 500 }),
-          async () => {
-            throw new TypeError("fetch failed");
-          },
-        ]) {
-          const error = yield* failingWrite(stub);
-          expect(isTransientBootstrapWriteError(error)).toBe(true);
-        }
-      }),
-    60_000,
-  );
+    it.effect(
+      "retries 404 (route propagation), 5xx (binding propagation) and transport failures",
+      () =>
+        Effect.gen(function* () {
+          for (const stub of [
+            async () => new Response("not found", { status: 404 }),
+            async () => new Response("secret unavailable", { status: 500 }),
+            async () => {
+              throw new TypeError("fetch failed");
+            },
+          ]) {
+            const fiber = yield* failingWrite(stub).pipe(Effect.forkChild);
+            yield* TestClock.adjust("30 seconds");
+            const error = yield* Fiber.join(fiber);
+            expect(isTransientBootstrapWriteError(error)).toBe(true);
+          }
+        }),
+      5_000,
+    );
 
-  it("does not retry errors without HTTP failure metadata", () => {
-    expect(isTransientBootstrapWriteError({ http: undefined })).toBe(false);
-  });
-});
-
-describe("isTransientEdgeSessionError", () => {
-  it("retries non-200 secret-probe responses (Cloudflare HTML error pages)", () => {
-    const error = new EdgeSessionError({
-      message: 'Secret probe returned 400: <!DOCTYPE html>\n<html class="no-',
+    it("does not retry errors without HTTP failure metadata", () => {
+      expect(isTransientBootstrapWriteError({ http: undefined })).toBe(false);
     });
-    expect(isTransientEdgeSessionError(error)).toBe(true);
-  });
+  },
+);
 
-  it("retries session-creation failures with transient causes", () => {
-    const error = new EdgeSessionError({
-      message: "Failed to create edge preview session",
-      cause: new TypeError("fetch failed"),
+describe(
+  "isTransientEdgeSessionError",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:statestore",
+      "local",
+    ],
+  },
+  () => {
+    it("retries non-200 secret-probe responses (Cloudflare HTML error pages)", () => {
+      const error = new EdgeSessionError({
+        message: 'Secret probe returned 400: <!DOCTYPE html>\n<html class="no-',
+      });
+      expect(isTransientEdgeSessionError(error)).toBe(true);
     });
-    expect(isTransientEdgeSessionError(error)).toBe(true);
-  });
 
-  it("does not retry permanent auth causes", () => {
-    for (const tag of ["Unauthorized", "Forbidden", "InvalidRoute"]) {
-      const cause = Object.assign(new Error("denied"), { _tag: tag });
+    it("retries session-creation failures with transient causes", () => {
       const error = new EdgeSessionError({
         message: "Failed to create edge preview session",
-        cause,
+        cause: new TypeError("fetch failed"),
       });
-      expect(isTransientEdgeSessionError(error)).toBe(false);
-    }
-  });
+      expect(isTransientEdgeSessionError(error)).toBe(true);
+    });
 
-  it("ignores non-EdgeSessionError values", () => {
-    expect(isTransientEdgeSessionError(new Error("boom"))).toBe(false);
-  });
-});
+    it("does not retry permanent auth causes", () => {
+      for (const tag of ["Unauthorized", "Forbidden", "InvalidRoute"]) {
+        const cause = Object.assign(new Error("denied"), { _tag: tag });
+        const error = new EdgeSessionError({
+          message: "Failed to create edge preview session",
+          cause,
+        });
+        expect(isTransientEdgeSessionError(error)).toBe(false);
+      }
+    });
+
+    it("ignores non-EdgeSessionError values", () => {
+      expect(isTransientEdgeSessionError(new Error("boom"))).toBe(false);
+    });
+  },
+);

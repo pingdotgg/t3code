@@ -39,6 +39,10 @@ jobs:
       - name: Run codemods
         run: pnpm codemod
       - name: Build package
+        env:
+          # Leave memory for the runner and package builds on the 8 GB runner.
+          # The native TypeScript compiler uses Go's soft memory limit.
+          GOMEMLIMIT: 4GiB
         run: pnpm build
       - name: Create snapshot
         id: snapshot

@@ -6,8 +6,8 @@
  */
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Context, Effect, flow, Layer, Schedule } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
-import { HttpApiBuilder, HttpApiClient, HttpApiMiddleware, HttpApiScalar } from "effect/unstable/httpapi"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http"
+import { HttpApiBuilder, HttpApiClient, HttpApiMiddleware, HttpApiScalar } from "effect/http-api"
 import { createServer } from "node:http"
 // Api definitions should **always** be seperate from the server implementation,
 // so that they can be shared between the server and client without leaking

@@ -112,5 +112,13 @@ test.provider(
       });
       expect(vpcAfter.Vpcs?.[0]?.IsDefault).toBe(true);
     }),
-  { timeout: 360_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:route53profiles",
+      "live",
+    ],
+    timeout: 360_000,
+  },
 );

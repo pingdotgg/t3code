@@ -9,73 +9,79 @@ import * as Predicate from "effect/Predicate";
 import * as NodeFs from "node:fs/promises";
 
 layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
-  it.effect("inlines a sibling file imported with ?raw", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectory({
-        prefix: "alchemy-raw-bundle-",
-      });
-      yield* fs.writeFileString(
-        path.join(root, "hello.txt"),
-        "HELLO_RAW_MARKER",
-      );
-      const entry = path.join(root, "entry.ts");
-      yield* fs.writeFileString(
-        entry,
-        `import txt from "./hello.txt?raw";\nconsole.log(txt);\n`,
-      );
+  it.effect(
+    "inlines a sibling file imported with ?raw",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-raw-bundle-",
+        });
+        yield* fs.writeFileString(
+          path.join(root, "hello.txt"),
+          "HELLO_RAW_MARKER",
+        );
+        const entry = path.join(root, "entry.ts");
+        yield* fs.writeFileString(
+          entry,
+          `import txt from "./hello.txt?raw";\nconsole.log(txt);\n`,
+        );
 
-      const result = yield* Bundle.build({
-        input: entry,
-        cwd: root,
-      });
+        const result = yield* Bundle.build({
+          input: entry,
+          cwd: root,
+        });
 
-      const code = result.files
-        .filter((f) => typeof f.content === "string")
-        .map((f) => f.content as string)
-        .join("\n");
-      expect(code).toContain(`"HELLO_RAW_MARKER"`);
-      // The bundle should not emit hello.txt as a separate asset.
-      expect(result.files.every((f) => !f.path.endsWith("hello.txt"))).toBe(
-        true,
-      );
+        const code = result.files
+          .filter((f) => typeof f.content === "string")
+          .map((f) => f.content as string)
+          .join("\n");
+        expect(code).toContain(`"HELLO_RAW_MARKER"`);
+        // The bundle should not emit hello.txt as a separate asset.
+        expect(result.files.every((f) => !f.path.endsWith("hello.txt"))).toBe(
+          true,
+        );
 
-      yield* fs.remove(root, { recursive: true });
-    }),
+        yield* fs.remove(root, { recursive: true });
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("resolves ?raw imports through subdirectories", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectory({
-        prefix: "alchemy-raw-subdir-",
-      });
-      yield* fs.makeDirectory(path.join(root, "sub"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(root, "sub", "foo.json"),
-        `{"marker":"SUBDIR_RAW_MARKER"}`,
-      );
-      const entry = path.join(root, "entry.ts");
-      yield* fs.writeFileString(
-        entry,
-        `import foo from "./sub/foo.json?raw";\nconsole.log(foo);\n`,
-      );
+  it.effect(
+    "resolves ?raw imports through subdirectories",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-raw-subdir-",
+        });
+        yield* fs.makeDirectory(path.join(root, "sub"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "sub", "foo.json"),
+          `{"marker":"SUBDIR_RAW_MARKER"}`,
+        );
+        const entry = path.join(root, "entry.ts");
+        yield* fs.writeFileString(
+          entry,
+          `import foo from "./sub/foo.json?raw";\nconsole.log(foo);\n`,
+        );
 
-      const result = yield* Bundle.build({
-        input: entry,
-        cwd: root,
-      });
+        const result = yield* Bundle.build({
+          input: entry,
+          cwd: root,
+        });
 
-      const code = result.files
-        .filter((f) => typeof f.content === "string")
-        .map((f) => f.content as string)
-        .join("\n");
-      expect(code).toContain("SUBDIR_RAW_MARKER");
+        const code = result.files
+          .filter((f) => typeof f.content === "string")
+          .map((f) => f.content as string)
+          .join("\n");
+        expect(code).toContain("SUBDIR_RAW_MARKER");
 
-      yield* fs.remove(root, { recursive: true });
-    }),
+        yield* fs.remove(root, { recursive: true });
+      }),
+    { tags: ["unit", "local"] },
   );
 });
 
@@ -100,58 +106,71 @@ layer(NodeServices.layer)("rawPlugin load hook", (it) => {
       return result;
     });
 
-  it.effect("inlines a .txt file as a JSON-encoded default export", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-load-" });
-      const file = path.join(root, "hello.txt");
-      yield* fs.writeFileString(file, "Hello, World!\n");
+  it.effect(
+    "inlines a .txt file as a JSON-encoded default export",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-raw-load-",
+        });
+        const file = path.join(root, "hello.txt");
+        yield* fs.writeFileString(file, "Hello, World!\n");
 
-      const result = yield* load(file);
+        const result = yield* load(file);
 
-      expect(result.code).toBe(`export default "Hello, World!\\n";`);
-      expect(result.moduleType).toBe("js");
+        expect(result.code).toBe(`export default "Hello, World!\\n";`);
+        expect(result.moduleType).toBe("js");
 
-      yield* fs.remove(root, { recursive: true });
-    }),
+        yield* fs.remove(root, { recursive: true });
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("inlines a .json file verbatim (no parsing)", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-json-" });
-      const file = path.join(root, "data.json");
-      const raw = `{"a": 1, "b": "two"}`;
-      yield* fs.writeFileString(file, raw);
+  it.effect(
+    "inlines a .json file verbatim (no parsing)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-raw-json-",
+        });
+        const file = path.join(root, "data.json");
+        const raw = `{"a": 1, "b": "two"}`;
+        yield* fs.writeFileString(file, raw);
 
-      const result = yield* load(`${file}?raw`);
+        const result = yield* load(`${file}?raw`);
 
-      expect(result.code).toBe(`export default ${JSON.stringify(raw)};`);
+        expect(result.code).toBe(`export default ${JSON.stringify(raw)};`);
 
-      yield* fs.remove(root, { recursive: true });
-    }),
+        yield* fs.remove(root, { recursive: true });
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("strips additional query params before reading the file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-q-" });
-      const file = path.join(root, "page.html");
-      yield* fs.writeFileString(file, "<h1>hi</h1>");
+  it.effect(
+    "strips additional query params before reading the file",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-q-" });
+        const file = path.join(root, "page.html");
+        yield* fs.writeFileString(file, "<h1>hi</h1>");
 
-      const result = yield* load(`${file}?raw&t=12345`);
+        const result = yield* load(`${file}?raw&t=12345`);
 
-      expect(result.code).toBe(`export default "<h1>hi</h1>";`);
+        expect(result.code).toBe(`export default "<h1>hi</h1>";`);
 
-      yield* fs.remove(root, { recursive: true });
-    }),
+        yield* fs.remove(root, { recursive: true });
+      }),
+    { tags: ["unit", "local"] },
   );
 });
 
-describe("RAW_RE", () => {
+describe("RAW_RE", { tags: ["unit", "local"] }, () => {
   it("matches `?raw`", () => {
     expect(RAW_RE.test("/foo/bar.txt?raw")).toBe(true);
   });
@@ -171,7 +190,7 @@ describe("RAW_RE", () => {
   });
 });
 
-describe("splitFileAndPostfix", () => {
+describe("splitFileAndPostfix", { tags: ["unit", "local"] }, () => {
   it("splits at the first `?`", () => {
     expect(splitFileAndPostfix("./foo.txt?raw")).toEqual(["./foo.txt", "?raw"]);
   });

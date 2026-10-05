@@ -1,6 +1,7 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { assertFalse, assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Equal, Hash, MutableHashMap as HM, Option, pipe } from "effect"
+import { Effect, Equal, Hash, MutableHashMap as HM, Option, pipe } from "effect"
+import { collectGarbage } from "./utils/gc.ts"
 
 class Key implements Equal.Equal {
   constructor(readonly a: number, readonly b: number) {}
@@ -35,6 +36,39 @@ function value(c: number, d: number): Value {
 }
 
 describe("MutableHashMap", () => {
+  it.effect.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
+    "does not retain replaced equal keys after removal and reinsertion",
+    () =>
+      Effect.gen(function*() {
+        const references: Array<WeakRef<Key>> = []
+        const control = new WeakRef({})
+        const map = HM.make([key(0, 0), "value"])
+        for (let i = 0; i < 10; i++) {
+          const lookupKey = key(0, 0)
+          const current = HM.get(map, lookupKey)
+          HM.remove(map, lookupKey)
+          HM.set(map, lookupKey, Option.getOrThrow(current))
+          references.push(new WeakRef(lookupKey))
+        }
+        const latest = references.pop()!.deref()!
+        strictEqual(Array.from(HM.keys(map))[0], latest)
+        yield* collectGarbage
+        assert.isUndefined(control.deref())
+        for (const reference of references) assert.isUndefined(reference.deref())
+        assertSome(HM.get(map, key(0, 0)), "value")
+      })
+  )
+
+  it("retains its entries after it is used as a lookup key", () => {
+    const entryKey = key(0, 0)
+    const map = HM.make([entryKey, "value"])
+    const equalMap = HM.make([key(0, 0), "value"])
+    const outer = HM.make([equalMap, true])
+
+    assertSome(HM.get(outer, map), true)
+    assertSome(HM.get(map, key(0, 0)), "value")
+  })
+
   it("isMutableHashMap", () => {
     assertTrue(HM.isMutableHashMap(HM.make([0, "a"], [1, "b"])))
     assertFalse(HM.isMutableHashMap(new Map([[0, "a"]])))

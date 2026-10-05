@@ -1,6 +1,6 @@
 // Measures top-level URL builder method derivation from 500 same-shaped endpoints.
 import { Schema } from "effect"
-import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Endpoint } from "./_grouped-api-500.ts"
 
 Schema.String

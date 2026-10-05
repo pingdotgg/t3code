@@ -12,9 +12,6 @@ import * as InternalRecord from "../record.ts"
 import * as InternalAnnotations from "./annotations.ts"
 
 type Path = ReadonlyArray<string | number>
-type CheckRepresentationAnnotation = SchemaRepresentation.CheckRepresentationAnnotation<
-  SchemaRepresentation.Representation
->
 
 function formatDefinitionReference(key: string): string {
   return `#/$defs/${formatUriFragmentToken(key)}`
@@ -165,6 +162,25 @@ function appendJsonSchema(
   return { ...left, allOf: members }
 }
 
+// Exactness forms a dependency graph because definitions can be recursive. A
+// cycle is exact unless it can reach `false`.
+type Exactness = boolean | ReadonlyArray<Exactness>
+
+type CompiledJsonSchema = [schema: JsonSchema.JsonSchema, dependencies: Array<Exactness>]
+
+function isExact(exactness: Exactness, seen = new Set<ReadonlyArray<Exactness>>()): boolean {
+  if (typeof exactness === "boolean") return exactness
+  if (seen.has(exactness)) return true
+  seen.add(exactness)
+  return exactness.every((dependency) => isExact(dependency, seen))
+}
+
+function isApproximateCheckOutput(
+  output: SchemaRepresentation.ToJsonSchema.CheckOutput
+): output is readonly [schema: JsonSchema.JsonSchema, approximate: true] {
+  return Array.isArray(output)
+}
+
 function compileJsonSchema(
   representations: readonly [
     SchemaRepresentation.Representation,
@@ -174,52 +190,72 @@ function compileJsonSchema(
   references: SchemaRepresentation.References,
   options: Schema.ToJsonSchemaOptions | undefined
 ): JsonSchema.MultiDocument<"draft-2020-12"> {
-  // null = compiling, string = canonical key, object = compiled schema
-  const definitionStates = new Map<string, JsonSchema.JsonSchema | string | null>()
-  const compiledRepresentations = new WeakMap<SchemaRepresentation.Representation, JsonSchema.JsonSchema>()
+  const compiledDefinitions = new Map<string, CompiledJsonSchema>()
+  const definitionAliases = new Map<string, string>()
+  const compiledRepresentations = new WeakMap<SchemaRepresentation.Representation, CompiledJsonSchema>()
+  const pendingOneOf = new Map<
+    ReadonlyArray<JsonSchema.JsonSchema>,
+    readonly [branches: ReadonlyArray<Exactness>, schemas: Array<JsonSchema.JsonSchema>]
+  >()
   const fallbackDefinitions = new Map<string, Array<string>>()
   const referenceKeys = Object.keys(references)
   for (const key of referenceKeys) {
     compileDefinition(key, ["references", key])
   }
-  const schemas = Arr.map(
+  const compiledSchemas = Arr.map(
     representations,
-    (representation, index) => finalizeJsonSchema(recur(representation, rootPaths[index]))
+    (representation, index) => recur(representation, rootPaths[index], [])
   )
+  for (const [branches, schemas] of pendingOneOf.values()) {
+    if (!isExact(branches)) {
+      for (const schema of schemas) {
+        if (Array.isArray(schema.oneOf)) {
+          schema.anyOf = schema.oneOf
+          delete schema.oneOf
+        }
+      }
+    }
+  }
+  for (const key of referenceKeys) {
+    const representation = references[key]
+    const fallback = getIdentifierFallback(representation)
+    if (fallback === undefined) continue
+    const schema = compiledDefinitions.get(key)![0]
+    const candidates = fallbackDefinitions.get(fallback)
+    const match = candidates?.find((candidate) => Equal.equals(compiledDefinitions.get(candidate)![0], schema))
+    if (match === undefined) {
+      if (candidates === undefined) fallbackDefinitions.set(fallback, [key])
+      else candidates.push(key)
+    } else {
+      definitionAliases.set(key, match)
+    }
+  }
+  const schemas = Arr.map(compiledSchemas, finalizeJsonSchema)
   const definitions: Record<string, JsonSchema.JsonSchema> = {}
   for (const key of referenceKeys) {
-    const compiled = definitionStates.get(key)!
-    if (typeof compiled !== "string") {
-      InternalRecord.assignProperty(definitions, key, finalizeJsonSchema(compiled))
+    if (!definitionAliases.has(key)) {
+      InternalRecord.assignProperty(definitions, key, finalizeJsonSchema(compiledDefinitions.get(key)![0]))
     }
   }
   return { dialect: "draft-2020-12", schemas, definitions }
 
-  function compileDefinition(key: string, path: Path): string {
-    const compiled = definitionStates.get(key)
-    if (compiled !== undefined) return typeof compiled === "string" ? compiled : key
+  function registerPendingOneOf(schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema {
+    if (Array.isArray(schema.oneOf)) pendingOneOf.get(schema.oneOf)?.[1].push(schema)
+    return schema
+  }
+
+  function compileDefinition(key: string, path: Path): CompiledJsonSchema {
     if (!Object.hasOwn(references, key)) {
       throw errorWithPath(`Invalid reference ${key}`, [...path, "$ref"])
     }
+    const cached = compiledDefinitions.get(key)
+    if (cached !== undefined) return cached
 
-    definitionStates.set(key, null)
-    const representation = references[key]
-    const schema = recur(representation, ["references", key])
-
-    const fallback = getIdentifierFallback(representation)
-    if (fallback !== undefined) {
-      const candidates = fallbackDefinitions.get(fallback)
-      const match = candidates?.find((candidate) => Equal.equals(definitionStates.get(candidate), schema))
-      if (match === undefined) {
-        if (candidates === undefined) fallbackDefinitions.set(fallback, [key])
-        else candidates.push(key)
-      } else {
-        definitionStates.set(key, match)
-        return match
-      }
-    }
-    definitionStates.set(key, schema)
-    return key
+    // Register the dependency cell before compiling so recursive references share it.
+    const result: CompiledJsonSchema = [{}, []]
+    compiledDefinitions.set(key, result)
+    result[0] = recur(references[key], ["references", key], result[1])
+    return result
   }
 
   function finalizeJsonSchema(schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema {
@@ -233,8 +269,10 @@ function compileJsonSchema(
       }
       if (!pointer.startsWith("/$defs/")) return $ref
       const separator = pointer.indexOf("/", 7)
-      const canonical = definitionStates.get(unescapeToken(pointer.slice(7, separator < 0 ? undefined : separator)))
-      if (typeof canonical !== "string") return $ref
+      const canonical = definitionAliases.get(
+        unescapeToken(pointer.slice(7, separator < 0 ? undefined : separator))
+      )
+      if (canonical === undefined) return $ref
       // URI-encoded slashes separate pointer tokens; only ~1 represents a slash within a token.
       return $ref.replace(
         /^#(?:\/|%2f).*?(?:\/|%2f).*?(?=\/|%2f|$)/i,
@@ -256,73 +294,86 @@ function compileJsonSchema(
       : undefined
   }
 
-  function annotationSchemas(
-    representation: CheckRepresentationAnnotation | undefined,
-    path: Path
-  ): ReadonlyArray<JsonSchema.JsonSchema> {
-    return representation?.schemas?.map((schema, index) => recur(schema, [...path, "schemas", index])) ?? []
-  }
-
   function compileCheck(
     check: SchemaRepresentation.Check,
     type: JsonSchema.Type | undefined,
-    path: Path
-  ): readonly [schema: JsonSchema.JsonSchema, inline?: true] | undefined {
+    path: Path,
+    dependencies: Array<Exactness>
+  ): readonly [schema: JsonSchema.JsonSchema, inline?: true | undefined] | undefined {
     const annotations = check.annotations
     const callback = annotations?.toJsonSchema
     if (callback !== undefined) {
-      const schemas = annotationSchemas(check.representation, [...path, "representation"])
-      const fragment = (callback as SchemaRepresentation.ToJsonSchema.Check)({ type, schemas })
+      const schemas = check.representation?.schemas?.map((schema, index) =>
+        recur(schema, [...path, "representation", "schemas", index], dependencies)
+      ) ?? []
+      const result = (callback as SchemaRepresentation.ToJsonSchema.Check)({ type, schemas })
+      const approximate = isApproximateCheckOutput(result)
+      if (approximate) {
+        dependencies.push(false)
+      }
+      const fragment = approximate ? result[0] : result
       const ordinary = collectJsonSchemaAnnotations(annotations, options)
       const schema = ordinary === undefined ? fragment : { ...fragment, ...ordinary }
       const allowed = ordinary === undefined ? inlineableCheckKeywords : inlineableAnnotatedCheckKeywords
-      return check._tag === "Filter" &&
+      return [
+        schema,
+        check._tag === "Filter" &&
           hasOnlyKeywords(schema, allowed) &&
           (ordinary === undefined || hasOnlyKeywords(ordinary, promotableAnnotationKeywords))
-        ? [schema, true]
-        : [schema]
+          ? true
+          : undefined
+      ]
     }
-    if (check._tag === "Filter") return undefined
+    if (check._tag === "Filter") {
+      dependencies.push(false)
+      return undefined
+    }
 
-    const children = check.checks
-      .map((child, index) => compileCheck(child, type, [...path, "checks", index]))
-      .filter((child): child is NonNullable<typeof child> => child !== undefined)
-    if (children.length === 0) return undefined
+    const schemas = check.checks.flatMap((child, index) => {
+      const result = compileCheck(child, type, [...path, "checks", index], dependencies)
+      return result === undefined ? [] : [result[0]]
+    })
+    if (schemas.length === 0) return undefined
     const ordinary = collectJsonSchemaAnnotations(annotations, options)
-    const allOf = children.map(([schema]) => schema)
-    return [ordinary === undefined ? { allOf } : { allOf, ...ordinary }]
+    const schema = { allOf: schemas }
+    return [ordinary === undefined ? schema : { ...schema, ...ordinary }]
   }
 
   function recur(
     representation: SchemaRepresentation.Representation,
-    path: Path
+    path: Path,
+    dependencies: Array<Exactness>
   ): JsonSchema.JsonSchema {
     if (representation._tag === "Reference") {
-      const canonical = compileDefinition(representation.$ref, path)
-      return { $ref: formatDefinitionReference(canonical) }
+      dependencies.push(compileDefinition(representation.$ref, path)[1])
+      return { $ref: formatDefinitionReference(representation.$ref) }
     }
     const cached = compiledRepresentations.get(representation)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      dependencies.push(cached[1])
+      return cached[0]
+    }
 
-    let output = on(representation, path)
+    const local: Array<Exactness> = []
+    dependencies.push(local)
+    let output = on(representation, path, local)
     const ordinary = collectJsonSchemaAnnotations(representation.annotations, options)
     if (ordinary !== undefined) {
       output = { ...output, ...ordinary }
     }
     for (let index = 0; index < representation.checks.length; index++) {
       const type = typeof output.type === "string" && isJsonSchemaType(output.type) ? output.type : undefined
-      const check = compileCheck(representation.checks[index], type, [...path, "checks", index])
-      if (check !== undefined) {
-        output = appendJsonSchema(output, ...check)
-      }
+      const check = compileCheck(representation.checks[index], type, [...path, "checks", index], local)
+      if (check !== undefined) output = appendJsonSchema(output, ...check)
     }
-    compiledRepresentations.set(representation, output)
-    return output
+    compiledRepresentations.set(representation, [output, local])
+    return registerPendingOneOf(output)
   }
 
   function on(
     representation: Exclude<SchemaRepresentation.Representation, SchemaRepresentation.Reference>,
-    path: Path
+    path: Path,
+    dependencies: Array<Exactness>
   ): JsonSchema.JsonSchema {
     switch (representation._tag) {
       case "Any":
@@ -342,11 +393,11 @@ function compileJsonSchema(
         return globalThis.Symbol.keyFor(representation.symbol) === undefined
           ? { not: {} }
           : { type: "string", enum: [globalThis.String(representation.symbol)] }
-      case "Declaration": {
+      case "Declaration":
+        dependencies.push(false)
         return {}
-      }
       case "Suspend":
-        return recur(representation.thunk, [...path, "thunk"])
+        return recur(representation.thunk, [...path, "thunk"], dependencies)
       case "Never":
         return { not: {} }
       case "String":
@@ -388,9 +439,11 @@ function compileJsonSchema(
         let minItems = representation.elements.length
         const prefixItems = representation.elements.map((element, index) => {
           if (element.isOptional) minItems--
-          const compiled = recur(element.type, [...path, "elements", index, "type"])
+          const schema = recur(element.type, [...path, "elements", index, "type"], dependencies)
           const annotations = collectJsonSchemaAnnotations(element.annotations, options)
-          return annotations === undefined ? compiled : appendJsonSchema(compiled, annotations)
+          return annotations === undefined
+            ? schema
+            : registerPendingOneOf(appendJsonSchema(schema, annotations))
         })
         if (prefixItems.length > 0) {
           out.prefixItems = prefixItems
@@ -401,7 +454,7 @@ function compileJsonSchema(
         }
         if (representation.rest.length === 1) {
           delete out.maxItems
-          const rest = recur(representation.rest[0], [...path, "rest", 0])
+          const rest = recur(representation.rest[0], [...path, "rest", 0], dependencies)
           if (Object.keys(rest).length > 0) out.items = rest
           else delete out.items
         }
@@ -425,12 +478,14 @@ function compileJsonSchema(
             ])
           }
           const name = property.name
-          const compiled = recur(property.type, [...path, "propertySignatures", index, "type"])
+          const schema = recur(property.type, [...path, "propertySignatures", index, "type"], dependencies)
           const annotations = collectJsonSchemaAnnotations(property.annotations, options)
           InternalRecord.assignProperty(
             properties,
             name,
-            annotations === undefined ? compiled : appendJsonSchema(compiled, annotations)
+            annotations === undefined
+              ? schema
+              : registerPendingOneOf(appendJsonSchema(schema, annotations))
           )
           if (!property.isOptional) required.push(name)
         }
@@ -444,7 +499,8 @@ function compileJsonSchema(
           const signature = representation.indexSignatures[index]
           let type: JsonSchema.JsonSchema | false = recur(
             signature.type,
-            [...path, "indexSignatures", index, "type"]
+            [...path, "indexSignatures", index, "type"],
+            dependencies
           )
           if (Equal.equals(type, { not: {} })) type = false
           indexValueSchemas.push(type)
@@ -455,6 +511,7 @@ function compileJsonSchema(
           )
           if (patterns === undefined) {
             hasUnrepresentableIndexPattern = true
+            dependencies.push(false)
             continue
           }
           if (patterns.length === 0) {
@@ -469,7 +526,7 @@ function compileJsonSchema(
                   ? type
                   : previous === false || type === false
                   ? false
-                  : appendJsonSchema(previous, type)
+                  : registerPendingOneOf(appendJsonSchema(previous, type))
               )
             }
           }
@@ -487,7 +544,8 @@ function compileJsonSchema(
             propertyNames.push(
               recur(
                 representation.indexSignatures[index].parameter,
-                [...path, "indexSignatures", index, "parameter"]
+                [...path, "indexSignatures", index, "parameter"],
+                dependencies
               )
             )
           }
@@ -519,14 +577,17 @@ function compileJsonSchema(
         return out
       }
       case "Union": {
-        const types = representation.types.map((type, index) => recur(type, [...path, "types", index]))
+        const branches: Array<Exactness> = []
+        const types = representation.types.map((type, index) => recur(type, [...path, "types", index], branches))
+        dependencies.push(branches)
         if (types.length === 0) return { not: {} }
         const mode = representation.options?.mode ?? "anyOf"
         if (mode === "anyOf" && types.length > 1) {
           const compacted = compactEnums(types)
           if (compacted !== undefined) return compacted
         }
-        return mode === "anyOf" ? { anyOf: types } : { oneOf: types }
+        if (mode === "oneOf") pendingOneOf.set(types, [branches, []])
+        return { [mode]: types }
       }
     }
   }
@@ -555,7 +616,9 @@ function compileJsonSchema(
         ) {
           return undefined
         }
-        const schema = recur(parameter, path)
+        const dependencies: Array<Exactness> = []
+        const schema = recur(parameter, path, dependencies)
+        if (!isExact(dependencies)) return undefined
         return schema.type === "string" && typeof schema.pattern === "string" &&
             hasOnlyKeywords(schema, "|type|pattern|title|description|default|examples|readOnly|writeOnly|")
           ? [schema.pattern]

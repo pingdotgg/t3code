@@ -83,7 +83,15 @@ test.provider.skipIf(outgoingEntitled)(
       );
       expect(error._tag).toEqual("OutgoingZoneTransfersNotAllowed");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!outgoingEntitled)(
@@ -151,7 +159,15 @@ test.provider.skipIf(!outgoingEntitled)(
       // Re-running destroy is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped singleton): there is no account-wide
@@ -189,5 +205,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

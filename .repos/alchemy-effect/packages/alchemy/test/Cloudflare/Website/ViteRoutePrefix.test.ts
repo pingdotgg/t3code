@@ -218,118 +218,131 @@ const evaluateSite = Effect.fn(function* (pageUrl: string, label: string) {
 
 // Tests are independent (per-test scratch stacks, private fixture clones),
 // so run them concurrently; suites are sequential by default.
-describe.concurrent("ViteRoutePrefix", () => {
-  test.provider(
-    "Vite: base from vite.config.ts serves the site on a path-prefixed zone route",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const zoneId = yield* resolveZoneId;
+describe.concurrent(
+  "ViteRoutePrefix",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "Vite: base from vite.config.ts serves the site on a path-prefixed zone route",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* purgeRoutes(zoneId, routePattern);
-        yield* ensureApexPlaceholder(zoneId);
+          yield* stack.destroy();
+          yield* purgeRoutes(zoneId, routePattern);
+          yield* ensureApexPlaceholder(zoneId);
 
-        const rootDir = yield* cloneFixture(spaFixtureDir, {
-          prefix: "alchemy-vite-route-",
-          tempRoot,
-          entries: ["index.html", "package.json", "src"],
-        });
-        yield* fs.writeFileString(path.join(rootDir, "index.html"), htmlPage);
-        // The base lives in the app's own Vite config — the deploy adopts
-        // the resolved value; nothing is configured on the alchemy side.
-        yield* fs.writeFileString(
-          path.join(rootDir, "vite.config.ts"),
-          `import { defineConfig } from "vite";\n\nexport default defineConfig({ base: "${basePath}/" });\n`,
-        );
-        const memoInclude = [
-          "index.html",
-          "src/**",
-          "package.json",
-          "vite.config.ts",
-        ];
-
-        let workerName: string | undefined;
-
-        yield* Effect.gen(function* () {
-          const site = yield* stack.deploy(
-            Effect.gen(function* () {
-              return yield* Cloudflare.Website.Vite("ViteRoutePrefix", {
-                rootDir,
-                workersDev: true,
-                compatibility: {
-                  date: "2024-09-23",
-                  flags: ["nodejs_compat"],
-                },
-                memo: { include: memoInclude },
-                assets: { notFoundHandling: "single-page-application" },
-                routes: [{ pattern: routePattern, zoneName }],
-              });
-            }),
+          const rootDir = yield* cloneFixture(spaFixtureDir, {
+            prefix: "alchemy-vite-route-",
+            tempRoot,
+            entries: ["index.html", "package.json", "src"],
+          });
+          yield* fs.writeFileString(path.join(rootDir, "index.html"), htmlPage);
+          // The base lives in the app's own Vite config — the deploy adopts
+          // the resolved value; nothing is configured on the alchemy side.
+          yield* fs.writeFileString(
+            path.join(rootDir, "vite.config.ts"),
+            `import { defineConfig } from "vite";\n\nexport default defineConfig({ base: "${basePath}/" });\n`,
           );
-          workerName = site.workerName;
+          const memoInclude = [
+            "index.html",
+            "src/**",
+            "package.json",
+            "vite.config.ts",
+          ];
 
-          expect(site.url).toBeDefined();
-          expect(site.routes).toHaveLength(1);
-          expect(site.routes[0]?.pattern).toEqual(routePattern);
+          let workerName: string | undefined;
 
-          // Control — the same manifest serves under the prefix on
-          // workers.dev too (the manifest is nested, not the route).
-          const control = yield* evaluateSite(
-            `${site.url!}${basePath}/`,
-            "workers.dev",
+          yield* Effect.gen(function* () {
+            const site = yield* stack.deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.Website.Vite("ViteRoutePrefix", {
+                  rootDir,
+                  workersDev: true,
+                  compatibility: {
+                    date: "2024-09-23",
+                    flags: ["nodejs_compat"],
+                  },
+                  memo: { include: memoInclude },
+                  assets: { notFoundHandling: "single-page-application" },
+                  routes: [{ pattern: routePattern, zoneName }],
+                });
+              }),
+            );
+            workerName = site.workerName;
+
+            expect(site.url).toBeDefined();
+            expect(site.routes).toHaveLength(1);
+            expect(site.routes[0]?.pattern).toEqual(routePattern);
+
+            // Control — the same manifest serves under the prefix on
+            // workers.dev too (the manifest is nested, not the route).
+            const control = yield* evaluateSite(
+              `${site.url!}${basePath}/`,
+              "workers.dev",
+            );
+            expect(control.page.status).toBe(200);
+            expect(control.page.body).toContain(marker);
+            // Vite `base` bakes the prefix into the emitted script URL.
+            expect(control.src).toContain(`${basePath}/`);
+            expect(control.script?.status).toBe(200);
+            expect(control.script?.contentType).toContain("javascript");
+
+            // The point of the feature: the site works end-to-end behind the
+            // path-prefixed zone route — HTML serves AND the module script it
+            // references resolves under the prefix (inside the route).
+            const routed = yield* evaluateSite(routePageUrl, "zone route");
+            expect(routed.page.status).toBe(200);
+            expect(routed.page.body).toContain(marker);
+            expect(routed.script?.status).toBe(200);
+            expect(routed.script?.contentType).toContain("javascript");
+            // `(hydrated)` is a string literal in the fixture's client module,
+            // so it proves the response is the real script — a 404 here would
+            // be answered by the SPA fallback with the shell, which contains
+            // the marker but never that literal.
+            expect(routed.script?.body).toContain("(hydrated)");
+            expect(
+              routed.script?.url.startsWith(`https://${zoneName}${basePath}/`),
+            ).toBe(true);
+
+            // Cloudflare's SPA fallback resolves `/index.html` at the manifest
+            // root, hard-coded — the shell is aliased back there so client-side
+            // routes under the base still boot the app.
+            const deep = yield* probeStable(
+              `https://${zoneName}${basePath}/deep/route`,
+            );
+            yield* Effect.log(
+              `[spa deep link] ${deep.status} ${deep.contentType ?? "-"} :: ${excerpt(deep.body)}`,
+            );
+            expect(deep.status).toBe(200);
+            expect(deep.body).toContain(marker);
+          }).pipe(
+            Effect.ensuring(
+              Effect.gen(function* () {
+                yield* stack.destroy().pipe(Effect.ignore);
+                yield* purgeRoutes(zoneId, routePattern).pipe(Effect.ignore);
+                if (workerName) {
+                  yield* waitForWorkerToBeDeleted(workerName, accountId).pipe(
+                    Effect.ignore,
+                  );
+                }
+              }),
+            ),
           );
-          expect(control.page.status).toBe(200);
-          expect(control.page.body).toContain(marker);
-          // Vite `base` bakes the prefix into the emitted script URL.
-          expect(control.src).toContain(`${basePath}/`);
-          expect(control.script?.status).toBe(200);
-          expect(control.script?.contentType).toContain("javascript");
-
-          // The point of the feature: the site works end-to-end behind the
-          // path-prefixed zone route — HTML serves AND the module script it
-          // references resolves under the prefix (inside the route).
-          const routed = yield* evaluateSite(routePageUrl, "zone route");
-          expect(routed.page.status).toBe(200);
-          expect(routed.page.body).toContain(marker);
-          expect(routed.script?.status).toBe(200);
-          expect(routed.script?.contentType).toContain("javascript");
-          // `(hydrated)` is a string literal in the fixture's client module,
-          // so it proves the response is the real script — a 404 here would
-          // be answered by the SPA fallback with the shell, which contains
-          // the marker but never that literal.
-          expect(routed.script?.body).toContain("(hydrated)");
-          expect(
-            routed.script?.url.startsWith(`https://${zoneName}${basePath}/`),
-          ).toBe(true);
-
-          // Cloudflare's SPA fallback resolves `/index.html` at the manifest
-          // root, hard-coded — the shell is aliased back there so client-side
-          // routes under the base still boot the app.
-          const deep = yield* probeStable(
-            `https://${zoneName}${basePath}/deep/route`,
-          );
-          yield* Effect.log(
-            `[spa deep link] ${deep.status} ${deep.contentType ?? "-"} :: ${excerpt(deep.body)}`,
-          );
-          expect(deep.status).toBe(200);
-          expect(deep.body).toContain(marker);
-        }).pipe(
-          Effect.ensuring(
-            Effect.gen(function* () {
-              yield* stack.destroy().pipe(Effect.ignore);
-              yield* purgeRoutes(zoneId, routePattern).pipe(Effect.ignore);
-              if (workerName) {
-                yield* waitForWorkerToBeDeleted(workerName, accountId).pipe(
-                  Effect.ignore,
-                );
-              }
-            }),
-          ),
-        );
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
-});
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
+  },
+);

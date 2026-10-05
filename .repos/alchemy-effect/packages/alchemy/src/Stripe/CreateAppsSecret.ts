@@ -23,6 +23,7 @@ import type { RuntimeContext } from "../RuntimeContext.ts";
  * ```
  *
  * @binding
+ * @product Secrets
  */
 export interface CreateAppsSecret extends Binding.Service<
   CreateAppsSecret,

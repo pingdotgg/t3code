@@ -5,9 +5,9 @@ import * as ByteSize from "effect/ByteSize"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
-import * as Etag from "effect/unstable/http/Etag"
-import type * as HttpBody from "effect/unstable/http/HttpBody"
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
+import * as Etag from "effect/http/Etag"
+import type * as HttpBody from "effect/http/HttpBody"
+import * as HttpPlatform from "effect/http/HttpPlatform"
 
 const fixture = `${import.meta.dirname}/fixtures/text.txt`
 
@@ -19,6 +19,24 @@ const readBody = (body: HttpBody.HttpBody) => {
 }
 
 describe("DenoHttpPlatform", () => {
+  it.effect("fileWebResponse preserves the requested content type", () =>
+    Effect.gen(function*() {
+      const platform = yield* HttpPlatform.HttpPlatform
+      const response = yield* platform.fileWebResponse(new File([], "script.js", { type: "text/plain" }), {
+        contentType: "text/javascript"
+      })
+      assert.strictEqual(response.headers["content-type"], "text/javascript")
+    }).pipe(Effect.provide(DenoHttpPlatform.layer)))
+
+  for (const [name, expected] of [["image.png", "image/png"], ["file", "application/octet-stream"]]) {
+    it.effect(`fileWebResponse resolves an empty File.type for ${name}`, () =>
+      Effect.gen(function*() {
+        const platform = yield* HttpPlatform.HttpPlatform
+        const response = yield* platform.fileWebResponse(new File([], name))
+        assert.strictEqual(response.headers["content-type"], expected)
+      }).pipe(Effect.provide(DenoHttpPlatform.layer)))
+  }
+
   for (
     const { name, offset, bytesToRead, expected } of [
       { name: "clamps bytesToRead beyond EOF", offset: 1, bytesToRead: 10, expected: "bcd" },

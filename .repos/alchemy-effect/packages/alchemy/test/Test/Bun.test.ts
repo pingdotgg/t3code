@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const fixturesDir = fileURLToPath(new URL("./fixtures/", import.meta.url));
 
-describe("Bun adapter fallback cleanup", () => {
+describe("Bun adapter fallback cleanup", { tags: ["unit", "local"] }, () => {
   test(
     "closes the shared scope when a user afterAll throws",
     async () => {

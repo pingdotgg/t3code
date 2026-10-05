@@ -1,8 +1,8 @@
 "@effect/cluster/Reply#ReplyEncoded":
-  replacement: "effect/unstable/cluster/Reply#Encoded"
+  replacement: "effect/cluster/Reply#Encoded"
   note: "Renamed to Encoded and no longer parameterized by an Rpc; payload fields are unknown and validated by Reply.Reply(rpc, codecFor) with the transport's codec."
 "@effect/cluster/Reply#serialize":
-  replacement: "effect/unstable/cluster/Reply#serialize"
+  replacement: "effect/cluster/Reply#serialize"
   note: "Moved into core Effect and now returns the non-generic Reply.Encoded wire union. Pass the transport's codecFor as the second argument."
 "@effect/cluster/Reply#TypeId":
   replacement: "none"

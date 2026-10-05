@@ -3,13 +3,13 @@ import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Option, Queue, Redacted } from "effect"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
+import type * as NetAddress from "effect/net/NetAddress"
 import * as Scope from "effect/Scope"
+import { Socket } from "effect/socket"
 import * as Stream from "effect/Stream"
-import type * as NetAddress from "effect/unstable/net/NetAddress"
-import { Socket } from "effect/unstable/socket"
 import * as Fs from "node:fs"
 import * as Net from "node:net"
-import { Duplex } from "node:stream"
+import { Duplex, PassThrough } from "node:stream"
 import * as Tls from "node:tls"
 import { fileURLToPath } from "node:url"
 import { vi } from "vitest"
@@ -45,6 +45,22 @@ const echoHandler = (socket: Socket.Socket, upgradeOptions?: Socket.TlsUpgradeOp
     Effect.scoped,
     Effect.catchTag("SocketError", () => Effect.void)
   )
+
+const makePassThrough = Effect.acquireRelease(
+  Effect.sync(() => new PassThrough()),
+  (duplex) => Effect.sync(() => duplex.destroy())
+)
+
+// A duplex-backed reader with one pull parked, waiting for bytes.
+const parkedPull = Effect.gen(function*() {
+  const duplex = yield* makePassThrough
+  const { pull } = yield* (yield* NodeSocket.fromDuplex(Effect.succeed(duplex))).reader
+  const parked = yield* Effect.forkChild(pull, { startImmediately: true })
+  return { duplex, pull, parked }
+})
+
+const decode = (batch: ReadonlyArray<Uint8Array | string>) =>
+  Buffer.concat(batch.map((chunk) => Buffer.from(chunk))).toString()
 
 const sendHelloWorld = (socket: Socket.Socket, upgradeOptions?: Socket.TlsUpgradeOptions) =>
   Effect.gen(function*() {
@@ -195,6 +211,84 @@ describe("Socket", () => {
         assert.strictEqual(batch[0], first)
         assert.strictEqual(batch[1], second)
       }
+    }))
+
+  it.live("handles reader scope closure during a parked pull read", () =>
+    Effect.gen(function*() {
+      const duplex = yield* makePassThrough
+      const socket = yield* NodeSocket.fromDuplex(Effect.succeed(duplex))
+      const readScope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(readScope, Exit.void))
+      const { pull } = yield* Scope.provide(socket.reader, readScope)
+      const parked = yield* Effect.forkChild(pull, { startImmediately: true })
+      let observed = ""
+      duplex.once("data", (chunk) => {
+        observed = chunk.toString()
+        Effect.runSync(Scope.close(readScope, Exit.void))
+      })
+
+      // Deliver synchronously so an exception stays in the test, rather than
+      // escaping from Node's next-tick readable notification.
+      duplex.write("hello")
+      duplex.emit("readable")
+      const error = yield* Fiber.join(parked).pipe(Effect.flip, Effect.timeout("1 second"))
+      assert.strictEqual(observed, "hello")
+      assert.strictEqual(error.reason._tag, "SocketCloseError")
+      if (error.reason._tag === "SocketCloseError") {
+        assert.strictEqual(error.reason.code, 1006)
+      }
+    }))
+
+  it.live("preserves a chunk when a parked pull is interrupted during read", () =>
+    Effect.gen(function*() {
+      const { duplex, parked, pull } = yield* parkedPull
+      duplex.once("data", () => Effect.runSync(Fiber.interrupt(parked)))
+      duplex.write("hello")
+      duplex.emit("readable")
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(parked).pipe(Effect.timeout("1 second"))))
+      const next = yield* pull.pipe(Effect.timeout("1 second"))
+      assert.strictEqual(decode(next), "hello")
+    }))
+
+  it.live("drains a retained chunk when EOF follows parked pull interruption", () =>
+    Effect.gen(function*() {
+      const { duplex, parked, pull } = yield* parkedPull
+      duplex.once("data", () => Effect.runSync(Fiber.interrupt(parked)))
+      const ended = new Promise<void>((resolve) => duplex.once("end", resolve))
+      duplex.end("hello")
+      duplex.emit("readable")
+      yield* Effect.promise(() => ended).pipe(Effect.timeout("1 second"))
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(parked)))
+      const next = yield* pull.pipe(Effect.timeout("1 second"))
+      assert.strictEqual(decode(next), "hello")
+      const error = yield* Effect.flip(pull).pipe(Effect.timeout("1 second"))
+      assert.strictEqual(error.reason._tag, "SocketCloseError")
+      if (error.reason._tag === "SocketCloseError") {
+        assert.strictEqual(error.reason.code, 1000)
+      }
+    }))
+
+  it.live("preserves order when a parked pull is replaced synchronously during read", () =>
+    Effect.gen(function*() {
+      const { duplex, parked, pull } = yield* parkedPull
+      const scope = yield* Effect.scope
+      let replacement: Fiber.Fiber<ReadonlyArray<Uint8Array | string>, Socket.SocketError> | undefined
+      duplex.once("data", () => {
+        Effect.runSync(Fiber.interrupt(parked))
+        // Make the second chunk available only after read() consumes the first,
+        // so this also exercises separate reads on Node versions that coalesce.
+        duplex.write("second")
+        replacement = Effect.runSync(Effect.forkIn(pull, scope, { startImmediately: true }))
+      })
+      duplex.write("first")
+      duplex.emit("readable")
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(parked)))
+      assert.isDefined(replacement)
+      let received = decode(yield* Fiber.join(replacement).pipe(Effect.timeout("1 second")))
+      while (received.length < "firstsecond".length) {
+        received += decode(yield* pull.pipe(Effect.timeout("1 second")))
+      }
+      assert.strictEqual(received, "firstsecond")
     }))
 
   it.live("respects a zero open timeout", () =>

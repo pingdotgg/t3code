@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api"
 import { User, UserId } from "../domain/User.ts"
 import { SearchQueryTooShort, UserNotFound } from "../domain/UserErrors.ts"
 import { Authorization } from "./Authorization.ts"

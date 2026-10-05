@@ -98,6 +98,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:waitingroom",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!entitledZoneId)(
@@ -176,7 +184,10 @@ test.provider.skipIf(!entitledZoneId)(
       // Destroy again — deletion is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:waitingroom", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): waiting rooms have no
@@ -224,5 +235,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:waitingroom", "live"],
+    timeout: 120_000,
+  },
 );

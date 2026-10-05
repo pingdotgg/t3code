@@ -16,7 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import {
   concatBytes,
   decodeOfsDeltaOffset,
@@ -181,7 +181,7 @@ const platform = <A, E, R>(
     Exclude<R, BunServices.BunServices>
   >;
 
-describe("fixture pack parsing", () => {
+describe("fixture pack parsing", { tags: ["unit", "local"] }, () => {
   it.live("empty pack: count 0, valid trailer, zero objects", () =>
     Effect.gen(function* () {
       const pack = yield* readFixture("empty.pack");
@@ -353,7 +353,7 @@ describe("fixture pack parsing", () => {
   );
 });
 
-describe("PackWriter round-trips", () => {
+describe("PackWriter round-trips", { tags: ["local"] }, () => {
   it.live(
     "rewrite of an ingested delta pack re-parses to an identical object set",
     () =>
@@ -380,6 +380,7 @@ describe("PackWriter round-trips", () => {
           expect(yield* hashObject(stored.type, stored.content)).toBe(oid);
         }
       }).pipe(platform),
+    { tags: ["unit"] },
   );
 
   it.live(

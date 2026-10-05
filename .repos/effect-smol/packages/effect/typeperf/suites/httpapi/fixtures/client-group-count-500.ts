@@ -1,6 +1,6 @@
 // Measures Client.Group derivation from one type-only group with 500 same-shaped endpoints.
 import { Schema } from "effect"
-import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Group } from "./_grouped-api-types.ts"
 
 Schema.String

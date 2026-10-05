@@ -1,7 +1,7 @@
 import type { ConnectClient } from "@/Cloudflare/Hyperdrive/Connect.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared routes exercised by the effect-worker fixture so every member of

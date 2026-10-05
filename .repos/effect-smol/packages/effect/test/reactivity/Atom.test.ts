@@ -14,9 +14,10 @@ import {
   Stream,
   SubscriptionRef
 } from "effect"
+import { KeyValueStore } from "effect/persistence"
+import { AsyncResult, Atom, AtomRegistry, Hydration, Reactivity } from "effect/reactivity"
 import { TestClock } from "effect/testing"
-import { KeyValueStore } from "effect/unstable/persistence"
-import { AsyncResult, Atom, AtomRegistry, Hydration, Reactivity } from "effect/unstable/reactivity"
+import { collectGarbage, getGc } from "../utils/gc.ts"
 
 declare const global: any
 
@@ -430,6 +431,73 @@ describe("Atom", { concurrent: false }, () => {
     assert(AsyncResult.isSuccess(result))
   })
 
+  it("effectFn concurrent preserves synchronous success and failure", () => {
+    const count = Atom.fn((n: number) => n === 1 ? Effect.succeed(n + 1) : Effect.fail("fail"), {
+      concurrent: true
+    })
+    const r = AtomRegistry.make()
+    r.mount(count)
+
+    r.set(count, 1)
+    const success = r.get(count)
+    assert(AsyncResult.isSuccess(success))
+    assert.strictEqual(success.value, 2)
+
+    r.set(count, 2)
+    const failure = r.get(count)
+    assert(AsyncResult.isFailure(failure))
+    const error = Cause.findErrorOption(failure.cause)
+    assert(Option.isSome(error))
+    assert.strictEqual(error.value, "fail")
+    r.dispose()
+  })
+
+  it("effectFn concurrent waits for earlier calls", async () => {
+    const latch = Latch.makeUnsafe()
+    const count = Atom.fn((n: number) => n === 1 ? latch.await.pipe(Effect.as(n)) : Effect.succeed(n), {
+      concurrent: true
+    })
+    const r = AtomRegistry.make()
+    r.mount(count)
+
+    r.set(count, 1)
+    assert(AsyncResult.isInitial(r.get(count)))
+    r.set(count, 2)
+    const waiting = r.get(count)
+    assert(AsyncResult.isInitial(waiting) && waiting.waiting)
+
+    latch.openUnsafe()
+    await Effect.runPromise(Effect.yieldNow)
+    const result = r.get(count)
+    assert(AsyncResult.isSuccess(result))
+    assert.strictEqual(result.value, 1)
+    r.dispose()
+  })
+
+  it("effectFn concurrent observes an earlier failure after a later success", async () => {
+    const latch = Latch.makeUnsafe()
+    const count = Atom.fn((n: number) =>
+      n === 1
+        ? latch.await.pipe(Effect.flatMap(() => Effect.fail("older failure")))
+        : Effect.succeed(n), { concurrent: true })
+    const r = AtomRegistry.make()
+    r.mount(count)
+
+    r.set(count, 1)
+    r.set(count, 2)
+    const waiting = r.get(count)
+    assert(AsyncResult.isInitial(waiting) && waiting.waiting)
+
+    latch.openUnsafe()
+    await Effect.runPromise(Effect.yieldNow)
+    const result = r.get(count)
+    assert(AsyncResult.isFailure(result))
+    const error = Cause.findErrorOption(result.cause)
+    assert(Option.isSome(error))
+    assert.strictEqual(error.value, "older failure")
+    r.dispose()
+  })
+
   it("effectFn initial", async () => {
     const count = Atom.fn((n: number) => Effect.succeed(n + 1), {
       initialValue: 0
@@ -525,6 +593,69 @@ describe("Atom", { concurrent: false }, () => {
 
     assert.strictEqual(registry.get(derived), 1)
     unsubscribe()
+  })
+
+  it("a stale dependent keeps its dependency", async () => {
+    const a = Atom.make(0)
+    let builds = 0
+    const dependency = Atom.make(() => ++builds)
+    const dependent = Atom.make((get) => get(a) + get(dependency)).pipe(Atom.keepAlive)
+    const r = AtomRegistry.make()
+    r.get(dependent)
+    r.set(a, 1)
+    await Effect.runPromise(Effect.yieldNow)
+    assert.strictEqual(r.get(dependent), 2)
+  })
+
+  it("a listener added to a stale node hears changes through a parent that rebuilds to the same value", () => {
+    const a = Atom.make(0)
+    const b = Atom.make(0)
+    const middle = Atom.make((get) => get(a) > 0 ? 1 : 0)
+    const derived = Atom.make((get) => get(middle) + get(b))
+    const r = AtomRegistry.make()
+    r.get(derived)
+    r.set(b, 5)
+    r.set(a, 1)
+    const seen: Array<number> = []
+    r.subscribe(derived, (value) => seen.push(value))
+    r.set(a, 0)
+    assert.deepStrictEqual(seen, [5])
+  })
+
+  it("recovers an observed derived atom after its build throws", () => {
+    const source = Atom.make(0)
+    const derived = Atom.make((get) => {
+      const value = get(source)
+      if (value === 1) throw new Error("build failed")
+      return value
+    })
+    const r = AtomRegistry.make()
+    const sourceValues: Array<number> = []
+    const derivedValues: Array<number> = []
+
+    assert.strictEqual(r.get(derived), 0)
+    r.subscribe(source, (value) => sourceValues.push(value))
+    r.subscribe(derived, (value) => derivedValues.push(value))
+
+    assert.throws(() => r.set(source, 1), /build failed/)
+    assert.deepStrictEqual(sourceValues, [1])
+
+    r.set(source, 2)
+    assert.deepStrictEqual(derivedValues, [2])
+  })
+
+  it("a build superseded while it runs is released", () => {
+    const p = Atom.make(0)
+    let finalized = 0
+    const n = Atom.make((get) => {
+      get.addFinalizer(() => finalized++)
+      if (get(p) === 0) get.set(p, 1)
+      return get(p)
+    })
+    const r = AtomRegistry.make()
+    r.subscribe(n, () => {})
+    r.get(n)
+    assert.strictEqual(finalized, 1)
   })
 
   it("refresh derived before mount resolves base effect", async () => {
@@ -937,6 +1068,29 @@ describe("Atom", { concurrent: false }, () => {
     }
   })
 
+  it.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
+    "family keeps a replacement atom when the collected atom is finalized late",
+    async () => {
+      vitest.useRealTimers()
+      const gc = await getGc()
+      const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+      const family = Atom.family((_: string) => Atom.make(0))
+
+      const older = new WeakRef(family("a"))
+      for (let i = 0; i < 8 && older.deref() !== undefined; i++) {
+        await tick()
+        gc()
+      }
+      assert.isUndefined(older.deref())
+
+      // Replace the collected atom before its finalizer gets a turn.
+      const current = family("a")
+      await Effect.runPromise(collectGarbage)
+
+      assert.strictEqual(family("a"), current)
+    }
+  )
+
   it("label", async () => {
     expect(
       Atom.make(0).pipe(Atom.withLabel("counter")).label![1]
@@ -1081,6 +1235,60 @@ describe("Atom", { concurrent: false }, () => {
     })
     expect(count).toEqual(1)
     expect(r.get(derived)).toEqual("2b")
+  })
+
+  it.each([
+    { existingListener: false, expected: [0] },
+    { existingListener: true, expected: [0, 0] }
+  ])("delivers a batched value to a late subscriber (existing listener: $existingListener)", ({
+    existingListener,
+    expected
+  }) => {
+    const r = AtomRegistry.make()
+    const state = Atom.make(existingListener ? 1 : 0)
+    const seen: Array<number> = []
+
+    Atom.batch(() => {
+      if (existingListener) {
+        r.subscribe(state, () => {})
+        r.set(state, 0)
+      } else {
+        r.get(state)
+      }
+      r.subscribe(state, (value) => seen.push(value), { immediate: true })
+    })
+
+    assert.deepStrictEqual(seen, expected)
+    r.dispose()
+  })
+
+  it("does not queue an initialValues notification without listeners", () => {
+    const state = Atom.make(0)
+    const seen: Array<number> = []
+
+    Atom.batch(() => {
+      const r = AtomRegistry.make({ initialValues: [Atom.initialValue(state, 10)] })
+      r.subscribe(state, (value) => seen.push(value), { immediate: true })
+    })
+
+    assert.deepStrictEqual(seen, [10])
+  })
+
+  it("runs Atom.fn writes from batch commit listeners", () => {
+    const registry = AtomRegistry.make()
+    const source = Atom.make(0)
+    const write = Atom.fn((value: number, get) => Effect.sync(() => get.registry.set(source, value)))
+    const seen: Array<number> = []
+    registry.mount(write)
+    registry.subscribe(source, (value) => seen.push(value))
+    registry.subscribe(source, (value) => {
+      if (value < 3) registry.set(write, value + 1)
+    })
+
+    Atom.batch(() => registry.set(source, 1))
+
+    assert.deepStrictEqual(seen, [1, 2, 3])
+    registry.dispose()
   })
 
   it("initialValues", async () => {
@@ -1874,7 +2082,7 @@ describe("Atom", { concurrent: false }, () => {
     unmount()
   })
 
-  test(`swr revalidates on stale remount when enabled`, async () => {
+  test(`swr revalidates after a stale remount returns`, async () => {
     const r = AtomRegistry.make()
     let runs = 0
     const base = Atom.make(Effect.sync(() => ++runs)).pipe(Atom.keepAlive)
@@ -1893,9 +2101,81 @@ describe("Atom", { concurrent: false }, () => {
     const unmount2 = r.mount(atom)
     result = r.get(atom)
     assert(AsyncResult.isSuccess(result))
+    assert.strictEqual(result.value, 1)
+    assert.strictEqual(runs, 1)
+
+    await Effect.runPromise(Effect.yieldNow)
+    result = r.get(atom)
+    assert(AsyncResult.isSuccess(result))
     assert.strictEqual(result.value, 2)
     assert.strictEqual(runs, 2)
     unmount2()
+  })
+
+  test(`swr cancels queued revalidation when unmounted`, async () => {
+    const r = AtomRegistry.make()
+    let runs = 0
+    const base = Atom.make(Effect.sync(() => ++runs)).pipe(Atom.keepAlive)
+    const atom = base.pipe(Atom.swr({ staleTime: 100 }))
+    r.get(base)
+    await vitest.advanceTimersByTimeAsync(101)
+
+    const unmount = r.mount(atom)
+    const result = r.get(atom)
+    assert(AsyncResult.isSuccess(result))
+    assert.strictEqual(result.value, 1)
+    unmount()
+    await Effect.runPromise(Effect.yieldNow)
+
+    assert.strictEqual(runs, 1)
+  })
+
+  test(`swr does not notify subscribers during a nested read`, async () => {
+    const r = AtomRegistry.make()
+    const events: Array<string> = []
+    let runs = 0
+    const base = Atom.make(Effect.sync(() => ++runs)).pipe(Atom.keepAlive)
+    const atom = base.pipe(Atom.swr({ staleTime: 100 }))
+    r.get(base)
+    await vitest.advanceTimersByTimeAsync(101)
+    const unsubscribe = r.subscribe(base, () => events.push("notified"))
+    const outer = Atom.make(() => {
+      events.push("read start")
+      const unmount = r.mount(atom)
+      const value = r.get(atom)
+      assert(AsyncResult.isSuccess(value))
+      assert.strictEqual(value.value, 1)
+      unmount()
+      events.push("read end")
+      return value
+    })
+
+    r.get(outer)
+    assert.deepStrictEqual(events, ["read start", "read end"])
+    await Effect.runPromise(Effect.yieldNow)
+    assert.deepStrictEqual(events, ["read start", "read end"])
+    assert.strictEqual(runs, 1)
+    unsubscribe()
+  })
+
+  test(`swr skips queued revalidation when the source becomes fresh`, async () => {
+    const r = AtomRegistry.make()
+    let runs = 0
+    const base = Atom.make(Effect.sync(() => ++runs)).pipe(Atom.keepAlive)
+    const atom = base.pipe(Atom.swr({ staleTime: 100 }))
+    r.get(base)
+    await vitest.advanceTimersByTimeAsync(101)
+
+    const unmount = r.mount(atom)
+    const result = r.get(atom)
+    assert(AsyncResult.isSuccess(result))
+    assert.strictEqual(result.value, 1)
+    assert.strictEqual(runs, 1)
+    r.refresh(base)
+    await Effect.runPromise(Effect.yieldNow)
+
+    assert.strictEqual(runs, 2)
+    unmount()
   })
 
   test(`swr does not revalidate on fresh remount when enabled`, async () => {

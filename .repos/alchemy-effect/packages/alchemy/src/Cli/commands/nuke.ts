@@ -3,7 +3,7 @@ import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import * as Nuke from "../../Alchemist/routes/nuke.ts";
 import * as CliKit from "../../Cli/CliKit/index.ts";
 import { formatElapsed } from "../Format.ts";

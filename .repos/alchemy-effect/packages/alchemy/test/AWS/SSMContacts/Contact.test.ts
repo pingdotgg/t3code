@@ -35,6 +35,7 @@ test.provider(
         "IncidentManagerNotOnboarded",
       ]).toContain(error._tag);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmcontacts", "live"] },
 );
 
 // Contacts require the Incident Manager replication set (the account
@@ -273,5 +274,13 @@ test.provider.skipIf(!process.env.AWS_TEST_INCIDENT_MANAGER)(
       expect(rotationError._tag).toBe("ResourceNotFoundException");
     }),
   // ensureReplicationSet may onboard Incident Manager (~1-2 min) on first run.
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ssmcontacts",
+      "provider:aws:ssmincidents",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

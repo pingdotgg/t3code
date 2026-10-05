@@ -1,16 +1,54 @@
 import { AnthropicClient } from "@effect/ai-anthropic"
 import * as Errors from "@effect/ai-anthropic/internal/errors"
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Effect, Layer, Redacted, type Schema } from "effect"
-import {
-  Headers,
-  HttpClient,
-  type HttpClientError,
-  type HttpClientRequest,
-  HttpClientResponse
-} from "effect/unstable/http"
+import { Context, Duration, Effect, Layer, Redacted, type Schema } from "effect"
+import { Headers, HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("AnthropicClient", () => {
+  it.effect("maps a gateway 400 without an Anthropic error envelope", () =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+      const error = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(error.reason._tag, "InvalidRequestError")
+      if (error.reason._tag !== "InvalidRequestError") return
+      assert.include(error.reason.description ?? "", "HTTP 400")
+      assert.include(error.reason.description ?? "", "gateway rejected request")
+      assert.strictEqual(error.reason.http?.response?.status, 400)
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 400,
+      body: { error: { message: "gateway rejected request" } }
+    }))))
+
+  it.effect("maps a gateway 429 without an Anthropic error envelope and preserves retry-after", () =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+      const error = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(error.reason._tag, "RateLimitError")
+      if (error.reason._tag !== "RateLimitError") return
+      assert.strictEqual(Duration.toMillis(error.reason.retryAfter!), 3000)
+      assert.strictEqual(error.reason.http?.response?.status, 429)
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 429,
+      headers: { "retry-after": "3" },
+      body: { error: { message: "gateway rate limit" } }
+    }))))
+
   it.effect("redacts the API key in AI error context", () =>
     Effect.gen(function*() {
       const client = yield* AnthropicClient.AnthropicClient
@@ -63,6 +101,10 @@ describe("AnthropicClient", () => {
         return yield* Effect.die(new Error("Expected AuthenticationError"))
       }
       assert.strictEqual(result.reason.kind, "InvalidKey")
+      assert.deepStrictEqual(result.reason.metadata?.anthropic, {
+        errorType: "authentication_error",
+        requestId: "req_anthropic"
+      })
       assert.strictEqual(
         result.reason.description,
         "invalid x-api-key (POST https://api.anthropic.com/v1/messages?beta=true) [type: authentication_error] [requestId: req_anthropic]"

@@ -1,10 +1,10 @@
-import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
+import { Generated, OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Schema, Stream } from "effect"
-import { LanguageModel } from "effect/unstable/ai"
-import * as Sse from "effect/unstable/encoding/Sse"
-import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { LanguageModel } from "effect/ai"
+import * as Sse from "effect/encoding/Sse"
+import { HttpClientRequest, HttpClientResponse } from "effect/http"
 
 const makeResponse = (overrides: Record<string, unknown> = {}) => ({
   id: "resp_123",
@@ -17,6 +17,36 @@ const makeResponse = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe("OpenAiSchema", () => {
+  describe("web search sources", () => {
+    it("preserves API sources in response history", () => {
+      const item = {
+        type: "web_search_call",
+        id: "ws_123",
+        status: "completed",
+        action: { type: "search", sources: [{ type: "api", name: "oai-weather" }] }
+      } as const
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(Generated.InputItem)(item), item)
+    })
+
+    it.each([
+      { type: "url" },
+      { type: "api" },
+      { type: "api", name: null },
+      { type: "unknown", name: "oai-weather" }
+    ])("rejects malformed search sources: %j", (source) => {
+      const item = {
+        type: "web_search_call",
+        id: "ws_123",
+        status: "completed",
+        action: { type: "search", sources: [source] }
+      }
+
+      assert.throws(() => Schema.decodeUnknownSync(Generated.WebSearchToolCall)(item))
+      assert.throws(() => Schema.decodeUnknownSync(Generated.InputItem)(item))
+    })
+  })
+
   it("accepts max reasoning effort", () => {
     const decoded = Schema.decodeUnknownSync(OpenAiSchema.CreateResponse)({
       reasoning: { effort: "max" }

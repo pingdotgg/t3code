@@ -13,18 +13,18 @@ import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
-import * as Redacted from "effect/Redacted"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner"
-import * as Migrator from "effect/unstable/sql/Migrator"
-import type { SqlClient } from "effect/unstable/sql/SqlClient"
-import type { SqlError } from "effect/unstable/sql/SqlError"
+import * as ChildProcess from "effect/process/ChildProcess"
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
+import * as Migrator from "effect/sql/Migrator"
+import type { SqlClient } from "effect/sql/SqlClient"
+import type { SqlError } from "effect/sql/SqlError"
+import * as Password from "./internal/password.ts"
 import { PgClient } from "./PgClient.ts"
 
 /**
  * @since 4.0.0
  */
-export * from "effect/unstable/sql/Migrator"
+export * from "effect/sql/Migrator"
 
 /**
  * Runs PostgreSQL SQL migrations using the configured clients. Schema dumps use `pg_dump` and require child process, filesystem, and path services.
@@ -45,7 +45,7 @@ export const run: <R2 = never>(
   | R2
 > = Migrator.make({
   dumpSchema(path, table) {
-    const pgDump = (args: Array<string>) =>
+    const pgDump = (args: Array<string>, password: string | undefined) =>
       Effect.gen(function*() {
         const sql = yield* PgClient
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
@@ -55,9 +55,7 @@ export const run: <R2 = never>(
             PGHOST: sql.config.host,
             PGPORT: sql.config.port?.toString(),
             PGUSER: sql.config.username,
-            PGPASSWORD: sql.config.password
-              ? Redacted.value(sql.config.password)
-              : undefined,
+            PGPASSWORD: password,
             PGDATABASE: sql.config.database,
             PGSSLMODE: sql.config.ssl ? "require" : "prefer"
           }
@@ -69,21 +67,20 @@ export const run: <R2 = never>(
           .replace(/\n{2,}/gm, "\n\n")
           .trim()
       }).pipe(
-        Effect.mapError((error) => new Migrator.MigrationError({ kind: "Failed", message: error.message }))
+        Effect.mapError((error) =>
+          new Migrator.MigrationError({ kind: "Failed", message: error.message, cause: error })
+        )
       )
 
-    const pgDumpSchema = pgDump(["--schema-only"])
-
-    const pgDumpMigrations = pgDump([
-      "--column-inserts",
-      "--data-only",
-      `--table=${table}`
-    ])
-
-    const pgDumpAll = Effect.map(
-      Effect.all([pgDumpSchema, pgDumpMigrations], { concurrency: 2 }),
-      ([schema, migrations]) => schema + "\n\n" + migrations
-    )
+    const pgDumpAll = Effect.gen(function*() {
+      const sql = yield* PgClient
+      const password = yield* Password.resolve(sql.config.password)
+      const [schema, migrations] = yield* Effect.all([
+        pgDump(["--schema-only"], password),
+        pgDump(["--column-inserts", "--data-only", `--table=${table}`], password)
+      ], { concurrency: 2 })
+      return schema + "\n\n" + migrations
+    })
 
     const pgDumpFile = (path: string) =>
       Effect.gen(function*() {
@@ -93,7 +90,9 @@ export const run: <R2 = never>(
         yield* fs.makeDirectory(path_.dirname(path), { recursive: true })
         yield* fs.writeFileString(path, dump)
       }).pipe(
-        Effect.mapError((error) => new Migrator.MigrationError({ kind: "Failed", message: error.message }))
+        Effect.mapError((error) =>
+          new Migrator.MigrationError({ kind: "Failed", message: error.message, cause: error })
+        )
       )
 
     return pgDumpFile(path)

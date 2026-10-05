@@ -3,8 +3,8 @@ import * as Test from "@/Test/Alchemy";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import TimestreamSinkFunctionLive, {
   TimestreamSinkFunction,
@@ -53,62 +53,76 @@ const countForHost = (baseUrl: string, host: string) =>
 // records through RecordsSink, read them back out-of-band via the Query
 // binding — is therefore gated behind AWS_TEST_TIMESTREAM=1 so an onboarded
 // account can run it unchanged.
-describe("AWS.Timestream.RecordsSink", () => {
-  test.provider.skipIf(!process.env.AWS_TEST_TIMESTREAM)(
-    "Lambda streams records through the sink; rejected records are dropped",
-    (stack) =>
-      Effect.gen(function* () {
-        const { functionUrl } = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* TimestreamSinkFunction;
-          }).pipe(Effect.provide(TimestreamSinkFunctionLive)),
-        );
-        expect(functionUrl).toBeTruthy();
-        const baseUrl = functionUrl!.replace(/\/+$/, "");
+describe(
+  "AWS.Timestream.RecordsSink",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:timestream",
+      "live",
+    ],
+  },
+  () => {
+    test.provider.skipIf(!process.env.AWS_TEST_TIMESTREAM)(
+      "Lambda streams records through the sink; rejected records are dropped",
+      (stack) =>
+        Effect.gen(function* () {
+          const { functionUrl } = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* TimestreamSinkFunction;
+            }).pipe(Effect.provide(TimestreamSinkFunctionLive)),
+          );
+          expect(functionUrl).toBeTruthy();
+          const baseUrl = functionUrl!.replace(/\/+$/, "");
 
-        // 150 records > the 100-record WriteRecords limit, so the sink must
-        // split the stream into two sequential batches.
-        yield* postJson(baseUrl, "/sink", { host: "sink-bulk", count: 150 });
+          // 150 records > the 100-record WriteRecords limit, so the sink must
+          // split the stream into two sequential batches.
+          yield* postJson(baseUrl, "/sink", { host: "sink-bulk", count: 150 });
 
-        // Memory-store writes are queryable near-immediately; retry a few
-        // times regardless.
-        const bulkCount = yield* countForHost(baseUrl, "sink-bulk").pipe(
-          Effect.flatMap((count) =>
-            count >= 150
-              ? Effect.succeed(count)
-              : Effect.fail(new Error(`only ${count} rows counted yet`)),
-          ),
-          Effect.retry({
-            schedule: Schedule.max([
-              Schedule.spaced("2 seconds"),
-              Schedule.recurs(10),
-            ]),
-          }),
-        );
-        expect(bulkCount).toBe(150);
+          // Memory-store writes are queryable near-immediately; retry a few
+          // times regardless.
+          const bulkCount = yield* countForHost(baseUrl, "sink-bulk").pipe(
+            Effect.flatMap((count) =>
+              count >= 150
+                ? Effect.succeed(count)
+                : Effect.fail(new Error(`only ${count} rows counted yet`)),
+            ),
+            Effect.retry({
+              schedule: Schedule.max([
+                Schedule.spaced("2 seconds"),
+                Schedule.recurs(10),
+              ]),
+            }),
+          );
+          expect(bulkCount).toBe(150);
 
-        // Partial failure: the out-of-retention record is permanently
-        // rejected (RejectedRecordsException); the sink drops it, lands the
-        // two valid records, and the handler still returns 200.
-        yield* postJson(baseUrl, "/sink-rejects", { host: "sink-rejects" });
+          // Partial failure: the out-of-retention record is permanently
+          // rejected (RejectedRecordsException); the sink drops it, lands the
+          // two valid records, and the handler still returns 200.
+          yield* postJson(baseUrl, "/sink-rejects", { host: "sink-rejects" });
 
-        const rejectsCount = yield* countForHost(baseUrl, "sink-rejects").pipe(
-          Effect.flatMap((count) =>
-            count >= 2
-              ? Effect.succeed(count)
-              : Effect.fail(new Error(`only ${count} rows counted yet`)),
-          ),
-          Effect.retry({
-            schedule: Schedule.max([
-              Schedule.spaced("2 seconds"),
-              Schedule.recurs(10),
-            ]),
-          }),
-        );
-        expect(rejectsCount).toBe(2);
+          const rejectsCount = yield* countForHost(
+            baseUrl,
+            "sink-rejects",
+          ).pipe(
+            Effect.flatMap((count) =>
+              count >= 2
+                ? Effect.succeed(count)
+                : Effect.fail(new Error(`only ${count} rows counted yet`)),
+            ),
+            Effect.retry({
+              schedule: Schedule.max([
+                Schedule.spaced("2 seconds"),
+                Schedule.recurs(10),
+              ]),
+            }),
+          );
+          expect(rejectsCount).toBe(2);
 
-        yield* stack.destroy();
-      }),
-    { timeout: 600_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 600_000 },
+    );
+  },
+);

@@ -2,7 +2,7 @@
 import * as Git from "alchemy/Git";
 import * as GitHttp from "alchemy/Git/Http";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { AppApi } from "./api.ts";
 import { checkRefChanges } from "./branch-policy.ts";
 

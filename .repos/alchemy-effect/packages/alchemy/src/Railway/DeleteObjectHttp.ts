@@ -8,6 +8,7 @@ import { DeleteObject } from "./DeleteObject.ts";
  * `deleteObject` against the Railway endpoint with the bucket's credentials.
  *
  * @layer
+ * @product Bucket
  * @provides Railway.DeleteObject
  */
 export const DeleteObjectHttp = Layer.effect(

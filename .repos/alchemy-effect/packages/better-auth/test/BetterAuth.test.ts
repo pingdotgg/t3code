@@ -3,8 +3,8 @@ import { APIError } from "better-auth/api";
 import { anonymous } from "better-auth/plugins/anonymous";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
   BetterAuth,
   BetterAuthApiError,
@@ -50,7 +50,7 @@ const provideTestEnv = <A, E, R>(
     Exclude<R, RuntimeContext>
   >;
 
-describe("BetterAuth (memory)", () => {
+describe("BetterAuth (memory)", { tags: ["unit", "local"] }, () => {
   it.live("signs up, signs in over HTTP, reads the session", () =>
     Effect.gen(function* () {
       const auth = yield* BetterAuth({
@@ -73,7 +73,10 @@ describe("BetterAuth (memory)", () => {
         auth.fetch,
         new Request("http://localhost:3000/auth/sign-in/email", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "192.0.2.1",
+          },
           body: JSON.stringify({
             email: "user@example.com",
             password: "password1234",

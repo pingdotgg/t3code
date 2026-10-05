@@ -10,9 +10,10 @@ import {
 } from "../node.ts";
 
 describe("makeNodeTarget", () => {
-  it("declares the node adapter contract octane.config.ts must satisfy", () => {
+  it("accepts native Node output without an application adapter", () => {
     const nodeTarget = makeNodeTarget({ compatibilityDate: "2026-03-10" });
     expect(nodeTarget.platform).toBe("node");
+    expect(nodeTarget.requiresAdapter).not.toBe(true);
     expect(nodeTarget.adapterName).toBe(ADAPTER_NAME);
     expect(nodeTarget.adapterPackage).toBe(ADAPTER_PACKAGE);
     expect(nodeTarget.serverEntryFileName).toBe(SERVER_ENTRY_FILE_NAME);

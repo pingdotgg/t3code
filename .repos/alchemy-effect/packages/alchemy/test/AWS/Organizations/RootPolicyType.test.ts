@@ -13,25 +13,28 @@ const { test } = Test.make({ providers: AWS.providers() });
 // (rootId, policyType). It runs read-only: outside an org management account
 // `listRoots` rejects with a typed error that degrades to [], so the assertion
 // holds without deploying anything.
-test.provider("list enumerates root policy types", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(RootPolicyType);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates root policy types",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(RootPolicyType);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    for (const item of all) {
-      expect(typeof item.rootId).toBe("string");
-      expect(item.rootId.length).toBeGreaterThan(0);
-      expect(typeof item.policyType).toBe("string");
-      if (item.rootArn !== undefined) {
-        expect(typeof item.rootArn).toBe("string");
+      for (const item of all) {
+        expect(typeof item.rootId).toBe("string");
+        expect(item.rootId.length).toBeGreaterThan(0);
+        expect(typeof item.policyType).toBe("string");
+        if (item.rootArn !== undefined) {
+          expect(typeof item.rootArn).toBe("string");
+        }
+        if (item.status !== undefined) {
+          expect(typeof item.status).toBe("string");
+        }
       }
-      if (item.status !== undefined) {
-        expect(typeof item.status).toBe("string");
-      }
-    }
-  }),
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );
 
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
@@ -120,5 +123,8 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:organizations", "live"],
+    timeout: 240_000,
+  },
 );

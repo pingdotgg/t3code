@@ -23,6 +23,7 @@ import type { RuntimeContext } from "../RuntimeContext.ts";
  * ```
  *
  * @binding
+ * @product Issuing
  */
 export interface CreateIssuingCard extends Binding.Service<
   CreateIssuingCard,

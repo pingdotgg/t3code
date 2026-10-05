@@ -46,77 +46,83 @@ const expectGone = (accountId: string, siteTag: string) =>
     }),
   );
 
-test.provider("create and delete a host (gray-clouded) site", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete a host (gray-clouded) site",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const site = yield* stack.deploy(
-      Cloudflare.Rum.Site("HostSite", {
-        host: `create.${zoneName}`,
-      }),
-    );
+      const site = yield* stack.deploy(
+        Cloudflare.Rum.Site("HostSite", {
+          host: `create.${zoneName}`,
+        }),
+      );
 
-    expect(site.siteTag).toBeTruthy();
-    expect(site.siteToken).toBeTruthy();
-    expect(site.snippet).toContain(site.siteToken);
-    expect(site.accountId).toEqual(accountId);
-    expect(site.host).toEqual(`create.${zoneName}`);
-    expect(site.autoInstall).toEqual(false);
+      expect(site.siteTag).toBeTruthy();
+      expect(site.siteToken).toBeTruthy();
+      expect(site.snippet).toContain(site.siteToken);
+      expect(site.accountId).toEqual(accountId);
+      expect(site.host).toEqual(`create.${zoneName}`);
+      expect(site.autoInstall).toEqual(false);
 
-    // Verify out-of-band against the live API.
-    const live = yield* getSite(accountId, site.siteTag);
-    expect(live.siteTag).toEqual(site.siteTag);
-    expect(live.host).toEqual(`create.${zoneName}`);
+      // Verify out-of-band against the live API.
+      const live = yield* getSite(accountId, site.siteTag);
+      expect(live.siteTag).toEqual(site.siteTag);
+      expect(live.host).toEqual(`create.${zoneName}`);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, site.siteTag);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, site.siteTag);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:rum", "live"] },
 );
 
-test.provider("update mutable props in place (same siteTag)", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "update mutable props in place (same siteTag)",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Cloudflare.Rum.Site("UpdateSite", {
-        host: `update.${zoneName}`,
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Cloudflare.Rum.Site("UpdateSite", {
+          host: `update.${zoneName}`,
+        }),
+      );
 
-    expect(initial.host).toEqual(`update.${zoneName}`);
-    expect(initial.autoInstall).toEqual(false);
+      expect(initial.host).toEqual(`update.${zoneName}`);
+      expect(initial.autoInstall).toEqual(false);
 
-    // Changing the hostname is an in-place update of the same site.
-    const updated = yield* stack.deploy(
-      Cloudflare.Rum.Site("UpdateSite", {
-        host: `update-v2.${zoneName}`,
-      }),
-    );
+      // Changing the hostname is an in-place update of the same site.
+      const updated = yield* stack.deploy(
+        Cloudflare.Rum.Site("UpdateSite", {
+          host: `update-v2.${zoneName}`,
+        }),
+      );
 
-    expect(updated.siteTag).toEqual(initial.siteTag);
-    expect(updated.siteToken).toEqual(initial.siteToken);
-    expect(updated.host).toEqual(`update-v2.${zoneName}`);
+      expect(updated.siteTag).toEqual(initial.siteTag);
+      expect(updated.siteToken).toEqual(initial.siteToken);
+      expect(updated.host).toEqual(`update-v2.${zoneName}`);
 
-    const live = yield* getSite(accountId, updated.siteTag);
-    expect(live.host).toEqual(`update-v2.${zoneName}`);
+      const live = yield* getSite(accountId, updated.siteTag);
+      expect(live.host).toEqual(`update-v2.${zoneName}`);
 
-    // Redeploying identical props is a no-op (still the same site).
-    const noop = yield* stack.deploy(
-      Cloudflare.Rum.Site("UpdateSite", {
-        host: `update-v2.${zoneName}`,
-      }),
-    );
-    expect(noop.siteTag).toEqual(initial.siteTag);
+      // Redeploying identical props is a no-op (still the same site).
+      const noop = yield* stack.deploy(
+        Cloudflare.Rum.Site("UpdateSite", {
+          host: `update-v2.${zoneName}`,
+        }),
+      );
+      expect(noop.siteTag).toEqual(initial.siteTag);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, initial.siteTag);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, initial.siteTag);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:rum", "live"] },
 );
 
 test.provider(
@@ -172,63 +178,77 @@ test.provider(
 
       yield* expectGone(accountId, replaced.siteTag);
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:rum",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates the deployed RUM site", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed RUM site",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Cloudflare.Rum.Site("ListSite", {
-        host: `list.${zoneName}`,
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Cloudflare.Rum.Site("ListSite", {
+          host: `list.${zoneName}`,
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Rum.Site);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Rum.Site);
+      const all = yield* provider.list();
 
-    expect(all.some((s) => s.siteTag === deployed.siteTag)).toBe(true);
+      expect(all.some((s) => s.siteTag === deployed.siteTag)).toBe(true);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:rum", "live"] },
 );
 
-test.provider("recreates after out-of-band delete", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "recreates after out-of-band delete",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const site = yield* stack.deploy(
-      Cloudflare.Rum.Site("HealSite", {
-        host: `heal.${zoneName}`,
-      }),
-    );
+      const site = yield* stack.deploy(
+        Cloudflare.Rum.Site("HealSite", {
+          host: `heal.${zoneName}`,
+        }),
+      );
 
-    // Delete the site out-of-band. A redeploy with identical props is a
-    // planner no-op, so change a prop to force reconcile — it must observe
-    // the site as missing and recreate it instead of failing on a 404.
-    yield* rum.deleteSiteInfo({ accountId, siteId: site.siteTag }).pipe(
-      Effect.retry({
-        while: (e) => e._tag === "Forbidden",
-        schedule: Schedule.exponential("500 millis"),
-        times: 8,
-      }),
-    );
+      // Delete the site out-of-band. A redeploy with identical props is a
+      // planner no-op, so change a prop to force reconcile — it must observe
+      // the site as missing and recreate it instead of failing on a 404.
+      yield* rum.deleteSiteInfo({ accountId, siteId: site.siteTag }).pipe(
+        Effect.retry({
+          while: (e) => e._tag === "Forbidden",
+          schedule: Schedule.exponential("500 millis"),
+          times: 8,
+        }),
+      );
 
-    const healed = yield* stack.deploy(
-      Cloudflare.Rum.Site("HealSite", {
-        host: `heal-v2.${zoneName}`,
-      }),
-    );
+      const healed = yield* stack.deploy(
+        Cloudflare.Rum.Site("HealSite", {
+          host: `heal-v2.${zoneName}`,
+        }),
+      );
 
-    expect(healed.siteTag).not.toEqual(site.siteTag);
-    expect(healed.host).toEqual(`heal-v2.${zoneName}`);
-    const live = yield* getSite(accountId, healed.siteTag);
-    expect(live.host).toEqual(`heal-v2.${zoneName}`);
+      expect(healed.siteTag).not.toEqual(site.siteTag);
+      expect(healed.host).toEqual(`heal-v2.${zoneName}`);
+      const live = yield* getSite(accountId, healed.siteTag);
+      expect(live.host).toEqual(`heal-v2.${zoneName}`);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectGone(accountId, healed.siteTag);
-  }).pipe(logLevel),
+      yield* expectGone(accountId, healed.siteTag);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:rum", "live"] },
 );

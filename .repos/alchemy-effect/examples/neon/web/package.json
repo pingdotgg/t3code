@@ -1,0 +1,9 @@
+{
+  "name": "neon-upload-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "vite build" },
+  "dependencies": { "@neondatabase/neon-js": "0.7.0-beta" },
+  "devDependencies": { "vite": "catalog:" }
+}

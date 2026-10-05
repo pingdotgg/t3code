@@ -70,7 +70,15 @@ test.provider.skipIf(external)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:devices",
+      "live",
+    ],
+    timeout: 90_000,
+  },
 );
 
 test.provider.skipIf(!external)(
@@ -126,7 +134,15 @@ test.provider.skipIf(!external)(
         .pipe(Effect.flip);
       expect(gone._tag).toEqual("DevicePostureIntegrationNotFound");
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:devices",
+      "live",
+    ],
+    timeout: 90_000,
+  },
 );
 
 // Canonical `list()` test (account collection): `list()` enumerates every
@@ -155,7 +171,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"],
+    timeout: 90_000,
+  },
 );
 
 // When an entitled account + reachable external provider is supplied via
@@ -201,5 +220,13 @@ test.provider.skipIf(!external)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:devices",
+      "live",
+    ],
+    timeout: 90_000,
+  },
 );

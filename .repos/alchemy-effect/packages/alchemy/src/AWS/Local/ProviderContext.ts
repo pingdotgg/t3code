@@ -154,10 +154,10 @@ const isProviderService = (value: unknown): value is ProviderService<any> =>
  * over the ambient context), so providers that resolve environment services
  * at layer construction see the override too.
  */
-export const provideProviderContext = <ROut, E, RIn>(
+export const provideProviderContext = <ROut, E, RIn, ServicesE>(
   providerLayer: Layer.Layer<ROut, E, RIn>,
-  services: Layer.Layer<any, any, never>,
-): Layer.Layer<ROut, any, RIn> =>
+  services: Layer.Layer<any, ServicesE, never>,
+): Layer.Layer<ROut, E | ServicesE, RIn> =>
   Layer.fromBuildMemo((memoMap, scope) =>
     Effect.gen(function* () {
       const ambient = yield* Effect.context<never>();
@@ -189,4 +189,4 @@ export const provideProviderContext = <ROut, E, RIn>(
       }
       return Context.makeUnsafe(wrapped) as Context.Context<ROut>;
     }),
-  ) as Layer.Layer<ROut, any, RIn>;
+  ) as Layer.Layer<ROut, E | ServicesE, RIn>;

@@ -33,7 +33,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { spawnSync } from "node:child_process";
 import { cloneFixture } from "../../Cloudflare/Utils/Fixture.ts";
 import EcsDevMainTask from "./fixtures/ecs-dev/main-task.ts";
@@ -291,530 +291,542 @@ const assertTornDown = Effect.fn(function* (options: {
 // `docker-credential-desktop` helper, which can wedge machine-wide under
 // concurrent access (the same helper-race class documented on
 // `Docker.image.push`). One build at a time keeps this file off that path.
-describe.sequential("EcsDev", () => {
-  test.provider.skipIf(!dockerAvailable)(
-    "dev mode runs a context-Dockerfile ECS task as a real local container",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.sequential(
+  "EcsDev",
+  { tags: ["provider:aws", "provider:aws:ecs", "local"] },
+  () => {
+    test.provider.skipIf(!dockerAvailable)(
+      "dev mode runs a context-Dockerfile ECS task as a real local container",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const outputs = yield* stack.deploy(
-          Effect.gen(function* () {
-            // Propless instantiation on purpose: pins the `news ?? {}`
-            // normalization in the Cluster reconciler (every ClusterProps
-            // field is optional, so `Cluster("Id")` is legal).
-            const cluster = yield* AWS.ECS.Cluster("EcsDevCluster");
-            const task = yield* AWS.ECS.Task("EcsDevTask", {
-              context: contextDir,
-              port: CONTEXT_PORT,
+          const outputs = yield* stack.deploy(
+            Effect.gen(function* () {
+              // Propless instantiation on purpose: pins the `news ?? {}`
+              // normalization in the Cluster reconciler (every ClusterProps
+              // field is optional, so `Cluster("Id")` is legal).
+              const cluster = yield* AWS.ECS.Cluster("EcsDevCluster");
+              const task = yield* AWS.ECS.Task("EcsDevTask", {
+                context: contextDir,
+                port: CONTEXT_PORT,
+                cpu: 256,
+                memory: 512,
+                // Bridge mode publishes the literal host port — the only
+                // host-reachable mode when floci runs inside a container.
+                networkMode: "bridge",
+                requiresCompatibilities: ["EC2"],
+                runtimePlatform: hostRuntimePlatform,
+              });
+              return { cluster, task };
+            }),
+          );
+
+          // --- Emulator-shaped identity: the live cloud can never mint these.
+          expect(outputs.cluster.clusterArn).toContain(":000000000000:");
+          expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
+          expect(outputs.task.taskRoleArn).toContain("::000000000000:");
+          expect(outputs.task.executionRoleArn).toContain("::000000000000:");
+          // The image was pushed to floci's loopback ECR registry.
+          expect(outputs.task.repositoryUri).toContain(".localhost:");
+          expect(outputs.task.imageUri).toContain(".localhost:");
+
+          // --- Stamped-mode proof.
+          for (const fqn of ["EcsDevCluster", "EcsDevTask"]) {
+            const row = yield* getState(fqn);
+            expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
+            expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
+          }
+
+          // --- Run the task: real container, HTTP marker round-trip.
+          const { taskId } = yield* runTaskRoundTrip({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            port: CONTEXT_PORT,
+            marker: "ecs-dev-local-marker",
+          });
+
+          // --- Destroy: the cluster delete stops the running task (container
+          // removed), and the task delete sweeps the definition + repository.
+          yield* stack.destroy();
+
+          yield* assertTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            taskId,
+          });
+
+          // The ECR repository holding the built image is gone from the
+          // emulator's registry too.
+          const repositories = yield* rawAwsJson({
+            service: "ecr",
+            region: FLOCI_REGION,
+            target: "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
+            contentType: "application/x-amz-json-1.1",
+            body: { repositoryNames: [outputs.task.repositoryName] },
+          });
+          expect(repositories.status).toBe(400); // RepositoryNotFoundException
+        }),
+      { timeout: 300_000 },
+    );
+
+    test.provider.skipIf(!dockerAvailable)(
+      "dev mode bundles a main-program ECS task and pushes through the local ECR registry",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const outputs = yield* stack.deploy(
+            Effect.gen(function* () {
+              const cluster = yield* AWS.ECS.Cluster("EcsDevMainCluster", {});
+              const task = yield* EcsDevMainTask;
+              return { cluster, task };
+            }),
+          );
+
+          expect(outputs.cluster.clusterArn).toContain(":000000000000:");
+          expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
+          expect(outputs.task.repositoryUri).toContain(".localhost:");
+
+          for (const fqn of ["EcsDevMainCluster", "EcsDevMainTask"]) {
+            const row = yield* getState(fqn);
+            expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
+            expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
+          }
+
+          const { taskId } = yield* runTaskRoundTrip({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            port: MAIN_PORT,
+            marker: "ecs-dev-main-marker",
+          });
+
+          yield* stack.destroy();
+
+          yield* assertTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            taskId,
+          });
+        }),
+      { timeout: 300_000 },
+    );
+
+    test.provider.skipIf(!dockerAvailable)(
+      "hot reloads a context-Dockerfile task without a deploy",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* stack.destroy();
+
+          // Clone the fixture so the hot-reload rewrite never touches the
+          // repo tree.
+          const clone = yield* cloneFixture(
+            `${import.meta.dirname}/fixtures/ecs-reload`,
+            { prefix: "ecs-reload-" },
+          );
+
+          const outputs = yield* stack.deploy(
+            Effect.gen(function* () {
+              const cluster = yield* AWS.ECS.Cluster("EcsReloadCluster");
+              const task = yield* AWS.ECS.Task("EcsReloadTask", {
+                context: clone,
+                port: RELOAD_PORT,
+                cpu: 256,
+                memory: 512,
+                networkMode: "bridge",
+                requiresCompatibilities: ["EC2"],
+                runtimePlatform: hostRuntimePlatform,
+              });
+              return { cluster, task };
+            }),
+          );
+          expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
+          expect(outputs.task.repositoryUri).toContain(".localhost:");
+
+          // Run the deployed revision out-of-band; marker v1 serves.
+          yield* runTaskRoundTrip({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            port: RELOAD_PORT,
+            marker: "ecs-reload-v1",
+          });
+
+          // Hot reload: rewrite the CLONED context — no deploy in between.
+          // The sidecar watch loop rebuilds the image, pushes the new
+          // content-hash tag, registers a new task definition revision, and
+          // restarts the running standalone task on it.
+          const swapStartedAt = Date.now();
+          yield* fs.writeFileString(
+            path.join(clone, "index.html"),
+            "ecs-reload-v2\n",
+          );
+          yield* pollMarker({
+            port: RELOAD_PORT,
+            marker: "ecs-reload-v2",
+            times: 90,
+          });
+          yield* Effect.log(
+            `context task hot reload observed in ${Date.now() - swapStartedAt}ms`,
+          );
+
+          yield* stack.destroy();
+          yield* assertFamilyTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            containerName: outputs.task.containerName,
+          });
+        }),
+      { timeout: 300_000 },
+    );
+
+    test.provider.skipIf(!dockerAvailable)(
+      "hot reloads a bundled-main task without a deploy",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* stack.destroy();
+
+          const clone = yield* cloneFixture(
+            `${import.meta.dirname}/fixtures/ecs-reload-main`,
+            { prefix: "ecs-reload-main-" },
+          );
+          const mainPath = path.join(clone, "server.ts");
+
+          const program = Effect.gen(function* () {
+            const cluster = yield* AWS.ECS.Cluster("EcsReloadMainCluster");
+            // Declared WITHOUT an inline impl — the platform marks it
+            // external and the bundle runs as-is (a plain Bun server).
+            const task = yield* AWS.ECS.Task("EcsReloadMainTask", {
+              main: mainPath,
+              image: "oven/bun:1",
+              port: MAIN_RELOAD_PORT,
               cpu: 256,
               memory: 512,
-              // Bridge mode publishes the literal host port — the only
-              // host-reachable mode when floci runs inside a container.
               networkMode: "bridge",
               requiresCompatibilities: ["EC2"],
               runtimePlatform: hostRuntimePlatform,
             });
             return { cluster, task };
-          }),
-        );
+          });
+          const outputs = yield* stack.deploy(program);
+          expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
+          expect(outputs.task.repositoryUri).toContain(".localhost:");
 
-        // --- Emulator-shaped identity: the live cloud can never mint these.
-        expect(outputs.cluster.clusterArn).toContain(":000000000000:");
-        expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
-        expect(outputs.task.taskRoleArn).toContain("::000000000000:");
-        expect(outputs.task.executionRoleArn).toContain("::000000000000:");
-        // The image was pushed to floci's loopback ECR registry.
-        expect(outputs.task.repositoryUri).toContain(".localhost:");
-        expect(outputs.task.imageUri).toContain(".localhost:");
-
-        // --- Stamped-mode proof.
-        for (const fqn of ["EcsDevCluster", "EcsDevTask"]) {
-          const row = yield* getState(fqn);
-          expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
-          expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
-        }
-
-        // --- Run the task: real container, HTTP marker round-trip.
-        const { taskId } = yield* runTaskRoundTrip({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          port: CONTEXT_PORT,
-          marker: "ecs-dev-local-marker",
-        });
-
-        // --- Destroy: the cluster delete stops the running task (container
-        // removed), and the task delete sweeps the definition + repository.
-        yield* stack.destroy();
-
-        yield* assertTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          taskId,
-        });
-
-        // The ECR repository holding the built image is gone from the
-        // emulator's registry too.
-        const repositories = yield* rawAwsJson({
-          service: "ecr",
-          region: FLOCI_REGION,
-          target: "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
-          contentType: "application/x-amz-json-1.1",
-          body: { repositoryNames: [outputs.task.repositoryName] },
-        });
-        expect(repositories.status).toBe(400); // RepositoryNotFoundException
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider.skipIf(!dockerAvailable)(
-    "dev mode bundles a main-program ECS task and pushes through the local ECR registry",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const outputs = yield* stack.deploy(
-          Effect.gen(function* () {
-            const cluster = yield* AWS.ECS.Cluster("EcsDevMainCluster", {});
-            const task = yield* EcsDevMainTask;
-            return { cluster, task };
-          }),
-        );
-
-        expect(outputs.cluster.clusterArn).toContain(":000000000000:");
-        expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
-        expect(outputs.task.repositoryUri).toContain(".localhost:");
-
-        for (const fqn of ["EcsDevMainCluster", "EcsDevMainTask"]) {
-          const row = yield* getState(fqn);
-          expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
-          expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
-        }
-
-        const { taskId } = yield* runTaskRoundTrip({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          port: MAIN_PORT,
-          marker: "ecs-dev-main-marker",
-        });
-
-        yield* stack.destroy();
-
-        yield* assertTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          taskId,
-        });
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider.skipIf(!dockerAvailable)(
-    "hot reloads a context-Dockerfile task without a deploy",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* stack.destroy();
-
-        // Clone the fixture so the hot-reload rewrite never touches the
-        // repo tree.
-        const clone = yield* cloneFixture(
-          `${import.meta.dirname}/fixtures/ecs-reload`,
-          { prefix: "ecs-reload-" },
-        );
-
-        const outputs = yield* stack.deploy(
-          Effect.gen(function* () {
-            const cluster = yield* AWS.ECS.Cluster("EcsReloadCluster");
-            const task = yield* AWS.ECS.Task("EcsReloadTask", {
-              context: clone,
-              port: RELOAD_PORT,
-              cpu: 256,
-              memory: 512,
-              networkMode: "bridge",
-              requiresCompatibilities: ["EC2"],
-              runtimePlatform: hostRuntimePlatform,
-            });
-            return { cluster, task };
-          }),
-        );
-        expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
-        expect(outputs.task.repositoryUri).toContain(".localhost:");
-
-        // Run the deployed revision out-of-band; marker v1 serves.
-        yield* runTaskRoundTrip({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          port: RELOAD_PORT,
-          marker: "ecs-reload-v1",
-        });
-
-        // Hot reload: rewrite the CLONED context — no deploy in between.
-        // The sidecar watch loop rebuilds the image, pushes the new
-        // content-hash tag, registers a new task definition revision, and
-        // restarts the running standalone task on it.
-        const swapStartedAt = Date.now();
-        yield* fs.writeFileString(
-          path.join(clone, "index.html"),
-          "ecs-reload-v2\n",
-        );
-        yield* pollMarker({
-          port: RELOAD_PORT,
-          marker: "ecs-reload-v2",
-          times: 90,
-        });
-        yield* Effect.log(
-          `context task hot reload observed in ${Date.now() - swapStartedAt}ms`,
-        );
-
-        yield* stack.destroy();
-        yield* assertFamilyTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          containerName: outputs.task.containerName,
-        });
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider.skipIf(!dockerAvailable)(
-    "hot reloads a bundled-main task without a deploy",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* stack.destroy();
-
-        const clone = yield* cloneFixture(
-          `${import.meta.dirname}/fixtures/ecs-reload-main`,
-          { prefix: "ecs-reload-main-" },
-        );
-        const mainPath = path.join(clone, "server.ts");
-
-        const program = Effect.gen(function* () {
-          const cluster = yield* AWS.ECS.Cluster("EcsReloadMainCluster");
-          // Declared WITHOUT an inline impl — the platform marks it
-          // external and the bundle runs as-is (a plain Bun server).
-          const task = yield* AWS.ECS.Task("EcsReloadMainTask", {
-            main: mainPath,
-            image: "oven/bun:1",
+          yield* runTaskRoundTrip({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
             port: MAIN_RELOAD_PORT,
-            cpu: 256,
-            memory: 512,
-            networkMode: "bridge",
-            requiresCompatibilities: ["EC2"],
-            runtimePlatform: hostRuntimePlatform,
-          });
-          return { cluster, task };
-        });
-        const outputs = yield* stack.deploy(program);
-        expect(outputs.task.taskDefinitionArn).toContain(":000000000000:");
-        expect(outputs.task.repositoryUri).toContain(".localhost:");
-
-        yield* runTaskRoundTrip({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          port: MAIN_RELOAD_PORT,
-          marker: "ecs-reload-main-v1",
-        });
-
-        // Hot reload: rewrite the CLONED program source. The sidecar's
-        // `Bundle.watch` (the deploy's exact rolldown module graph)
-        // triggers the rebuild → push → re-register → restart.
-        const source = yield* fs.readFileString(mainPath);
-        const swapStartedAt = Date.now();
-        yield* fs.writeFileString(
-          mainPath,
-          source.replace("ecs-reload-main-v1", "ecs-reload-main-v2"),
-        );
-        yield* pollMarker({
-          port: MAIN_RELOAD_PORT,
-          marker: "ecs-reload-main-v2",
-          times: 90,
-        });
-        yield* Effect.log(
-          `bundled-main task hot reload observed in ${Date.now() - swapStartedAt}ms`,
-        );
-
-        // A REPLAN after the watcher's swap must surface it. Persisted state
-        // still carries v1's code hash (the watcher updates the emulator and
-        // the sidecar's in-memory attrs, not the state store), so the dev
-        // diff plans an update — not a noop — and the fresh attrs flow to
-        // stack outputs. The reported bug had this replan noop, so
-        // `task.code.hash` never advanced and Actions keyed on it stayed
-        // skipped after a transitive-import change.
-        const replanned = yield* stack.deploy(program);
-        expect(replanned.task.code.hash).not.toBe(outputs.task.code.hash);
-        // And a second replan with nothing new IS a noop-equivalent: the
-        // attrs are settled, the hash stable.
-        const settled = yield* stack.deploy(program);
-        expect(settled.task.code.hash).toBe(replanned.task.code.hash);
-
-        yield* stack.destroy();
-        yield* assertFamilyTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.task.taskDefinitionArn,
-          containerName: outputs.task.containerName,
-        });
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider.skipIf(!dockerAvailable)(
-    "dev mode runs an image-owning ECS Service with hot reload",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* stack.destroy();
-
-        const clone = yield* cloneFixture(
-          `${import.meta.dirname}/fixtures/ecs-svc`,
-          { prefix: "ecs-svc-" },
-        );
-
-        const outputs = yield* stack.deploy(
-          Effect.gen(function* () {
-            const cluster = yield* AWS.ECS.Cluster("EcsDevSvcCluster");
-            const service = yield* AWS.ECS.Service("EcsDevService", {
-              cluster,
-              context: clone,
-              port: SVC_PORT,
-              cpu: 256,
-              memory: 512,
-              // Bridge mode publishes the literal host port — the only
-              // host-reachable mode when floci runs inside a container
-              // (managed ALB ingress is out of scope in dev: floci binds
-              // listener sockets inside its own container, and the managed
-              // `alchemy-floci` container only exposes the gateway port).
-              networkMode: "bridge",
-              requiresCompatibilities: ["EC2"],
-              launchType: "EC2",
-              desiredCount: 1,
-              runtimePlatform: hostRuntimePlatform,
-              deploymentStabilizationTimeout: "3 minutes",
-            });
-            return { cluster, service };
-          }),
-        );
-
-        // Emulator-shaped identity + stamped-mode proof.
-        expect(outputs.service.serviceArn).toContain(":000000000000:");
-        expect(outputs.service.taskDefinitionArn).toContain(":000000000000:");
-        expect(outputs.service.repositoryUri).toContain(".localhost:");
-        expect(outputs.service.status).toBe("ACTIVE");
-        for (const fqn of ["EcsDevSvcCluster", "EcsDevService"]) {
-          const row = yield* getState(fqn);
-          expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
-          expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
-        }
-
-        // The floci service scheduler launched the task itself — a REAL
-        // container serving the marker (no manual RunTask).
-        yield* pollMarker({ port: SVC_PORT, marker: "ecs-svc-v1", times: 60 });
-        expect(yield* runningContainerNames).toContain(
-          `-${outputs.service.containerName!}`,
-        );
-
-        // Hot reload: rewrite the CLONED context — no deploy in between.
-        // The sidecar watcher rebuilds + pushes the new content-hash tag,
-        // re-reconciles (updateService onto the new revision), and stops
-        // the old-revision task; the floci scheduler relaunches it.
-        const swapStartedAt = Date.now();
-        yield* fs.writeFileString(
-          path.join(clone, "index.html"),
-          "ecs-svc-v2\n",
-        );
-        yield* pollMarker({ port: SVC_PORT, marker: "ecs-svc-v2", times: 90 });
-        yield* Effect.log(
-          `service hot reload observed in ${Date.now() - swapStartedAt}ms`,
-        );
-
-        // Destroy drains the service (desiredCount 0 → tasks stopped),
-        // deletes it, then sweeps the task-definition infrastructure.
-        yield* stack.destroy();
-        yield* assertFamilyTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.service.taskDefinitionArn,
-          containerName: outputs.service.containerName!,
-        });
-        const services = (yield* (yield* rawEcs("DescribeServices", {
-          cluster: outputs.cluster.clusterName,
-          services: [outputs.service.serviceName],
-        })).json) as { services?: { status?: string }[] };
-        const activeServices = (services.services ?? []).filter(
-          (service) => service.status === "ACTIVE",
-        );
-        expect(activeServices).toEqual([]);
-      }),
-    { timeout: 300_000 },
-  );
-
-  /**
-   * A PROP-driven update — no file event — must roll the service's running
-   * containers onto the new task-definition revision. Regression: restart
-   * logic lived only in the file-watch trigger, so an engine reconcile
-   * (env change, inline-dockerfile edit) registered a new revision and
-   * `updateService`d onto it while the container kept serving the old one
-   * until the next source edit (`onReconciled` in DevWatchProvider).
-   */
-  test.provider.skipIf(!dockerAvailable)(
-    "rolls a service task on a prop-only env update",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const clone = yield* cloneFixture(
-          `${import.meta.dirname}/fixtures/ecs-env`,
-          { prefix: "ecs-env-" },
-        );
-
-        const declare = (env: string) =>
-          Effect.gen(function* () {
-            const cluster = yield* AWS.ECS.Cluster("EcsEnvCluster");
-            const service = yield* AWS.ECS.Service("EcsEnvService", {
-              cluster,
-              context: clone,
-              port: ENV_PORT,
-              cpu: 256,
-              memory: 512,
-              networkMode: "bridge",
-              requiresCompatibilities: ["EC2"],
-              launchType: "EC2",
-              desiredCount: 1,
-              runtimePlatform: hostRuntimePlatform,
-              deploymentStabilizationTimeout: "3 minutes",
-              env: { ROLL_ENV: env },
-            });
-            return { cluster, service };
+            marker: "ecs-reload-main-v1",
           });
 
-        const outputs = yield* stack.deploy(declare("roll-env-v1"));
-        yield* pollMarker({
-          port: ENV_PORT,
-          marker: "roll-env-v1",
-          path: "/env.txt",
-          times: 90,
-        });
+          // Hot reload: rewrite the CLONED program source. The sidecar's
+          // `Bundle.watch` (the deploy's exact rolldown module graph)
+          // triggers the rebuild → push → re-register → restart.
+          const source = yield* fs.readFileString(mainPath);
+          const swapStartedAt = Date.now();
+          yield* fs.writeFileString(
+            mainPath,
+            source.replace("ecs-reload-main-v1", "ecs-reload-main-v2"),
+          );
+          yield* pollMarker({
+            port: MAIN_RELOAD_PORT,
+            marker: "ecs-reload-main-v2",
+            times: 90,
+          });
+          yield* Effect.log(
+            `bundled-main task hot reload observed in ${Date.now() - swapStartedAt}ms`,
+          );
 
-        // The prop change: same fixture bytes, only the env differs. The
-        // engine registers a new revision; the running container must roll.
-        const swapStartedAt = Date.now();
-        const updated = yield* stack.deploy(declare("roll-env-v2"));
-        expect(updated.service.taskDefinitionArn).not.toBe(
-          outputs.service.taskDefinitionArn,
-        );
-        yield* pollMarker({
-          port: ENV_PORT,
-          marker: "roll-env-v2",
-          path: "/env.txt",
-          times: 90,
-        });
-        yield* Effect.log(
-          `prop-only service roll observed in ${Date.now() - swapStartedAt}ms`,
-        );
+          // A REPLAN after the watcher's swap must surface it. Persisted state
+          // still carries v1's code hash (the watcher updates the emulator and
+          // the sidecar's in-memory attrs, not the state store), so the dev
+          // diff plans an update — not a noop — and the fresh attrs flow to
+          // stack outputs. The reported bug had this replan noop, so
+          // `task.code.hash` never advanced and Actions keyed on it stayed
+          // skipped after a transitive-import change.
+          const replanned = yield* stack.deploy(program);
+          expect(replanned.task.code.hash).not.toBe(outputs.task.code.hash);
+          // And a second replan with nothing new IS a noop-equivalent: the
+          // attrs are settled, the hash stable.
+          const settled = yield* stack.deploy(program);
+          expect(settled.task.code.hash).toBe(replanned.task.code.hash);
 
-        yield* stack.destroy();
-        yield* assertFamilyTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: updated.service.taskDefinitionArn,
-          containerName: updated.service.containerName!,
-        });
-      }),
-    { timeout: 600_000 },
-  );
-  /**
-   * A `dockerfile` PATH that lives OUTSIDE the build context: the watcher
-   * must watch the Dockerfile's own directory in addition to the context
-   * (the `imageSourceTrigger` outside-context branch — previously never
-   * exercised by any test), and an edit to the Dockerfile itself must
-   * rebuild + roll with no deploy.
-   */
-  test.provider.skipIf(!dockerAvailable)(
-    "hot reloads a service whose Dockerfile lives outside the build context",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+          yield* stack.destroy();
+          yield* assertFamilyTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.task.taskDefinitionArn,
+            containerName: outputs.task.containerName,
+          });
+        }),
+      { timeout: 300_000 },
+    );
 
-        yield* stack.destroy();
+    test.provider.skipIf(!dockerAvailable)(
+      "dev mode runs an image-owning ECS Service with hot reload",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* stack.destroy();
 
-        const clone = yield* cloneFixture(
-          `${import.meta.dirname}/fixtures/ecs-ext`,
-          { prefix: "ecs-ext-" },
-        );
+          const clone = yield* cloneFixture(
+            `${import.meta.dirname}/fixtures/ecs-svc`,
+            { prefix: "ecs-svc-" },
+          );
 
-        const outputs = yield* stack.deploy(
-          Effect.gen(function* () {
-            const cluster = yield* AWS.ECS.Cluster("EcsExtCluster");
-            const service = yield* AWS.ECS.Service("EcsExtService", {
-              cluster,
-              context: path.join(clone, "site"),
-              dockerfile: path.join(clone, "Dockerfile.ecs"),
-              port: EXT_PORT,
-              cpu: 256,
-              memory: 512,
-              networkMode: "bridge",
-              requiresCompatibilities: ["EC2"],
-              launchType: "EC2",
-              desiredCount: 1,
-              runtimePlatform: hostRuntimePlatform,
-              deploymentStabilizationTimeout: "3 minutes",
+          const outputs = yield* stack.deploy(
+            Effect.gen(function* () {
+              const cluster = yield* AWS.ECS.Cluster("EcsDevSvcCluster");
+              const service = yield* AWS.ECS.Service("EcsDevService", {
+                cluster,
+                context: clone,
+                port: SVC_PORT,
+                cpu: 256,
+                memory: 512,
+                // Bridge mode publishes the literal host port — the only
+                // host-reachable mode when floci runs inside a container
+                // (managed ALB ingress is out of scope in dev: floci binds
+                // listener sockets inside its own container, and the managed
+                // `alchemy-floci` container only exposes the gateway port).
+                networkMode: "bridge",
+                requiresCompatibilities: ["EC2"],
+                launchType: "EC2",
+                desiredCount: 1,
+                runtimePlatform: hostRuntimePlatform,
+                deploymentStabilizationTimeout: "3 minutes",
+              });
+              return { cluster, service };
+            }),
+          );
+
+          // Emulator-shaped identity + stamped-mode proof.
+          expect(outputs.service.serviceArn).toContain(":000000000000:");
+          expect(outputs.service.taskDefinitionArn).toContain(":000000000000:");
+          expect(outputs.service.repositoryUri).toContain(".localhost:");
+          expect(outputs.service.status).toBe("ACTIVE");
+          for (const fqn of ["EcsDevSvcCluster", "EcsDevService"]) {
+            const row = yield* getState(fqn);
+            expect(`${fqn}:${row?.status}`).toBe(`${fqn}:created`);
+            expect(`${fqn}:${row?.providerMode}`).toBe(`${fqn}:local`);
+          }
+
+          // The floci service scheduler launched the task itself — a REAL
+          // container serving the marker (no manual RunTask).
+          yield* pollMarker({
+            port: SVC_PORT,
+            marker: "ecs-svc-v1",
+            times: 60,
+          });
+          expect(yield* runningContainerNames).toContain(
+            `-${outputs.service.containerName!}`,
+          );
+
+          // Hot reload: rewrite the CLONED context — no deploy in between.
+          // The sidecar watcher rebuilds + pushes the new content-hash tag,
+          // re-reconciles (updateService onto the new revision), and stops
+          // the old-revision task; the floci scheduler relaunches it.
+          const swapStartedAt = Date.now();
+          yield* fs.writeFileString(
+            path.join(clone, "index.html"),
+            "ecs-svc-v2\n",
+          );
+          yield* pollMarker({
+            port: SVC_PORT,
+            marker: "ecs-svc-v2",
+            times: 90,
+          });
+          yield* Effect.log(
+            `service hot reload observed in ${Date.now() - swapStartedAt}ms`,
+          );
+
+          // Destroy drains the service (desiredCount 0 → tasks stopped),
+          // deletes it, then sweeps the task-definition infrastructure.
+          yield* stack.destroy();
+          yield* assertFamilyTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.service.taskDefinitionArn,
+            containerName: outputs.service.containerName!,
+          });
+          const services = (yield* (yield* rawEcs("DescribeServices", {
+            cluster: outputs.cluster.clusterName,
+            services: [outputs.service.serviceName],
+          })).json) as { services?: { status?: string }[] };
+          const activeServices = (services.services ?? []).filter(
+            (service) => service.status === "ACTIVE",
+          );
+          expect(activeServices).toEqual([]);
+        }),
+      { timeout: 300_000 },
+    );
+
+    /**
+     * A PROP-driven update — no file event — must roll the service's running
+     * containers onto the new task-definition revision. Regression: restart
+     * logic lived only in the file-watch trigger, so an engine reconcile
+     * (env change, inline-dockerfile edit) registered a new revision and
+     * `updateService`d onto it while the container kept serving the old one
+     * until the next source edit (`onReconciled` in DevWatchProvider).
+     */
+    test.provider.skipIf(!dockerAvailable)(
+      "rolls a service task on a prop-only env update",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const clone = yield* cloneFixture(
+            `${import.meta.dirname}/fixtures/ecs-env`,
+            { prefix: "ecs-env-" },
+          );
+
+          const declare = (env: string) =>
+            Effect.gen(function* () {
+              const cluster = yield* AWS.ECS.Cluster("EcsEnvCluster");
+              const service = yield* AWS.ECS.Service("EcsEnvService", {
+                cluster,
+                context: clone,
+                port: ENV_PORT,
+                cpu: 256,
+                memory: 512,
+                networkMode: "bridge",
+                requiresCompatibilities: ["EC2"],
+                launchType: "EC2",
+                desiredCount: 1,
+                runtimePlatform: hostRuntimePlatform,
+                deploymentStabilizationTimeout: "3 minutes",
+                env: { ROLL_ENV: env },
+              });
+              return { cluster, service };
             });
-            return { cluster, service };
-          }),
-        );
 
-        yield* pollMarker({
-          port: EXT_PORT,
-          marker: "ecs-ext-content-v1",
-          times: 90,
-        });
-        yield* pollMarker({
-          port: EXT_PORT,
-          marker: "ecs-ext-baked-v1",
-          path: "/baked.txt",
-          times: 60,
-        });
+          const outputs = yield* stack.deploy(declare("roll-env-v1"));
+          yield* pollMarker({
+            port: ENV_PORT,
+            marker: "roll-env-v1",
+            path: "/env.txt",
+            times: 90,
+          });
 
-        // Edit the OUT-OF-CONTEXT Dockerfile — no deploy.
-        const swapStartedAt = Date.now();
-        const dockerfile = yield* fs.readFileString(
-          path.join(clone, "Dockerfile.ecs"),
-        );
-        yield* fs.writeFileString(
-          path.join(clone, "Dockerfile.ecs"),
-          dockerfile.replace("ecs-ext-baked-v1", "ecs-ext-baked-v2"),
-        );
-        yield* pollMarker({
-          port: EXT_PORT,
-          marker: "ecs-ext-baked-v2",
-          path: "/baked.txt",
-          times: 90,
-        });
-        yield* Effect.log(
-          `out-of-context Dockerfile reload observed in ${Date.now() - swapStartedAt}ms`,
-        );
+          // The prop change: same fixture bytes, only the env differs. The
+          // engine registers a new revision; the running container must roll.
+          const swapStartedAt = Date.now();
+          const updated = yield* stack.deploy(declare("roll-env-v2"));
+          expect(updated.service.taskDefinitionArn).not.toBe(
+            outputs.service.taskDefinitionArn,
+          );
+          yield* pollMarker({
+            port: ENV_PORT,
+            marker: "roll-env-v2",
+            path: "/env.txt",
+            times: 90,
+          });
+          yield* Effect.log(
+            `prop-only service roll observed in ${Date.now() - swapStartedAt}ms`,
+          );
 
-        // A context file edit still reloads too.
-        yield* fs.writeFileString(
-          path.join(clone, "site", "index.html"),
-          "ecs-ext-content-v2\n",
-        );
-        yield* pollMarker({
-          port: EXT_PORT,
-          marker: "ecs-ext-content-v2",
-          times: 90,
-        });
+          yield* stack.destroy();
+          yield* assertFamilyTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: updated.service.taskDefinitionArn,
+            containerName: updated.service.containerName!,
+          });
+        }),
+      { timeout: 600_000 },
+    );
+    /**
+     * A `dockerfile` PATH that lives OUTSIDE the build context: the watcher
+     * must watch the Dockerfile's own directory in addition to the context
+     * (the `imageSourceTrigger` outside-context branch — previously never
+     * exercised by any test), and an edit to the Dockerfile itself must
+     * rebuild + roll with no deploy.
+     */
+    test.provider.skipIf(!dockerAvailable)(
+      "hot reloads a service whose Dockerfile lives outside the build context",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
-        yield* assertFamilyTornDown({
-          clusterName: outputs.cluster.clusterName,
-          taskDefinitionArn: outputs.service.taskDefinitionArn,
-          containerName: outputs.service.containerName!,
-        });
-      }),
-    { timeout: 600_000 },
-  );
-}); // describe.sequential("EcsDev")
+          yield* stack.destroy();
+
+          const clone = yield* cloneFixture(
+            `${import.meta.dirname}/fixtures/ecs-ext`,
+            { prefix: "ecs-ext-" },
+          );
+
+          const outputs = yield* stack.deploy(
+            Effect.gen(function* () {
+              const cluster = yield* AWS.ECS.Cluster("EcsExtCluster");
+              const service = yield* AWS.ECS.Service("EcsExtService", {
+                cluster,
+                context: path.join(clone, "site"),
+                dockerfile: path.join(clone, "Dockerfile.ecs"),
+                port: EXT_PORT,
+                cpu: 256,
+                memory: 512,
+                networkMode: "bridge",
+                requiresCompatibilities: ["EC2"],
+                launchType: "EC2",
+                desiredCount: 1,
+                runtimePlatform: hostRuntimePlatform,
+                deploymentStabilizationTimeout: "3 minutes",
+              });
+              return { cluster, service };
+            }),
+          );
+
+          yield* pollMarker({
+            port: EXT_PORT,
+            marker: "ecs-ext-content-v1",
+            times: 90,
+          });
+          yield* pollMarker({
+            port: EXT_PORT,
+            marker: "ecs-ext-baked-v1",
+            path: "/baked.txt",
+            times: 60,
+          });
+
+          // Edit the OUT-OF-CONTEXT Dockerfile — no deploy.
+          const swapStartedAt = Date.now();
+          const dockerfile = yield* fs.readFileString(
+            path.join(clone, "Dockerfile.ecs"),
+          );
+          yield* fs.writeFileString(
+            path.join(clone, "Dockerfile.ecs"),
+            dockerfile.replace("ecs-ext-baked-v1", "ecs-ext-baked-v2"),
+          );
+          yield* pollMarker({
+            port: EXT_PORT,
+            marker: "ecs-ext-baked-v2",
+            path: "/baked.txt",
+            times: 90,
+          });
+          yield* Effect.log(
+            `out-of-context Dockerfile reload observed in ${Date.now() - swapStartedAt}ms`,
+          );
+
+          // A context file edit still reloads too.
+          yield* fs.writeFileString(
+            path.join(clone, "site", "index.html"),
+            "ecs-ext-content-v2\n",
+          );
+          yield* pollMarker({
+            port: EXT_PORT,
+            marker: "ecs-ext-content-v2",
+            times: 90,
+          });
+
+          yield* stack.destroy();
+          yield* assertFamilyTornDown({
+            clusterName: outputs.cluster.clusterName,
+            taskDefinitionArn: outputs.service.taskDefinitionArn,
+            containerName: outputs.service.containerName!,
+          });
+        }),
+      { timeout: 600_000 },
+    );
+  },
+); // describe.sequential("EcsDev")

@@ -1,3 +1,5 @@
+import type * as Redacted from "effect/Redacted";
+
 /**
  * The cluster-agnostic Kubernetes connection model.
  *
@@ -84,6 +86,31 @@ export type ConnectionAuth = {
 }[keyof AuthRegistry];
 
 /**
+ * A container registry the cluster's nodes can pull from. `Deployment` and
+ * `Job` workloads with a `main` program or a `context` Dockerfile are built
+ * on the deploying machine and pushed here as `<server>/<name>:<hash>`.
+ *
+ * Clusters whose platform adapter provides its own registry (EKS pushes to
+ * ECR) ignore this setting.
+ */
+export interface ContainerRegistry {
+  /**
+   * Registry host, optionally followed by the namespace images are pushed
+   * under — e.g. `localhost:5001`, `ghcr.io/acme`, or
+   * `us-docker.pkg.dev/my-project/apps`.
+   */
+  server: string;
+  /**
+   * Username for pushing. Omit `username` and `password` to push with the
+   * deploying machine's own Docker login (`docker login`, credential
+   * helpers).
+   */
+  username?: string;
+  /** Password or access token for pushing. */
+  password?: string | Redacted.Redacted<string>;
+}
+
+/**
  * A serializable description of how to reach and authenticate against a
  * Kubernetes API server.
  */
@@ -100,6 +127,18 @@ export interface Connection {
   insecureSkipTlsVerify?: boolean;
   /** How to authenticate — selects the {@link ClusterAdapter} by `kind`. */
   auth: ConnectionAuth;
+  /**
+   * Where `main` and `context` workloads push their images. Required for
+   * those sources unless the cluster's platform adapter provides a
+   * registry (EKS → ECR).
+   */
+  registry?: ContainerRegistry;
+  /**
+   * CPU architecture of the cluster's nodes — the default target of
+   * workload image builds when a workload doesn't set `architecture`.
+   * @default "amd64"
+   */
+  architecture?: "amd64" | "arm64";
 }
 
 /**
@@ -151,6 +190,16 @@ export const toConnection = (cluster: ClusterLike): Connection => {
  *   port: 8080,
  * });
  * ```
+ *
+ * Add a `registry` to build `main` programs and `context` Dockerfiles for
+ * the cluster:
+ *
+ * ```ts
+ * const cluster = Kubernetes.KubeConfig({
+ *   context: "prod-east",
+ *   registry: { server: "ghcr.io/acme" },
+ * });
+ * ```
  */
 export const KubeConfig = (options?: {
   /**
@@ -163,10 +212,25 @@ export const KubeConfig = (options?: {
    * @default the file's `current-context`
    */
   context?: string;
+  /**
+   * Where `main` and `context` workloads push their images. The cluster's
+   * nodes must be able to pull from it.
+   */
+  registry?: ContainerRegistry;
+  /**
+   * CPU architecture of the cluster's nodes, used as the default image
+   * build target.
+   * @default "amd64"
+   */
+  architecture?: "amd64" | "arm64";
 }): Connection => ({
   auth: {
     kind: "kubeconfig",
     path: options?.path,
     context: options?.context,
   },
+  ...(options?.registry !== undefined ? { registry: options.registry } : {}),
+  ...(options?.architecture !== undefined
+    ? { architecture: options.architecture }
+    : {}),
 });

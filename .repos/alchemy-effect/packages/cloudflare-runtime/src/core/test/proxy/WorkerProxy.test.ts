@@ -699,6 +699,63 @@ layer(services, { excludeTestServices: true })((it) => {
       expect(length).toBe(4 * 1024 * 1024);
     }),
   );
+
+  it.effect(
+    "answers Expect: 100-continue before the client sends the body",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* WorkerProxy.WorkerProxy;
+        const upstream = yield* serveUpstream(HTTP_WORKER);
+        const instance = yield* proxy.serve();
+        yield* instance.set(upstream);
+
+        // Two requests on one keep-alive connection. Each body is only
+        // sent after a `100 Continue` arrives; without one the request
+        // never completes and the test times out.
+        const transcript = yield* Effect.promise(
+          () =>
+            new Promise<string>((resolve, reject) => {
+              const socket = NodeNet.connect(
+                Number(instance.url.port),
+                instance.url.hostname,
+              );
+              socket.on("error", reject);
+              const bodies = ["first", "second"];
+              let received = "";
+              let continues = 0;
+              let responses = 0;
+              const send = (body: string) =>
+                socket.write(
+                  `POST /echo HTTP/1.1\r\nHost: ${instance.url.host}\r\nContent-Length: ${body.length}\r\nExpect: 100-continue\r\n\r\n`,
+                );
+              socket.on("data", (chunk) => {
+                received += chunk.toString();
+                const seen = received.split("HTTP/1.1 100 Continue").length - 1;
+                while (continues < seen) socket.write(bodies[continues++]!);
+                const done = (received.match(/echo:(first|second)/g) ?? [])
+                  .length;
+                if (done > responses) {
+                  responses = done;
+                  if (responses < bodies.length) send(bodies[responses]!);
+                  else {
+                    socket.end();
+                    resolve(received);
+                  }
+                }
+              });
+              send(bodies[0]!);
+            }),
+        );
+        // Each interim response precedes its final response
+        expect(transcript.indexOf("100 Continue")).toBeLessThan(
+          transcript.indexOf("200 OK"),
+        );
+        expect(transcript.split("100 Continue").length - 1).toBe(2);
+        expect(transcript).toContain("echo:first");
+        expect(transcript).toContain("echo:second");
+      }),
+    10_000,
+  );
 });
 
 const roundTrip = (url: URL, payload: string) =>

@@ -1,8 +1,3 @@
-import {
-  NODE_SERVE_ENTRY_FILE_NAME,
-  relativeClientDirExpression,
-  writeNodeServeEntry,
-} from "@alchemy.run/frontend-frameworks/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,6 +19,7 @@ import {
   type FrameworkSiteProps,
   type Website,
 } from "./FrameworkSite.ts";
+import { loadFrontendCore } from "../../Website/FrontendCore.ts";
 
 export interface StaticSiteProps extends Pick<
   FrameworkSiteProps,
@@ -189,6 +185,11 @@ export const StaticSite = (id: string, props: StaticSiteProps) =>
     const path = yield* Path.Path;
     const cwd = path.resolve(initialCwd, props.cwd ?? ".");
     const outdir = path.resolve(cwd, props.outdir);
+    const {
+      NODE_SERVE_ENTRY_FILE_NAME,
+      relativeClientDirExpression,
+      writeNodeServeEntry,
+    } = yield* loadFrontendCore;
     const servePath = path.join(
       path.dirname(outdir),
       NODE_SERVE_ENTRY_FILE_NAME,

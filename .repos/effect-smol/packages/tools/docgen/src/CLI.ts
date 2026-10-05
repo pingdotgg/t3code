@@ -6,13 +6,13 @@
  * @since 0.6.0
  */
 import * as Array from "effect/Array"
+import * as CliError from "effect/cli/CliError"
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import * as CliError from "effect/unstable/cli/CliError"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
 import PackageJson from "../package.json" with { type: "json" }
 import * as Configuration from "./Configuration.ts"
 import * as Core from "./Core.ts"

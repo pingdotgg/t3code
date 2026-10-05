@@ -8,6 +8,7 @@ import { makeHttpStripeAccountBinding } from "./StripeHttp.ts";
  * Function or Worker Effect.
  *
  * @layer
+ * @product Terminal
  * @provides Stripe.CreateTerminalReader
  */
 export const CreateTerminalReaderHttp = Layer.effect(

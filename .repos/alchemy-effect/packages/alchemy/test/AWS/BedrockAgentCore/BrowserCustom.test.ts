@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:bedrockagentcore", "live"] },
 );
 
 const assertBrowserGone = (browserId: string) =>
@@ -80,5 +81,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertBrowserGone(browser.browserId);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:bedrockagentcore", "live"],
+    timeout: 120_000,
+  },
 );

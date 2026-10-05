@@ -68,45 +68,54 @@ const writeKubeconfig = Effect.gen(function* () {
 });
 
 describe("Kubernetes.KubeConfig", (it) => {
-  it.effect("resolves the current-context's cluster and static token", () =>
-    Effect.gen(function* () {
-      const file = yield* writeKubeconfig;
-      const transport = yield* connectCluster(
-        Kubernetes.KubeConfig({ path: file }),
-      );
-      expect(transport.endpoint).toBe("https://token.example:6443");
-      expect(
-        Buffer.from(transport.certificateAuthorityData!, "base64").toString(
-          "utf8",
-        ),
-      ).toBe(CA_PEM);
-      const headers = yield* transport.headers;
-      expect(headers.Authorization).toBe("Bearer static-test-token");
-    }),
+  it.effect(
+    "resolves the current-context's cluster and static token",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* writeKubeconfig;
+        const transport = yield* connectCluster(
+          Kubernetes.KubeConfig({ path: file }),
+        );
+        expect(transport.endpoint).toBe("https://token.example:6443");
+        expect(
+          Buffer.from(transport.certificateAuthorityData!, "base64").toString(
+            "utf8",
+          ),
+        ).toBe(CA_PEM);
+        const headers = yield* transport.headers;
+        expect(headers.Authorization).toBe("Bearer static-test-token");
+      }),
+    { tags: ["unit", "provider:kubernetes", "local"] },
   );
 
-  it.effect("mints credentials through an exec plugin context", () =>
-    Effect.gen(function* () {
-      const file = yield* writeKubeconfig;
-      const transport = yield* connectCluster(
-        Kubernetes.KubeConfig({ path: file, context: "exec-ctx" }),
-      );
-      expect(transport.endpoint).toBe("https://exec.example:6443");
-      expect(transport.insecureSkipTlsVerify).toBe(true);
-      const headers = yield* transport.headers;
-      expect(headers.Authorization).toBe("Bearer exec-minted-token");
-    }),
+  it.effect(
+    "mints credentials through an exec plugin context",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* writeKubeconfig;
+        const transport = yield* connectCluster(
+          Kubernetes.KubeConfig({ path: file, context: "exec-ctx" }),
+        );
+        expect(transport.endpoint).toBe("https://exec.example:6443");
+        expect(transport.insecureSkipTlsVerify).toBe(true);
+        const headers = yield* transport.headers;
+        expect(headers.Authorization).toBe("Bearer exec-minted-token");
+      }),
+    { tags: ["unit", "provider:kubernetes", "local"] },
   );
 
-  it.effect("an unknown context fails with a typed KubeConfigError", () =>
-    Effect.gen(function* () {
-      const file = yield* writeKubeconfig;
-      const result = yield* Effect.result(
-        connectCluster(
-          Kubernetes.KubeConfig({ path: file, context: "missing" }),
-        ),
-      );
-      expect(result._tag).toBe("Failure");
-    }),
+  it.effect(
+    "an unknown context fails with a typed KubeConfigError",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* writeKubeconfig;
+        const result = yield* Effect.result(
+          connectCluster(
+            Kubernetes.KubeConfig({ path: file, context: "missing" }),
+          ),
+        );
+        expect(result._tag).toBe("Failure");
+      }),
+    { tags: ["unit", "provider:kubernetes", "local"] },
   );
 });

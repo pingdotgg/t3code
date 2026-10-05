@@ -113,6 +113,37 @@ describe("toEquivalence", () => {
     assertFalse(equivalence(["head", "tail", 1, true, "A"], ["head", "tail", 1, true, "B"]))
   })
 
+  describe("rest elements", () => {
+    // Pairwise distinct, so a rest element read at the wrong index is observable.
+    const Mod = (n: number) =>
+      Schema.Number.annotate({
+        toEquivalence: (): Equivalence.Equivalence<number> => Equivalence.make((a, b) => a % n === b % n)
+      })
+
+    it("one trailing element after the rest element", () => {
+      const schema = Schema.TupleWithRest(Schema.Tuple([Mod(2)]), [Mod(3), Mod(5)])
+      const equivalence = Schema.toEquivalence(schema)
+      assertTrue(equivalence([2, 5], [4, 10]))
+      assertFalse(equivalence([2, 5], [4, 7]))
+      assertTrue(equivalence([2, 3, 5], [4, 6, 10]))
+      assertFalse(equivalence([2, 3, 5], [4, 7, 10]))
+      assertFalse(equivalence([2, 3, 5], [4, 6, 7]))
+      assertTrue(equivalence([2, 3, 6, 5], [4, 6, 9, 10]))
+      assertFalse(equivalence([2, 3, 6, 5], [4, 6, 10, 10]))
+    })
+
+    it("multiple trailing elements after the rest element", () => {
+      const equivalence = Schema.toEquivalence(
+        Schema.TupleWithRest(Schema.Tuple([Mod(2)]), [Mod(3), Mod(5), Mod(7)])
+      )
+      assertTrue(equivalence([2, 5, 7], [4, 10, 14]))
+      assertFalse(equivalence([2, 5, 7], [4, 7, 14]))
+      assertFalse(equivalence([2, 5, 7], [4, 10, 9]))
+      assertTrue(equivalence([2, 3, 5, 7], [4, 6, 10, 14]))
+      assertFalse(equivalence([2, 3, 5, 7], [4, 7, 10, 14]))
+    })
+  })
+
   describe("Struct", () => {
     it("should fail on non-record inputs", () => {
       const schema = Schema.Struct({ a: Schema.String })
@@ -259,6 +290,36 @@ describe("toEquivalence", () => {
   })
 
   describe("suspend", () => {
+    it("reuses the compiled recursive body for deeper values", () => {
+      interface Tree {
+        readonly value: number
+        readonly children: ReadonlyArray<Tree>
+      }
+      let derivations = 0
+      const value = Schema.Number.annotate({
+        toEquivalence: () => {
+          derivations++
+          return Equivalence.strictEqual<number>()
+        }
+      })
+      const schema = Schema.Struct({
+        value,
+        children: Schema.Array(Schema.suspend((): Schema.Codec<Tree> => schema))
+      })
+      const make = (depth: number, leafValue = 0): Tree => ({
+        value: depth === 0 ? leafValue : depth,
+        children: depth === 0 ? [] : [make(depth - 1, leafValue)]
+      })
+      const equivalence = Schema.toEquivalence(schema)
+
+      strictEqual(derivations, 1)
+      for (const depth of [1, 8, 32]) {
+        assertTrue(equivalence(make(depth), make(depth)))
+        assertFalse(equivalence(make(depth), make(depth, -1)))
+        strictEqual(derivations, 1)
+      }
+    })
+
     it("recursive schema", () => {
       interface A {
         readonly a: string

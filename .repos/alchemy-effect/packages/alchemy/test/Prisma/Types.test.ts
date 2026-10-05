@@ -54,14 +54,20 @@ const failedFlatDatabaseWithUnknownRegion: DatabaseCreateResult = {
   region: null,
 };
 
-describe("Prisma API types", () => {
-  it("mirror nullable database sources and optional create-time secrets", () => {
-    expect(nullableDatabaseSource).toBeNull();
-    expect(endpointSecretMayBeAbsent.direct?.connectionString).toBeUndefined();
-    expect(validDatabaseSourceInput.type).toBe("backup");
-    expect(invalidDatabaseSourceInput.type).toBe("snapshot");
-    expect("project" in projectCreateDatabaseWithoutProject).toBe(false);
-    expect(failedFlatDatabaseWithUnknownRegion.status).toBe("failure");
-    expect(failedFlatDatabaseWithUnknownRegion.region).toBeNull();
-  });
-});
+describe(
+  "Prisma API types",
+  { tags: ["unit", "provider:prisma", "local"] },
+  () => {
+    it("mirror nullable database sources and optional create-time secrets", () => {
+      expect(nullableDatabaseSource).toBeNull();
+      expect(
+        endpointSecretMayBeAbsent.direct?.connectionString,
+      ).toBeUndefined();
+      expect(validDatabaseSourceInput.type).toBe("backup");
+      expect(invalidDatabaseSourceInput.type).toBe("snapshot");
+      expect("project" in projectCreateDatabaseWithoutProject).toBe(false);
+      expect(failedFlatDatabaseWithUnknownRegion.status).toBe("failure");
+      expect(failedFlatDatabaseWithUnknownRegion.region).toBeNull();
+    });
+  },
+);

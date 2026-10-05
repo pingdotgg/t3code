@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Queue from "effect/Queue"
-import * as Worker from "effect/unstable/workers/Worker"
+import * as Worker from "effect/workers/Worker"
 import { Worker as NativeWorker } from "node:worker_threads"
 
 const fixture = new URL("./fixtures/worker-runner.ts", import.meta.url)

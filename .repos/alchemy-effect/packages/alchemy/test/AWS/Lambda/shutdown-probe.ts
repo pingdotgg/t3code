@@ -1,7 +1,7 @@
 import * as AWS from "@/AWS/index.ts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Probe for Lambda's Shutdown phase.

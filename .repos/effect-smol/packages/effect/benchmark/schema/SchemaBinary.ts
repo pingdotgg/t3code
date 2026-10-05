@@ -1,5 +1,5 @@
 import { Effect, Schema, Stream } from "effect"
-import { Ndjson, SchemaBinary } from "effect/unstable/encoding"
+import { Ndjson, SchemaBinary } from "effect/encoding"
 import assert from "node:assert/strict"
 import { gzipSync, zstdCompressSync } from "node:zlib"
 import protobuf, { type Message, type Type } from "protobufjs"

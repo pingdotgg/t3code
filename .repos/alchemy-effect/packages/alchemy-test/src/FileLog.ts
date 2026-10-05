@@ -1,3 +1,4 @@
+import { formatPlanPreview } from "./Plan.ts";
 /**
  * Persistent run log: every test's pass/failure followed by its captured
  * output, appended to `.alchemy/log/test.log` as the run progresses —
@@ -30,6 +31,10 @@ const GLYPH = {
 /** Render an event as a log chunk; `undefined` = nothing to write. */
 export const formatEvent = (event: TestEvent): string | undefined => {
   switch (event._tag) {
+    case "PlanPreview":
+      return `${formatPlanPreview(event.phases)}\n`;
+    case "PlanPhaseStart":
+      return `Plan phase ${event.phase}/${event.phases}: ${event.tests} tests\n`;
     case "RunStart":
       return `running ${event.tests.length} tests from ${event.files} files (${new Date().toISOString()})\n\n`;
     case "TestEnd": {
@@ -69,6 +74,9 @@ export const formatEvent = (event: TestEvent): string | undefined => {
         `Tests: ${s.failed} failed | ${s.passed} passed` +
         (s.skipped > 0 ? ` | ${s.skipped} skipped` : "") +
         (s.todo > 0 ? ` | ${s.todo} todo` : "") +
+        (s.plan
+          ? ` | ${s.plan.found} found | ${s.plan.selected} selected by plan | ${s.plan.excluded} excluded by plan`
+          : "") +
         ` (${s.files} files, ${formatDuration(s.durationMs)})\n`
       );
     }

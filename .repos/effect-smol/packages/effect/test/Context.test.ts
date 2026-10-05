@@ -149,6 +149,35 @@ describe("Context", () => {
     strictEqual(added.baseHits, 0)
   })
 
+  it("defers flattening a large base until enough base hits", () => {
+    const keys = Array.from({ length: 32 }, (_, i) => Context.Service<number>(`ContextTest/Large${i}`))
+    const base = Context.makeUnsafe(new Map(keys.map((key, i) => [key.key, i])))
+    const context = Context.add(base, A, -1)
+    const impl = context as any
+
+    for (let i = 0; i < 8; i++) {
+      strictEqual(Context.getUnsafe(context, keys[0]), 0)
+    }
+    strictEqual(impl._flat, undefined)
+    strictEqual(impl.base, base.mapUnsafe)
+    strictEqual(Context.getUnsafe(context, A), -1)
+    assertTrue(Option.isNone(Context.getOption(context, B)))
+    strictEqual(impl.baseHits, 8)
+
+    for (let i = 8; i < 31; i++) {
+      strictEqual(Context.getUnsafe(context, keys[i]), i)
+    }
+    strictEqual(impl._flat, undefined)
+    strictEqual(impl.base, base.mapUnsafe)
+
+    strictEqual(Context.getUnsafe(context, keys[31]), 31)
+    assertTrue(impl._flat instanceof Map)
+    strictEqual(impl.overlay, undefined)
+    strictEqual(impl.baseHits, 32)
+    strictEqual(Context.getUnsafe(context, A), -1)
+    strictEqual(Context.getUnsafe(context, keys[0]), 0)
+  })
+
   it("supports the ReadonlyMap surface through mapUnsafe", () => {
     const context = Context.make(A, 1).pipe(Context.add(B, 2))
     const visited: Array<[string, number]> = []

@@ -3,17 +3,20 @@ import * as Cloudflare from "@/Cloudflare";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import ZlibProbeWorker from "./fixtures/zlib-probe-worker.ts";
+
+const state = Alchemy.inMemoryState();
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
+  state,
   dev: true,
 });
 
 const Stack = Alchemy.Stack(
   "ZlibProbeStack",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  { providers: Cloudflare.providers(), state },
   Effect.gen(function* () {
     const worker = yield* ZlibProbeWorker;
     return { url: worker.url.as<string>() };
@@ -69,5 +72,8 @@ test(
     expect(body.info?.outLen).toBe(body.contentLen);
     expect(body.info?.bytesWritten).toBe(body.info?.expectedConsumed);
   }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "local"],
+    timeout: 60_000,
+  },
 );

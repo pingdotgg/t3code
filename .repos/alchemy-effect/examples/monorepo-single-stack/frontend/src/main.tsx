@@ -1,6 +1,6 @@
 import { BackendClient } from "@monorepo-single-stack/backend/Client";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import React from "react";
 import ReactDOM from "react-dom/client";
 

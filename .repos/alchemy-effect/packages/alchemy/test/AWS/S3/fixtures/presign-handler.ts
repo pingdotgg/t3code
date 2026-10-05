@@ -2,8 +2,8 @@ import * as Lambda from "@/AWS/Lambda";
 import * as S3 from "@/AWS/S3";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class S3PresignTestFunction extends Lambda.Function<S3PresignTestFunction>()(
   "S3PresignTestFunction",

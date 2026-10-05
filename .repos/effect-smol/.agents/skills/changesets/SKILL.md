@@ -1,21 +1,37 @@
 ---
 name: changesets
-description: Changesets. Use after consumer-visible runtime, public API, entrypoint, lifecycle, or wire-format changes, when deciding whether a change is breaking, or when authoring changesets and consumer release notes.
+description: Concise PR finalization changesets. Use when implementation scope is complete and focused validation has finished to classify release impact, consolidate the PR's existing changeset, or write its consumer release note.
 ---
 
-Record what consumers need to know after implementation and focused validation.
+Treat a changeset as the release note for the complete PR, not as a log of work
+performed along the way. Finalize it after the current implementation scope and
+focused validation are complete.
 
 ## Workflow
 
-1. Inspect the complete diff and identify directly affected published packages.
+1. Inspect the complete diff from the merge base, including changeset files
+   already introduced by the PR, and identify directly affected published
+   packages.
 2. Classify impact across source types, runtime behavior, entrypoints, required
    services, lifecycle, and persisted or wire data.
 3. Perform the breaking audit below.
-4. Record either a reason no changeset is required or one coherent changeset.
-   When required, read [authoring.md](authoring.md).
-5. Validate package names, frontmatter, bump policy, and consumer-facing text.
+4. Record a reason no changeset is required, or update the PR's existing
+   changeset. Create one only when the PR does not have one. When required, read
+   [authoring.md](authoring.md).
+5. Validate package names, frontmatter, bump policy, and a concise
+   consumer-facing description.
 
 Do not include unrelated worktree changes.
+
+## PR-level consolidation
+
+The default is one changeset file per PR. One file can name several packages and
+summarize several related fixes or additions. Successive prompts, commits, and
+subtasks within the same PR update that file. If implementation resumes after a
+changeset was drafted, revise it during the next finalization pass.
+
+Use separate files only when a maintainer requests the split or the PR contains
+independent changes that need separate release notes.
 
 ## Requirement
 
@@ -53,6 +69,7 @@ consumer-visible. Verify representative existing calls when overload ordering,
 structural assignability, or inference makes compatibility uncertain. API diff
 output is mechanical evidence, not a semantic-version decision.
 
-The task is complete when every affected surface and published package is
-accounted for and either the no-changeset decision is explicit or one coherent,
-valid changeset describes the consumer impact and migration for every break.
+The task is complete when every affected contract and published package is
+accounted for and either the no-changeset decision is explicit or the PR has one
+consolidated, valid changeset by default. Its release note describes the consumer
+impact and migration for every break without repeating the PR description.

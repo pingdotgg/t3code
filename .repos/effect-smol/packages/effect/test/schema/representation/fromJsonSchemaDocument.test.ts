@@ -79,18 +79,51 @@ describe("fromJsonSchemaDocument", () => {
     )
   })
 
-  it("retains the string length and integer semantics of built-in checks", () => {
+  it("imports string lengths by code point and integers as safe integers", () => {
     for (
       const [source, input, expected] of [
-        [{ type: "string", minLength: 2 }, "😀", true],
-        [{ type: "string", maxLength: 1 }, "😀", false],
+        [{ type: "string", minLength: 2 }, "😀", false],
+        [{ type: "string", maxLength: 1 }, "😀", true],
+        [{ type: "string", minLength: 1 }, "😀", true],
+        [{ type: "string", minLength: 1 }, "", false],
+        [{ type: "string", maxLength: 0 }, "", true],
+        [{ type: "string", maxLength: 0 }, "a", false],
+        [{ type: "string", minLength: 2 }, "é", false],
+        [{ type: "string", maxLength: 1 }, "é", true],
+        [{ type: "string", minLength: 2 }, "e\u0301", true],
+        [{ type: "string", maxLength: 1 }, "e\u0301", false],
+        [{ type: "string", minLength: 2 }, "\uD800", false],
+        [{ type: "string", maxLength: 1 }, "\uD800", true],
         [{ type: "integer" }, 1e20, false],
-        [{ type: "string", pattern: "^.$" }, "😀", false]
+        [{ type: "string", pattern: "^.$" }, "😀", true]
       ] as const
     ) {
       const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12(source))
       assert.strictEqual(Schema.is(schema)(input), expected)
     }
+  })
+
+  it("uses imported string semantics while intersecting primitive literals", () => {
+    const minLength = toSchemaFromJsonSchemaDocument(
+      JsonSchema.fromSchemaDraft2020_12({ enum: ["😀", "e\u0301"], minLength: 2 })
+    )
+    assert.isFalse(Schema.is(minLength)("😀"))
+    assert.isTrue(Schema.is(minLength)("e\u0301"))
+
+    const pattern = toSchemaFromJsonSchemaDocument(
+      JsonSchema.fromSchemaDraft2020_12({ const: "😀", pattern: "^.$" })
+    )
+    assert.isTrue(Schema.is(pattern)("😀"))
+  })
+
+  it("reports patterns unsupported in ECMAScript Unicode mode", () => {
+    throws(
+      () =>
+        toSchemaFromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ type: "string", pattern: "\\a" })
+        ),
+      `Cannot import pattern using ECMAScript Unicode mode.\n  at ["schema"]["pattern"]`
+    )
   })
 
   function assertFromJsonSchema(
@@ -337,7 +370,7 @@ describe("fromJsonSchemaDocument", () => {
           { schema: { type: "string", maxLength: 1 } },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.isMaxLength(1).annotate({ "expected": "a value with a length of at most 1" }))`,
+              `Schema.String.check(Schema.isMaxCodePoints(1).annotate({ "expected": "a string with at most 1 code points" }))`,
               `string`
             )
           }
@@ -349,7 +382,7 @@ describe("fromJsonSchemaDocument", () => {
           { schema: { type: "string", pattern: "a*" } },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.isPattern(new RegExp("a*")).annotate({ "expected": "a string matching the RegExp a*" }))`,
+              `Schema.String.check(Schema.isPattern(new RegExp("a*", "u")).annotate({ "expected": "a string matching the RegExp a*" }))`,
               `string`
             )
           }
@@ -359,7 +392,7 @@ describe("fromJsonSchemaDocument", () => {
       it("pattern only constrains strings", () => {
         assertFromJsonSchema({ schema: { pattern: "^a+$" } }, {
           codes: makeCode(
-            `Schema.Union([Schema.Null, Schema.String.check(Schema.isPattern(new RegExp("^a+$")).annotate({ "expected": "a string matching the RegExp ^a+$" })), Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })), Schema.Array(Schema.Json.annotate({ "expected": "JSON value" }))])`,
+            `Schema.Union([Schema.Null, Schema.String.check(Schema.isPattern(new RegExp("^a+$", "u")).annotate({ "expected": "a string matching the RegExp ^a+$" })), Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })), Schema.Array(Schema.Json.annotate({ "expected": "JSON value" }))])`,
             `null | string | number | boolean | { readonly [x: string]: Schema.Json } | ReadonlyArray<Schema.Json>`
           )
         })
@@ -868,7 +901,7 @@ describe("fromJsonSchemaDocument", () => {
     })
 
     it("round-trips a closed Record with a patterned key", async () => {
-      const original = Schema.Record(Schema.String.check(Schema.isStartsWith("a")), Schema.Finite)
+      const original = Schema.Record(Schema.String.check(Schema.isStartingWith("a")), Schema.Finite)
       const document = Schema.toJsonSchemaDocument(original, { onExcessProperty: "error" })
       assert.deepStrictEqual(document.schema, {
         type: "object",
@@ -923,13 +956,13 @@ describe("fromJsonSchemaDocument", () => {
           nonRecursives: [{
             $ref: `Value`,
             code: makeCode(
-              `Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2", "identifier": "Value" }))`,
+              `Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points", "identifier": "Value" }))`,
               `string`
             )
           }, {
             $ref: `Values`,
             code: makeCode(
-              `Schema.Record(Schema.String.check(Schema.isPattern(new RegExp("a")).annotate({ "expected": "a string matching the RegExp a" })), Value).annotate({ "identifier": "Values" })`,
+              `Schema.Record(Schema.String.check(Schema.isPattern(new RegExp("a", "u")).annotate({ "expected": "a string matching the RegExp a" })), Value).annotate({ "identifier": "Values" })`,
               `{ readonly [x: string]: Value }`
             )
           }]
@@ -946,9 +979,31 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.Record(Schema.String.check(Schema.isPattern(new RegExp("^a")).annotate({ "expected": "a string matching the RegExp ^a" })), Schema.Never)`,
+          `Schema.Record(Schema.String.check(Schema.isPattern(new RegExp("^a", "u")).annotate({ "expected": "a string matching the RegExp ^a" })), Schema.Never)`,
           `{ readonly [x: string]: never }`
         )
+      })
+    })
+
+    it("matches finite patternProperties keys in Unicode mode", () => {
+      const document = JsonSchema.fromSchemaDraft2020_12({
+        allOf: [
+          {
+            type: "object",
+            properties: { "😀": {} },
+            additionalProperties: false
+          },
+          {
+            type: "object",
+            patternProperties: { "^.$": { type: "string" } }
+          }
+        ]
+      })
+      const schema = toSchemaFromJsonSchemaDocument(document)
+      assert.isTrue(Schema.is(schema)({ "😀": "value" }))
+      assert.isFalse(Schema.is(schema)({ "😀": 1 }))
+      assertCode(schema, {
+        codes: makeCode(`Schema.Struct({ "😀": Schema.optionalKey(Schema.String) })`, `{ readonly "😀"?: string }`)
       })
     })
 
@@ -1004,7 +1059,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isPattern(new RegExp("^[A-Z]")).annotate({ "expected": "a string matching the RegExp ^[A-Z]" }))).annotate({ "expected": "an object with property names matching the schema" }))`,
+              `Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isPattern(new RegExp("^[A-Z]", "u")).annotate({ "expected": "a string matching the RegExp ^[A-Z]" }))).annotate({ "expected": "an object with property names matching the schema" }))`,
               `{ readonly [x: string]: Schema.Json }`
             )
           }
@@ -1040,7 +1095,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isPattern(new RegExp("^[A-Z]")).annotate({ "expected": "a string matching the RegExp ^[A-Z]" }))).annotate({ "expected": "an object with property names matching the schema" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" }))).annotate({ "expected": "an object with property names matching the schema" }))`,
+              `Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isPattern(new RegExp("^[A-Z]", "u")).annotate({ "expected": "a string matching the RegExp ^[A-Z]" }))).annotate({ "expected": "an object with property names matching the schema" })).check(Schema.isPropertyNames(Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" }))).annotate({ "expected": "an object with property names matching the schema" }))`,
               `{ readonly [x: string]: Schema.Json }`
             )
           }
@@ -1496,7 +1551,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.String.annotate({ "description": "name" }).check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" }))`,
+          `Schema.String.annotate({ "description": "name" }).check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" }))`,
           `string`
         )
       })
@@ -1662,7 +1717,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" }))`,
+          `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" }))`,
           `string`
         )
       })
@@ -1677,7 +1732,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" }))`,
+          `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" }))`,
           `string`
         )
       })
@@ -1940,7 +1995,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }))`,
+              `Schema.String.check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }))`,
               `string`
             )
           }
@@ -1961,7 +2016,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.annotate({ "description": "a" }).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }))`,
+              `Schema.String.annotate({ "description": "a" }).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }))`,
               `string`
             )
           }
@@ -1982,7 +2037,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.annotate({ "description": "a" }).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1", "description": "b" }))`,
+              `Schema.String.annotate({ "description": "a" }).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1", "description": "b" }))`,
               `string`
             )
           }
@@ -2001,7 +2056,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" }))`,
+              `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" }))`,
               `string`
             )
           }
@@ -2020,7 +2075,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.makeFilterGroup([Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }), Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" })]).annotate({ "description": "b" }))`,
+              `Schema.String.check(Schema.makeFilterGroup([Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }), Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points" })]).annotate({ "description": "b" }))`,
               `string`
             )
           }
@@ -2039,7 +2094,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2", "description": "c" }))`,
+              `Schema.String.check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" })).check(Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points", "description": "c" }))`,
               `string`
             )
           }
@@ -2058,7 +2113,7 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             codes: makeCode(
-              `Schema.String.check(Schema.makeFilterGroup([Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }), Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2", "description": "c" })]).annotate({ "description": "b" }))`,
+              `Schema.String.check(Schema.makeFilterGroup([Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }), Schema.isMaxCodePoints(2).annotate({ "expected": "a string with at most 2 code points", "description": "c" })]).annotate({ "description": "b" }))`,
               `string`
             )
           }
@@ -2674,7 +2729,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.Struct({ "a": Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" })) })`,
+          `Schema.Struct({ "a": Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" })) })`,
           `{ readonly "a": string }`
         )
       })
@@ -2788,7 +2843,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" }))) })`,
+          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" }))) })`,
           `{ readonly "a"?: string }`
         )
       })
@@ -2854,7 +2909,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" }))) })`,
+          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" }))) })`,
           `{ readonly "a"?: string }`
         )
       })
@@ -2876,7 +2931,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(
-          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinLength(2).annotate({ "expected": "a value with a length of at least 2" }))) })`,
+          `Schema.Struct({ "a": Schema.optionalKey(Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points" }))) })`,
           `{ readonly "a"?: string }`
         )
       })
@@ -3065,10 +3120,37 @@ describe("fromJsonSchemaDocument", () => {
       it("applies patterns explicitly", () => {
         assertFromJsonSchema({ schema: { type: "string", pattern: "^a+$" }, options: { patterns: "apply" } }, {
           codes: makeCode(
-            `Schema.String.check(Schema.isPattern(new RegExp("^a+$")).annotate({ "expected": "a string matching the RegExp ^a+$" }))`,
+            `Schema.String.check(Schema.isPattern(new RegExp("^a+$", "u")).annotate({ "expected": "a string matching the RegExp ^a+$" }))`,
             `string`
           )
         })
+      })
+
+      it("applies patterns whose source is canonicalized by RegExp", () => {
+        for (
+          const [pattern, source, matching, nonMatching] of [
+            ["a/b", "a\\/b", "a/b", "ab"],
+            ["", "(?:)", "anything", undefined],
+            ["\n", "\\n", "a\nb", "ab"],
+            ["\r", "\\r", "a\rb", "ab"],
+            ["\u2028", "\\u2028", "a\u2028b", "ab"],
+            ["\u2029", "\\u2029", "a\u2029b", "ab"]
+          ] as const
+        ) {
+          const schema = toSchemaFromJsonSchemaDocument(
+            JsonSchema.fromSchemaDraft2020_12({ type: "string", pattern })
+          )
+          const representation = SchemaRepresentation.toRepresentation(schema.ast).representation
+          assert.strictEqual(representation._tag, "String")
+          if (representation._tag === "String") {
+            assert.deepStrictEqual(representation.checks[0]?.representation?.payload, { source, flags: "u" })
+          }
+          assert.isTrue(Schema.is(schema)(matching))
+          if (nonMatching !== undefined) {
+            assert.isFalse(Schema.is(schema)(nonMatching))
+          }
+          assert.isFalse(Schema.is(schema)(123))
+        }
       })
 
       it("ignores patterns explicitly", () => {

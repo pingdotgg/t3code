@@ -137,5 +137,8 @@ test.provider(
       expect(afterDestroy).toBeUndefined();
       yield* assertAccessPointDeleted(deployed.accessPoint.accessPointName);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3", "provider:aws:s3control", "live"],
+    timeout: 120_000,
+  },
 );

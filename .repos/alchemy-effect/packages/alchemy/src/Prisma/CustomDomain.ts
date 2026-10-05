@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import { Unowned } from "../AdoptPolicy.ts";
 import { isResolved } from "../Diff.ts";
-import * as Output from "../Output.ts";
 import * as Provider from "../Provider.ts";
 import {
   DEV_TIMESTAMP,
@@ -117,6 +116,7 @@ export interface CustomDomain extends Resource<
  * ```
  *
  * @resource
+ * @product Compute
  */
 export const CustomDomain = Resource<CustomDomain>("Prisma.CustomDomain");
 
@@ -155,16 +155,12 @@ const appIdValue = (app: AppReference | undefined) =>
 const unresolvedAppIdOf = (app: AppReference | undefined) =>
   concreteIdOf(appIdValue(app));
 
-const resolveAppId = (app: AppReference) =>
-  Effect.gen(function* () {
-    const value = appIdValue(app);
-    if (typeof value === "string") return value;
-    if (Output.isOutput(value)) {
-      const accessor = yield* value as Output.Output<string>;
-      return yield* accessor;
-    }
-    return yield* Effect.fail(new Error("Unable to resolve Prisma app id."));
-  });
+const resolveAppId = (app: AppReference) => {
+  const value = appIdValue(app);
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new Error("Unable to resolve Prisma app id."));
+};
 
 const findDomain = (
   client: PrismaManagementClient,

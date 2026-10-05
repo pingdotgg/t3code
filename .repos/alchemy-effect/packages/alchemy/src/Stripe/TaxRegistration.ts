@@ -423,6 +423,7 @@ export type TaxRegistration = Resource<
  * ```
  *
  * @resource
+ * @product Tax
  */
 export const TaxRegistration = Resource<TaxRegistration>(
   "Stripe.TaxRegistration",

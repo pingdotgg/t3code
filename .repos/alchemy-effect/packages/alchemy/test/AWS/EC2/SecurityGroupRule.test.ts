@@ -16,69 +16,72 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("list enumerates the deployed Security Group Rule", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed Security Group Rule",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const { vpc, sg, rule } = yield* stack.deploy(
-      Effect.gen(function* () {
-        const vpc = yield* Vpc("ListSgrVpc", {
-          cidrBlock: "10.0.0.0/16",
-        });
-        const sg = yield* SecurityGroup("ListSgrSg", {
-          vpcId: vpc.vpcId,
-        });
-        const rule = yield* SecurityGroupRule("ListSgr", {
-          groupId: sg.groupId,
-          type: "ingress",
-          ipProtocol: "tcp",
-          fromPort: 443,
-          toPort: 443,
-          cidrIpv4: "10.0.0.0/16",
-        });
-        return { vpc, sg, rule };
-      }),
-    );
+      const { vpc, sg, rule } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const vpc = yield* Vpc("ListSgrVpc", {
+            cidrBlock: "10.0.0.0/16",
+          });
+          const sg = yield* SecurityGroup("ListSgrSg", {
+            vpcId: vpc.vpcId,
+          });
+          const rule = yield* SecurityGroupRule("ListSgr", {
+            groupId: sg.groupId,
+            type: "ingress",
+            ipProtocol: "tcp",
+            fromPort: 443,
+            toPort: 443,
+            cidrIpv4: "10.0.0.0/16",
+          });
+          return { vpc, sg, rule };
+        }),
+      );
 
-    // Modification requires canonical CIDRs; authorization normalizes them.
-    const rejection = yield* EC2.modifySecurityGroupRules({
-      GroupId: sg.groupId,
-      SecurityGroupRules: [
-        {
-          SecurityGroupRuleId: rule.securityGroupRuleId,
-          SecurityGroupRule: {
-            IpProtocol: "tcp",
-            FromPort: 443,
-            ToPort: 443,
-            CidrIpv4: "10.0.0.7/16",
+      // Modification requires canonical CIDRs; authorization normalizes them.
+      const rejection = yield* EC2.modifySecurityGroupRules({
+        GroupId: sg.groupId,
+        SecurityGroupRules: [
+          {
+            SecurityGroupRuleId: rule.securityGroupRuleId,
+            SecurityGroupRule: {
+              IpProtocol: "tcp",
+              FromPort: 443,
+              ToPort: 443,
+              CidrIpv4: "10.0.0.7/16",
+            },
           },
-        },
-      ],
-    }).pipe(
-      Effect.as(undefined),
-      Effect.catchTag("InvalidParameterValue", (error) =>
-        Effect.succeed(error),
-      ),
-    );
-    expect(rejection?._tag).toBe("InvalidParameterValue");
-    expect(rejection?.message).toBe(
-      "CIDR block 10.0.0.7/16 is not in canonical form",
-    );
+        ],
+      }).pipe(
+        Effect.as(undefined),
+        Effect.catchTag("InvalidParameterValue", (error) =>
+          Effect.succeed(error),
+        ),
+      );
+      expect(rejection?._tag).toBe("InvalidParameterValue");
+      expect(rejection?.message).toBe(
+        "CIDR block 10.0.0.7/16 is not in canonical form",
+      );
 
-    const provider = yield* Provider.findProvider(SecurityGroupRule);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(SecurityGroupRule);
+      const all = yield* provider.list();
 
-    expect(
-      all.some((x) => x.securityGroupRuleId === rule.securityGroupRuleId),
-    ).toBe(true);
+      expect(
+        all.some((x) => x.securityGroupRuleId === rule.securityGroupRuleId),
+      ).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // The rule dies with its security group; group + VPC gone proves full
-    // teardown.
-    yield* assertSecurityGroupGone(sg.groupId);
-    yield* assertVpcGone(vpc.vpcId);
-  }).pipe(logLevel),
+      // The rule dies with its security group; group + VPC gone proves full
+      // teardown.
+      yield* assertSecurityGroupGone(sg.groupId);
+      yield* assertVpcGone(vpc.vpcId);
+    }).pipe(logLevel),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"] },
 );
 
 for (const type of ["ingress", "egress"] as const) {
@@ -234,6 +237,6 @@ for (const type of ["ingress", "egress"] as const) {
         yield* assertSecurityGroupGone(sg.groupId);
         yield* assertVpcGone(vpc.vpcId);
       }),
-    { timeout: 120_000 },
+    { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 120_000 },
   );
 }

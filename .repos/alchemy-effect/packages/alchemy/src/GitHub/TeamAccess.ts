@@ -140,6 +140,7 @@ export interface TeamAccess extends Resource<
  * ```
  *
  * @resource
+ * @product Repository
  */
 export const TeamAccess = Resource<TeamAccess>("GitHub.TeamAccess", {
   defaultRemovalPolicy: "retain",

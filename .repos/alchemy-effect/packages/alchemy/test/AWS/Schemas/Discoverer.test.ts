@@ -24,72 +24,85 @@ const assertDiscovererGone = (discovererId: string) =>
     }),
   );
 
-describe("AWS.Schemas.Discoverer", () => {
-  test.provider(
-    "creates a discoverer on an event bus, stops it, and deletes it",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.Schemas.Discoverer",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:eventbridge",
+      "provider:aws:schemas",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "creates a discoverer on an event bus, stops it, and deletes it",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        // CREATE — discoverer on a dedicated event bus, started by default.
-        const created = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bus = yield* EventBus("DiscovererBus", {});
-            const discoverer = yield* Discoverer("BusDiscoverer", {
-              sourceArn: bus.eventBusArn,
-              description: "alchemy schemas discoverer test",
-              tags: { purpose: "alchemy-test" },
-            });
-            return {
-              eventBusArn: bus.eventBusArn,
-              discovererId: discoverer.discovererId,
-              discovererArn: discoverer.discovererArn,
-              state: discoverer.state,
-            };
-          }),
-        );
-        expect(created.state).toEqual("STARTED");
+          // CREATE — discoverer on a dedicated event bus, started by default.
+          const created = yield* stack.deploy(
+            Effect.gen(function* () {
+              const bus = yield* EventBus("DiscovererBus", {});
+              const discoverer = yield* Discoverer("BusDiscoverer", {
+                sourceArn: bus.eventBusArn,
+                description: "alchemy schemas discoverer test",
+                tags: { purpose: "alchemy-test" },
+              });
+              return {
+                eventBusArn: bus.eventBusArn,
+                discovererId: discoverer.discovererId,
+                discovererArn: discoverer.discovererArn,
+                state: discoverer.state,
+              };
+            }),
+          );
+          expect(created.state).toEqual("STARTED");
 
-        // Verify out-of-band via distilled.
-        const observed = yield* schemas.describeDiscoverer({
-          DiscovererId: created.discovererId,
-        });
-        expect(observed.DiscovererArn).toEqual(created.discovererArn);
-        expect(observed.SourceArn).toEqual(created.eventBusArn);
-        expect(observed.State).toEqual("STARTED");
-        expect(observed.Description).toEqual("alchemy schemas discoverer test");
-        expect(observed.Tags?.purpose).toEqual("alchemy-test");
-        expect(observed.Tags?.["alchemy::id"]).toEqual("BusDiscoverer");
+          // Verify out-of-band via distilled.
+          const observed = yield* schemas.describeDiscoverer({
+            DiscovererId: created.discovererId,
+          });
+          expect(observed.DiscovererArn).toEqual(created.discovererArn);
+          expect(observed.SourceArn).toEqual(created.eventBusArn);
+          expect(observed.State).toEqual("STARTED");
+          expect(observed.Description).toEqual(
+            "alchemy schemas discoverer test",
+          );
+          expect(observed.Tags?.purpose).toEqual("alchemy-test");
+          expect(observed.Tags?.["alchemy::id"]).toEqual("BusDiscoverer");
 
-        // UPDATE — stop the discoverer and change the description in place.
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bus = yield* EventBus("DiscovererBus", {});
-            const discoverer = yield* Discoverer("BusDiscoverer", {
-              sourceArn: bus.eventBusArn,
-              description: "paused discoverer",
-              state: "STOPPED",
-              tags: { purpose: "alchemy-test" },
-            });
-            return {
-              discovererId: discoverer.discovererId,
-              state: discoverer.state,
-            };
-          }),
-        );
-        expect(updated.discovererId).toEqual(created.discovererId);
-        expect(updated.state).toEqual("STOPPED");
+          // UPDATE — stop the discoverer and change the description in place.
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              const bus = yield* EventBus("DiscovererBus", {});
+              const discoverer = yield* Discoverer("BusDiscoverer", {
+                sourceArn: bus.eventBusArn,
+                description: "paused discoverer",
+                state: "STOPPED",
+                tags: { purpose: "alchemy-test" },
+              });
+              return {
+                discovererId: discoverer.discovererId,
+                state: discoverer.state,
+              };
+            }),
+          );
+          expect(updated.discovererId).toEqual(created.discovererId);
+          expect(updated.state).toEqual("STOPPED");
 
-        const afterUpdate = yield* schemas.describeDiscoverer({
-          DiscovererId: created.discovererId,
-        });
-        expect(afterUpdate.State).toEqual("STOPPED");
-        expect(afterUpdate.Description).toEqual("paused discoverer");
+          const afterUpdate = yield* schemas.describeDiscoverer({
+            DiscovererId: created.discovererId,
+          });
+          expect(afterUpdate.State).toEqual("STOPPED");
+          expect(afterUpdate.Description).toEqual("paused discoverer");
 
-        // DELETE
-        yield* stack.destroy();
-        yield* assertDiscovererGone(created.discovererId);
-      }),
-    { timeout: 120_000 },
-  );
-});
+          // DELETE
+          yield* stack.destroy();
+          yield* assertDiscovererGone(created.discovererId);
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

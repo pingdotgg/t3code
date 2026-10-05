@@ -1,6 +1,5 @@
 import { assert, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema, Stream, Struct } from "effect"
-import { TestClock } from "effect/testing"
 import {
   FetchHttpClient,
   HttpClient,
@@ -10,7 +9,8 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse
-} from "effect/unstable/http"
+} from "effect/http"
+import { TestClock } from "effect/testing"
 
 const Todo = Schema.Struct({
   userId: Schema.Number,

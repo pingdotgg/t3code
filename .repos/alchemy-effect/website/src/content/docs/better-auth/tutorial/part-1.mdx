@@ -1,0 +1,152 @@
+---
+title: "Part 1: Create an Auth service"
+description: Install Better Auth, provide a D1 database layer, and create an Effect service.
+sidebar:
+  order: 1
+---
+
+Build one application with email/password authentication, an Effect HTTP API, and GitHub sign-in. This tutorial uses Bun and Cloudflare D1; [other databases](/better-auth/databases) use the same Auth service.
+
+Use your existing Alchemy project with [Bun](https://bun.sh) and a [configured Cloudflare profile](/cloudflare/setup). The examples use Effect 4 and Better Auth 1.7.5.
+
+## Install the module
+
+```sh
+bun add @alchemy.run/better-auth better-auth@1.7.5 kysely
+```
+
+Use matching Alchemy and Better Auth integration releases. D1 uses Kysely internally; application code does not need to construct a Kysely client.
+
+## Declare the database
+
+```typescript
+// src/database.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const AuthDb = Cloudflare.D1.Database("AuthDb");
+```
+
+Alchemy creates the database when you deploy. During local development, D1 runs in the local simulator.
+
+## Choose the authentication method
+
+```typescript
+// src/auth.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+
+const makeAuth = BetterAuth({
+  basePath: "/api/auth",
+  emailAndPassword: { enabled: true },
+});
+```
+
+Alchemy provisions a stable signing secret and applies D1 schema migrations. You do not need to create auth tables or supply a signing secret.
+
+## Expose an Effect service
+
+```diff lang="typescript"
+ // src/auth.ts
+ import { BetterAuth } from "@alchemy.run/better-auth";
++import * as Context from "effect/Context";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+
+ const makeAuth = BetterAuth({
+   basePath: "/api/auth",
+   emailAndPassword: { enabled: true },
+ });
++
++export class Auth extends Context.Service<
++  Auth,
++  Effect.Success<typeof makeAuth>
++>()("app/Auth") {
++  static readonly layer = Layer.effect(Auth, makeAuth);
++}
+```
+
+Handlers and middleware can now request the same typed service with `yield* Auth`.
+
+## Create the Worker
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"] },
+  },
+  Effect.gen(function* () {
+    return { fetch: Effect.succeed(HttpServerResponse.text("Ready")) };
+  }),
+) {}
+```
+
+Alchemy selects an available local port. Use the URL it prints rather than assuming a particular port.
+
+## Provide the database layer
+
+```diff lang="typescript"
+ // src/worker.ts
++import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
++import * as Layer from "effect/Layer";
++import { Auth } from "./auth.ts";
++import { AuthDb } from "./database.ts";
+
+   Effect.gen(function* () {
++    yield* Auth;
+     return { fetch: Effect.succeed(HttpServerResponse.text("Ready")) };
+-  }),
++  }).pipe(
++    Effect.provide(Auth.layer.pipe(Layer.provide(CloudflareD1(AuthDb)))),
++  ),
+```
+
+The host supplies the database; the Auth service stays independent of Cloudflare. This also registers the database binding and migration action.
+
+## Create the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "BetterAuthTutorial",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url };
+  }),
+);
+```
+
+Local state keeps this walkthrough self-contained. Preserve its state directory so future deployments retain the signing secret and resource identities.
+
+## Start development
+
+```sh
+bunx alchemy dev --stage tutorial
+```
+
+In another terminal, paste the printed URL after running `read`, then press Enter:
+
+```sh
+read -r DEV_URL
+export DEV_URL
+curl "$DEV_URL"
+```
+
+Keep this shell for the following API checks. Update `DEV_URL` if a later restart prints a different address.
+
+```text
+Ready
+```
+
+Continue to [Part 2: Mount the HTTP API](/better-auth/tutorial/part-2).

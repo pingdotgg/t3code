@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { PostgreSqlContainer } from "@testcontainers/postgresql"
 import { Effect, Redacted } from "effect"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import { execFileSync } from "node:child_process"
 import { cpus } from "node:os"
 import { Bench } from "tinybench"

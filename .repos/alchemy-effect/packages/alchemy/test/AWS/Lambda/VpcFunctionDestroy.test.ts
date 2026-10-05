@@ -105,5 +105,8 @@ test.provider.skipIf(!!process.env.FAST)(
       );
       expect(vpcs.Vpcs ?? []).toHaveLength(0);
     }),
-  { timeout: 30 * 60 * 1000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:lambda", "live"],
+    timeout: 30 * 60 * 1000,
+  },
 );

@@ -20,115 +20,123 @@ const { test } = Test.make({ providers: AWS.providers() });
 // cover the wiring + typed-error surface in CI.
 const runLifecycle = process.env.CLOUDFRONT_TEST_VPC_ORIGIN === "1";
 
-describe("AWS.CloudFront.VpcOrigin", () => {
-  // Fast probe (no deploy): creating a VPC origin against a bogus ARN must
-  // surface a typed `InvalidArgument` (or `EntityNotFound`), proving the error
-  // typing for the create op without provisioning any infrastructure.
-  test.provider("createVpcOrigin rejects a bogus ARN with a typed error", () =>
-    Effect.gen(function* () {
-      const result = yield* cloudfront
-        .createVpcOrigin({
-          VpcOriginEndpointConfig: {
-            Name: "alchemy-vpc-origin-probe",
-            Arn: "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/does-not-exist/0000000000000000",
-            HTTPPort: 80,
-            HTTPSPort: 443,
-            OriginProtocolPolicy: "https-only",
-          },
-        })
-        .pipe(Effect.flip);
-
-      expect(["InvalidArgument", "EntityNotFound", "AccessDenied"]).toContain(
-        result._tag,
-      );
-    }),
-  );
-
-  test.provider.skipIf(!runLifecycle)(
-    "create, update, and delete a VPC origin for an internal ALB",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        // CloudFront VPC origins require the target's VPC to have an internet
-        // gateway attached. `Network` provisions a production-shaped VPC (VPC +
-        // attached IGW + public/private subnets across 2 AZs + route tables), so
-        // the networking + ALB is deployed in a first phase, then the VPC origin
-        // in a second — the IGW must be attached before `createVpcOrigin` runs.
-        const network = Effect.gen(function* () {
-          const net = yield* Network("VpcOriginNet", {
-            cidrBlock: "10.40.0.0/16",
-          });
-          const sg = yield* SecurityGroup("VpcOriginSg", {
-            vpcId: net.vpcId,
-            description: "alchemy vpc origin alb",
-            ingress: [
-              {
-                ipProtocol: "tcp",
-                fromPort: 80,
-                toPort: 80,
-                cidrIpv4: "0.0.0.0/0",
+describe(
+  "AWS.CloudFront.VpcOrigin",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    // Fast probe (no deploy): creating a VPC origin against a bogus ARN must
+    // surface a typed `InvalidArgument` (or `EntityNotFound`), proving the error
+    // typing for the create op without provisioning any infrastructure.
+    test.provider(
+      "createVpcOrigin rejects a bogus ARN with a typed error",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* cloudfront
+            .createVpcOrigin({
+              VpcOriginEndpointConfig: {
+                Name: "alchemy-vpc-origin-probe",
+                Arn: "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/does-not-exist/0000000000000000",
+                HTTPPort: 80,
+                HTTPSPort: 443,
+                OriginProtocolPolicy: "https-only",
               },
-            ],
-          });
-          const alb = yield* LoadBalancer("VpcOriginAlb", {
-            scheme: "internal",
-            type: "application",
-            subnets: net.publicSubnetIds,
-            securityGroups: [sg.groupId],
-          });
-          return { albArn: alb.loadBalancerArn };
-        });
+            })
+            .pipe(Effect.flip);
 
-        // Phase 1: networking (incl. attached IGW) + ALB.
-        yield* stack.deploy(network);
+          expect([
+            "InvalidArgument",
+            "EntityNotFound",
+            "AccessDenied",
+          ]).toContain(result._tag);
+        }),
+    );
 
-        // Phase 2: the VPC origin, now that the IGW is attached.
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const { albArn } = yield* network;
-            const vpcOrigin = yield* VpcOrigin("AppVpcOrigin", {
-              arn: albArn,
-              httpPort: 80,
-              originProtocolPolicy: "http-only",
+    test.provider.skipIf(!runLifecycle)(
+      "create, update, and delete a VPC origin for an internal ALB",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          // CloudFront VPC origins require the target's VPC to have an internet
+          // gateway attached. `Network` provisions a production-shaped VPC (VPC +
+          // attached IGW + public/private subnets across 2 AZs + route tables), so
+          // the networking + ALB is deployed in a first phase, then the VPC origin
+          // in a second — the IGW must be attached before `createVpcOrigin` runs.
+          const network = Effect.gen(function* () {
+            const net = yield* Network("VpcOriginNet", {
+              cidrBlock: "10.40.0.0/16",
             });
-            return { vpcOrigin };
-          }),
-        );
+            const sg = yield* SecurityGroup("VpcOriginSg", {
+              vpcId: net.vpcId,
+              description: "alchemy vpc origin alb",
+              ingress: [
+                {
+                  ipProtocol: "tcp",
+                  fromPort: 80,
+                  toPort: 80,
+                  cidrIpv4: "0.0.0.0/0",
+                },
+              ],
+            });
+            const alb = yield* LoadBalancer("VpcOriginAlb", {
+              scheme: "internal",
+              type: "application",
+              subnets: net.publicSubnetIds,
+              securityGroups: [sg.groupId],
+            });
+            return { albArn: alb.loadBalancerArn };
+          });
 
-        // Out-of-band: confirm it deployed.
-        const got = yield* cloudfront.getVpcOrigin({
-          Id: deployed.vpcOrigin.vpcOriginId,
-        });
-        expect(got.VpcOrigin?.Status).toEqual("Deployed");
-        expect(got.VpcOrigin?.VpcOriginEndpointConfig.HTTPPort).toEqual(80);
-        expect(
-          got.VpcOrigin?.VpcOriginEndpointConfig.OriginProtocolPolicy,
-        ).toEqual("http-only");
+          // Phase 1: networking (incl. attached IGW) + ALB.
+          yield* stack.deploy(network);
 
-        yield* stack.destroy();
-        yield* assertVpcOriginDeleted(deployed.vpcOrigin.vpcOriginId);
-      }),
-    // CloudFront VPC origin deploy + delete each take many minutes (global
-    // propagation), on top of the ALB/VPC provisioning and teardown — budget
-    // 45 min for the full create -> Deployed -> delete -> gone cycle.
-    { timeout: 2_700_000 },
-  );
+          // Phase 2: the VPC origin, now that the IGW is attached.
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const { albArn } = yield* network;
+              const vpcOrigin = yield* VpcOrigin("AppVpcOrigin", {
+                arn: albArn,
+                httpPort: 80,
+                originProtocolPolicy: "http-only",
+              });
+              return { vpcOrigin };
+            }),
+          );
 
-  test.provider.skipIf(!runLifecycle)(
-    "list enumerates account VPC origins",
-    () =>
-      Effect.gen(function* () {
-        const provider = yield* Provider.findProvider(VpcOrigin);
-        const all = yield* provider.list();
-        expect(Array.isArray(all)).toBe(true);
-        for (const item of all) {
-          expect(item.vpcOriginId).toBeDefined();
-          expect(item.vpcOriginArn).toBeDefined();
-        }
-      }),
-  );
-});
+          // Out-of-band: confirm it deployed.
+          const got = yield* cloudfront.getVpcOrigin({
+            Id: deployed.vpcOrigin.vpcOriginId,
+          });
+          expect(got.VpcOrigin?.Status).toEqual("Deployed");
+          expect(got.VpcOrigin?.VpcOriginEndpointConfig.HTTPPort).toEqual(80);
+          expect(
+            got.VpcOrigin?.VpcOriginEndpointConfig.OriginProtocolPolicy,
+          ).toEqual("http-only");
+
+          yield* stack.destroy();
+          yield* assertVpcOriginDeleted(deployed.vpcOrigin.vpcOriginId);
+        }),
+      // CloudFront VPC origin deploy + delete each take many minutes (global
+      // propagation), on top of the ALB/VPC provisioning and teardown — budget
+      // 45 min for the full create -> Deployed -> delete -> gone cycle.
+      { tags: ["provider:aws:ec2", "provider:aws:elbv2"], timeout: 2_700_000 },
+    );
+
+    test.provider.skipIf(!runLifecycle)(
+      "list enumerates account VPC origins",
+      () =>
+        Effect.gen(function* () {
+          const provider = yield* Provider.findProvider(VpcOrigin);
+          const all = yield* provider.list();
+          expect(Array.isArray(all)).toBe(true);
+          for (const item of all) {
+            expect(item.vpcOriginId).toBeDefined();
+            expect(item.vpcOriginArn).toBeDefined();
+          }
+        }),
+    );
+  },
+);
 
 const assertVpcOriginDeleted = (id: string) =>
   cloudfront.getVpcOrigin({ Id: id }).pipe(

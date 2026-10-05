@@ -14,12 +14,8 @@ Effect divides the work into three parts:
   it as an input generator with built-in shrinking.
 - `it.prop`, `it.effect.prop`, or `Arbitrary.checkEffect` runs the rule against generated inputs.
 
-The API used here is currently available from `effect/unstable/arbitrary`. The `unstable` segment matters:
-the ideas are stable, but names, result types, generation policies, and replay format may still change before this
-module is promoted.
-
-If you are upgrading from the earlier Schema arbitrary integration available in `effect@4.0.0-rc.109`, see the
-[migration guide](ARBITRARY-MIGRATION.md).
+The API is available from `effect/Arbitrary` or as the `Arbitrary` export from `effect`. It is marked `@stability unstable`:
+names, result types, generation policies, and replay format may still change before this module is promoted.
 
 ## Writing a First Property
 
@@ -28,7 +24,7 @@ Consider the rule “adding zero does not change an integer.” With `@effect/vi
 ```ts
 import { it } from "@effect/vitest"
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const integer = Arbitrary.schema(Schema.Int)
 
@@ -62,7 +58,7 @@ without overflow or loss of precision, we should restrict the inputs accordingly
 
 ```ts
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const SmallInt = Schema.Int.check(
   Schema.isBetween({ minimum: -100, maximum: 100 })
@@ -118,7 +114,7 @@ Use:
 
 ```ts
 import { Result, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const integers = Arbitrary.schema(Schema.Int)
 
@@ -165,12 +161,28 @@ match the input. After a failure, it simplifies one member at a time. Empty tupl
 Effect occasionally creates generated records without inherited `Object` methods. This can reveal code that assumes
 methods such as `hasOwnProperty` always exist. Prefer `Object.hasOwn(value, key)` when checking generated objects.
 
+Use `array` for variable-length collections of an existing Arbitrary:
+
+```ts
+const command = integers.pipe(Arbitrary.map((value) => ({ _tag: "Add" as const, value })))
+const commands = Arbitrary.array(command, { maxLength: 50 })
+```
+
+`minLength` defaults to zero. Generation grows with `size`, honors explicit minima even at size zero, and respects
+`maxLength`. Invalid bounds throw immediately. After a failure, `array` tries removing blocks, including prefixes and
+interior blocks, while retaining the other elements in their original order. Retained objects keep their identity.
+It also simplifies individual elements. The bounded search may stop before finding the smallest possible failure.
+
+This differs from generating a length and using `flatMap` with `all`: shrinking that length regenerates the dependent
+contents. Use `array` when shrinking should remove commands from the failing sequence. `Arbitrary.schema` applied to
+`Schema.Array` uses the same block-removal strategy; prefer it when the complete collection is already a Schema.
+
 Use `flatMap` when one generated value decides what can be generated next. Create the possible generators before the
 callback when you can, because creating a Schema inside the callback repeats that work each time it runs:
 
 ```ts
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const Length = Arbitrary.schema(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))
@@ -208,7 +220,7 @@ important transition:
 
 ```ts
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const Key = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 20 }))
 
@@ -272,7 +284,7 @@ the result instead of immediately failing a Vitest test. It accepts a function t
 
 ```ts
 import { Effect, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const values = Arbitrary.schema(Schema.Array(Schema.Int))
 
@@ -290,7 +302,7 @@ A property may also return an `Effect`, so it can use Effect services or fail th
 
 ```ts
 import { Effect, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const program = Arbitrary.checkEffect(
   Arbitrary.schema(Schema.String),
@@ -332,7 +344,7 @@ rule is often called a **law**.
 ```ts
 import { it } from "@effect/vitest"
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const smallInt = Arbitrary.schema(
   Schema.Int.check(Schema.isBetween({ minimum: -100, maximum: 100 }))
@@ -467,7 +479,7 @@ and update operations below are correct, but `front` deliberately reads the last
 ```ts
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 interface Queue {
   readonly front: ReadonlyArray<number>
@@ -607,7 +619,7 @@ sets directly, it generates command sequences and runs the same history against 
 ```ts
 import { it } from "@effect/vitest"
 import { HashSet, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const Key = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 20 })
@@ -671,7 +683,7 @@ reported counterexample:
 
 ```ts
 import { Effect, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const arbitrary = Arbitrary.schema(Schema.Int)
 
@@ -781,7 +793,7 @@ meaning from the object shape:
 
 ```ts
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 interface Literal {
   readonly _tag: "Literal"
@@ -852,7 +864,7 @@ Recursive Schemas are supported as long as there is a way for generation to stop
 
 ```ts
 import { Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 interface Node {
   readonly value: string
@@ -935,7 +947,7 @@ works needs no Arbitrary-specific annotation.
 ```ts
 import { assert, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
-import { Arbitrary } from "effect/unstable/arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const Name = Arbitrary.schema(Schema.Literals(["Ada", "Grace"]))
 
@@ -977,7 +989,7 @@ Effect finalizers still run. A timeout cannot stop a synchronous JavaScript call
 
 The module starts from Schema and currently does not provide:
 
-- separate Arbitrary constructors for strings, numbers, arrays, and objects; describe those inputs with Schema;
+- a second catalog of Schema-like constructors for strings, numbers, and objects; describe those inputs with Schema;
 - a public low-level generator constructor or direct access to simplification steps;
 - weighted choice; use [targeted scenarios](#targeting-rare-scenarios) to guarantee that a test reaches an important
   situation;
@@ -1044,6 +1056,11 @@ different ways to describe the same inputs.
 The module therefore exposes `schema` and a small set of operations for combining existing Arbitraries. A declaration
 whose structure is hidden can provide a simpler Schema through `toCodecArbitrary`; it does not need a second language
 for generators.
+
+`Arbitrary.array(item, options)` composes an existing element Arbitrary, including one built with `map`, `filter`,
+`flatMap`, or `all`. It supports deleting commands while retaining the failing sequence's remaining values, which a
+dependent length generator cannot preserve. Schema remains the place to describe primitive values and checked data
+structures.
 
 The implementation stored inside `Arbitrary<A>` remains private. Users can combine and run an Arbitrary without
 depending on how Effect currently generates or simplifies values. Reconsider this decision only if an important input
@@ -1142,8 +1159,7 @@ generated sequences, probabilities, and intermediate simplifications may change.
 
 The unstable interface does not currently expose:
 
-- separate Arbitrary constructors for primitive values and structures, or direct access to internal samples and
-  simplification steps;
+- a second catalog of Schema-like constructors, or direct access to internal samples and simplification steps;
 - weighted distribution controls;
 - custom simplification that is not attached to a Schema;
 - support for generators from other libraries or a broad set of runner settings;
@@ -1228,17 +1244,27 @@ can alter generated values, simplification, replay, performance, or bundle size 
   to `Schema.Struct`, `Schema.Record`, `Schema.Json`, and record-shaped `all`, but not to arrays, tuples, declarations, or
   collection classes.
 - Integer and BigInt generation avoids favoring some values accidentally. It tries boundary values more often on some
-  runs. Number generation includes signed zero, very small values, infinities, and `NaN` when the Schema permits them.
-  Finite and integer checks exclude the values they promise to exclude.
-- The magnitude of unbounded integers grows with `size`. Ordinary strings combine printable ASCII with a fixed set of
-  JavaScript edge cases. Regular-expression length is measured in UTF-16 code units, matching JavaScript strings.
+  runs. Unbounded BigInts select their bit length separately from their value, mixing ordinary magnitudes with much
+  wider values even at a small `size`. Number generation includes signed zero, very small values, infinities, and `NaN`
+  when the Schema permits them. Finite and integer checks exclude the values they promise to exclude.
+- BigDecimal generation selects precision and decimal exponent independently, while ordered constraints are projected
+  to the selected scale. Its simplifications operate on the represented numeric value, so a fixed generated scale does
+  not dictate the final counterexample. Local simplification continues between passing and failing values with a finite
+  limit on added precision. Ordinary strings combine printable ASCII with a fixed set of JavaScript edge cases.
+  Regular-expression length is measured in UTF-16 code units, matching JavaScript strings.
 - Exact probabilities, the value produced by a particular seed, and the order of simplifications may change. Source
   code comments credit algorithms adapted from other property-testing and random-number implementations.
 
 #### Generating and Simplifying Data Structures
 
-- Arrays first remove optional or repeated items and then simplify remaining items. Objects choose optional properties
-  without favoring earlier declarations. If the first choice is too large for the available recursion space, Effect
+- Arrays try removing progressively smaller blocks at successive positions and simplifying individual items. Deletions
+  retain the other elements and their shrink history, so an earlier element candidate can be tried again after deletion
+  changes the property context. This history is lazy and local to a collection generation. Products and objects also
+  retain shared child histories, so exploring a filtered descendant cannot exhaust a sibling's shrink candidates.
+  Ordinary field shrinking continues from the field being simplified; structural deletions restart field traversal.
+  Tuple prefixes and fixed tails cannot be deleted; optional positions can only be removed from the end when the tuple
+  permits it. Whole-array minima apply to every deletion. Objects choose optional properties without favoring earlier
+  declarations. If the first choice is too large for the available recursion space, Effect
   uses the smallest choice that still satisfies the Schema instead of rejecting a Schema that can produce a value.
   Simplification removes optional properties, simplifies values, and then simplifies generated keys while keeping keys
   unique.

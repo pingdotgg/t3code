@@ -52,24 +52,29 @@ const expectGone = (accountId: string, name: string) =>
 // `list()` swallows the `ImagesAccessNotEnabled` 5403 and returns `[]` on
 // unentitled accounts, so the result is a well-typed Attributes[] in either
 // case. On an entitled account it additionally contains the deployed key.
-test.provider("list enumerates the account's signing keys", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the account's signing keys",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(Cloudflare.Images.SigningKey);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Images.SigningKey,
+      );
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const key of all) {
-      expect(typeof key.keyName).toBe("string");
-      expect(key.accountId).toEqual(accountId);
-      expect(typeof Redacted.value(key.value)).toBe("string");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const key of all) {
+        expect(typeof key.keyName).toBe("string");
+        expect(key.accountId).toEqual(accountId);
+        expect(typeof Redacted.value(key.value)).toBe("string");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:images", "live"] },
 );
 
 test.provider.skipIf(keysEntitled)(
@@ -88,6 +93,7 @@ test.provider.skipIf(keysEntitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:images", "live"] },
 );
 
 // NOTE: Cloudflare caps signing keys at 2 per account (the account's
@@ -136,4 +142,5 @@ test.provider.skipIf(!keysEntitled)(
       // Destroy again — delete is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:images", "live"] },
 );

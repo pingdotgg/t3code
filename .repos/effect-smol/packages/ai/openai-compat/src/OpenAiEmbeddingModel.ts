@@ -5,22 +5,24 @@
  * values, supports scoped request configuration overrides, and checks that the
  * provider returns one numeric vector for each requested input.
  *
+ * @stability unstable
  * @since 4.0.0
  */
+import * as AiError from "effect/ai/AiError"
+import * as EmbeddingModel from "effect/ai/EmbeddingModel"
+import * as AiModel from "effect/ai/Model"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
 import * as Layer from "effect/Layer"
 import type { Simplify } from "effect/Types"
-import * as AiError from "effect/unstable/ai/AiError"
-import * as EmbeddingModel from "effect/unstable/ai/EmbeddingModel"
-import * as AiModel from "effect/unstable/ai/Model"
 import type { CreateEmbedding200, CreateEmbeddingRequestJson } from "./OpenAiClient.ts"
 import { OpenAiClient } from "./OpenAiClient.ts"
 
 /**
  * A model identifier accepted by an OpenAI-compatible embeddings endpoint.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -46,6 +48,7 @@ type ModelConfig = Omit<ConfigOptions, "model"> & { readonly [x: string]: unknow
  *
  * @see {@link withConfigOverride} for scoping embedding request overrides
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -65,6 +68,7 @@ export class Config extends Context.Service<
  * @see {@link layer} for providing only the embedding model service
  * @see {@link withConfigOverride} for scoped request configuration overrides
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -112,6 +116,7 @@ export const model = (
  * @see {@link layer} for providing the service as a `Layer`
  * @see {@link withConfigOverride} for scoping embedding request overrides
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -146,6 +151,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
  * @see {@link make} for constructing the embedding model service effectfully
  * @see {@link model} for creating an `AiModel` with configured dimensions
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -172,6 +178,7 @@ export const layer = (options: {
  *
  * @see {@link Config} for available OpenAI-compatible embedding request configuration fields
  *
+ * @stability unstable
  * @category configuration
  * @since 4.0.0
  */

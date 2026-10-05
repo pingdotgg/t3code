@@ -1,6 +1,6 @@
 "effect/FastCheck":
   replacement: "fast-check"
-  note: "Effect no longer re-exports fast-check. Depend on the fast-check package and import it directly. For Schema-derived generation, use Arbitrary.schema from effect/unstable/arbitrary."
+  note: "Effect no longer re-exports fast-check. Depend on the fast-check package and import it directly. For Schema-derived generation, use Arbitrary.schema from effect/Arbitrary."
 "effect/FastCheck#ascii":
   replacement: "FastCheck.string"
   note: "Depend on fast-check and import it directly. fast-check v4 replaced character arbitraries with string units."

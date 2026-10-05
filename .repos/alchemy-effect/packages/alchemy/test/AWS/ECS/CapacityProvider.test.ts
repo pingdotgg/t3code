@@ -37,7 +37,7 @@ test.provider(
         );
       }
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 120_000 },
 );
 
 // Full deploy + list assertion. Requires a pre-provisioned EC2 Auto Scaling
@@ -77,5 +77,5 @@ test.provider.skipIf(!process.env.TEST_ASG_ARN)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 600_000 },
 );

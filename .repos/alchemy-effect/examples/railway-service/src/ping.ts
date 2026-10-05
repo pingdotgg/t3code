@@ -1,7 +1,7 @@
 import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Db, Site } from "./shared.ts";
 
 /**

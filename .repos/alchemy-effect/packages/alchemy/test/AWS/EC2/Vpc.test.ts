@@ -16,89 +16,95 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create, update, delete vpc", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create, update, delete vpc",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const vpc = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Vpc("TestVpc", {
-          cidrBlock: "10.0.0.0/16",
-          enableDnsSupport: true,
-          enableDnsHostnames: true,
-        });
-      }),
-    );
+      const vpc = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Vpc("TestVpc", {
+            cidrBlock: "10.0.0.0/16",
+            enableDnsSupport: true,
+            enableDnsHostnames: true,
+          });
+        }),
+      );
 
-    const actualVpc = yield* EC2.describeVpcs({
-      VpcIds: [vpc.vpcId],
-    });
-    expect(actualVpc.Vpcs?.[0]?.VpcId).toEqual(vpc.vpcId);
-    expect(actualVpc.Vpcs?.[0]?.CidrBlock).toEqual("10.0.0.0/16");
-    expect(actualVpc.Vpcs?.[0]?.State).toEqual("available");
+      const actualVpc = yield* EC2.describeVpcs({
+        VpcIds: [vpc.vpcId],
+      });
+      expect(actualVpc.Vpcs?.[0]?.VpcId).toEqual(vpc.vpcId);
+      expect(actualVpc.Vpcs?.[0]?.CidrBlock).toEqual("10.0.0.0/16");
+      expect(actualVpc.Vpcs?.[0]?.State).toEqual("available");
 
-    yield* expectVpcAttribute({
-      VpcId: vpc.vpcId,
-      Attribute: "enableDnsSupport",
-      Value: true,
-    });
+      yield* expectVpcAttribute({
+        VpcId: vpc.vpcId,
+        Attribute: "enableDnsSupport",
+        Value: true,
+      });
 
-    yield* expectVpcAttribute({
-      VpcId: vpc.vpcId,
-      Attribute: "enableDnsHostnames",
-      Value: true,
-    });
+      yield* expectVpcAttribute({
+        VpcId: vpc.vpcId,
+        Attribute: "enableDnsHostnames",
+        Value: true,
+      });
 
-    // Update VPC attributes
-    const updatedVpc = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Vpc("TestVpc", {
-          cidrBlock: "10.0.0.0/16",
-          enableDnsSupport: false,
-          enableDnsHostnames: false,
-        });
-      }),
-    );
+      // Update VPC attributes
+      const updatedVpc = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Vpc("TestVpc", {
+            cidrBlock: "10.0.0.0/16",
+            enableDnsSupport: false,
+            enableDnsHostnames: false,
+          });
+        }),
+      );
 
-    yield* expectVpcAttribute({
-      VpcId: updatedVpc.vpcId,
-      Attribute: "enableDnsSupport",
-      Value: false,
-    });
+      yield* expectVpcAttribute({
+        VpcId: updatedVpc.vpcId,
+        Attribute: "enableDnsSupport",
+        Value: false,
+      });
 
-    yield* expectVpcAttribute({
-      VpcId: updatedVpc.vpcId,
-      Attribute: "enableDnsHostnames",
-      Value: false,
-    });
+      yield* expectVpcAttribute({
+        VpcId: updatedVpc.vpcId,
+        Attribute: "enableDnsHostnames",
+        Value: false,
+      });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertVpcDeleted(vpc.vpcId);
-  }).pipe(logLevel),
+      yield* assertVpcDeleted(vpc.vpcId);
+    }).pipe(logLevel),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 15 * 60_000 },
 );
 
-test.provider("list enumerates the deployed vpc", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed vpc",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Vpc("ListVpc", {
-          cidrBlock: "10.0.0.0/16",
-        });
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Vpc("ListVpc", {
+            cidrBlock: "10.0.0.0/16",
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Vpc);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Vpc);
+      const all = yield* provider.list();
 
-    expect(all.some((v) => v.vpcId === deployed.vpcId)).toBe(true);
+      expect(all.some((v) => v.vpcId === deployed.vpcId)).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertVpcDeleted(deployed.vpcId);
-  }).pipe(logLevel),
+      yield* assertVpcDeleted(deployed.vpcId);
+    }).pipe(logLevel),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 15 * 60_000 },
 );
 
 const expectVpcAttribute = Effect.fn(function* (props: {

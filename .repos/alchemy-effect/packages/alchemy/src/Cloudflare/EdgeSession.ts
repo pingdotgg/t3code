@@ -3,7 +3,7 @@ import { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { Access } from "./Access.ts";
 import { CloudflareEnvironment } from "./CloudflareEnvironment.ts";
 

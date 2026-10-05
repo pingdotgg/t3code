@@ -91,230 +91,245 @@ const normalizeBaseline = (zoneId: string) =>
       );
   });
 
-describe.sequential("ManagedTransforms", () => {
-  test.provider(
-    "manages a named transform, updates in place, and restores it on destroy",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+describe.sequential(
+  "ManagedTransforms",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:managedtransforms",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "manages a named transform, updates in place, and restores it on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* normalizeBaseline(zoneId);
-
-        const baseline = yield* listTransforms(zoneId);
-        expect(enabledOf(baseline.managedResponseHeaders, MANAGED_ID)).toBe(
-          false,
-        );
-        expect(enabledOf(baseline.managedResponseHeaders, UNMANAGED_ID)).toBe(
-          false,
-        );
-
-        yield* Effect.gen(function* () {
-          // 1. Create (adopt the singleton) — enable one response transform.
-          const created = yield* stack.deploy(
-            Effect.gen(function* () {
-              return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
-                "Transforms",
-                {
-                  zoneId,
-                  responseHeaders: { [MANAGED_ID]: true },
-                },
-              );
-            }),
-          );
-          expect(created.zoneId).toEqual(zoneId);
-          expect(enabledOf(created.responseHeaders, MANAGED_ID)).toBe(true);
-          // Snapshot captured the pre-management (normalized) state.
-          expect(created.initialResponseHeaders[MANAGED_ID]).toBe(false);
-
-          const live1 = yield* listTransforms(zoneId);
-          expect(enabledOf(live1.managedResponseHeaders, MANAGED_ID)).toBe(
-            true,
-          );
-          // The unmanaged transform is untouched.
-          expect(enabledOf(live1.managedResponseHeaders, UNMANAGED_ID)).toBe(
-            false,
-          );
-
-          // 2. Update in place — flip the managed transform off and take over
-          //    the second one. Same identity (same zoneId), and the initial
-          //    snapshot must remain sticky across updates.
-          const updated = yield* stack.deploy(
-            Effect.gen(function* () {
-              return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
-                "Transforms",
-                {
-                  zoneId,
-                  responseHeaders: {
-                    [MANAGED_ID]: false,
-                    [UNMANAGED_ID]: true,
-                  },
-                },
-              );
-            }),
-          );
-          expect(updated.zoneId).toEqual(zoneId);
-          expect(enabledOf(updated.responseHeaders, MANAGED_ID)).toBe(false);
-          expect(enabledOf(updated.responseHeaders, UNMANAGED_ID)).toBe(true);
-          expect(updated.initialResponseHeaders[MANAGED_ID]).toBe(false);
-          expect(updated.initialResponseHeaders[UNMANAGED_ID]).toBe(false);
-
-          const live2 = yield* listTransforms(zoneId);
-          expect(enabledOf(live2.managedResponseHeaders, MANAGED_ID)).toBe(
-            false,
-          );
-          expect(enabledOf(live2.managedResponseHeaders, UNMANAGED_ID)).toBe(
-            true,
-          );
-
-          // 3. Destroy — managed ids are restored to their snapshot values.
           yield* stack.destroy();
+          yield* normalizeBaseline(zoneId);
 
-          const after = yield* listTransforms(zoneId);
-          expect(enabledOf(after.managedResponseHeaders, MANAGED_ID)).toBe(
+          const baseline = yield* listTransforms(zoneId);
+          expect(enabledOf(baseline.managedResponseHeaders, MANAGED_ID)).toBe(
             false,
           );
-          expect(enabledOf(after.managedResponseHeaders, UNMANAGED_ID)).toBe(
+          expect(enabledOf(baseline.managedResponseHeaders, UNMANAGED_ID)).toBe(
             false,
           );
-        }).pipe(Effect.ensuring(normalizeBaseline(zoneId).pipe(Effect.ignore)));
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 240_000 },
-  );
-
-  test.provider(
-    "destroy restores a transform that was enabled before management",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* normalizeBaseline(zoneId);
-
-        yield* Effect.gen(function* () {
-          // Enable the transform out-of-band so the snapshot captures
-          // `enabled: true` as the pre-management state.
-          yield* managedTransforms
-            .patchManagedTransform({
-              zoneId,
-              managedRequestHeaders: [],
-              managedResponseHeaders: [{ id: MANAGED_ID, enabled: true }],
-            })
-            .pipe(
-              Effect.retry({
-                while: (e) => e._tag === "Forbidden",
-                schedule: forbiddenRetrySchedule,
-                times: 8,
+          yield* Effect.gen(function* () {
+            // 1. Create (adopt the singleton) — enable one response transform.
+            const created = yield* stack.deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
+                  "Transforms",
+                  {
+                    zoneId,
+                    responseHeaders: { [MANAGED_ID]: true },
+                  },
+                );
               }),
             );
+            expect(created.zoneId).toEqual(zoneId);
+            expect(enabledOf(created.responseHeaders, MANAGED_ID)).toBe(true);
+            // Snapshot captured the pre-management (normalized) state.
+            expect(created.initialResponseHeaders[MANAGED_ID]).toBe(false);
 
-          // Manage it to disabled.
-          const created = yield* stack.deploy(
+            const live1 = yield* listTransforms(zoneId);
+            expect(enabledOf(live1.managedResponseHeaders, MANAGED_ID)).toBe(
+              true,
+            );
+            // The unmanaged transform is untouched.
+            expect(enabledOf(live1.managedResponseHeaders, UNMANAGED_ID)).toBe(
+              false,
+            );
+
+            // 2. Update in place — flip the managed transform off and take over
+            //    the second one. Same identity (same zoneId), and the initial
+            //    snapshot must remain sticky across updates.
+            const updated = yield* stack.deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
+                  "Transforms",
+                  {
+                    zoneId,
+                    responseHeaders: {
+                      [MANAGED_ID]: false,
+                      [UNMANAGED_ID]: true,
+                    },
+                  },
+                );
+              }),
+            );
+            expect(updated.zoneId).toEqual(zoneId);
+            expect(enabledOf(updated.responseHeaders, MANAGED_ID)).toBe(false);
+            expect(enabledOf(updated.responseHeaders, UNMANAGED_ID)).toBe(true);
+            expect(updated.initialResponseHeaders[MANAGED_ID]).toBe(false);
+            expect(updated.initialResponseHeaders[UNMANAGED_ID]).toBe(false);
+
+            const live2 = yield* listTransforms(zoneId);
+            expect(enabledOf(live2.managedResponseHeaders, MANAGED_ID)).toBe(
+              false,
+            );
+            expect(enabledOf(live2.managedResponseHeaders, UNMANAGED_ID)).toBe(
+              true,
+            );
+
+            // 3. Destroy — managed ids are restored to their snapshot values.
+            yield* stack.destroy();
+
+            const after = yield* listTransforms(zoneId);
+            expect(enabledOf(after.managedResponseHeaders, MANAGED_ID)).toBe(
+              false,
+            );
+            expect(enabledOf(after.managedResponseHeaders, UNMANAGED_ID)).toBe(
+              false,
+            );
+          }).pipe(
+            Effect.ensuring(normalizeBaseline(zoneId).pipe(Effect.ignore)),
+          );
+
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 240_000 },
+    );
+
+    test.provider(
+      "destroy restores a transform that was enabled before management",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* normalizeBaseline(zoneId);
+
+          yield* Effect.gen(function* () {
+            // Enable the transform out-of-band so the snapshot captures
+            // `enabled: true` as the pre-management state.
+            yield* managedTransforms
+              .patchManagedTransform({
+                zoneId,
+                managedRequestHeaders: [],
+                managedResponseHeaders: [{ id: MANAGED_ID, enabled: true }],
+              })
+              .pipe(
+                Effect.retry({
+                  while: (e) => e._tag === "Forbidden",
+                  schedule: forbiddenRetrySchedule,
+                  times: 8,
+                }),
+              );
+
+            // Manage it to disabled.
+            const created = yield* stack.deploy(
+              Effect.gen(function* () {
+                return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
+                  "Transforms",
+                  {
+                    zoneId,
+                    responseHeaders: { [MANAGED_ID]: false },
+                  },
+                );
+              }),
+            );
+            expect(created.initialResponseHeaders[MANAGED_ID]).toBe(true);
+            expect(enabledOf(created.responseHeaders, MANAGED_ID)).toBe(false);
+
+            const live = yield* listTransforms(zoneId);
+            expect(enabledOf(live.managedResponseHeaders, MANAGED_ID)).toBe(
+              false,
+            );
+
+            // Destroy — the transform goes back to enabled (its snapshot value).
+            yield* stack.destroy();
+
+            const after = yield* listTransforms(zoneId);
+            expect(enabledOf(after.managedResponseHeaders, MANAGED_ID)).toBe(
+              true,
+            );
+          }).pipe(
+            Effect.ensuring(normalizeBaseline(zoneId).pipe(Effect.ignore)),
+          );
+
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 240_000 },
+    );
+
+    test.provider(
+      "deploy with no transforms named adopts the singleton without writing",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* normalizeBaseline(zoneId);
+
+          const before = yield* listTransforms(zoneId);
+
+          const adopted = yield* stack.deploy(
             Effect.gen(function* () {
               return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
                 "Transforms",
                 {
                   zoneId,
-                  responseHeaders: { [MANAGED_ID]: false },
                 },
               );
             }),
           );
-          expect(created.initialResponseHeaders[MANAGED_ID]).toBe(true);
-          expect(enabledOf(created.responseHeaders, MANAGED_ID)).toBe(false);
+          expect(adopted.zoneId).toEqual(zoneId);
+          // Attributes surface the full observed catalog. Note: a fresh zone
+          // reports `managed_request_headers: null` (normalized to `[]`) until
+          // the first PATCH materializes the catalog, so only its array shape
+          // is stable across runs.
+          expect(Array.isArray(adopted.requestHeaders)).toBe(true);
+          expect(adopted.responseHeaders.length).toBeGreaterThan(0);
 
-          const live = yield* listTransforms(zoneId);
-          expect(enabledOf(live.managedResponseHeaders, MANAGED_ID)).toBe(
-            false,
-          );
+          // Nothing named => no PATCH => live state unchanged.
+          const afterDeploy = yield* listTransforms(zoneId);
+          for (const t of before.managedResponseHeaders ?? []) {
+            expect(enabledOf(afterDeploy.managedResponseHeaders, t.id)).toBe(
+              t.enabled,
+            );
+          }
 
-          // Destroy — the transform goes back to enabled (its snapshot value).
+          // Destroy of an untouched singleton restores nothing and never errors.
           yield* stack.destroy();
 
-          const after = yield* listTransforms(zoneId);
-          expect(enabledOf(after.managedResponseHeaders, MANAGED_ID)).toBe(
-            true,
-          );
-        }).pipe(Effect.ensuring(normalizeBaseline(zoneId).pipe(Effect.ignore)));
-
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 240_000 },
-  );
-
-  test.provider(
-    "deploy with no transforms named adopts the singleton without writing",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* normalizeBaseline(zoneId);
-
-        const before = yield* listTransforms(zoneId);
-
-        const adopted = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.ManagedTransforms.ManagedTransforms(
-              "Transforms",
-              {
-                zoneId,
-              },
+          const afterDestroy = yield* listTransforms(zoneId);
+          for (const t of before.managedResponseHeaders ?? []) {
+            expect(enabledOf(afterDestroy.managedResponseHeaders, t.id)).toBe(
+              t.enabled,
             );
-          }),
-        );
-        expect(adopted.zoneId).toEqual(zoneId);
-        // Attributes surface the full observed catalog. Note: a fresh zone
-        // reports `managed_request_headers: null` (normalized to `[]`) until
-        // the first PATCH materializes the catalog, so only its array shape
-        // is stable across runs.
-        expect(Array.isArray(adopted.requestHeaders)).toBe(true);
-        expect(adopted.responseHeaders.length).toBeGreaterThan(0);
+          }
+        }).pipe(logLevel),
+      { timeout: 240_000 },
+    );
 
-        // Nothing named => no PATCH => live state unchanged.
-        const afterDeploy = yield* listTransforms(zoneId);
-        for (const t of before.managedResponseHeaders ?? []) {
-          expect(enabledOf(afterDeploy.managedResponseHeaders, t.id)).toBe(
-            t.enabled,
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for the managed-transforms catalog, so `list()` enumerates every zone
+    // via `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider.skipIf(!runManagedTransformsListTest)(
+      "list enumerates managed transforms across all zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          const provider = yield* Provider.findProvider(
+            Cloudflare.ManagedTransforms.ManagedTransforms,
           );
-        }
+          const all = yield* provider.list();
 
-        // Destroy of an untouched singleton restores nothing and never errors.
-        yield* stack.destroy();
+          expect(all.length).toBeGreaterThan(0);
+          expect(all.some((t) => t.zoneId === zoneId)).toBe(true);
 
-        const afterDestroy = yield* listTransforms(zoneId);
-        for (const t of before.managedResponseHeaders ?? []) {
-          expect(enabledOf(afterDestroy.managedResponseHeaders, t.id)).toBe(
-            t.enabled,
-          );
-        }
-      }).pipe(logLevel),
-    { timeout: 240_000 },
-  );
-
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for the managed-transforms catalog, so `list()` enumerates every zone
-  // via `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider.skipIf(!runManagedTransformsListTest)(
-    "list enumerates managed transforms across all zones",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        const provider = yield* Provider.findProvider(
-          Cloudflare.ManagedTransforms.ManagedTransforms,
-        );
-        const all = yield* provider.list();
-
-        expect(all.length).toBeGreaterThan(0);
-        expect(all.some((t) => t.zoneId === zoneId)).toBe(true);
-
-        // `stack` is unused here (the singleton always exists on every zone),
-        // but keep the destroy bookend so the harness state stays clean.
-        yield* stack.destroy();
-      }).pipe(logLevel),
-  );
-});
+          // `stack` is unused here (the singleton always exists on every zone),
+          // but keep the destroy bookend so the harness state stays clean.
+          yield* stack.destroy();
+        }).pipe(logLevel),
+    );
+  },
+);

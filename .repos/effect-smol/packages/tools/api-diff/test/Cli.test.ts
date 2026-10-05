@@ -4,12 +4,12 @@ import type { ApiEntity, ApiSnapshot } from "@effect/api-diff/Model"
 import { Worktrees } from "@effect/api-diff/Worktrees"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
+import * as Command from "effect/cli/Command"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
-import * as Command from "effect/unstable/cli/Command"
 
 const snapshot = (ref: string, sha: string, entities: ReadonlyArray<ApiEntity> = []): ApiSnapshot => ({
   version: 1,

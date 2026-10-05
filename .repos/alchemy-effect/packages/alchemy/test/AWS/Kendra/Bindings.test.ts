@@ -5,7 +5,7 @@ import * as kendra from "@distilled.cloud/aws/kendra";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import KendraTestFunctionLive, { KendraTestFunction } from "./handler";
 
 const testOptions = { providers: AWS.providers() };
@@ -23,305 +23,311 @@ const NONEXISTENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 // runtime fixture below is gated behind the 20-30 minute index provisioning.
 // ---------------------------------------------------------------------------
 
-describe("Kendra binding operations (typed-error probes)", () => {
-  const expectTag = (error: { _tag: string }, tags: readonly string[]) =>
-    expect(tags).toContain(error._tag);
-  const NOT_FOUND = ["ResourceNotFoundException"] as const;
-  // Operations whose body preconditions may be validated before the index
-  // lookup surface either tag.
-  const NOT_FOUND_OR_INVALID = [
-    "ResourceNotFoundException",
-    "ValidationException",
-  ] as const;
+describe(
+  "Kendra binding operations (typed-error probes)",
+  { tags: ["provider:aws", "provider:aws:kendra", "live"] },
+  () => {
+    const expectTag = (error: { _tag: string }, tags: readonly string[]) =>
+      expect(tags).toContain(error._tag);
+    const NOT_FOUND = ["ResourceNotFoundException"] as const;
+    // Operations whose body preconditions may be validated before the index
+    // lookup surface either tag.
+    const NOT_FOUND_OR_INVALID = [
+      "ResourceNotFoundException",
+      "ValidationException",
+    ] as const;
 
-  test.provider("query yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.query({ IndexId: NONEXISTENT, QueryText: "probe" }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
+    test.provider("query yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.query({ IndexId: NONEXISTENT, QueryText: "probe" }),
+        );
+        expectTag(error, NOT_FOUND);
+      }),
+    );
 
-  test.provider("retrieve yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.retrieve({ IndexId: NONEXISTENT, QueryText: "probe" }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
+    test.provider("retrieve yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.retrieve({ IndexId: NONEXISTENT, QueryText: "probe" }),
+        );
+        expectTag(error, NOT_FOUND);
+      }),
+    );
 
-  test.provider("getQuerySuggestions yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.getQuerySuggestions({
-          IndexId: NONEXISTENT,
-          QueryText: "probe",
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
+    test.provider("getQuerySuggestions yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.getQuerySuggestions({
+            IndexId: NONEXISTENT,
+            QueryText: "probe",
+          }),
+        );
+        expectTag(error, NOT_FOUND);
+      }),
+    );
 
-  test.provider("submitFeedback yields a typed error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.submitFeedback({
-          IndexId: NONEXISTENT,
-          QueryId: "probe-query-id",
-          ClickFeedbackItems: [
-            { ResultId: "probe-result", ClickTime: new Date() },
-          ],
-        }),
-      );
-      expectTag(error, NOT_FOUND_OR_INVALID);
-    }),
-  );
+    test.provider("submitFeedback yields a typed error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.submitFeedback({
+            IndexId: NONEXISTENT,
+            QueryId: "probe-query-id",
+            ClickFeedbackItems: [
+              { ResultId: "probe-result", ClickTime: new Date() },
+            ],
+          }),
+        );
+        expectTag(error, NOT_FOUND_OR_INVALID);
+      }),
+    );
 
-  test.provider("batchPutDocument yields a typed error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.batchPutDocument({
-          IndexId: NONEXISTENT,
-          Documents: [
-            {
-              Id: "probe",
-              Blob: new TextEncoder().encode("probe"),
-              ContentType: "PLAIN_TEXT",
+    test.provider("batchPutDocument yields a typed error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.batchPutDocument({
+            IndexId: NONEXISTENT,
+            Documents: [
+              {
+                Id: "probe",
+                Blob: new TextEncoder().encode("probe"),
+                ContentType: "PLAIN_TEXT",
+              },
+            ],
+          }),
+        );
+        expectTag(error, NOT_FOUND_OR_INVALID);
+      }),
+    );
+
+    test.provider("batchDeleteDocument yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.batchDeleteDocument({
+            IndexId: NONEXISTENT,
+            DocumentIdList: ["probe"],
+          }),
+        );
+        expectTag(error, NOT_FOUND);
+      }),
+    );
+
+    test.provider("batchGetDocumentStatus yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.batchGetDocumentStatus({
+            IndexId: NONEXISTENT,
+            DocumentInfoList: [{ DocumentId: "probe" }],
+          }),
+        );
+        expectTag(error, NOT_FOUND);
+      }),
+    );
+
+    test.provider("getSnapshots yields a typed error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.getSnapshots({
+            IndexId: NONEXISTENT,
+            Interval: "ONE_WEEK_AGO",
+            MetricType: "QUERIES_BY_COUNT",
+          }),
+        );
+        expectTag(error, NOT_FOUND_OR_INVALID);
+      }),
+    );
+
+    test.provider("putPrincipalMapping yields a typed error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.putPrincipalMapping({
+            IndexId: NONEXISTENT,
+            GroupId: "probe",
+            GroupMembers: {
+              MemberUsers: [{ UserId: "probe@example.com" }],
             },
-          ],
-        }),
-      );
-      expectTag(error, NOT_FOUND_OR_INVALID);
-    }),
-  );
+          }),
+        );
+        expectTag(error, NOT_FOUND_OR_INVALID);
+      }),
+    );
 
-  test.provider("batchDeleteDocument yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.batchDeleteDocument({
-          IndexId: NONEXISTENT,
-          DocumentIdList: ["probe"],
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider("batchGetDocumentStatus yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.batchGetDocumentStatus({
-          IndexId: NONEXISTENT,
-          DocumentInfoList: [{ DocumentId: "probe" }],
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider("getSnapshots yields a typed error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.getSnapshots({
-          IndexId: NONEXISTENT,
-          Interval: "ONE_WEEK_AGO",
-          MetricType: "QUERIES_BY_COUNT",
-        }),
-      );
-      expectTag(error, NOT_FOUND_OR_INVALID);
-    }),
-  );
-
-  test.provider("putPrincipalMapping yields a typed error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.putPrincipalMapping({
-          IndexId: NONEXISTENT,
-          GroupId: "probe",
-          GroupMembers: {
-            MemberUsers: [{ UserId: "probe@example.com" }],
-          },
-        }),
-      );
-      expectTag(error, NOT_FOUND_OR_INVALID);
-    }),
-  );
-
-  test.provider("deletePrincipalMapping yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.deletePrincipalMapping({
-          IndexId: NONEXISTENT,
-          GroupId: "probe",
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider("describePrincipalMapping yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.describePrincipalMapping({
-          IndexId: NONEXISTENT,
-          GroupId: "probe",
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider(
-    "listGroupsOlderThanOrderingId yields a typed not-found error",
-    () =>
+    test.provider("deletePrincipalMapping yields a typed not-found error", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          kendra.listGroupsOlderThanOrderingId({
+          kendra.deletePrincipalMapping({
             IndexId: NONEXISTENT,
-            OrderingId: 1,
+            GroupId: "probe",
           }),
         );
         expectTag(error, NOT_FOUND);
       }),
-  );
+    );
 
-  test.provider("clearQuerySuggestions yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.clearQuerySuggestions({ IndexId: NONEXISTENT }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
+    test.provider(
+      "describePrincipalMapping yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.describePrincipalMapping({
+              IndexId: NONEXISTENT,
+              GroupId: "probe",
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
 
-  test.provider(
-    "describeQuerySuggestionsConfig yields a typed not-found error",
-    () =>
+    test.provider(
+      "listGroupsOlderThanOrderingId yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.listGroupsOlderThanOrderingId({
+              IndexId: NONEXISTENT,
+              OrderingId: 1,
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider("clearQuerySuggestions yields a typed not-found error", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          kendra.describeQuerySuggestionsConfig({ IndexId: NONEXISTENT }),
+          kendra.clearQuerySuggestions({ IndexId: NONEXISTENT }),
         );
         expectTag(error, NOT_FOUND);
       }),
-  );
+    );
 
-  test.provider(
-    "updateQuerySuggestionsConfig yields a typed not-found error",
-    () =>
+    test.provider(
+      "describeQuerySuggestionsConfig yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.describeQuerySuggestionsConfig({ IndexId: NONEXISTENT }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider(
+      "updateQuerySuggestionsConfig yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.updateQuerySuggestionsConfig({
+              IndexId: NONEXISTENT,
+              Mode: "LEARN_ONLY",
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider("createAccessControlConfiguration yields a typed error", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          kendra.updateQuerySuggestionsConfig({
+          kendra.createAccessControlConfiguration({
             IndexId: NONEXISTENT,
-            Mode: "LEARN_ONLY",
+            Name: "probe",
+          }),
+        );
+        expectTag(error, NOT_FOUND_OR_INVALID);
+      }),
+    );
+
+    test.provider(
+      "describeAccessControlConfiguration yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.describeAccessControlConfiguration({
+              IndexId: NONEXISTENT,
+              Id: "probe",
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider(
+      "updateAccessControlConfiguration yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.updateAccessControlConfiguration({
+              IndexId: NONEXISTENT,
+              Id: "probe",
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider(
+      "deleteAccessControlConfiguration yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.deleteAccessControlConfiguration({
+              IndexId: NONEXISTENT,
+              Id: "probe",
+            }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider(
+      "listAccessControlConfigurations yields a typed not-found error",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            kendra.listAccessControlConfigurations({ IndexId: NONEXISTENT }),
+          );
+          expectTag(error, NOT_FOUND);
+        }),
+    );
+
+    test.provider("startDataSourceSyncJob yields a typed not-found error", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          kendra.startDataSourceSyncJob({
+            IndexId: NONEXISTENT,
+            Id: NONEXISTENT,
           }),
         );
         expectTag(error, NOT_FOUND);
       }),
-  );
+    );
 
-  test.provider("createAccessControlConfiguration yields a typed error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.createAccessControlConfiguration({
-          IndexId: NONEXISTENT,
-          Name: "probe",
-        }),
-      );
-      expectTag(error, NOT_FOUND_OR_INVALID);
-    }),
-  );
-
-  test.provider(
-    "describeAccessControlConfiguration yields a typed not-found error",
-    () =>
+    test.provider("stopDataSourceSyncJob yields a typed not-found error", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          kendra.describeAccessControlConfiguration({
+          kendra.stopDataSourceSyncJob({
             IndexId: NONEXISTENT,
-            Id: "probe",
+            Id: NONEXISTENT,
           }),
         );
         expectTag(error, NOT_FOUND);
       }),
-  );
+    );
 
-  test.provider(
-    "updateAccessControlConfiguration yields a typed not-found error",
-    () =>
+    test.provider("listDataSourceSyncJobs yields a typed not-found error", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          kendra.updateAccessControlConfiguration({
+          kendra.listDataSourceSyncJobs({
             IndexId: NONEXISTENT,
-            Id: "probe",
+            Id: NONEXISTENT,
           }),
         );
         expectTag(error, NOT_FOUND);
       }),
-  );
-
-  test.provider(
-    "deleteAccessControlConfiguration yields a typed not-found error",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          kendra.deleteAccessControlConfiguration({
-            IndexId: NONEXISTENT,
-            Id: "probe",
-          }),
-        );
-        expectTag(error, NOT_FOUND);
-      }),
-  );
-
-  test.provider(
-    "listAccessControlConfigurations yields a typed not-found error",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          kendra.listAccessControlConfigurations({ IndexId: NONEXISTENT }),
-        );
-        expectTag(error, NOT_FOUND);
-      }),
-  );
-
-  test.provider("startDataSourceSyncJob yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.startDataSourceSyncJob({
-          IndexId: NONEXISTENT,
-          Id: NONEXISTENT,
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider("stopDataSourceSyncJob yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.stopDataSourceSyncJob({
-          IndexId: NONEXISTENT,
-          Id: NONEXISTENT,
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-
-  test.provider("listDataSourceSyncJobs yields a typed not-found error", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        kendra.listDataSourceSyncJobs({
-          IndexId: NONEXISTENT,
-          Id: NONEXISTENT,
-        }),
-      );
-      expectTag(error, NOT_FOUND);
-    }),
-  );
-});
+    );
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Full runtime fixture: a Lambda bound to all twenty-three bindings against a
@@ -521,5 +527,16 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       }).pipe(Effect.ensuring(sharedStack.destroy().pipe(Effect.orDie)));
     }),
   // index create (~20-30 min) + document indexing + sync + delete wait.
-  { timeout: 5_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:iam",
+      "provider:aws:kendra",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 5_400_000,
+  },
 );

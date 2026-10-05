@@ -9,6 +9,16 @@
    prose plugin leaves them alone in docs.
    ============================================================ */
 
+/* Terminals are dark in both themes, so status colors always use their
+   dark-theme values (the light-theme moss/brick fail contrast here). */
+.alc-term,
+.prf-win,
+.expressive-code {
+  --alc-success: #8fb15e;
+  --alc-warn: #e8b04a;
+  --alc-danger: #d76a4e;
+  --alc-info: #6da4b4;
+}
 .alc-term {
   background: var(--alc-bg-code);
   border: 1px solid var(--alc-hairline);
@@ -47,7 +57,13 @@
   border-radius: 0;
   min-height: 296px;
 }
+/* Window dots are only drawn in terminals. Elsewhere they had no size but
+   their flex gaps still pushed the filename right, so drop them. */
+.alc-code-block__dot {
+  display: none;
+}
 .alc-term .alc-code-block__dot {
+  display: block;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -59,4 +75,49 @@
    margin so embedded terminals breathe like other block elements. */
 .sl-markdown-content > .alc-term {
   margin: 1rem 0;
+}
+
+/* ============================================================
+   Expressive Code frames (the file-name tab on docs code blocks)
+
+   The default Starlight rendering of the editor-style frame paints
+   the tab title with a very low-contrast walnut on a near-walnut
+   strip — practically unreadable on the cream page. Force the
+   active tab to use the bright sunrise palette so the file name
+   reads cleanly against the dark code surface. Lives here (loaded by
+   both the docs and the marketing layout) so code blocks in marketing
+   .mdx pages match the docs.
+   ============================================================ */
+
+.expressive-code .frame {
+  --ec-frm-edBg: var(--alc-bg-code);
+  --ec-frm-edTabBarBg: var(--alc-bg-code);
+  --ec-frm-edTabBarBrdBtmCol: var(--alc-walnut-700);
+  --ec-frm-edActTabBg: var(--alc-bg-code);
+  --ec-frm-edActTabFg: var(--alc-walnut-100);
+  --ec-frm-edActTabBrdCol: var(--alc-walnut-700);
+  --ec-frm-edActTabIndTopCol: var(--alc-accent-warm);
+  --ec-frm-edActTabIndBtmCol: transparent;
+  --ec-frm-edTabsMargBlkStart: 0;
+  --ec-frm-edTabsMargInlStart: 0;
+  --ec-frm-trmTtbBg: var(--alc-bg-code);
+  --ec-frm-trmTtbBrdBtmCol: var(--alc-walnut-700);
+  --ec-frm-trmTtbFg: var(--alc-walnut-100);
+}
+
+.expressive-code .frame.has-title:not(.is-terminal) .title {
+  color: var(--alc-walnut-100);
+  font-family: var(--alc-font-mono);
+  font-weight: 500;
+}
+
+.expressive-code .frame.is-terminal .title {
+  color: var(--alc-walnut-100);
+}
+
+/* Twoslash inline error boxes: the default red fails contrast on the
+   dark code surface. */
+.expressive-code .twoslash-error-box-content-title,
+.expressive-code .twoslash-error-box-content-message {
+  color: #f08a78 !important;
 }

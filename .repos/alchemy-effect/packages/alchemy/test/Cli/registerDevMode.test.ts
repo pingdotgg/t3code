@@ -2,7 +2,7 @@ import { PlatformServices } from "@/Util/PlatformServices.ts";
 import { expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { fileURLToPath } from "node:url";
 import { nodePath, nodeSupportsDevMode } from "../nodeProbe.ts";
 
@@ -126,5 +126,5 @@ it.live.skipIf(!nodeSupportsDevMode)(
       expect(cliExitCode).toBe(0);
       expect(cliStdout).toMatch(/alchemy v.*\(node [^,]+, src\)/);
     }).pipe(Effect.scoped, Effect.provide(PlatformServices)),
-  { timeout: 60_000 },
+  { tags: ["local"], timeout: 60_000 },
 );

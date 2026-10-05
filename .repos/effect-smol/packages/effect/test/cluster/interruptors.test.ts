@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { EntityAddress, EntityId, EntityType, ShardId } from "effect/unstable/cluster"
-import { acquireEntity, aroundEntityType, isActive, releaseEntity } from "effect/unstable/cluster/internal/interruptors"
+import { EntityAddress, EntityId, EntityType, ShardId } from "effect/cluster"
+import { acquireEntity, aroundEntityType, isActive, releaseEntity } from "effect/cluster/internal/interruptors"
 
 const address = EntityAddress.make({
   shardId: ShardId.make("active-teardown-unit", 1),

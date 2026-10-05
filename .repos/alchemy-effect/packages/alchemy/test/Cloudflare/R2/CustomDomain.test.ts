@@ -36,62 +36,65 @@ const domain3 = zoneName
   ? `alchemy-r2-test-multi-b-${suffix}.${zoneName}`
   : undefined;
 
-test.provider("creates, updates, and deletes a bucket custom domain", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "creates, updates, and deletes a bucket custom domain",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.R2.Bucket("DomainBucket", {
-          forceDestroy: true,
-          domains: [{ name: domain! }],
-        });
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.R2.Bucket("DomainBucket", {
+            forceDestroy: true,
+            domains: [{ name: domain! }],
+          });
+        }),
+      );
 
-    expect(bucket.domains).toHaveLength(1);
-    expect(bucket.domains[0]?.domain).toEqual(domain);
-    expect(bucket.domains[0]?.enabled).toEqual(true);
+      expect(bucket.domains).toHaveLength(1);
+      expect(bucket.domains[0]?.domain).toEqual(domain);
+      expect(bucket.domains[0]?.enabled).toEqual(true);
 
-    const actual = yield* r2.getBucketDomainCustom({
-      accountId,
-      bucketName: bucket.bucketName,
-      domain: domain!,
-      jurisdiction: bucket.jurisdiction,
-    });
-    expect(actual.domain).toEqual(domain);
-
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.R2.Bucket("DomainBucket", {
-          forceDestroy: true,
-          domains: [{ name: domain!, enabled: false }],
-        });
-      }),
-    );
-
-    expect(updated.domains[0]?.enabled).toEqual(false);
-
-    yield* stack.destroy();
-
-    const deleted = yield* r2
-      .getBucketDomainCustom({
+      const actual = yield* r2.getBucketDomainCustom({
         accountId,
         bucketName: bucket.bucketName,
         domain: domain!,
         jurisdiction: bucket.jurisdiction,
-      })
-      .pipe(
-        Effect.map(() => false),
-        Effect.catchTag("DomainNotFound", () => Effect.succeed(true)),
-        Effect.catchTag("NoSuchBucket", () => Effect.succeed(true)),
-      );
-    expect(deleted).toEqual(true);
+      });
+      expect(actual.domain).toEqual(domain);
 
-    yield* waitForBucketToBeDeleted(bucket.bucketName, accountId);
-  }).pipe(logLevel),
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.R2.Bucket("DomainBucket", {
+            forceDestroy: true,
+            domains: [{ name: domain!, enabled: false }],
+          });
+        }),
+      );
+
+      expect(updated.domains[0]?.enabled).toEqual(false);
+
+      yield* stack.destroy();
+
+      const deleted = yield* r2
+        .getBucketDomainCustom({
+          accountId,
+          bucketName: bucket.bucketName,
+          domain: domain!,
+          jurisdiction: bucket.jurisdiction,
+        })
+        .pipe(
+          Effect.map(() => false),
+          Effect.catchTag("DomainNotFound", () => Effect.succeed(true)),
+          Effect.catchTag("NoSuchBucket", () => Effect.succeed(true)),
+        );
+      expect(deleted).toEqual(true);
+
+      yield* waitForBucketToBeDeleted(bucket.bucketName, accountId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"] },
 );
 
 test.provider(
@@ -186,6 +189,7 @@ test.provider(
 
       yield* waitForBucketToBeDeleted(bucket.bucketName, accountId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"] },
 );
 
 const waitForBucketToBeDeleted = Effect.fn(function* (

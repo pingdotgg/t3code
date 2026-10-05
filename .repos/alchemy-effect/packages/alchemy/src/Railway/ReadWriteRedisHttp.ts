@@ -7,6 +7,7 @@ import { makeReadWriteRedisClient } from "./RedisHttp.ts";
  * HTTP implementation of {@link ReadWriteRedis}.
  *
  * @layer
+ * @product Redis
  * @provides Railway.ReadWriteRedis
  */
 export const ReadWriteRedisHttp = Layer.effect(

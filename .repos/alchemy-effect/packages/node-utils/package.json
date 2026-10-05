@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/node-utils",
-  "version": "2.0.0-beta.78",
+  "version": "2.0.0-beta.80",
   "description": "Runtime utilities for Alchemy packages.",
   "homepage": "https://alchemy.run",
   "author": "Sam Goodwin <sam@alchemy.run>",

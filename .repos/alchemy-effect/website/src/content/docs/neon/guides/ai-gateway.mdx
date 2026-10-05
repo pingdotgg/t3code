@@ -1,0 +1,104 @@
+---
+title: AI Gateway setup
+description: Buy Neon AI Gateway credits and use a model from an Effect Function.
+---
+
+Use Neon AI Gateway from an Effect Function with a model your organization can
+access. Complete [Setup](/neon/setup) first.
+
+## Buy AI Gateway credits
+
+[Buy AI Gateway credits in the Neon Console](https://console.neon.tech/app/billing)
+before sending model requests. AI Gateway requires a paid Neon plan; follow
+[Neon's purchase guide](https://neon.com/docs/ai-gateway/prepaid-credits) for the
+steps and current requirements.
+
+Choose a Chat Completions-compatible model from the
+[model catalog](https://neon.com/docs/ai-gateway/models) that your organization
+can access. The examples use the supported `aws-us-east-2` region.
+
+## Declare the branch gateway
+
+Inside your stack, using an existing `branch`:
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const gateway = yield* Neon.AIGateway("AI", { branch });
+```
+
+This discovers the endpoint without sending an inference request or changing
+billing. See the [resource reference](/providers/neon/aigateway) for explicit
+project/branch IDs and an optional credential reference.
+
+## Bind an Effect model
+
+Inside a Function's initialization Effect:
+
+```typescript
+const ai = yield* Neon.QueryAIGateway(gateway);
+```
+
+Provide `Neon.QueryAIGatewayHttp` on the application. It uses the injected
+credential for a same-branch production Neon Function and manages a tracked
+`ai_gateway:invoke` credential for a Worker, Lambda, local Function, or cross-branch
+caller. An explicit credential on `Neon.AIGateway` overrides automatic injection.
+Every path uses HTTP; Neon does not expose a Cloudflare-style native gateway
+binding. The deployment management key is never the inference credential.
+
+## Verify one small request
+
+Inside an authenticated request handler, use a Chat Completions model ID your
+organization can access. The following handler excerpt assumes `modelId` is that
+configured string:
+
+```typescript
+import * as Effect from "effect/Effect";
+import { LanguageModel } from "effect/ai";
+
+const reply = yield* LanguageModel.generateText({
+  prompt: "Reply with hello.",
+}).pipe(
+  Effect.provide(ai.model({
+    model: modelId,
+    parameters: { maxTokens: 16 },
+  })),
+);
+```
+
+Call the deployed route once, confirm it returns model text, and check the
+organization's usage. The request consumes credits; it is not a deployment-time
+probe. Some models use `maxCompletionTokens` or need a larger reasoning budget;
+use the catalog's supported settings rather than sending both token-limit fields.
+Protect the route with authentication and rate limits before exposing it to users.
+
+After basic inference works, exercise the actual features you need: streamed
+output, tools or structured results, and cancelling a stream. Endpoint discovery
+alone does not verify any of these behaviors. See
+[AI Gateway bindings](/providers/neon/queryaigateway) and the
+[Effect model layer](/providers/neon/makelanguagemodellayer).
+
+## Diagnose access failures
+
+| Symptom | Check | Action |
+| --- | --- | --- |
+| `403` with `ai gateway not enabled for account` | Correct organization, paid-plan access, and account enablement | Resolve access in the Console or with Neon Support before retrying; redeploying the Function does not enable the account |
+| Model access denied | Approval for that model, not just gateway access | Select an accessible model or request foundation-model access |
+| Authentication failure | Credential scope and target branch | Use an `ai_gateway:invoke` service credential or the same-branch Function's injected credential, not a management API key |
+| `429` / `REQUEST_LIMIT_EXCEEDED` | Token rate, daily cap, and credit balance | Inspect rate-limit headers and Billing; distinguish transient rate limiting from a quota requiring operator action |
+| Incompatible request or model | Chat Completions versus Responses/Anthropic API | Match the model to the adapter or use the appropriate bound SDK URL |
+
+Preserve request IDs and sanitized errors when contacting
+[Neon Support](https://neon.com/docs/introduction/support). Exclude bearer tokens,
+private prompts, and response data from public reports. Neon's
+[troubleshooting guide](https://neon.com/docs/ai-gateway/troubleshooting) covers
+current service limits.
+
+PrivateLink and IP Allow do not cover AI Gateway traffic. A private database
+connection does not make this model endpoint private.
+
+## Related guides
+
+- [Setup](/neon/setup) — management credentials and feature prerequisites.
+- [Private networking](/neon/guides/private-networking) — database-only network controls.
+- [State and recovery](/neon/guides/state-recovery) — retain managed credential state.

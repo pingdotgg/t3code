@@ -198,5 +198,13 @@ test.provider(
 
       yield* reclaimTaskDefinitionFamily(clusterName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:applicationautoscaling",
+      "provider:aws:ecs",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

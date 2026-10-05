@@ -27,6 +27,7 @@ test.provider.skipIf(!!process.env.FAST)(
         expect(d.tags).toBeDefined();
       }
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );
 
 // Full deploy-then-list assertion. SKIPPED by default because an API Gateway
@@ -67,4 +68,5 @@ test.provider.skipIf(!!process.env.FAST || !domainName || !certificateArn)(
       yield* stack.destroy();
       yield* assertDomainNameDeleted(domain.domainName);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );

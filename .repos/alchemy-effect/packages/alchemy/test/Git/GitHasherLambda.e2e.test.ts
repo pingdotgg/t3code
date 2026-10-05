@@ -16,10 +16,10 @@ import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { makeLambdaTestStack, TEST_SECRET } from "./fixtures/lambda-stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -160,5 +160,15 @@ test(
     expect(push?.phases?.chunks ?? 0).toBeGreaterThanOrEqual(4);
     yield* Effect.logInfo(`lastPush: ${JSON.stringify(push)}`);
   }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:cloudflare",
+      "provider:cloudflare:r2",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

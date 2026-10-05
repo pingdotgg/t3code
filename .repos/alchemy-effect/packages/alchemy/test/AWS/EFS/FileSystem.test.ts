@@ -239,7 +239,7 @@ test.provider(
       const gone = yield* waitUntilFileSystemGone(created.files.fileSystemId);
       expect(gone).toBe(true);
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:efs", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -284,5 +284,5 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:efs", "live"], timeout: 120_000 },
 );

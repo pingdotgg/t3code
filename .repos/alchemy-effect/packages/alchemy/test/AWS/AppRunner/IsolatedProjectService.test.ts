@@ -4,7 +4,7 @@ import * as apprunner from "@distilled.cloud/aws/apprunner";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import {
   materializeIsolatedProject,
   removeIsolatedProject,
@@ -75,5 +75,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW || !!process.env.FAST)(
       }
     }),
   // Docker build + push (~2-4 min) + create (~3-5 min) + delete (~2-3 min).
-  { timeout: 1_200_000 },
+  {
+    tags: ["provider:aws", "provider:aws:apprunner", "live"],
+    timeout: 1_200_000,
+  },
 );

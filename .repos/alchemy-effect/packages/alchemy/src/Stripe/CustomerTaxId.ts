@@ -107,6 +107,7 @@ export type CustomerTaxId = Resource<
  * ```
  *
  * @resource
+ * @product Customer
  */
 export const CustomerTaxId = Resource<CustomerTaxId>("Stripe.CustomerTaxId");
 

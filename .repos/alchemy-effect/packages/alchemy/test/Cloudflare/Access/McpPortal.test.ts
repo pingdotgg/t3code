@@ -130,7 +130,10 @@ test.provider(
       const afterDestroy = yield* getLivePortal(accountId, PORTAL_ID);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 90_000,
+  },
 );
 
 // Canonical `list()` test (account collection): deploy a portal, then resolve
@@ -166,5 +169,8 @@ test.provider(
       const afterDestroy = yield* getLivePortal(accountId, LIST_PORTAL_ID);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 90_000,
+  },
 );

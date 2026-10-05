@@ -1,10 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Stdio, Stream } from "effect"
+import { CliOutput } from "effect/cli"
 import * as Exit from "effect/Exit"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { TestConsole } from "effect/testing"
-import { CliOutput } from "effect/unstable/cli"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 
 const makeLayer = (args: ReadonlyArray<string>) =>
   Layer.mergeAll(
@@ -102,7 +102,7 @@ describe("openapigen CLI", () => {
       assert.strictEqual(defaultResult.stdout, httpclientResult.stdout)
       assert.include(httpclientResult.stdout, "import * as Schema from \"effect/Schema\"")
       assert.notInclude(typeOnlyResult.stdout, "import * as Schema from \"effect/Schema\"")
-      assert.include(typeOnlyResult.stdout, "import type * as HttpClient from \"effect/unstable/http/HttpClient\"")
+      assert.include(typeOnlyResult.stdout, "import type * as HttpClient from \"effect/http/HttpClient\"")
       assert.include(httpapiResult.stdout, "export class CliClient extends HttpApi.make(\"CliClient\")")
     }))
 

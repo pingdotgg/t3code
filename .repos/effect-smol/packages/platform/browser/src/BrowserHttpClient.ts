@@ -14,6 +14,15 @@ import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import type { LazyArg } from "effect/Function"
+import * as Cookies from "effect/http/Cookies"
+import * as Headers from "effect/http/Headers"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import type * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage"
+import * as HeaderParser from "effect/http/MultipartParser/HeadersParser"
+import * as UrlParams from "effect/http/UrlParams"
 import * as Inspectable from "effect/Inspectable"
 import type * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -21,15 +30,6 @@ import { type Pipeable, pipeArguments } from "effect/Pipeable"
 import * as Queue from "effect/Queue"
 import type * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import * as Cookies from "effect/unstable/http/Cookies"
-import * as Headers from "effect/unstable/http/Headers"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
-import * as HttpIncomingMessage from "effect/unstable/http/HttpIncomingMessage"
-import * as HeaderParser from "effect/unstable/http/MultipartParser/HeadersParser"
-import * as UrlParams from "effect/unstable/http/UrlParams"
 
 // =============================================================================
 // Fetch
@@ -62,7 +62,7 @@ export {
    * @since 4.0.0
    */
   RequestInit
-} from "effect/unstable/http/FetchHttpClient"
+} from "effect/http/FetchHttpClient"
 
 // =============================================================================
 // XML Http Request

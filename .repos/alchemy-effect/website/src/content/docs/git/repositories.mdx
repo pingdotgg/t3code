@@ -8,7 +8,7 @@ One schema types the server, the client, and your tests:
 
 ```typescript
 import { GitApi } from "alchemy/Git";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const client = yield* HttpApiClient.make(GitApi, { baseUrl: host });
 

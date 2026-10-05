@@ -270,5 +270,17 @@ test.provider.skipIf(GATED)(
         ),
       );
     }),
-  { timeout: 900_000, exclusive: true },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:ses",
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 900_000,
+    exclusive: true,
+  },
 );

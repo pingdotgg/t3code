@@ -49,6 +49,7 @@ import type { App } from "./App.ts";
  * ```
  *
  * @binding
+ * @product Secret
  */
 export interface ListSecrets extends Binding.Service<
   ListSecrets,

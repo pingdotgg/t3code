@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect"
-import * as Multipart from "effect/unstable/http/Multipart"
-import * as MultipartParser from "effect/unstable/http/MultipartParser"
+import * as Multipart from "effect/http/Multipart"
+import * as MultipartParser from "effect/http/MultipartParser"
 import { Bench } from "tinybench"
 
 const bench = new Bench()

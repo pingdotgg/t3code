@@ -151,12 +151,32 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
           await environment.connect(address);
         }
       };
+      // Match Cloudflare's Vite plugin: rebuild the dev server's environments,
+      // hot channels and module runners after the runtime recovers. Framework
+      // state may still refer to the crashed process even with the same ports.
+      const onRuntimeRestart = () => {
+        server.config.logger.warn(
+          "The Worker runtime recovered after a crash; restarting the Vite dev server.",
+          { timestamp: true },
+        );
+        if (!handle) return;
+        void server.restart().catch((error: unknown) => {
+          server.config.logger.error(
+            `Failed to restart the Vite dev server after Worker recovery: ${String(error)}`,
+            {
+              error: error instanceof Error ? error : undefined,
+              timestamp: true,
+            },
+          );
+        });
+      };
       handle ??= await startServer(
         options,
         entryEnvironment,
         server,
         options.context ?? context!,
         exportTypes,
+        onRuntimeRestart,
       );
       await connect(handle.address);
       let address = handle.address;
@@ -183,6 +203,7 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
           server,
           options.context ?? context!,
           exportTypes,
+          onRuntimeRestart,
         );
         await connect(handle.address);
         address = handle.address;

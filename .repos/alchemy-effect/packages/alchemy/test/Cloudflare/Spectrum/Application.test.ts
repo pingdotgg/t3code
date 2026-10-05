@@ -122,6 +122,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:spectrum",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!entitledZoneId)(
@@ -187,7 +195,15 @@ test.provider.skipIf(!entitledZoneId)(
       const gone = yield* findApp(zoneId, dnsName, "tcp/22");
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:spectrum",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitledZoneId)(
@@ -262,7 +278,15 @@ test.provider.skipIf(!entitledZoneId)(
       const gone = yield* findApp(zoneId, dnsName, "tcp/22");
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:spectrum",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): `list()` fans out over
@@ -292,6 +316,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:spectrum", "live"] },
 );
 
 // Full deploy + list assertion: requires a Spectrum-entitled zone (create is
@@ -329,7 +354,15 @@ test.provider.skipIf(!entitledZoneId)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:spectrum",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 /**

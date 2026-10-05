@@ -24,6 +24,7 @@ export interface RetrieveBillingPortalConfigurationRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Billing
  */
 export interface RetrieveBillingPortalConfiguration extends Binding.Service<
   RetrieveBillingPortalConfiguration,

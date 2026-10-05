@@ -9,9 +9,11 @@ import HostReachContainerWorker from "./worker.ts";
  * own fixture identity so it never shares state with the other container
  * suites when files run concurrently.
  */
+export const state = Alchemy.inMemoryState();
+
 export default Alchemy.Stack(
   "HostReachContainerStack",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  { providers: Cloudflare.providers(), state },
   Effect.gen(function* () {
     const worker = yield* HostReachContainerWorker;
     return { url: worker.url.as<string>() };

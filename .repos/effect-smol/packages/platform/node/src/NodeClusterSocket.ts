@@ -11,23 +11,23 @@
  * @since 4.0.0
  */
 import { layerClientProtocol, layerSocketServer } from "@effect/platform-node-shared/NodeClusterSocket"
+import * as K8sHttpClient from "effect/cluster/K8sHttpClient"
+import * as MessageStorage from "effect/cluster/MessageStorage"
+import * as RunnerHealth from "effect/cluster/RunnerHealth"
+import * as Runners from "effect/cluster/Runners"
+import * as RunnerStorage from "effect/cluster/RunnerStorage"
+import type { Sharding } from "effect/cluster/Sharding"
+import * as ShardingConfig from "effect/cluster/ShardingConfig"
+import * as SocketRunner from "effect/cluster/SocketRunner"
+import * as SqlMessageStorage from "effect/cluster/SqlMessageStorage"
+import * as SqlRunnerStorage from "effect/cluster/SqlRunnerStorage"
 import type { ConfigError } from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
-import * as K8sHttpClient from "effect/unstable/cluster/K8sHttpClient"
-import * as MessageStorage from "effect/unstable/cluster/MessageStorage"
-import * as RunnerHealth from "effect/unstable/cluster/RunnerHealth"
-import * as Runners from "effect/unstable/cluster/Runners"
-import * as RunnerStorage from "effect/unstable/cluster/RunnerStorage"
-import type { Sharding } from "effect/unstable/cluster/Sharding"
-import * as ShardingConfig from "effect/unstable/cluster/ShardingConfig"
-import * as SocketRunner from "effect/unstable/cluster/SocketRunner"
-import * as SqlMessageStorage from "effect/unstable/cluster/SqlMessageStorage"
-import * as SqlRunnerStorage from "effect/unstable/cluster/SqlRunnerStorage"
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
-import type * as SocketServer from "effect/unstable/socket/SocketServer"
-import type { SqlClient } from "effect/unstable/sql/SqlClient"
+import * as RpcSerialization from "effect/rpc/RpcSerialization"
+import type * as SocketServer from "effect/socket/SocketServer"
+import type { SqlClient } from "effect/sql/SqlClient"
 import * as NodeCrypto from "./NodeCrypto.ts"
 import * as NodeFileSystem from "./NodeFileSystem.ts"
 import * as NodeHttpClient from "./NodeHttpClient.ts"
@@ -139,6 +139,7 @@ export const layer = <
  * account CA certificate when it is available and falling back to the default
  * dispatcher otherwise.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

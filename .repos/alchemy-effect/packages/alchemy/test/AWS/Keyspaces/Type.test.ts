@@ -81,5 +81,8 @@ test.provider(
       const gone = yield* getType(ksName, replaced.address.typeName);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:keyspaces", "live"],
+    timeout: 240_000,
+  },
 );

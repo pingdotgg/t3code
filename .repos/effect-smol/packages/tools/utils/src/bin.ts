@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import * as Command from "effect/cli/Command"
 import * as Effect from "effect/Effect"
-import * as Command from "effect/unstable/cli/Command"
 import { codegen } from "./commands/codegen.ts"
 
 const cli = Command.make("effect-utils").pipe(

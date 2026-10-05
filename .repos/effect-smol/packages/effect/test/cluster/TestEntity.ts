@@ -1,9 +1,9 @@
 import { type Cause, Context, Effect, Latch, Layer, MutableRef, Option, Queue, Schedule, Schema, Stream } from "effect"
-import type { Envelope } from "effect/unstable/cluster"
-import { ClusterSchema, Entity } from "effect/unstable/cluster"
-import { MemoryTransaction } from "effect/unstable/cluster/MessageStorage"
-import type { RpcGroup } from "effect/unstable/rpc"
-import { Rpc, RpcSchema } from "effect/unstable/rpc"
+import type { Envelope } from "effect/cluster"
+import { ClusterSchema, Entity } from "effect/cluster"
+import { MemoryTransaction } from "effect/cluster/MessageStorage"
+import type { RpcGroup } from "effect/rpc"
+import { Rpc, RpcSchema } from "effect/rpc"
 
 export class User extends Schema.Class<User>("User")({
   id: Schema.Number,

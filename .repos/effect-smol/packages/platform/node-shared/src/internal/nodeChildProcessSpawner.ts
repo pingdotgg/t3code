@@ -1,4 +1,4 @@
-import type * as ChildProcess from "effect/unstable/process/ChildProcess"
+import type * as ChildProcess from "effect/process/ChildProcess"
 import type * as NodeChildProcess from "node:child_process"
 
 export const buildSpawnOptions = (

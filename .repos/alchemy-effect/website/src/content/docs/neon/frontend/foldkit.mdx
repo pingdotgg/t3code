@@ -1,0 +1,85 @@
+---
+title: Foldkit
+description: Package a client-only Foldkit Vite app for Neon Functions with SPA routing.
+sidebar:
+  order: 11
+---
+
+`Neon.Website.Foldkit` is the client-only Vite composition with SPA routing. It
+packages built assets with a Node 24 Fetch file handler in a Neon Function ZIP,
+not a Foldkit SSR server, container, listening Bun server, or S3 website.
+
+## Prepare the app
+
+Use an existing Foldkit app or the
+[runnable Foldkit example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-foldkit).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep the `foldkit()` plugin from `@foldkit/vite-plugin` in `vite.config.*` and
+retain your application's normal entry configuration. The constructor delegates
+to Vite; there is no separate server adapter to configure.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonFoldkit",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Foldkit("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+Unmatched GET/HEAD paths fall back to `index.html` for client-side routes.
+For a multi-page build with a `404.html`, set `assets.notFoundHandling` to
+`"404-page"`. Like Vite, `vite.outDir` and `vite.base` are supported overrides.
+
+`env` values with Vite's `VITE_*` prefix are embedded into the browser build.
+There is no application server here to consume private runtime values; use a
+separate backend for privileged operations.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run separately, destroying when finished. Dev uses Vite's native server and HMR,
+returns a local URL, and creates no implicit Neon resources. Append
+`.pipe(Alchemy.remote())` to the Website Effect to use live deployment during dev.
+
+Live deploy creates an Ohio Project if no scope is supplied. Pass either
+`project` or `branch` for an existing backend; choose Ohio for combined storage
+use. Read [scope and credentials](/neon/frontend/vite#scope-and-credentials):
+account keys and privileged branch tokens must not reach this browser bundle.
+
+:::caution[Deployment limits]
+Complete live framework acceptance remains unverified. Neon probes have served
+old code/env after new deployment metadata became active. Static assets are
+served inside the Function without an added CDN, and domain registration does
+not validate TLS. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [Foldkit API](/providers/neon/website/foldkit)
+- [Runnable Foldkit example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-foldkit)

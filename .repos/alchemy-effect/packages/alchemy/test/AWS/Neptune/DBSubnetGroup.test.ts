@@ -101,5 +101,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(group.dbSubnetGroupName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:neptune", "live"],
+    timeout: 240_000,
+  },
 );

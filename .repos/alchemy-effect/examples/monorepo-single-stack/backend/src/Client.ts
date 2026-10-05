@@ -1,4 +1,4 @@
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { BackendApi } from "./Spec.ts";
 
 export const BackendClient = (baseUrl: string) =>

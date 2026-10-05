@@ -131,5 +131,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(replaced.locationHash);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:applicationsignals", "live"],
+    timeout: 120_000,
+  },
 );

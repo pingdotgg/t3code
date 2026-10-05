@@ -161,7 +161,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertWebAclDeleted(acl.webAclName, acl.webAclId, "REGIONAL");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:wafv2", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -200,7 +200,7 @@ test.provider(
         "REGIONAL",
       );
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:wafv2", "live"], timeout: 120_000 },
 );
 
 // CLOUDFRONT-scoped web ACLs are pinned to us-east-1 by the provider. The
@@ -239,5 +239,5 @@ test.provider.skipIf(!process.env.AWS_TEST_WAF_CLOUDFRONT)(
         "CLOUDFRONT",
       ).pipe(Effect.provideService(AwsRegion, Effect.succeed("us-east-1")));
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:wafv2", "live"], timeout: 120_000 },
 );

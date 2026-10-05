@@ -1,0 +1,54 @@
+---
+// Tailwind is wired through astro.config.ts (@tailwindcss/vite) — Alchemy
+// loads the project's own config natively, so the utilities below compile.
+import "../styles/global.css";
+import Card from "../components/Card.astro";
+
+// Server-rendered on every request inside the Neon Functions runtime.
+// Environment values declared in alchemy.run.ts are available on
+// `process.env`.
+const greeting = process.env.GREETING ?? "Hello!";
+const now = new Date().toISOString();
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astro on Neon</title>
+  </head>
+  <body class="bg-slate-50 p-8 text-slate-900">
+    <h1 class="text-3xl font-bold">{greeting}</h1>
+    <Card
+      title="Styled with Tailwind CSS"
+      body="This card is an Astro component styled with Tailwind utilities."
+    />
+    <p class="mt-4 text-slate-600">
+      This page is server-rendered in a Neon Functions runtime at {now}.
+    </p>
+    <p class="mt-2">
+      <a href="/about/" class="text-blue-600 underline">A prerendered page</a>
+    </p>
+    <button type="button" id="counter">count: 0</button>
+    <button type="button" id="load-greeting">Load greeting</button>
+    <p role="status" id="response-greeting"></p>
+    <script>
+      let count = 0;
+      const counter = document.querySelector<HTMLButtonElement>("#counter")!;
+      counter.addEventListener("click", () => {
+        counter.textContent = `count: ${++count}`;
+      });
+      const result = document.querySelector<HTMLElement>("#response-greeting")!;
+      document.querySelector("#load-greeting")!.addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/hello?name=browser");
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const body = (await response.json()) as { greeting: string };
+          result.textContent = body.greeting;
+        } catch {
+          result.textContent = "Could not load the greeting. Try again.";
+        }
+      });
+    </script>
+  </body>
+</html>

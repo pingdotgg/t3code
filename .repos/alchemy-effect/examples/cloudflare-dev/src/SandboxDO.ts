@@ -1,6 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpClientRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpClientRequest, HttpServerResponse } from "effect/http";
 import { SandboxContainer } from "./SandboxContainer.ts";
 
 export default class SandboxDO extends Cloudflare.DurableObject<SandboxDO>()(

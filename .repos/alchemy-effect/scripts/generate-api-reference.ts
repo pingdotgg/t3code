@@ -3,6 +3,14 @@ import * as path from "node:path";
 
 import * as ts from "typescript-api/unstable/ast";
 import type { Node, SourceFile } from "typescript-api/unstable/ast";
+import {
+  docCommentLines,
+  jsdocCopyId,
+  LINK_TAG_RE,
+  markDocLines,
+  normalizeLinkTarget,
+  parseLinkTag,
+} from "./jsdoc-blocks.ts";
 import { createSyntaxProject } from "./typescript-source.ts";
 
 const websiteRoot = path.join(import.meta.dir, "../website");
@@ -20,8 +28,18 @@ interface SourceRoot {
   sourceDisplayPrefix: string;
 }
 
+const repoRoot = path.join(import.meta.dir, "..");
+
 const config = {
   outRoot: path.join(websiteRoot, "src/content/docs/providers"),
+  /**
+   * Emit `<!--copy:jsdoc:...-->` markers after each prose block so the
+   * website's dev-time copy editor can map rendered text back to the JSDoc
+   * it came from. Dev only — production builds never set this.
+   */
+  copyMarkers:
+    process.env.API_REFERENCE_COPY_MARKERS === "1" ||
+    process.argv.includes("--copy-markers"),
   roots: [
     {
       srcRoot: path.join(import.meta.dir, "../packages/alchemy/src"),
@@ -157,7 +175,33 @@ interface ParsedJSDoc {
   product: string;
 }
 
-function parseJSDoc(node: Node): ParsedJSDoc {
+/** Where a declaration's JSDoc lives, for copy markers. */
+interface MarkerContext {
+  /** Repo-relative path of the source file. */
+  file: string;
+  /** Full source text (JSDoc offsets index into it). */
+  text: string;
+}
+
+function docLines(node: Node, raw: string, markers?: MarkerContext): string[] {
+  const docs = node.jsDoc ?? [];
+  // Markers need one comment per declaration to map blocks to source.
+  const start = docs[0]?.getStart();
+  // `getStart()` can land on leading `//` trivia; only map clean comments.
+  if (
+    markers &&
+    docs.length === 1 &&
+    start !== undefined &&
+    markers.text.startsWith("/**", start)
+  ) {
+    return markDocLines(docCommentLines(markers.text, start), (block) =>
+      jsdocCopyId(markers.file, start, block),
+    );
+  }
+  return cleanDocComment(raw).split("\n");
+}
+
+function parseJSDoc(node: Node, markers?: MarkerContext): ParsedJSDoc {
   const raw = getJsDocText(node);
   if (!raw) {
     return {
@@ -173,7 +217,7 @@ function parseJSDoc(node: Node): ParsedJSDoc {
     };
   }
 
-  const lines = cleanDocComment(raw).split("\n");
+  const lines = docLines(node, raw, markers);
 
   const summaryLines: string[] = [];
   const sections: ExampleSection[] = [];
@@ -443,7 +487,10 @@ function localNameForExport(
  * When the tagged declaration itself has no content, pull it from that related
  * declaration so the page isn't dropped as empty.
  */
-export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
+export function findTaggedPrimary(
+  sourceFile: SourceFile,
+  markers?: MarkerContext,
+): Primary | undefined {
   const candidates: Node[] = [
     ...sourceFile.statements
       .filter(ts.isVariableStatement)
@@ -457,7 +504,7 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
   ];
 
   for (const node of candidates) {
-    const doc = parseJSDoc(node);
+    const doc = parseJSDoc(node, markers);
     if (!doc.hasResourceTag && !doc.hasBindingTag && !doc.hasLayerTag) {
       continue;
     }
@@ -483,7 +530,7 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
 
     let best: ParsedJSDoc | undefined;
     for (const d of related) {
-      const pd = parseJSDoc(d);
+      const pd = parseJSDoc(d, markers);
       if (pd.sections.length > 0) {
         best = pd;
         break;
@@ -502,38 +549,6 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
     return { name, doc: merged, category, product };
   }
   return undefined;
-}
-
-const LINK_TAG_RE = /\{@link\s+([^}]+)\}/g;
-
-/** Split a `{@link ...}` tag's inner text into target + optional label. */
-function parseLinkTag(inner: string): { target: string; label?: string } {
-  const trimmed = inner.trim();
-  const pipe = trimmed.indexOf("|");
-  if (pipe !== -1) {
-    return {
-      target: trimmed.slice(0, pipe).trim(),
-      label: trimmed.slice(pipe + 1).trim() || undefined,
-    };
-  }
-  const space = trimmed.search(/\s/);
-  if (space !== -1) {
-    return {
-      target: trimmed.slice(0, space).trim(),
-      label: trimmed.slice(space + 1).trim() || undefined,
-    };
-  }
-  return { target: trimmed };
-}
-
-/**
- * Reduce a typedoc-style `import("./Secrets.ts").Secrets` target to the bare
- * symbol name — resolution (same-directory first) and display both want the
- * name, not the module expression.
- */
-function normalizeLinkTarget(target: string): string {
-  const match = target.match(/^import\((["'])[^"']+\1\)\.(.+)$/);
-  return match ? match[2] : target;
 }
 
 /** Resolves a `{@link}` symbol target to a generated page URL, if any. */
@@ -679,25 +694,11 @@ function linkifyMarkdown(markdown: string, resolve: LinkResolver): string {
   return out.join("\n");
 }
 
-/** Reduce `{@link ...}` tags to plain text for frontmatter descriptions. */
-function stripLinkTags(text: string): string {
-  return text.replace(LINK_TAG_RE, (_, inner: string) => {
-    const { target, label } = parseLinkTag(inner.replace(/\s+/g, " "));
-    return (label ?? normalizeLinkTarget(target)).replace(/`/g, "");
-  });
-}
-
 function yamlString(value: string): string {
   if (/[\n:"{}[\],&*?|>!%@`#]/.test(value) || value.trim() !== value) {
     return JSON.stringify(value);
   }
   return value;
-}
-
-function firstParagraph(value: string): string {
-  const idx = value.indexOf("\n\n");
-  const para = idx === -1 ? value : value.slice(0, idx);
-  return para.replace(/\s+/g, " ").trim();
 }
 
 function renderPageBody(doc: PageDoc): string {
@@ -724,30 +725,27 @@ function renderPageBody(doc: PageDoc): string {
   return parts.join("\n\n");
 }
 
-function renderPage(doc: PageDoc, resolve: LinkResolver): string {
-  const description =
-    stripLinkTags(firstParagraph(doc.summary)) ||
-    `API reference for ${doc.title}`;
-  const frontmatter = [
+function renderReferenceFrontmatter(title: string): string {
+  return [
     "---",
-    `title: ${yamlString(doc.title)}`,
-    `description: ${yamlString(description)}`,
-    // Generated reference pages are ~4k near-identical one-paragraph +
-    // one-snippet stubs (92% of the site). Indexed as separate documents
-    // they read as programmatic thin content, dilute crawl budget, and are
-    // what surfaces as "random" search results instead of the hub and
-    // guide pages. Keep them navigable and crawlable (`follow`) but out of
-    // search indexes; the sitemap integration drops any page carrying this
-    // meta. Revisit once pages are consolidated per service / carry real
-    // prose — this is the only line to change.
+    `title: ${yamlString(`${title} reference`)}`,
+    `description: ${yamlString(`Resources and capabilities for ${title}.`)}`,
+    // Keep the existing search-engine indexing policy during this experiment.
     "head:",
     "  - tag: meta",
     "    attrs:",
     "      name: robots",
     '      content: "noindex, follow"',
+    "prev: false",
+    "next: false",
+    "tableOfContents:",
+    "  minHeadingLevel: 2",
+    "  maxHeadingLevel: 2",
     "---",
   ].join("\n");
+}
 
+function renderResource(doc: PageDoc, resolve: LinkResolver): string {
   const headerLines = [`> **Source:** \`${doc.sourceDisplay}\``];
   if (doc.isLayer) {
     const meta = ["**Kind:** Layer"];
@@ -769,19 +767,69 @@ function renderPage(doc: PageDoc, resolve: LinkResolver): string {
   const body = linkifyMarkdown(renderPageBody(doc).trim(), resolve);
 
   if (body) {
-    return `${frontmatter}\n\n${sourceBlock}\n\n${body}\n`;
+    return `${sourceBlock}\n\n${body}\n`;
   }
-  return `${frontmatter}\n\n${sourceBlock}\n`;
+  return `${sourceBlock}\n`;
+}
+
+/** Change this grouping to experiment with larger or smaller reference pages. */
+function referenceLocation(outputRelative: string, product: string) {
+  const parts = normalizeSlashes(outputRelative)
+    .replace(/\.md$/, "")
+    .split("/");
+  // Flat providers declare service-sized pages with @product instead of folders.
+  const group =
+    parts.length > 2
+      ? parts.slice(0, 2)
+      : product
+        ? [
+            parts[0],
+            "reference",
+            product
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, ""),
+          ]
+        : [parts[0], "reference"];
+  const title = parts.slice(parts.length > 2 ? 2 : 1).join("-");
+  return {
+    outputRelative: `${group.join("/")}.md`,
+    title:
+      parts.length > 2
+        ? group.join(".")
+        : product
+          ? `${parts[0]}.${product}`
+          : parts[0],
+    resourceTitle: title,
+    link: `/providers/${group.join("/").toLowerCase()}#${title.toLowerCase()}`,
+  };
+}
+
+/** Keep example headings below their resource, with resource-scoped slugs. */
+function nestResourceHeadings(markdown: string, resource: string): string {
+  let fence: string | undefined;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length)
+          fence = undefined;
+        return line;
+      }
+      if (fence) return line;
+      return line.replace(
+        /^(#{1,6})\s+(.+)$/,
+        (_, hashes: string, title: string) =>
+          `${"#".repeat(Math.min(6, Math.max(3, hashes.length + 1)))} ${resource}: ${title}`,
+      );
+    })
+    .join("\n");
 }
 
 /** Providers shown first in the sidebar; the rest follow alphabetically. */
 const PROVIDER_ORDER = ["AWS", "Cloudflare"];
-
-/**
- * Uncategorized providers with at most this many pages render as a flat
- * resource list instead of per-service folders (see buildProvidersSidebar).
- */
-const FLAT_PROVIDER_MAX_PAGES = 16;
 
 interface SidebarLeaf {
   label: string;
@@ -817,45 +865,14 @@ function orderedKeys(keys: string[], order: string[]): string[] {
   return [...ranked, ...rest];
 }
 
-/**
- * Build sidebar items for one set of pages sharing a provider+category:
- * every product is its own collapsible folder containing its resource
- * pages, mirroring how Cloudflare's API reference gives each product its
- * own section — even single-page products like D1 or Organization — so
- * the grouping is uniform.
- *
- * Grouping is by resolved product LABEL (`@product`, falling back to the
- * service dir name), not by directory: two directories declaring the same
- * product merge into one group instead of rendering duplicate siblings.
- *
- * A group that would hold exactly one page named the same as the group
- * (a flat provider dir where the label falls back to the resource name,
- * e.g. "Certificate > Certificate") carries no information — collapse it
- * to a plain leaf. Genuine single-page products keep their folder (the
- * label differs, e.g. Cloudflare's "D1 > Database").
- */
+/** The sidebar lists documents; resource anchors live in the page's TOC. */
 function buildServiceItems(pages: PageEntry[]): SidebarItem[] {
-  const byLabelKey = new Map<string, PageEntry[]>();
-  for (const p of pages) {
-    const key = p.product || p.service || p.resource;
-    if (!byLabelKey.has(key)) byLabelKey.set(key, []);
-    byLabelKey.get(key)!.push(p);
-  }
-  const items: SidebarItem[] = [];
-  for (const [label, productPages] of byLabelKey) {
-    if (productPages.length === 1 && productPages[0].resource === label) {
-      items.push({ label, link: productPages[0].link });
-      continue;
-    }
-    items.push({
-      label,
-      collapsed: true,
-      items: productPages
-        .map((p) => ({ label: p.resource, link: p.link }))
-        .sort(byLabel),
-    });
-  }
-  return items.sort(byLabel);
+  return pages
+    .map((page) => ({
+      label: page.product || page.service || page.provider,
+      link: page.link,
+    }))
+    .sort(byLabel);
 }
 
 function buildProvidersSidebar(entries: PageEntry[]): SidebarItem[] {
@@ -867,57 +884,23 @@ function buildProvidersSidebar(entries: PageEntry[]): SidebarItem[] {
 
   const providers: SidebarGroup[] = [];
   for (const provider of orderedKeys([...byProvider.keys()], PROVIDER_ORDER)) {
-    const pages = byProvider.get(provider)!;
+    const byPage = new Map<string, PageEntry[]>();
+    for (const entry of byProvider.get(provider)!) {
+      const link = entry.link.split("#")[0];
+      if (!byPage.has(link)) byPage.set(link, []);
+      byPage.get(link)!.push(entry);
+    }
+    const pages = [...byPage].map(([link, resources]) => ({
+      ...resources[0],
+      link,
+      product: resources.every(
+        (resource) => resource.product === resources[0].product,
+      )
+        ? resources[0].product
+        : "",
+    }));
 
-    // `@category` is per-file; a documented file that omits it must not fall
-    // out of its service's category and render a duplicate service group at
-    // the provider root. Inherit the category any sibling page of the same
-    // service dir declares.
-    const categoryByService = new Map<string, string>();
-    for (const p of pages) {
-      if (p.service && p.category && !categoryByService.has(p.service)) {
-        categoryByService.set(p.service, p.category);
-      }
-    }
-
-    const categorized = new Map<string, PageEntry[]>();
-    const uncategorized: PageEntry[] = [];
-    for (const p of pages) {
-      const category = p.category || categoryByService.get(p.service) || "";
-      if (category) {
-        if (!categorized.has(category)) categorized.set(category, []);
-        categorized.get(category)!.push(p);
-      } else {
-        uncategorized.push(p);
-      }
-    }
-
-    const items: SidebarItem[] = [];
-    for (const cat of [...categorized.keys()].sort((a, b) =>
-      a.localeCompare(b),
-    )) {
-      items.push({
-        label: cat,
-        collapsed: true,
-        items: buildServiceItems(categorized.get(cat)!),
-      });
-    }
-    if (categorized.size === 0 && pages.length <= FLAT_PROVIDER_MAX_PAGES) {
-      // Small uncategorized providers (Neon, Planetscale, Axiom, GitHub, …)
-      // render as a flat resource list — per-service folders around one or
-      // two pages ("Branch > Branch") are redundant nesting, and prefixed
-      // resource names (MySQLBranch/PostgresBranch) already carry the
-      // grouping information.
-      items.push(
-        ...uncategorized
-          .map((p) => ({ label: p.resource, link: p.link }))
-          .sort(byLabel),
-      );
-    } else {
-      // Pages without a category fall back to service grouping directly under
-      // the provider (this is how AWS renders until it gets categorized).
-      items.push(...buildServiceItems(uncategorized));
-    }
+    const items = buildServiceItems(pages);
 
     providers.push({ label: provider, collapsed: true, items });
   }
@@ -951,14 +934,46 @@ function assertNoDuplicateSiblings(items: SidebarItem[], path: string[]) {
   }
 }
 
+/**
+ * Writes `content` only when it differs from what's on disk, so a dev server
+ * watching the output reloads just the pages that changed.
+ */
+async function writeIfChanged(file: string, content: string): Promise<boolean> {
+  const current = await fs.readFile(file, "utf8").catch(() => undefined);
+  if (current === content) return false;
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, content, "utf8");
+  return true;
+}
+
+/** Deletes files under `dir` not in `keep`, then any directories left empty. */
+async function pruneOutput(dir: string, keep: Set<string>): Promise<void> {
+  const entries = await fs
+    .readdir(dir, { withFileTypes: true })
+    .catch(() => []);
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await pruneOutput(full, keep);
+      const left = await fs.readdir(full).catch(() => []);
+      if (left.length === 0) await fs.rmdir(full).catch(() => {});
+    } else if (!keep.has(full)) {
+      await fs.rm(full, { force: true });
+    }
+  }
+}
+
 async function main() {
-  await fs.rm(config.outRoot, { recursive: true, force: true });
   await fs.mkdir(config.outRoot, { recursive: true });
+  const outputs = new Set<string>();
 
   const seen = new Map<string, string>();
   const pageEntries: PageEntry[] = [];
-  const pending: { outputRelative: string; doc: PageDoc }[] = [];
+  const pending: { outputRelative: string; product: string; doc: PageDoc }[] =
+    [];
   let written = 0;
+  const redirects: Record<string, string> = {};
+  const anchors = new Set<string>();
   let skipped = 0;
 
   for (const root of config.roots) {
@@ -981,7 +996,17 @@ async function main() {
         throw new Error(`Missing source file ${entry.absolutePath}`);
       }
 
-      const primary = findTaggedPrimary(sourceFile);
+      const primary = findTaggedPrimary(
+        sourceFile,
+        config.copyMarkers
+          ? {
+              file: normalizeSlashes(
+                path.relative(repoRoot, entry.absolutePath),
+              ),
+              text: sourceFile.text,
+            }
+          : undefined,
+      );
       if (!primary) {
         skipped++;
         continue;
@@ -1016,20 +1041,25 @@ async function main() {
         provides: primary.doc.provides,
         peers: primary.doc.peers,
       };
-      pending.push({ outputRelative, doc });
+      pending.push({ outputRelative, product: primary.product, doc });
 
       const exportNames = exportedNames(sourceFile);
 
       const segments = normalizeSlashes(outputRelative).split("/");
+      const location = referenceLocation(outputRelative, primary.product);
+      const oldLink = `/providers/${normalizeSlashes(outputRelative).replace(/\.md$/, "").toLowerCase()}`;
+      if (anchors.has(location.link)) {
+        throw new Error(`Duplicate reference anchor: ${location.link}`);
+      }
+      anchors.add(location.link);
+      redirects[oldLink] = location.link;
       pageEntries.push({
         provider: segments[0] ?? "",
         service: segments.length > 2 ? segments[1] : "",
         resource: primary.name,
         category: primary.category,
         product: primary.product,
-        link: `/providers/${normalizeSlashes(outputRelative)
-          .replace(/\.md$/, "")
-          .toLowerCase()}`,
+        link: location.link,
         dir: normalizeSlashes(relDir),
         exports: exportNames,
       });
@@ -1039,14 +1069,32 @@ async function main() {
   // Second pass: render with `{@link}` resolution — the full page set must be
   // known before symbol targets can resolve to their pages.
   const resolverFor = makeLinkResolverFactory(pageEntries);
+  const groups = new Map<string, { title: string; sections: string[] }>();
   for (const page of pending) {
+    const location = referenceLocation(page.outputRelative, page.product);
     const resolve = resolverFor(
       normalizeSlashes(path.dirname(page.outputRelative)),
     );
-    const outputPath = path.join(config.outRoot, page.outputRelative);
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, renderPage(page.doc, resolve), "utf8");
-    written++;
+    const group = groups.get(location.outputRelative) ?? {
+      title: location.title,
+      sections: [],
+    };
+    group.sections.push(
+      `## ${location.resourceTitle}\n\n${nestResourceHeadings(renderResource(page.doc, resolve), location.resourceTitle)}`,
+    );
+    groups.set(location.outputRelative, group);
+  }
+  for (const [relative, group] of groups) {
+    const outputPath = path.join(config.outRoot, relative);
+    outputs.add(outputPath);
+    if (
+      await writeIfChanged(
+        outputPath,
+        `${renderReferenceFrontmatter(group.title)}\n\n${group.sections.join("\n\n")}\n`,
+      )
+    ) {
+      written++;
+    }
   }
 
   const sidebar = buildProvidersSidebar(pageEntries);
@@ -1071,26 +1119,26 @@ async function main() {
     "<ProviderDirectory />",
     "",
   ].join("\n");
-  await fs.rm(path.join(config.outRoot, "index.md"), { force: true });
-  await fs.writeFile(
-    path.join(config.outRoot, "index.mdx"),
-    referenceIndex,
-    "utf8",
-  );
+  const indexPath = path.join(config.outRoot, "index.mdx");
+  outputs.add(indexPath);
+  await writeIfChanged(indexPath, referenceIndex);
+  await pruneOutput(config.outRoot, outputs);
 
   const sidebarPath = path.join(
     websiteRoot,
     "src/generated/providers-sidebar.json",
   );
-  await fs.mkdir(path.dirname(sidebarPath), { recursive: true });
-  await fs.writeFile(
-    sidebarPath,
-    `${JSON.stringify(sidebar, null, 2)}\n`,
-    "utf8",
+  await writeIfChanged(
+    path.join(websiteRoot, "src/generated/reference-redirects.json"),
+    `${JSON.stringify(redirects, null, 2)}\n`,
   );
+  // astro.config imports the sidebar, so rewriting it restarts a dev server.
+  await writeIfChanged(sidebarPath, `${JSON.stringify(sidebar, null, 2)}\n`);
 
   console.log(
-    `Done. Wrote ${written} resource pages (skipped ${skipped} untagged) to ${normalizeSlashes(
+    `Done. Wrote ${written} changed reference pages containing ${pending.length} resources (skipped ${skipped} untagged${
+      config.copyMarkers ? ", with copy markers" : ""
+    }) to ${normalizeSlashes(
       path.relative(path.join(import.meta.dir, ".."), config.outRoot),
     )}.`,
   );

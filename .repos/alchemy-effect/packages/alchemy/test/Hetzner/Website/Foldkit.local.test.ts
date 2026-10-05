@@ -15,43 +15,47 @@ const fixtureDir = pathe.resolve(
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 const fixtureEntries = ["index.html", "package.json", "vite.config.ts", "src"];
 
-describe("Hetzner.Website.Foldkit local", () => {
-  test.provider(
-    "dev runs the framework server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Hetzner.Website.Foldkit local",
+  { tags: ["provider:hetzner", "provider:hetzner:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs the framework server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-hetzner-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-hetzner-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Hetzner.Website.Foldkit("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Hetzner.Website.Foldkit("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
 
-        yield* expectUrlContains(`${url}/`, "Foldkit Fixture", {
-          timeout: "90 seconds",
-          label: "dev home page",
-        });
-        yield* expectUrlContains(`${url}/counter/42`, "Foldkit Fixture", {
-          label: "spa fallback",
-        });
+          yield* expectUrlContains(`${url}/`, "Foldkit Fixture", {
+            timeout: "90 seconds",
+            label: "dev home page",
+          });
+          yield* expectUrlContains(`${url}/counter/42`, "Foldkit Fixture", {
+            label: "spa fallback",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

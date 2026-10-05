@@ -1,6 +1,7 @@
 import { PgConnection, PgTypes } from "@effect/sql-pg"
 import { assert, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber, Redacted, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Queue, Redacted, Scope, Stream } from "effect"
+import type { SqlError } from "effect/sql/SqlError"
 import { PgContainer } from "./utils.ts"
 
 const makeConnection = (options?: PgConnection.Config) =>
@@ -12,7 +13,34 @@ const makeConnection = (options?: PgConnection.Config) =>
     })
   })
 
+const assertInterruptedOnClose = (
+  scope: Scope.Closeable,
+  notifications: Queue.Dequeue<PgConnection.Notification, SqlError>
+) =>
+  Effect.gen(function*() {
+    const consumer = yield* Effect.forkScoped(Queue.take(notifications))
+    yield* Scope.close(scope, Exit.void)
+    const exit = yield* Fiber.await(consumer)
+    assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause))
+  })
+
 it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
+  it.effect("interrupts notification consumers when the connection scope closes", () =>
+    Effect.gen(function*() {
+      const scope = yield* Scope.fork(yield* Scope.Scope)
+      const connection = yield* Scope.provide(makeConnection(), scope)
+      const notifications = yield* connection.listen("closed_listener")
+      yield* assertInterruptedOnClose(scope, notifications)
+    }))
+
+  it.effect("interrupts notification consumers when the listener scope closes", () =>
+    Effect.gen(function*() {
+      const scope = yield* Scope.fork(yield* Scope.Scope)
+      const connection = yield* makeConnection()
+      const notifications = yield* Scope.provide(connection.listen("closed_listener"), scope)
+      yield* assertInterruptedOnClose(scope, notifications)
+    }))
+
   it.effect("connects through ReadyForQuery", () =>
     Effect.gen(function*() {
       const connection = yield* makeConnection()
@@ -50,7 +78,7 @@ it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
         flag: true,
         text: "hello",
         bytes: new Uint8Array([1, 255]),
-        instant: instant.getTime(),
+        instant,
         numbers: [1, null, 3],
         nil: null,
         jsonb: { nested: true }
@@ -67,6 +95,30 @@ it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
         "nil",
         "jsonb"
       ])
+    }))
+
+  it.effect("applies the session TimeZone only to Dates bound into timestamp columns", () =>
+    Effect.gen(function*() {
+      const connection = yield* makeConnection()
+      const instant = new Date("2024-05-06T07:08:09.123Z")
+      yield* connection.query(
+        "CREATE TEMP TABLE timestamp_timezone (bare timestamp, explicit timestamp, zoned timestamptz)"
+      )
+      for (
+        const [zone, expectedBare] of [
+          ["UTC", instant],
+          ["Europe/Berlin", new Date("2024-05-06T09:08:09.123Z")]
+        ] as const
+      ) {
+        yield* connection.query(`SET TIME ZONE '${zone}'`)
+        yield* connection.query("TRUNCATE timestamp_timezone")
+        yield* connection.query(
+          "INSERT INTO timestamp_timezone VALUES ($1, $2, $3)",
+          [instant, PgTypes.timestamp(instant), instant]
+        )
+        const result = yield* connection.query("SELECT * FROM timestamp_timezone")
+        assert.deepStrictEqual(result.rows, [{ bare: expectedBare, explicit: instant, zoned: instant }])
+      }
     }))
 
   it.effect("returns queryValues in RowDescription order", () =>

@@ -2,7 +2,7 @@ import { decodeStagedBatch, encodeStagedBatch } from "@/Git/PushWire.ts";
 import { ObjectType } from "@/Git/Protocol/ObjectCodec.ts";
 import { describe, expect, test } from "alchemy-test";
 
-describe("push batch codec", () => {
+describe("push batch codec", { tags: ["unit", "local"] }, () => {
   test("inline and promoted rows round-trip", () => {
     const rows = [
       {

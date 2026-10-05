@@ -15,8 +15,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { requestWorker } from "../Utils/WorkerRequest.ts";
 import RuntimeEntryWorker from "./fixtures/runtime-entry/worker.ts";
 
 const plannerSources = [
@@ -178,19 +178,37 @@ layer(NodeServices.layer)(
             ]),
           );
         }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
 
-    it.effect("keeps planner tooling out of /Bridge's dependency graph", () =>
-      Effect.gen(function* () {
-        const { code, sources, packages } = yield* bundleWorkerEntry(
-          "src/Cloudflare/Bridge.ts",
-        );
-        expect(sources.filter(isPlannerSource)).toEqual([]);
-        expect(toolchainPackages.filter((name) => packages.has(name))).toEqual(
-          [],
-        );
-        expect(code).not.toContain("require.resolve");
-      }),
+    it.effect(
+      "keeps planner tooling out of /Bridge's dependency graph",
+      () =>
+        Effect.gen(function* () {
+          const { code, sources, packages } = yield* bundleWorkerEntry(
+            "src/Cloudflare/Bridge.ts",
+          );
+          expect(sources.filter(isPlannerSource)).toEqual([]);
+          expect(
+            toolchainPackages.filter((name) => packages.has(name)),
+          ).toEqual([]);
+          expect(code).not.toContain("require.resolve");
+        }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
 
     it.effect(
@@ -209,88 +227,141 @@ layer(NodeServices.layer)(
           ).toEqual([]);
           expect(code).not.toContain("require.resolve");
         }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
 
-    it.effect("the alchemy/Cloudflare namespace does pull that tooling", () =>
-      Effect.gen(function* () {
-        const { code, sources, packages } = yield* bundleWorkerEntry(
-          "src/Cloudflare/index.ts",
-        );
-        expect(sources).toContain("src/Cloudflare/Workers/Sources/Rolldown.ts");
-        expect(packages.has("workerd")).toBe(true);
-        expect(code).toContain("require.resolve");
-      }),
+    it.effect(
+      "the alchemy/Cloudflare namespace does pull that tooling",
+      () =>
+        Effect.gen(function* () {
+          const { code, sources, packages } = yield* bundleWorkerEntry(
+            "src/Cloudflare/index.ts",
+          );
+          expect(sources).toContain(
+            "src/Cloudflare/Workers/Sources/Rolldown.ts",
+          );
+          expect(packages.has("workerd")).toBe(true);
+          expect(code).toContain("require.resolve");
+        }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
 
-    it.effect("detects local tooling behind a dynamic import", () =>
-      Effect.gen(function* () {
-        const { code, sources, packages } = yield* bundleWorkerEntry(
-          "test/Cloudflare/Workers/fixtures/runtime-entry/dynamic-tooling.ts",
-        );
-        expect(sources.filter(isPlannerSource)).toContain(
-          "src/Cloudflare/LocalRuntime.ts",
-        );
-        expect(packages.has("workerd")).toBe(true);
-        expect(code).toContain("require.resolve");
-      }),
+    it.effect(
+      "detects local tooling behind a dynamic import",
+      () =>
+        Effect.gen(function* () {
+          const { code, sources, packages } = yield* bundleWorkerEntry(
+            "test/Cloudflare/Workers/fixtures/runtime-entry/dynamic-tooling.ts",
+          );
+          expect(sources.filter(isPlannerSource)).toContain(
+            "src/Cloudflare/LocalRuntime.ts",
+          );
+          expect(packages.has("workerd")).toBe(true);
+          expect(code).toContain("require.resolve");
+        }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
 
-    it.effect("preserves the public runtime service identities", () =>
-      Effect.sync(() => {
-        expect(Cloudflare.WorkerEnvironment).toBe(
-          WorkerRuntime.WorkerEnvironment,
-        );
-        expect(Cloudflare.WorkerExecutionContext).toBe(
-          WorkerRuntime.WorkerExecutionContext,
-        );
-        expect(Cloudflare.Workflows.WorkflowEvent).toBe(
-          WorkflowRuntime.WorkflowEvent,
-        );
-        expect(Cloudflare.Workflows.WorkflowStep).toBe(
-          WorkflowRuntime.WorkflowStep,
-        );
-        expect(Cloudflare.Workflows.WorkflowStepContext).toBe(
-          WorkflowRuntime.WorkflowStepContext,
-        );
-        expect(CloudflareEnvironment).toBe(RuntimeCloudflareEnvironment);
-        expect(Stack.key).toBe(StackContext.key);
-        expect(Telemetry.Telemetry).toBe(TelemetryRuntime.Telemetry);
-      }),
+    it.effect(
+      "preserves the public runtime service identities",
+      () =>
+        Effect.sync(() => {
+          expect(Cloudflare.WorkerEnvironment).toBe(
+            WorkerRuntime.WorkerEnvironment,
+          );
+          expect(Cloudflare.WorkerExecutionContext).toBe(
+            WorkerRuntime.WorkerExecutionContext,
+          );
+          expect(Cloudflare.Workflows.WorkflowEvent).toBe(
+            WorkflowRuntime.WorkflowEvent,
+          );
+          expect(Cloudflare.Workflows.WorkflowStep).toBe(
+            WorkflowRuntime.WorkflowStep,
+          );
+          expect(Cloudflare.Workflows.WorkflowStepContext).toBe(
+            WorkflowRuntime.WorkflowStepContext,
+          );
+          expect(CloudflareEnvironment).toBe(RuntimeCloudflareEnvironment);
+          expect(Stack.key).toBe(StackContext.key);
+          expect(Telemetry.Telemetry).toBe(TelemetryRuntime.Telemetry);
+        }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "provider:cloudflare:workflow",
+          "local",
+        ],
+      },
     );
 
-    it.effect("alchemy/Cloudflare still re-exports the same factories", () =>
-      Effect.sync(() => {
-        expect(Cloudflare.makeWorkerBridge).toBe(Bridge.makeWorkerBridge);
-        expect(Cloudflare.makeDurableObjectBridge).toBe(
-          Bridge.makeDurableObjectBridge,
-        );
-        expect(Cloudflare.makeWorkflowBridge).toBe(Bridge.makeWorkflowBridge);
-      }),
+    it.effect(
+      "alchemy/Cloudflare still re-exports the same factories",
+      () =>
+        Effect.sync(() => {
+          expect(Cloudflare.makeWorkerBridge).toBe(Bridge.makeWorkerBridge);
+          expect(Cloudflare.makeDurableObjectBridge).toBe(
+            Bridge.makeDurableObjectBridge,
+          );
+          expect(Cloudflare.makeWorkflowBridge).toBe(Bridge.makeWorkflowBridge);
+        }),
+      {
+        tags: [
+          "unit",
+          "provider:cloudflare",
+          "provider:cloudflare:worker",
+          "local",
+        ],
+      },
     );
   },
 );
 
 for (const dev of [false, true]) {
-  describe(`runtime entry (${dev ? "local" : "live"})`, () => {
-    const { test } = Test.make({ providers: Cloudflare.providers(), dev });
+  describe(
+    `runtime entry (${dev ? "local" : "live"})`,
+    { tags: ["provider:cloudflare", "provider:cloudflare:worker"] },
+    () => {
+      const { test } = Test.make({ providers: Cloudflare.providers(), dev });
 
-    test.provider("application importing Worker.ts serves requests", (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-        const worker = yield* stack.deploy(RuntimeEntryWorker);
-        const client = yield* HttpClient.HttpClient;
-        const body = yield* client.get(worker.url!).pipe(
-          Effect.flatMap((response) => response.text),
-          Effect.retry({ schedule: Schedule.spaced("1 second"), times: 8 }),
-          Effect.repeat({
-            schedule: Schedule.spaced("1 second"),
-            times: 8,
-            until: (body) => body === "runtime-entry:ok",
+      test.provider(
+        "application importing Worker.ts serves requests",
+        (stack) =>
+          Effect.gen(function* () {
+            yield* stack.destroy();
+            const worker = yield* stack.deploy(RuntimeEntryWorker);
+            const response = yield* requestWorker(
+              HttpClientRequest.get(worker.url!),
+              { retryDelay: "3 seconds" },
+            );
+            expect(response.status).toBe(200);
+            expect(yield* response.text).toBe("runtime-entry:ok");
+            yield* stack.destroy();
           }),
-        );
-        expect(body).toBe("runtime-entry:ok");
-        yield* stack.destroy();
-      }),
-    );
-  });
+        { tags: [...(dev ? ["local"] : ["live"])] },
+      );
+    },
+  );
 }

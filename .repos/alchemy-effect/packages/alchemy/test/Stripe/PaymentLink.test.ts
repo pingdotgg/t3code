@@ -129,7 +129,10 @@ test.provider(
 
       yield* archiveProduct(product.id);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:paymentlink", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -174,7 +177,10 @@ test.provider(
 
       yield* archiveProduct(product.id);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:paymentlink", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -235,5 +241,8 @@ test.provider(
 
       yield* archiveProduct(product.id);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:paymentlink", "live"],
+    timeout: 120_000,
+  },
 );

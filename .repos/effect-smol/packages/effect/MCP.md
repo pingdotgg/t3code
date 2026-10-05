@@ -11,7 +11,7 @@ Here is an example of a MCP server implementation:
 ```typescript
 import { NodeRuntime, NodeStdio } from "@effect/platform-node"
 import { Effect, Layer, Logger, Schema } from "effect"
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai"
 
 // Define a simple tool
 const DemoTool = Tool.make("DemoTool", {
@@ -99,7 +99,7 @@ parameters, completions, and content generation.
 
 ```typescript
 import { Effect, Schema } from "effect"
-import { McpSchema, McpServer } from "effect/unstable/ai"
+import { McpSchema, McpServer } from "effect/ai"
 
 const SimpleResource = McpServer.resource({
   uri: "file:///demo.txt",
@@ -140,7 +140,7 @@ generation logic in a declarative way.
 
 ```typescript
 import { Effect, Schema } from "effect"
-import { McpServer } from "effect/unstable/ai"
+import { McpServer } from "effect/ai"
 
 const DemoPrompt = McpServer.prompt({
   name: "Demo Prompt",
@@ -167,7 +167,7 @@ grouped into toolkits, which can be combined and converted into layers.
 
 ```typescript
 import { Effect, Layer, Schema } from "effect"
-import { McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { McpServer, Tool, Toolkit } from "effect/ai"
 
 const DemoTool = Tool.make("DemoTool", {
   description: "This is a demo tool for the documentation",
@@ -214,7 +214,7 @@ validated user input.
 
 ```typescript
 import { Effect, Schema } from "effect"
-import { McpServer } from "effect/unstable/ai"
+import { McpServer } from "effect/ai"
 
 const DemoElicitation = McpServer.elicit({
   message: `Please answer the question ("yes" | "no") (default "no"):`,
@@ -240,7 +240,7 @@ Here's a complete, copy/pastable MCP server example that combines all the concep
 ```typescript
 import { NodeRuntime, NodeStdio } from "@effect/platform-node"
 import { Effect, Layer, Logger, Schema } from "effect"
-import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai"
 
 // Define tools
 const GreetTool = Tool.make("GreetTool", {

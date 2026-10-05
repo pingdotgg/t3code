@@ -1,6 +1,6 @@
 // Measures class-like endpoint declaration for 500 same-shaped endpoints.
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 
 Schema.String
 HttpApi.make("Api")

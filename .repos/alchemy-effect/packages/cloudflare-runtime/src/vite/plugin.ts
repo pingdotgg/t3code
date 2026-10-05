@@ -50,10 +50,117 @@ export interface CloudflareVitePluginOptions<
   dev?: CloudflareVitePluginDevOptions;
 }
 
+/**
+ * Official `@cloudflare/vite-plugin` root name. vinext / Next-on-Workers
+ * treat this exact name, or any `vite-plugin-cloudflare:*` prefix, as
+ * "Cloudflare Workers path".
+ */
+export const OFFICIAL_CLOUDFLARE_VITE_PLUGIN_NAME = "vite-plugin-cloudflare";
+
+/**
+ * Alchemy's presence marker. Matches vinext's
+ * `name.startsWith("vite-plugin-cloudflare:")` check without colliding
+ * with the official plugin's exact name.
+ */
+export const ALCHEMY_CLOUDFLARE_VITE_PLUGIN_NAME =
+  "vite-plugin-cloudflare:alchemy";
+
+const officialCloudflareVitePluginPrefix = `${OFFICIAL_CLOUDFLARE_VITE_PLUGIN_NAME}:`;
+
+const isOfficialCloudflareVitePlugin = (plugin: vite.Plugin): boolean =>
+  plugin.name === OFFICIAL_CLOUDFLARE_VITE_PLUGIN_NAME ||
+  (plugin.name.startsWith(officialCloudflareVitePluginPrefix) &&
+    plugin.name !== ALCHEMY_CLOUDFLARE_VITE_PLUGIN_NAME);
+
+const noopHook = (): undefined => undefined;
+
+/**
+ * Neutralize official `@cloudflare/vite-plugin` instances already in the
+ * Vite plugin list. Vite flattens `config.plugins` into `userPlugins`
+ * *before* `config()` hooks run, so splicing the array cannot unregister
+ * them — but those entries are the same objects. Replacing their hooks
+ * with no-ops (not `undefined`: `getSortedPluginsByHook("config")` has
+ * already captured them) stops the official stack from running alongside
+ * Alchemy's `distilled-cloudflare:*` plugins.
+ *
+ * Construction-time side effects inside `cloudflare()` still happen if
+ * the app called the official factory. `ALCHEMY_CLOUDFLARE_VITE_INJECTED`
+ * remains the way to skip that factory.
+ */
+export const disableOfficialCloudflareVitePlugins = (
+  plugins: ReadonlyArray<unknown> | undefined,
+): number => {
+  let disabled = 0;
+  const visit = (entry: unknown): void => {
+    if (Array.isArray(entry)) {
+      for (const child of entry) visit(child);
+      return;
+    }
+    if (entry === null || typeof entry !== "object" || !("name" in entry)) {
+      return;
+    }
+    const plugin = entry as vite.Plugin;
+    if (
+      typeof plugin.name !== "string" ||
+      !isOfficialCloudflareVitePlugin(plugin)
+    ) {
+      return;
+    }
+    disableOfficialCloudflareVitePlugin(plugin);
+    disabled += 1;
+  };
+  for (const entry of plugins ?? []) visit(entry);
+  return disabled;
+};
+
+const disableOfficialCloudflareVitePlugin = (plugin: vite.Plugin): void => {
+  const record = plugin as unknown as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (
+      key === "name" ||
+      key === "enforce" ||
+      key === "apply" ||
+      key === "applyToEnvironment"
+    ) {
+      continue;
+    }
+    const value = record[key];
+    if (typeof value === "function") {
+      record[key] = noopHook;
+      continue;
+    }
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      "handler" in value &&
+      typeof (value as { handler: unknown }).handler === "function"
+    ) {
+      (value as { handler: typeof noopHook }).handler = noopHook;
+    }
+  }
+};
+
+/**
+ * Named so vinext takes the Workers path, and so a later `config()`
+ * reader cannot mistake us for the official plugin. `order: "pre"`
+ * runs before `vinext:config` scans `config.plugins`.
+ */
+const alchemyCloudflareVitePlugin = (): vite.Plugin => ({
+  name: ALCHEMY_CLOUDFLARE_VITE_PLUGIN_NAME,
+  enforce: "pre",
+  config: {
+    order: "pre",
+    handler(config) {
+      disableOfficialCloudflareVitePlugins(config.plugins);
+    },
+  },
+});
+
 export default function cloudflareVitePlugin(
   options: CloudflareVitePluginOptions = {},
 ): vite.PluginOption {
   return [
+    alchemyCloudflareVitePlugin(),
     optionsPlugin.vite(options),
     cloudflareExternalsPlugin.vite(options),
     nodejsAlsPlugin.vite(options),

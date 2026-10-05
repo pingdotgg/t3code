@@ -6,8 +6,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import DetectiveTestFunctionLive, { DetectiveTestFunction } from "./handler";
 import { makeDetectiveTestLease } from "./TestLease.ts";
 
@@ -89,281 +89,297 @@ const skipForeign = () =>
       ).pipe(Effect.as(true))
     : Effect.succeed(false);
 
-describe.sequential("Detective Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      // Never take over a behavior graph this fixture did not create.
-      const preexisting = (yield* aws(detective.listGraphs({}))).GraphList?.[0];
-      if (preexisting?.Arn) {
-        const tags = yield* aws(
-          detective.listTagsForResource({
-            ResourceArn: preexisting.Arn,
-          }),
-        );
-        if (tags.Tags?.["fixture"] !== "detective-bindings") {
-          foreignGraphArn = preexisting.Arn;
-          yield* Effect.logInfo(
-            `Detective test setup: foreign graph ${preexisting.Arn} present — suite degrades to no-op`,
+describe.sequential(
+  "Detective Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:detective",
+      "provider:aws:lambda",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        // Never take over a behavior graph this fixture did not create.
+        const preexisting = (yield* aws(detective.listGraphs({})))
+          .GraphList?.[0];
+        if (preexisting?.Arn) {
+          const tags = yield* aws(
+            detective.listTagsForResource({
+              ResourceArn: preexisting.Arn,
+            }),
           );
-          return;
+          if (tags.Tags?.["fixture"] !== "detective-bindings") {
+            foreignGraphArn = preexisting.Arn;
+            yield* Effect.logInfo(
+              `Detective test setup: foreign graph ${preexisting.Arn} present — suite degrades to no-op`,
+            );
+            return;
+          }
         }
-      }
 
-      yield* Effect.logInfo(
-        "Detective test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+        yield* Effect.logInfo(
+          "Detective test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("Detective test setup: deploying fixture");
-      const attrs = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* DetectiveTestFunction;
-        }).pipe(Effect.provide(DetectiveTestFunctionLive)),
-      );
+        yield* Effect.logInfo("Detective test setup: deploying fixture");
+        const attrs = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* DetectiveTestFunction;
+          }).pipe(Effect.provide(DetectiveTestFunctionLive)),
+        );
 
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
-      roleArn = attrs.roleArn;
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+        roleArn = attrs.roleArn;
 
-      // Out-of-band: the fixture created the account's (single) graph.
-      const graphs = yield* aws(detective.listGraphs({}));
-      graphArn = graphs.GraphList?.[0]?.Arn ?? "";
-      expect(graphArn).toContain(":graph:");
+        // Out-of-band: the fixture created the account's (single) graph.
+        const graphs = yield* aws(detective.listGraphs({}));
+        graphArn = graphs.GraphList?.[0]?.Arn ?? "";
+        expect(graphArn).toContain(":graph:");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `Detective test setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `Detective test setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `Detective test setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Detective test setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(
+      Effect.gen(function* () {
+        if (foreignGraphArn) return;
+        yield* sharedStack.destroy();
+      }),
+      { timeout: 120_000 },
+    );
+
+    describe("binding registration", () => {
+      test.provider("all 23 capabilities initialize in the runtime", (_stack) =>
+        Effect.gen(function* () {
+          if (yield* skipForeign()) return;
+          const response = (yield* getJson("/bindings")) as { bound: string[] };
+          expect(response.bound).toHaveLength(23);
+          expect(response.bound).toContain("startInvestigation");
+          expect(response.bound).toContain("acceptInvitation");
+          expect(response.bound).toContain("enableOrganizationAdminAccount");
+        }),
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll(
-    Effect.gen(function* () {
-      if (foreignGraphArn) return;
-      yield* sharedStack.destroy();
-    }),
-    { timeout: 120_000 },
-  );
+    describe("ListMembers", () => {
+      test.provider(
+        "enumerates the graph's member accounts (injected graph arn)",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            // An organization account may see auto-enabled members even on a
+            // freshly created graph, so assert shape rather than emptiness.
+            const response = (yield* getJson("/members")) as { count: number };
+            expect(typeof response.count).toBe("number");
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+      );
+    });
 
-  describe("binding registration", () => {
-    test.provider("all 23 capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        if (yield* skipForeign()) return;
-        const response = (yield* getJson("/bindings")) as { bound: string[] };
-        expect(response.bound).toHaveLength(23);
-        expect(response.bound).toContain("startInvestigation");
-        expect(response.bound).toContain("acceptInvitation");
-        expect(response.bound).toContain("enableOrganizationAdminAccount");
-      }),
-    );
-  });
+    describe("GetMembers", () => {
+      test.provider(
+        "a non-member account comes back as unprocessed (injected graph arn)",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            const response = (yield* getJson("/member-status")) as {
+              members: number;
+              unprocessed: number;
+            };
+            expect(response.members).toBe(0);
+            expect(response.unprocessed).toBe(1);
+          }),
+      );
+    });
 
-  describe("ListMembers", () => {
-    test.provider(
-      "enumerates the graph's member accounts (injected graph arn)",
-      (_stack) =>
+    describe("ListDatasourcePackages", () => {
+      test.provider("the graph ingests the core package", (_stack) =>
         Effect.gen(function* () {
           if (yield* skipForeign()) return;
-          // An organization account may see auto-enabled members even on a
-          // freshly created graph, so assert shape rather than emptiness.
-          const response = (yield* getJson("/members")) as { count: number };
-          expect(typeof response.count).toBe("number");
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-    );
-  });
-
-  describe("GetMembers", () => {
-    test.provider(
-      "a non-member account comes back as unprocessed (injected graph arn)",
-      (_stack) =>
-        Effect.gen(function* () {
-          if (yield* skipForeign()) return;
-          const response = (yield* getJson("/member-status")) as {
-            members: number;
-            unprocessed: number;
+          const response = (yield* getJson("/datasources")) as {
+            packages: string[];
           };
-          expect(response.members).toBe(0);
-          expect(response.unprocessed).toBe(1);
+          expect(response.packages).toContain("DETECTIVE_CORE");
         }),
-    );
-  });
+      );
+    });
 
-  describe("ListDatasourcePackages", () => {
-    test.provider("the graph ingests the core package", (_stack) =>
-      Effect.gen(function* () {
-        if (yield* skipForeign()) return;
-        const response = (yield* getJson("/datasources")) as {
-          packages: string[];
-        };
-        expect(response.packages).toContain("DETECTIVE_CORE");
-      }),
-    );
-  });
-
-  describe("BatchGetGraphMemberDatasources", () => {
-    test.provider("reads member ingest history for the graph", (_stack) =>
-      Effect.gen(function* () {
-        if (yield* skipForeign()) return;
-        const response = (yield* getJson("/graph-member-datasources")) as {
-          memberDatasources?: number;
-          unprocessed?: number;
-          errorTag?: string;
-        };
-        if (response.errorTag) {
-          // A non-member account id may be rejected outright instead of
-          // reported as unprocessed.
-          expect([
-            "ValidationException",
-            "ResourceNotFoundException",
-          ]).toContain(response.errorTag);
-        } else {
-          expect(response.memberDatasources).toBe(0);
-        }
-      }),
-    );
-  });
-
-  describe("ListInvestigations", () => {
-    test.provider("a fresh graph has no investigations", (_stack) =>
-      Effect.gen(function* () {
-        if (yield* skipForeign()) return;
-        const response = (yield* getJson("/investigations")) as {
-          count: number;
-        };
-        expect(response.count).toBe(0);
-      }),
-    );
-  });
-
-  describe("StartInvestigation", () => {
-    test.provider(
-      "triggers triage of the fixture's own role (typed outcome either way)",
-      (_stack) =>
+    describe("BatchGetGraphMemberDatasources", () => {
+      test.provider("reads member ingest history for the graph", (_stack) =>
         Effect.gen(function* () {
           if (yield* skipForeign()) return;
-          const response = (yield* postJson(
-            `/investigate?entity=${encodeURIComponent(roleArn)}`,
-          )) as { investigationId?: string; errorTag?: string };
+          const response = (yield* getJson("/graph-member-datasources")) as {
+            memberDatasources?: number;
+            unprocessed?: number;
+            errorTag?: string;
+          };
           if (response.errorTag) {
-            // A brand-new graph has ingested (almost) no data, so Detective
-            // typically cannot resolve the entity yet.
+            // A non-member account id may be rejected outright instead of
+            // reported as unprocessed.
             expect([
               "ValidationException",
               "ResourceNotFoundException",
-              "TooManyRequestsException",
-              "InternalServerException",
             ]).toContain(response.errorTag);
           } else {
-            expect(response.investigationId).toBeTruthy();
+            expect(response.memberDatasources).toBe(0);
           }
         }),
-    );
-  });
+      );
+    });
 
-  describe("ListInvitations", () => {
-    test.provider(
-      "enumerates this account's behavior-graph invitations",
-      (_stack) =>
+    describe("ListInvestigations", () => {
+      test.provider("a fresh graph has no investigations", (_stack) =>
         Effect.gen(function* () {
           if (yield* skipForeign()) return;
-          // The shared test account can carry standing invitations from
-          // other admin accounts — assert shape rather than emptiness.
-          const response = (yield* getJson("/invitations")) as {
+          const response = (yield* getJson("/investigations")) as {
             count: number;
           };
-          expect(typeof response.count).toBe("number");
-          expect(response.count).toBeGreaterThanOrEqual(0);
+          expect(response.count).toBe(0);
         }),
-    );
-  });
+      );
+    });
 
-  describe("BatchGetMembershipDatasources", () => {
-    test.provider(
-      "the admin account is not a member of its own graph",
-      (_stack) =>
-        Effect.gen(function* () {
-          if (yield* skipForeign()) return;
-          const response = (yield* getJson(
-            `/membership-datasources?graphArn=${encodeURIComponent(graphArn)}`,
-          )) as {
-            membershipDatasources?: number;
-            unprocessedGraphs?: number;
-            errorTag?: string;
-          };
-          if (response.errorTag) {
-            expect([
-              "ValidationException",
-              "ResourceNotFoundException",
-            ]).toContain(response.errorTag);
-          } else {
-            expect(
-              (response.membershipDatasources ?? 0) +
-                (response.unprocessedGraphs ?? 0),
-            ).toBeGreaterThanOrEqual(0);
-          }
-        }),
-    );
-  });
+    describe("StartInvestigation", () => {
+      test.provider(
+        "triggers triage of the fixture's own role (typed outcome either way)",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            const response = (yield* postJson(
+              `/investigate?entity=${encodeURIComponent(roleArn)}`,
+            )) as { investigationId?: string; errorTag?: string };
+            if (response.errorTag) {
+              // A brand-new graph has ingested (almost) no data, so Detective
+              // typically cannot resolve the entity yet.
+              expect([
+                "ValidationException",
+                "ResourceNotFoundException",
+                "TooManyRequestsException",
+                "InternalServerException",
+              ]).toContain(response.errorTag);
+            } else {
+              expect(response.investigationId).toBeTruthy();
+            }
+          }),
+      );
+    });
 
-  describe("DescribeOrganizationConfiguration", () => {
-    test.provider(
-      "answers (or rejects with a typed error for a non-delegated account)",
-      (_stack) =>
-        Effect.gen(function* () {
-          if (yield* skipForeign()) return;
-          const response = (yield* getJson("/org-config")) as {
-            autoEnable?: boolean;
-            errorTag?: string;
-          };
-          if (response.errorTag) {
-            // Only the organization's delegated Detective administrator may
-            // call this — a standalone test account gets a typed rejection,
-            // which still proves the binding + IAM wiring end-to-end.
-            expect([
-              "ValidationException",
-              "AccessDeniedException",
-              "TooManyRequestsException",
-            ]).toContain(response.errorTag);
-          } else {
-            expect(typeof response.autoEnable).toBe("boolean");
-          }
-        }),
-    );
-  });
+    describe("ListInvitations", () => {
+      test.provider(
+        "enumerates this account's behavior-graph invitations",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            // The shared test account can carry standing invitations from
+            // other admin accounts — assert shape rather than emptiness.
+            const response = (yield* getJson("/invitations")) as {
+              count: number;
+            };
+            expect(typeof response.count).toBe("number");
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+      );
+    });
 
-  describe("ListOrganizationAdminAccounts", () => {
-    test.provider(
-      "answers (or rejects with a typed error outside the management account)",
-      (_stack) =>
-        Effect.gen(function* () {
-          if (yield* skipForeign()) return;
-          const response = (yield* getJson("/org-admins")) as {
-            administrators?: number;
-            errorTag?: string;
-          };
-          if (response.errorTag) {
-            expect(["ValidationException", "AccessDeniedException"]).toContain(
-              response.errorTag,
-            );
-          } else {
-            expect(response.administrators).toBeGreaterThanOrEqual(0);
-          }
-        }),
-    );
-  });
-});
+    describe("BatchGetMembershipDatasources", () => {
+      test.provider(
+        "the admin account is not a member of its own graph",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            const response = (yield* getJson(
+              `/membership-datasources?graphArn=${encodeURIComponent(graphArn)}`,
+            )) as {
+              membershipDatasources?: number;
+              unprocessedGraphs?: number;
+              errorTag?: string;
+            };
+            if (response.errorTag) {
+              expect([
+                "ValidationException",
+                "ResourceNotFoundException",
+              ]).toContain(response.errorTag);
+            } else {
+              expect(
+                (response.membershipDatasources ?? 0) +
+                  (response.unprocessedGraphs ?? 0),
+              ).toBeGreaterThanOrEqual(0);
+            }
+          }),
+      );
+    });
+
+    describe("DescribeOrganizationConfiguration", () => {
+      test.provider(
+        "answers (or rejects with a typed error for a non-delegated account)",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            const response = (yield* getJson("/org-config")) as {
+              autoEnable?: boolean;
+              errorTag?: string;
+            };
+            if (response.errorTag) {
+              // Only the organization's delegated Detective administrator may
+              // call this — a standalone test account gets a typed rejection,
+              // which still proves the binding + IAM wiring end-to-end.
+              expect([
+                "ValidationException",
+                "AccessDeniedException",
+                "TooManyRequestsException",
+              ]).toContain(response.errorTag);
+            } else {
+              expect(typeof response.autoEnable).toBe("boolean");
+            }
+          }),
+      );
+    });
+
+    describe("ListOrganizationAdminAccounts", () => {
+      test.provider(
+        "answers (or rejects with a typed error outside the management account)",
+        (_stack) =>
+          Effect.gen(function* () {
+            if (yield* skipForeign()) return;
+            const response = (yield* getJson("/org-admins")) as {
+              administrators?: number;
+              errorTag?: string;
+            };
+            if (response.errorTag) {
+              expect([
+                "ValidationException",
+                "AccessDeniedException",
+              ]).toContain(response.errorTag);
+            } else {
+              expect(response.administrators).toBeGreaterThanOrEqual(0);
+            }
+          }),
+      );
+    });
+  },
+);

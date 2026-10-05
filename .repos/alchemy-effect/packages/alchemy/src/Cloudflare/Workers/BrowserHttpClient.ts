@@ -1,7 +1,7 @@
 import * as browser from "@distilled.cloud/cloudflare/browser-rendering";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { Credentials } from "../Credentials.ts";
 import {

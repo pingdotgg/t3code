@@ -245,7 +245,7 @@ const startFakeRedis = (options?: {
       }),
   );
 
-describe("Redis protocol client", () => {
+describe("Redis protocol client", { tags: ["unit", "local"] }, () => {
   it.effect("PING SET GET DEL over a one-shot connection", () =>
     Effect.gen(function* () {
       const { url } = yield* startFakeRedis();

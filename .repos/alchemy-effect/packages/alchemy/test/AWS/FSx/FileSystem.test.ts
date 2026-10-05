@@ -23,7 +23,7 @@ test.provider(
         expect(err._tag).toBe("FileSystemNotFound");
       }
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:fsx", "live"], timeout: 60_000 },
 );
 
 const describeById = (fileSystemId: string) =>
@@ -116,5 +116,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       const gone = yield* waitUntilGone(fileSystemId);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 1_500_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:fsx", "live"],
+    timeout: 1_500_000,
+  },
 );

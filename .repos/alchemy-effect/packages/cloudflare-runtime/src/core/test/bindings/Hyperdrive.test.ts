@@ -63,45 +63,47 @@ const startTcpEcho = (greeting: string) =>
   );
 
 layer(localRuntimeLayer)("Hyperdrive binding", (it) => {
-  it.effect(
-    "exposes the configured origin and connects to it via cloudflare:sockets",
-    () =>
-      Effect.gen(function* () {
-        const greeting = "hello-hyperdrive\n";
-        const origin = yield* startTcpEcho(greeting);
-        const { fetch } = yield* startTestWorker({
-          name: "hyperdrive-test",
-          compatibilityDate: "2026-03-10",
-          compatibilityFlags: [],
-          modules: [
-            { name: "main.js", type: "ESModule", content: HYPERDRIVE_SCRIPT },
-          ],
-          hyperdrives: {
-            db: {
-              scheme: "postgresql",
-              host: origin.host,
-              port: origin.port,
-              user: "alice",
-              password: "s3cret",
-              database: "mydb",
+  for (const legacy of [false, true]) {
+    it.effect(
+      `exposes the origin and connects via cloudflare:sockets with the ${legacy ? "legacy" : "default"} registry`,
+      () =>
+        Effect.gen(function* () {
+          const greeting = "hello-hyperdrive\n";
+          const origin = yield* startTcpEcho(greeting);
+          const { fetch } = yield* startTestWorker({
+            name: `hyperdrive-test-${legacy ? "legacy" : "default"}`,
+            compatibilityDate: "2026-03-10",
+            compatibilityFlags: legacy ? ["legacy_module_registry"] : [],
+            modules: [
+              { name: "main.js", type: "ESModule", content: HYPERDRIVE_SCRIPT },
+            ],
+            hyperdrives: {
+              db: {
+                scheme: "postgresql",
+                host: origin.host,
+                port: origin.port,
+                user: "alice",
+                password: "s3cret",
+                database: "mydb",
+              },
             },
-          },
-          bindings: [Hyperdrive.local("HYP", "db")],
-        });
+            bindings: [Hyperdrive.local("HYP", "db")],
+          });
 
-        const info = yield* fetch("/info");
-        expect(yield* Effect.promise(() => info.json())).toEqual({
-          connectionString: `postgresql://alice:s3cret@${origin.host}:${origin.port}/mydb`,
-          host: origin.host,
-          port: origin.port,
-          database: "mydb",
-          user: "alice",
-        });
+          const info = yield* fetch("/info");
+          expect(yield* Effect.promise(() => info.json())).toEqual({
+            connectionString: `postgresql://alice:s3cret@${origin.host}:${origin.port}/mydb`,
+            host: origin.host,
+            port: origin.port,
+            database: "mydb",
+            user: "alice",
+          });
 
-        const connected = yield* fetch("/connect");
-        expect(yield* Effect.promise(() => connected.text())).toBe(greeting);
-      }),
-  );
+          const connected = yield* fetch("/connect");
+          expect(yield* Effect.promise(() => connected.text())).toBe(greeting);
+        }),
+    );
+  }
 
   it.effect("fails with a ConfigError when the origin is missing", () =>
     Effect.gen(function* () {

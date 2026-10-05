@@ -9,7 +9,7 @@
  * login UX stays uniform.
  */
 import * as Effect from "effect/Effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import * as Interaction from "../Interaction.ts";
 import { CallbackServerStartError } from "./OAuthFlow.ts";
 

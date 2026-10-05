@@ -207,122 +207,134 @@ const shapes: Record<string, () => Effect.Effect<any, any, any>> = {
 };
 
 for (const kind of ["in-memory", "json"] as StoreKind[]) {
-  describe(`no-change redeploy is all-noop (${kind} state)`, () => {
-    for (const [shape, program] of Object.entries(shapes)) {
-      test(
-        shape,
-        Effect.gen(function* () {
-          const { deploy, plan } = makeHarness(
-            `bind-${kind}-${shape.replaceAll(/[^a-zA-Z0-9]/g, "-")}`,
-            kind,
-          );
-          yield* deploy(program());
-          expectAllNoop(yield* plan(program()));
-        }),
-      );
-    }
-  });
+  describe(
+    `no-change redeploy is all-noop (${kind} state)`,
+    { tags: ["unit", "local"] },
+    () => {
+      for (const [shape, program] of Object.entries(shapes)) {
+        test(
+          shape,
+          Effect.gen(function* () {
+            const { deploy, plan } = makeHarness(
+              `bind-${kind}-${shape.replaceAll(/[^a-zA-Z0-9]/g, "-")}`,
+              kind,
+            );
+            yield* deploy(program());
+            expectAllNoop(yield* plan(program()));
+          }),
+        );
+      }
+    },
+  );
 }
 
-describe("binding rows are deterministically ordered", () => {
-  // Bindings are registered by concurrently-built layers doing real IO before
-  // `host.bind`, so registration order is not stable across deploys. The
-  // engine sorts rows by sid at every boundary (dedupeBindings/diffBindings)
-  // so provider diff/reconcile inputs and persisted state never churn on a
-  // registration-order flip.
-  test(
-    "a registration-order flip stays noop and providers observe sorted rows",
-    Effect.gen(function* () {
-      const { deploy, plan } = makeHarness("bind-order", "in-memory");
+describe(
+  "binding rows are deterministically ordered",
+  { tags: ["unit", "local"] },
+  () => {
+    // Bindings are registered by concurrently-built layers doing real IO before
+    // `host.bind`, so registration order is not stable across deploys. The
+    // engine sorts rows by sid at every boundary (dedupeBindings/diffBindings)
+    // so provider diff/reconcile inputs and persisted state never churn on a
+    // registration-order flip.
+    test(
+      "a registration-order flip stays noop and providers observe sorted rows",
+      Effect.gen(function* () {
+        const { deploy, plan } = makeHarness("bind-order", "in-memory");
 
-      const program = (flipped: boolean) =>
-        Effect.gen(function* () {
+        const program = (flipped: boolean) =>
+          Effect.gen(function* () {
+            const target = yield* BindingTarget("Host", { name: "host" });
+            const bindA = target.bind("CapA", { env: { A: "1" } });
+            const bindB = target.bind("CapB", { env: { B: "2" } });
+            if (flipped) {
+              yield* bindB;
+              yield* bindA;
+            } else {
+              yield* bindA;
+              yield* bindB;
+            }
+            return target;
+          });
+
+        yield* deploy(program(false));
+
+        const observed: ResourceBinding[][] = [];
+        const p: any = yield* plan(program(true)).pipe(
+          Effect.provide(
+            Layer.succeed(TestResourceHooks, {
+              diff: (_id, newBindings) =>
+                Effect.sync(() => void observed.push(newBindings)),
+            }),
+          ),
+        );
+
+        expectAllNoop(p);
+        // The provider's diff observed the sid-sorted row order even though
+        // registration order was flipped between deploys.
+        expect(observed.length).toBeGreaterThan(0);
+        for (const rows of observed) {
+          expect(rows.map((r) => r.sid)).toEqual(["CapA", "CapB"]);
+        }
+        // The plan node's rows are sorted too.
+        expect(p.resources.Host.bindings.map((r: any) => r.sid)).toEqual([
+          "CapA",
+          "CapB",
+        ]);
+      }),
+    );
+  },
+);
+
+describe(
+  "persisted binding rows are plain data",
+  { tags: ["unit", "local"] },
+  () => {
+    // Mirror of the "interrupted create persists no unresolved Output exprs"
+    // apply test, for bindings: even non-terminal commits must not persist live
+    // Output proxies or Effect leaves into the state store.
+    test(
+      "terminal state holds no live Effect leaves in binding data",
+      Effect.gen(function* () {
+        const store: Record<string, any> = {};
+        const stateLayer = Layer.effect(
+          State,
+          Effect.sync(() => InMemoryService(store)),
+        );
+        const program = Effect.gen(function* () {
           const target = yield* BindingTarget("Host", { name: "host" });
-          const bindA = target.bind("CapA", { env: { A: "1" } });
-          const bindB = target.bind("CapB", { env: { B: "2" } });
-          if (flipped) {
-            yield* bindB;
-            yield* bindA;
-          } else {
-            yield* bindA;
-            yield* bindB;
-          }
+          yield* target.bind("Cap", {
+            env: { PEER: TestResource, NAME: Effect.succeed("x") },
+          } as any);
           return target;
         });
-
-      yield* deploy(program(false));
-
-      const observed: ResourceBinding[][] = [];
-      const p: any = yield* plan(program(true)).pipe(
-        Effect.provide(
-          Layer.succeed(TestResourceHooks, {
-            diff: (_id, newBindings) =>
-              Effect.sync(() => void observed.push(newBindings)),
+        yield* (program as unknown as Effect.Effect<any, any, never>).pipe(
+          Stack.make({
+            name: "bind-plain",
+            providers: TestLayers() as Layer.Layer<any, never, any>,
+            state: stateLayer,
           }),
-        ),
-      );
-
-      expectAllNoop(p);
-      // The provider's diff observed the sid-sorted row order even though
-      // registration order was flipped between deploys.
-      expect(observed.length).toBeGreaterThan(0);
-      for (const rows of observed) {
-        expect(rows.map((r) => r.sid)).toEqual(["CapA", "CapB"]);
-      }
-      // The plan node's rows are sorted too.
-      expect(p.resources.Host.bindings.map((r: any) => r.sid)).toEqual([
-        "CapA",
-        "CapB",
-      ]);
-    }),
-  );
-});
-
-describe("persisted binding rows are plain data", () => {
-  // Mirror of the "interrupted create persists no unresolved Output exprs"
-  // apply test, for bindings: even non-terminal commits must not persist live
-  // Output proxies or Effect leaves into the state store.
-  test(
-    "terminal state holds no live Effect leaves in binding data",
-    Effect.gen(function* () {
-      const store: Record<string, any> = {};
-      const stateLayer = Layer.effect(
-        State,
-        Effect.sync(() => InMemoryService(store)),
-      );
-      const program = Effect.gen(function* () {
-        const target = yield* BindingTarget("Host", { name: "host" });
-        yield* target.bind("Cap", {
-          env: { PEER: TestResource, NAME: Effect.succeed("x") },
-        } as any);
-        return target;
-      });
-      yield* (program as unknown as Effect.Effect<any, any, never>).pipe(
-        Stack.make({
-          name: "bind-plain",
-          providers: TestLayers() as Layer.Layer<any, never, any>,
-          state: stateLayer,
-        }),
-        Effect.flatMap((compiled: any) =>
-          Plan.make(compiled).pipe(
-            Effect.flatMap(apply),
-            Effect.provide(compiled.services),
+          Effect.flatMap((compiled: any) =>
+            Plan.make(compiled).pipe(
+              Effect.flatMap(apply),
+              Effect.provide(compiled.services),
+            ),
           ),
-        ),
-        Effect.provide(Layer.succeed(Stage, "test")),
-        provideFreshArtifactStore,
-      ) as unknown as Effect.Effect<any, any, never>;
+          Effect.provide(Layer.succeed(Stage, "test")),
+          provideFreshArtifactStore,
+        ) as unknown as Effect.Effect<any, any, never>;
 
-      const persisted = store["bind-plain"].test.Host;
-      const hasLiveEffect = (value: unknown): boolean => {
-        if (Effect.isEffect(value)) return true;
-        if (Array.isArray(value)) return value.some(hasLiveEffect);
-        if (value && typeof value === "object") {
-          return Object.values(value).some(hasLiveEffect);
-        }
-        return false;
-      };
-      expect(hasLiveEffect(persisted.bindings)).toBe(false);
-    }),
-  );
-});
+        const persisted = store["bind-plain"].test.Host;
+        const hasLiveEffect = (value: unknown): boolean => {
+          if (Effect.isEffect(value)) return true;
+          if (Array.isArray(value)) return value.some(hasLiveEffect);
+          if (value && typeof value === "object") {
+            return Object.values(value).some(hasLiveEffect);
+          }
+          return false;
+        };
+        expect(hasLiveEffect(persisted.bindings)).toBe(false);
+      }),
+    );
+  },
+);

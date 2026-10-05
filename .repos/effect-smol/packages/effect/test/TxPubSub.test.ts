@@ -257,21 +257,23 @@ describe("TxPubSub", () => {
         )
       }))
 
-    it.effect("isEmpty checks all subscriber queues are empty", () =>
+    it.effect("isEmpty and isNonEmpty reflect subscriber queues", () =>
       Effect.gen(function*() {
         const hub = yield* Effect.tx(TxPubSub.unbounded<number>())
         assert.strictEqual(yield* Effect.tx(TxPubSub.isEmpty(hub)), true)
+        assert.strictEqual(yield* Effect.tx(TxPubSub.isNonEmpty(hub)), false)
 
         yield* Effect.scoped(
           Effect.gen(function*() {
             const sub = yield* TxPubSub.subscribe(hub)
-            assert.strictEqual(yield* Effect.tx(TxPubSub.isEmpty(hub)), true)
 
             yield* Effect.tx(TxPubSub.publish(hub, 1))
             assert.strictEqual(yield* Effect.tx(TxPubSub.isEmpty(hub)), false)
+            assert.strictEqual(yield* Effect.tx(TxPubSub.isNonEmpty(hub)), true)
 
             yield* Effect.tx(TxQueue.take(sub))
             assert.strictEqual(yield* Effect.tx(TxPubSub.isEmpty(hub)), true)
+            assert.strictEqual(yield* Effect.tx(TxPubSub.isNonEmpty(hub)), false)
           })
         )
       }))

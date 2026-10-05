@@ -21,7 +21,7 @@ const spilled = Math.ceil(
   (RETAIN_BYTES + BACKPRESSURE_BYTES + STAGE_BATCH_BYTES) / MiB,
 );
 
-describe("pushPermitsFor", () => {
+describe("pushPermitsFor", { tags: ["unit", "local"] }, () => {
   test("a spilled push is charged its working set, never its body", () => {
     expect(pushPermitsFor(MAX_PACK_BYTES + 1)).toBe(spilled);
     expect(pushPermitsFor(400 * MiB)).toBe(spilled);

@@ -22,18 +22,21 @@ const VC_NAME = "alchemy-test-emrc-vc";
 // same id must surface the typed ValidationException the idempotent delete
 // path swallows (its typed union has no not-found tag — the API reports
 // missing/terminated ids as validation errors).
-test.provider("typed error semantics on a nonexistent virtual cluster", () =>
-  Effect.gen(function* () {
-    const id = "abcdefabcdefabcdefabcdef01";
+test.provider(
+  "typed error semantics on a nonexistent virtual cluster",
+  () =>
+    Effect.gen(function* () {
+      const id = "abcdefabcdefabcdefabcdef01";
 
-    const describeError = yield* Effect.flip(
-      emrc.describeVirtualCluster({ id }),
-    );
-    expect(describeError._tag).toBe("ResourceNotFoundException");
+      const describeError = yield* Effect.flip(
+        emrc.describeVirtualCluster({ id }),
+      );
+      expect(describeError._tag).toBe("ResourceNotFoundException");
 
-    const deleteError = yield* Effect.flip(emrc.deleteVirtualCluster({ id }));
-    expect(deleteError._tag).toBe("ValidationException");
-  }),
+      const deleteError = yield* Effect.flip(emrc.deleteVirtualCluster({ id }));
+      expect(deleteError._tag).toBe("ValidationException");
+    }),
+  { tags: ["provider:aws", "provider:aws:emrcontainers", "live"] },
 );
 
 // Ungated typed-error probe for the job-run data plane the VC-scoped
@@ -45,41 +48,47 @@ test.provider("typed error semantics on a nonexistent virtual cluster", () =>
 // (StartJobRun's tag depends on the caller's IAM scope — AccessDenied for
 // unauthorized arbitrary cluster ARNs — so it is not asserted here; the
 // binding grants on the bound cluster's ARN.)
-test.provider("typed error semantics for job run ops on a nonexistent vc", () =>
-  Effect.gen(function* () {
-    const virtualClusterId = "abcdefabcdefabcdefabcdef01";
-    const jobRunId = "abcdefabcdefabcdefa";
+test.provider(
+  "typed error semantics for job run ops on a nonexistent vc",
+  () =>
+    Effect.gen(function* () {
+      const virtualClusterId = "abcdefabcdefabcdefabcdef01";
+      const jobRunId = "abcdefabcdefabcdefa";
 
-    const describeError = yield* Effect.flip(
-      emrc.describeJobRun({ id: jobRunId, virtualClusterId }),
-    );
-    expect(describeError._tag).toBe("ValidationException");
+      const describeError = yield* Effect.flip(
+        emrc.describeJobRun({ id: jobRunId, virtualClusterId }),
+      );
+      expect(describeError._tag).toBe("ValidationException");
 
-    const cancelError = yield* Effect.flip(
-      emrc.cancelJobRun({ id: jobRunId, virtualClusterId }),
-    );
-    expect(cancelError._tag).toBe("ValidationException");
+      const cancelError = yield* Effect.flip(
+        emrc.cancelJobRun({ id: jobRunId, virtualClusterId }),
+      );
+      expect(cancelError._tag).toBe("ValidationException");
 
-    const list = yield* emrc.listJobRuns({ virtualClusterId });
-    expect(list.jobRuns ?? []).toHaveLength(0);
-  }),
+      const list = yield* emrc.listJobRuns({ virtualClusterId });
+      expect(list.jobRuns ?? []).toHaveLength(0);
+    }),
+  { tags: ["provider:aws", "provider:aws:emrcontainers", "live"] },
 );
 
 // Ungated list() probe: enumerates live virtual clusters in the ambient
 // account/region — proves the pagination + attribute mapping wiring without
 // needing an EKS cluster.
-test.provider("list returns a well-formed array of virtual clusters", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(VirtualCluster);
-    const all = yield* provider.list();
+test.provider(
+  "list returns a well-formed array of virtual clusters",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(VirtualCluster);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const vc of all) {
-      expect(typeof vc.virtualClusterId).toBe("string");
-      expect(typeof vc.virtualClusterName).toBe("string");
-      expect(vc.virtualClusterArn).toContain(":/virtualclusters/");
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const vc of all) {
+        expect(typeof vc.virtualClusterId).toBe("string");
+        expect(typeof vc.virtualClusterName).toBe("string");
+        expect(vc.virtualClusterArn).toContain(":/virtualclusters/");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:emrcontainers", "live"] },
 );
 
 // Full lifecycle: a virtual cluster itself is free and provisions instantly,
@@ -159,7 +168,17 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertVirtualClusterGone(vc.virtualClusterId);
     }),
-  { timeout: 1_800_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:eks",
+      "provider:aws:emrcontainers",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 1_800_000,
+  },
 );
 
 const assertVirtualClusterGone = (id: string) =>

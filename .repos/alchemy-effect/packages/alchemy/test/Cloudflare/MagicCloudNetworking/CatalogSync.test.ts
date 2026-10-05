@@ -87,6 +87,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -141,7 +148,14 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(accountId, sync.syncId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // On unentitled accounts `list()` swallows the typed `FeatureNotEnabled`
@@ -183,7 +197,14 @@ test.provider(
 
       yield* expectGone(deployed.accountId, deployed.syncId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -222,5 +243,12 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(accountId, replaced.syncId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magiccloudnetworking",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -6,7 +6,7 @@ import * as EC2 from "@distilled.cloud/aws/ec2";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 
 import DAXTestFunctionLive, { DAXTestFunction } from "./handler";
@@ -44,66 +44,72 @@ const getJson = (path: string) =>
     Effect.flatMap((r) => r.json),
   );
 
-describe.sequential("DAX Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo("DAX test setup: destroying previous resources");
-      yield* sharedStack.destroy();
-
-      yield* Effect.logInfo("DAX test setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* DAXTestFunction;
-        }).pipe(Effect.provide(DAXTestFunctionLive)),
-      );
-
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      );
-    }),
-    { timeout: 240_000 },
-  );
-
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
-
-  describe("binding registration", () => {
-    test.provider("both capabilities initialize in the runtime", (_stack) =>
+describe.sequential(
+  "DAX Bindings",
+  { tags: ["provider:aws", "provider:aws:dax", "provider:aws:lambda", "live"] },
+  () => {
+    beforeAll(
       Effect.gen(function* () {
-        const response = yield* getJson("/bindings");
-        expect((response as any).bound).toHaveLength(2);
-      }),
-    );
-  });
+        yield* Effect.logInfo("DAX test setup: destroying previous resources");
+        yield* sharedStack.destroy();
 
-  describe("DescribeClusters", () => {
-    test.provider(
-      "surfaces the typed not-found tag for a nonexistent cluster",
-      (_stack) =>
+        yield* Effect.logInfo("DAX test setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* DAXTestFunction;
+          }).pipe(Effect.provide(DAXTestFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
+
+    describe("binding registration", () => {
+      test.provider("both capabilities initialize in the runtime", (_stack) =>
         Effect.gen(function* () {
-          const response = yield* getJson("/clusters");
-          expect((response as any).tag).toBe("ClusterNotFoundFault");
+          const response = yield* getJson("/bindings");
+          expect((response as any).bound).toHaveLength(2);
         }),
-    );
-  });
+      );
+    });
 
-  describe("DescribeEvents", () => {
-    test.provider("lists the account's recent DAX events", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* getJson("/events");
-        expect((response as any).count).toBeGreaterThanOrEqual(0);
-      }),
-    );
-  });
-});
+    describe("DescribeClusters", () => {
+      test.provider(
+        "surfaces the typed not-found tag for a nonexistent cluster",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = yield* getJson("/clusters");
+            expect((response as any).tag).toBe("ClusterNotFoundFault");
+          }),
+      );
+    });
+
+    describe("DescribeEvents", () => {
+      test.provider("lists the account's recent DAX events", (_stack) =>
+        Effect.gen(function* () {
+          const response = yield* getJson("/events");
+          expect((response as any).count).toBeGreaterThanOrEqual(0);
+        }),
+      );
+    });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Cluster-scoped bindings (ConnectReadWrite, RebootNode) need a real DAX
@@ -239,5 +245,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       );
     }),
   // cluster create (~10 min) + probes + delete (~10 min) in one test.
-  { timeout: 2_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:dax",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 2_400_000,
+  },
 );

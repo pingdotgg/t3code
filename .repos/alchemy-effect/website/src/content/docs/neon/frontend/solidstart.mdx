@@ -1,0 +1,81 @@
+---
+title: SolidStart
+description: Package SolidStart SSR and prerendered assets for a Neon Function Fetch entry.
+sidebar:
+  order: 7
+---
+
+`Neon.Website.SolidStart` builds SolidStart through Nitro's Node target and adapts
+its handler to Node 24 Fetch on Neon Functions. SSR and public assets share a
+Function ZIP; the deployment is not a listening server, container, or S3 website.
+
+## Prepare the app
+
+Use a compatible SolidStart app or the
+[runnable SolidStart example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-solidstart).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep `solidStart()` from `@solidjs/start/config` in `vite.config.*`. Do not add
+`nitroV2Plugin()`: Alchemy owns the Nitro plugin and its preset. Use the resource's
+`nitro` prop for serializable options such as prerendering and route rules.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonSolidStart",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.SolidStart("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+The framework handler receives SSR and API requests; prerendered files are served
+from the packaged public output. Server code can read private `env` values from
+`process.env`. Vite public variables are browser-visible build inputs, not secrets.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run separately, destroying when finished. Native dev uses SolidStart's dev server
+and HMR, returns a local URL, and creates no implicit Project or Function. Append
+`.pipe(Alchemy.remote())` to the Website Effect to opt into live deployment during dev.
+
+Live deploy creates an Ohio Project if no scope is supplied. Pass either
+`project` or `branch` for an existing backend; choose Ohio for storage. See
+[scope and credentials](/neon/frontend/vite#scope-and-credentials) for branch
+selection and token boundaries.
+
+:::caution[Deployment limits]
+Complete live framework acceptance remains unverified. New active deployments
+have continued serving old code/env in Neon probes. Nitro route rules do not
+provision a CDN or durable shared cache here, and custom-domain registration is
+not TLS validation. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [SolidStart API](/providers/neon/website/solidstart)
+- [Runnable SolidStart example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-solidstart)

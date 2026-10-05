@@ -1,0 +1,206 @@
+---
+title: DNS validation
+description: Configure Cloudflare DNS-01 challenges, wildcard certificates, propagation, and custom solvers.
+---
+
+DNS-01 proves control of a name by publishing a CA-derived TXT value under
+`_acme-challenge`. The CA reads that value before issuing the certificate.
+Alchemy implements DNS-01 only; your application does not need a public HTTP
+challenge endpoint.
+
+## Reference a Cloudflare zone
+
+Inside the stack from [Getting started](/acme/getting-started):
+
+```typescript
+const certificate = yield* ACME.Certificate("Site", {
+  account,
+  identifiers: ["example.com"],
+  solver: Cloudflare.DNS.AcmeSolver({
+    zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+  }),
+});
+```
+
+`AcmeSolver` returns serializable data containing the solver type and zone ID.
+Include both `ACME.providers()` and `Cloudflare.providers()` in the stack. The
+Cloudflare credentials must allow listing, creating, and deleting TXT records in
+that zone. The domain must already be delegated to that zone's nameservers.
+
+## Use a managed zone instead
+
+If your stack already owns a Cloudflare `Zone` resource, pass the resolved zone:
+
+```diff lang="typescript"
++const zone = yield* Zone;
+ const certificate = yield* ACME.Certificate("Site", {
+   account,
+   identifiers: ["example.com"],
+-  solver: Cloudflare.DNS.AcmeSolver({
+-    zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+-  }),
++  solver: Cloudflare.DNS.AcmeSolver(zone),
+ });
+```
+
+The zone's output supplies the ID and establishes the resource dependency. Use
+the ID form when you only want to manage challenge records, not the zone's
+lifecycle or settings.
+
+## Add a wildcard
+
+```diff lang="typescript"
+-  identifiers: ["example.com"],
++  identifiers: ["example.com", "*.example.com"],
+```
+
+`*.example.com` covers one label such as `www.example.com`, but not the apex
+`example.com` or `a.b.example.com`. Include the apex separately when needed. Both
+names validate at `_acme-challenge.example.com`; Alchemy processes the
+authorizations sequentially and removes each challenge value afterward.
+
+## Understand record cleanup
+
+The deploy-time Cloudflare solver creates TXT records with a 60-second TTL. It
+matches both record name and value during cleanup, preserving unrelated values
+at the same name. Once `present` succeeds, cleanup runs when validation succeeds,
+fails, or is interrupted through Effect's normal finalization.
+
+A process kill or a failure after the DNS API accepted a write can prevent
+cleanup. Inspect any leftover value before removing it: another order may be
+using the same record name. Avoid concurrent issuers for the same names where
+possible.
+
+## Adjust the propagation budget
+
+```diff lang="typescript"
+ const certificate = yield* ACME.Certificate("Site", {
+   account,
+   identifiers: ["example.com", "*.example.com"],
+   solver: Cloudflare.DNS.AcmeSolver(zone),
++  propagation: {
++    delay: "60 seconds",
++    timeout: "90 seconds",
++    interval: "3 seconds",
++  },
+ });
+```
+
+These are the deploy-time Cloudflare defaults. The timeout covers the lookup and
+post-visibility delay together. Lookup attempts are bounded, so increasing the
+timeout alone does not create unlimited polling. Keep enough budget for the
+post-visibility delay; cached previous TXT values can cause a secondary CA
+validator to reject a record even after one resolver sees it.
+
+## Choose fallback resolvers
+
+```diff lang="typescript"
+   propagation: {
+     delay: "60 seconds",
+     timeout: "90 seconds",
+     interval: "3 seconds",
++    resolvers: [
++      "https://cloudflare-dns.com/dns-query",
++      "https://dns.google/resolve",
++    ],
+   },
+```
+
+Where Node DNS APIs are available, the deploy-time check prefers authoritative
+nameservers. Otherwise it polls DNS-over-HTTPS JSON endpoints and requires every
+configured resolver to return the expected TXT value. These endpoints are the
+default fallback resolvers; private DNS needs a solver-specific visibility check.
+
+## Select the runtime solver
+
+Inside a Worker's initialization Effect:
+
+```typescript
+const dns = yield* Cloudflare.DNS.WriteDns(Zone);
+const solver = Cloudflare.DNS.acmeDnsSolver(dns);
+```
+
+The runtime helper is **`acmeDnsSolver`**, while the deploy-time helper is
+**`AcmeSolver`**. Provide `Cloudflare.DNS.WriteDnsHttp` on the host Effect. Its
+client uses a zone-scoped token created at deployment, rather than exposing the
+deployer's entire credential set to the application.
+
+## Account for runtime propagation
+
+```typescript
+const issued = yield* issuer.issue({
+  identifiers: ["api.example.com"],
+  solver,
+  propagation: { delay: "60 seconds" },
+});
+```
+
+The Cloudflare runtime solver uses a fixed delay (60 seconds by default), rather
+than authoritative or public resolver polling. For this solver, `resolvers`,
+`interval`, and `timeout` do not add a DNS visibility check. An issuance request
+can take longer than a minute; [Runtime issuance](/acme/runtime) explains the
+hosting and scheduling implications.
+
+## Implement a custom runtime solver
+
+A custom solver adapts an existing DNS client's idempotent operations:
+
+```typescript
+import type * as ACME from "alchemy/ACME";
+import type * as Effect from "effect/Effect";
+
+export const makeSolver = <R>(dns: {
+  ensureTxt: (
+    record: ACME.DnsChallengeRecord,
+  ) => Effect.Effect<void, ACME.DnsSolverError, R>;
+  removeTxt: (
+    record: ACME.DnsChallengeRecord,
+  ) => Effect.Effect<void, ACME.DnsSolverError, R>;
+}): ACME.DnsSolver<R> => ({
+  present: (record) => dns.ensureTxt(record),
+  cleanup: (record) => dns.removeTxt(record),
+});
+```
+
+Implement `ensureTxt` and `removeTxt` with your provider's DNS API, mapping its
+failures to `ACME.DnsSolverError`. Ensure must tolerate the exact value already
+existing; removal must tolerate it already being absent. Match the requested
+value, not every TXT record at that name. The default propagation check applies
+unless you supply the solver's optional `propagated` method.
+
+## Register a deploy-time solver
+
+Deploy-time props need a serializable descriptor, not a client with closures.
+For an adapter whose client has no remaining Effect requirements, register a
+factory with this shape:
+
+```typescript
+import * as ACME from "alchemy/ACME";
+import type * as Effect from "effect/Effect";
+
+export const registerExampleDns = (
+  make: (
+    descriptor: ACME.DnsSolverDescriptor,
+  ) => Effect.Effect<ACME.DnsSolver, ACME.DnsSolverError>,
+) => ACME.dnsSolverLayer("Example.DNS", make);
+```
+
+Validate the descriptor's fields inside `make`, construct the client, and merge
+the returned layer into your stack's providers. Certificate props then use
+`solver: { type: "Example.DNS", ...providerData }`. A service-backed factory can
+instead provide its required credential and HTTP layers to `dnsSolverLayer`;
+the registration captures that context for the solver. Cloudflare's implementation
+in `Cloudflare/DNS/AcmeDnsSolver.ts` is the built-in reference.
+
+## Delegated challenges
+
+The Cloudflare helper writes directly to the specified zone at the calculated
+challenge name. It does not automatically follow CNAME or NS delegations to
+another challenge zone. For delegated validation, implement a solver that
+publishes to the delegated target and verifies its visibility. Simply changing
+`zoneId` is not a delegation resolver.
+
+## Next steps
+
+- [Troubleshooting](/acme/troubleshooting) — diagnose propagation and authorization failures.
+- [Runtime issuance](/acme/runtime) — use a solver in a complete Worker.

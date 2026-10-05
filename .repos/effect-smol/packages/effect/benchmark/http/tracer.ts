@@ -1,10 +1,10 @@
 import { Effect } from "effect"
+import * as Headers from "effect/http/Headers"
+import * as HttpMiddleware from "effect/http/HttpMiddleware"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
+import * as HttpTraceContext from "effect/http/HttpTraceContext"
 import * as Tracer from "effect/Tracer"
-import * as Headers from "effect/unstable/http/Headers"
-import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware"
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import * as HttpTraceContext from "effect/unstable/http/HttpTraceContext"
 import { Bench } from "tinybench"
 
 const bench = new Bench()

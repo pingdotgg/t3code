@@ -4,6 +4,12 @@ import { describe, expect, it } from "vitest";
 describe("runtime subpath exports", () => {
   it.each([
     [
+      "shared wire constants",
+      "../../core/globals/EntryOptions.shared.ts",
+      "/workspace/packages/cloudflare-runtime/src/vite/module-runner/constants.shared.ts",
+      "@alchemy.run/cloudflare-runtime/core/globals/EntryOptions",
+    ],
+    [
       "POSIX",
       "../core/index.ts",
       "/workspace/packages/cloudflare-runtime/src/vite/plugin.ts",

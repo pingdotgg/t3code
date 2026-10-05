@@ -36,183 +36,195 @@ const branchOutput = (
   ...overrides,
 });
 
-test.provider("diff tracks Postgres branch replica intent", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Planetscale.PostgresBranch);
-    const props = (replicas: number): Planetscale.PostgresBranchProps => ({
-      database: "database",
-      parentBranch: "main",
-      replicas,
-    });
+test.provider(
+  "diff tracks Postgres branch replica intent",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Planetscale.PostgresBranch);
+      const props = (replicas: number): Planetscale.PostgresBranchProps => ({
+        database: "database",
+        parentBranch: "main",
+        replicas,
+      });
 
-    const alreadyConvergedToNonHa = yield* provider.diff!({
-      id: "Branch",
-      fqn: "Branch",
-      instanceId: "instance",
-      olds: props(0),
-      news: props(0),
-      oldBindings: [],
-      newBindings: [],
-      output: branchOutput({
-        desiredReplicas: 0,
-        hasReplicas: false,
-        hasReadOnlyReplicas: false,
-      }),
-    });
-    expect(alreadyConvergedToNonHa).toBeUndefined();
+      const alreadyConvergedToNonHa = yield* provider.diff!({
+        id: "Branch",
+        fqn: "Branch",
+        instanceId: "instance",
+        olds: props(0),
+        news: props(0),
+        oldBindings: [],
+        newBindings: [],
+        output: branchOutput({
+          desiredReplicas: 0,
+          hasReplicas: false,
+          hasReadOnlyReplicas: false,
+        }),
+      });
+      expect(alreadyConvergedToNonHa).toBeUndefined();
 
-    const exactHaCountChanged = yield* provider.diff!({
-      id: "Branch",
-      fqn: "Branch",
-      instanceId: "instance",
-      olds: props(2),
-      news: props(3),
-      oldBindings: [],
-      newBindings: [],
-      output: branchOutput({
-        desiredReplicas: 2,
-        hasReplicas: true,
-        hasReadOnlyReplicas: false,
-      }),
-    });
-    // A non-renaming update advertises `name` as stable so downstream
-    // consumers keep resolving `branch.name` at plan time.
-    expect(exactHaCountChanged).toEqual({
-      action: "update",
-      stables: ["organization", "database", "name"],
-    });
-  }),
+      const exactHaCountChanged = yield* provider.diff!({
+        id: "Branch",
+        fqn: "Branch",
+        instanceId: "instance",
+        olds: props(2),
+        news: props(3),
+        oldBindings: [],
+        newBindings: [],
+        output: branchOutput({
+          desiredReplicas: 2,
+          hasReplicas: true,
+          hasReadOnlyReplicas: false,
+        }),
+      });
+      // A non-renaming update advertises `name` as stable so downstream
+      // consumers keep resolving `branch.name` at plan time.
+      expect(exactHaCountChanged).toEqual({
+        action: "update",
+        stables: ["organization", "database", "name"],
+      });
+    }),
+  { tags: ["provider:planetscale", "provider:planetscale:postgres", "live"] },
 );
 
-describe.skipIf(!process.env.PLANETSCALE_TEST)("Branch", () => {
-  test.provider.skipIf(
-    !process.env.PLANETSCALE_BRANCH_REPLICA_TEST ||
-      !process.env.PLANETSCALE_BRANCH_REPLICA_DATABASE,
-  )(
-    "Postgres branch persists replica intent and plans no-op once converged",
-    (stack) =>
-      Effect.gen(function* () {
-        const dbName = process.env.PLANETSCALE_BRANCH_REPLICA_DATABASE!;
-        const branchName = `replica-target-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        const { organization } = yield* yield* Planetscale.Credentials;
+describe.skipIf(!process.env.PLANETSCALE_TEST)(
+  "Branch",
+  { tags: ["provider:planetscale", "live"] },
+  () => {
+    test.provider.skipIf(
+      !process.env.PLANETSCALE_BRANCH_REPLICA_TEST ||
+        !process.env.PLANETSCALE_BRANCH_REPLICA_DATABASE,
+    )(
+      "Postgres branch persists replica intent and plans no-op once converged",
+      (stack) =>
+        Effect.gen(function* () {
+          const dbName = process.env.PLANETSCALE_BRANCH_REPLICA_DATABASE!;
+          const branchName = `replica-target-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+          const { organization } = yield* yield* Planetscale.Credentials;
 
-        yield* Effect.gen(function* () {
-          yield* stack.destroy();
-          yield* deleteBranchIfExists(dbName, branchName, organization);
+          yield* Effect.gen(function* () {
+            yield* stack.destroy();
+            yield* deleteBranchIfExists(dbName, branchName, organization);
 
-          const program = Effect.gen(function* () {
-            const branch = yield* Planetscale.PostgresBranch("ReplicaBranch", {
+            const program = Effect.gen(function* () {
+              const branch = yield* Planetscale.PostgresBranch(
+                "ReplicaBranch",
+                {
+                  name: branchName,
+                  database: dbName,
+                  parentBranch: "main",
+                  replicas: 0,
+                },
+              );
+
+              return { branch };
+            });
+
+            const { branch } = yield* stack.deploy(program);
+
+            expect(branch).toMatchObject({
               name: branchName,
               database: dbName,
-              parentBranch: "main",
-              replicas: 0,
+              desiredReplicas: 0,
+              hasReplicas: false,
+              hasReadOnlyReplicas: false,
             });
 
-            return { branch };
-          });
+            const live = yield* ps.getBranch({
+              organization,
+              database: dbName,
+              branch: branchName,
+            });
 
-          const { branch } = yield* stack.deploy(program);
+            expect(live.has_replicas).toBe(false);
+            expect(live.has_read_only_replicas).toBe(false);
 
-          expect(branch).toMatchObject({
-            name: branchName,
-            database: dbName,
-            desiredReplicas: 0,
-            hasReplicas: false,
-            hasReadOnlyReplicas: false,
-          });
+            const plan = yield* stack.plan(program);
+            expect(plan.resources.ReplicaBranch).toMatchObject({
+              action: "noop",
+            });
 
-          const live = yield* ps.getBranch({
-            organization,
-            database: dbName,
-            branch: branchName,
-          });
+            yield* stack.destroy();
+            yield* waitForBranchToBeDeleted(dbName, branchName, organization);
+          }).pipe(
+            Effect.ensuring(
+              deleteBranchIfExists(dbName, branchName, organization),
+            ),
+          );
+        }).pipe(logLevel),
+      { timeout: 5_000_000, tags: ["provider:planetscale:postgres"] },
+    );
 
-          expect(live.has_replicas).toBe(false);
-          expect(live.has_read_only_replicas).toBe(false);
-
-          const plan = yield* stack.plan(program);
-          expect(plan.resources.ReplicaBranch).toMatchObject({
-            action: "noop",
-          });
+    // Canonical `list()` test (PARENT FAN-OUT): branches live under a database
+    // within the credentialed organization. `list()` enumerates every database
+    // in the org, lists each database's branches, and keeps only the engine's
+    // kind (here MySQL). Deploy one branch, then assert it appears in the
+    // exhaustively-paginated result.
+    test.provider(
+      "list enumerates the deployed branch across the org",
+      (stack) =>
+        Effect.gen(function* () {
+          const dbName = "alchemy-branch-list";
+          const branchName = "list-target";
 
           yield* stack.destroy();
-          yield* waitForBranchToBeDeleted(dbName, branchName, organization);
-        }).pipe(
-          Effect.ensuring(
-            deleteBranchIfExists(dbName, branchName, organization),
-          ),
-        );
-      }).pipe(logLevel),
-    5_000_000,
-  );
 
-  // Canonical `list()` test (PARENT FAN-OUT): branches live under a database
-  // within the credentialed organization. `list()` enumerates every database
-  // in the org, lists each database's branches, and keeps only the engine's
-  // kind (here MySQL). Deploy one branch, then assert it appears in the
-  // exhaustively-paginated result.
-  test.provider(
-    "list enumerates the deployed branch across the org",
-    (stack) =>
-      Effect.gen(function* () {
-        const dbName = "alchemy-branch-list";
-        const branchName = "list-target";
+          const { database, branch } = yield* stack.deploy(
+            Effect.gen(function* () {
+              const database = yield* Planetscale.MySQLDatabase("Database", {
+                name: dbName,
+                region: { slug: "us-east" },
+                clusterSize: "PS_10",
+              });
+              const branch = yield* Planetscale.MySQLBranch("ListBranch", {
+                name: branchName,
+                database,
+                parentBranch: "main",
+                isProduction: false,
+              });
 
-        yield* stack.destroy();
+              return { database, branch };
+            }),
+          );
 
-        const { database, branch } = yield* stack.deploy(
-          Effect.gen(function* () {
-            const database = yield* Planetscale.MySQLDatabase("Database", {
-              name: dbName,
-              region: { slug: "us-east" },
-              clusterSize: "PS_10",
-            });
-            const branch = yield* Planetscale.MySQLBranch("ListBranch", {
-              name: branchName,
-              database,
-              parentBranch: "main",
-              isProduction: false,
-            });
+          const provider = yield* Provider.findProvider(
+            Planetscale.MySQLBranch,
+          );
+          const all = yield* provider.list();
 
-            return { database, branch };
-          }),
-        );
+          const found = all.find(
+            (b) =>
+              b.organization === database.organization &&
+              b.database === dbName &&
+              b.name === branch.name,
+          );
 
-        const provider = yield* Provider.findProvider(Planetscale.MySQLBranch);
-        const all = yield* provider.list();
+          expect(found).toBeDefined();
+          expect(found).toMatchObject({
+            organization: database.organization,
+            database: dbName,
+            name: branch.name,
+            parentBranch: "main",
+            production: false,
+            createdAt: expect.any(String),
+            updatedAt: expect.any(String),
+            htmlUrl: expect.any(String),
+            region: { slug: expect.any(String) },
+          });
 
-        const found = all.find(
-          (b) =>
-            b.organization === database.organization &&
-            b.database === dbName &&
-            b.name === branch.name,
-        );
+          // Every item is hydrated into the exact `read` Attributes shape — the
+          // org's `main` branch is enumerated too, only as MySQL kind.
+          expect(
+            all.every((b) => b.organization === database.organization),
+          ).toBe(true);
 
-        expect(found).toBeDefined();
-        expect(found).toMatchObject({
-          organization: database.organization,
-          database: dbName,
-          name: branch.name,
-          parentBranch: "main",
-          production: false,
-          createdAt: expect.any(String),
-          updatedAt: expect.any(String),
-          htmlUrl: expect.any(String),
-          region: { slug: expect.any(String) },
-        });
-
-        // Every item is hydrated into the exact `read` Attributes shape — the
-        // org's `main` branch is enumerated too, only as MySQL kind.
-        expect(all.every((b) => b.organization === database.organization)).toBe(
-          true,
-        );
-
-        yield* stack.destroy();
-        yield* waitForDatabaseToBeDeleted(dbName, database.organization);
-      }).pipe(logLevel),
-    5_000_000,
-  );
-});
+          yield* stack.destroy();
+          yield* waitForDatabaseToBeDeleted(dbName, database.organization);
+        }).pipe(logLevel),
+      { timeout: 5_000_000, tags: ["provider:planetscale:mysql"] },
+    );
+  },
+);
 
 const waitForDatabaseToBeDeleted = Effect.fn(function* (
   database: string,

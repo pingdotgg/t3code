@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Path, PlatformError } from "effect"
-import * as Migrator from "effect/unstable/sql/Migrator"
+import * as Migrator from "effect/sql/Migrator"
 
 const migrationNames = (
   migrations: ReadonlyArray<Migrator.ResolvedMigration>

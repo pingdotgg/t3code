@@ -51,7 +51,7 @@ import type { Postgres } from "./Postgres.ts";
  * ```
  *
  * @binding
- * @product Railway
+ * @product Postgres
  * @category Storage & Databases
  */
 export interface ConnectPostgres extends Binding.Service<

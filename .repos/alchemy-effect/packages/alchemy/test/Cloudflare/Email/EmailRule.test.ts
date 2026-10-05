@@ -48,66 +48,77 @@ const enableRouting = (zoneId: string) =>
     }),
   );
 
-describe.sequential.skipIf(!emailRoutingScoped)("EmailRule", () => {
-  // Canonical `list()` test (zone-scoped collection): email routing rules live
-  // under `/zones/{id}/email/routing/rules` with no account-wide enumeration
-  // API, so `list()` enumerates every zone via `listAllZones` and exhaustively
-  // paginates each zone's rules (skipping zones without Email Routing enabled).
-  // Deploy a rule on the standing test zone, then assert it appears in the
-  // exhaustively-paginated result.
-  test.provider(
-    "list enumerates the deployed email rule across all zones",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+describe.sequential.skipIf(!emailRoutingScoped)(
+  "EmailRule",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:email",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    // Canonical `list()` test (zone-scoped collection): email routing rules live
+    // under `/zones/{id}/email/routing/rules` with no account-wide enumeration
+    // API, so `list()` enumerates every zone via `listAllZones` and exhaustively
+    // paginates each zone's rules (skipping zones without Email Routing enabled).
+    // Deploy a rule on the standing test zone, then assert it appears in the
+    // exhaustively-paginated result.
+    test.provider(
+      "list enumerates the deployed email rule across all zones",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* enableRouting(zoneId);
+          yield* stack.destroy();
+          yield* enableRouting(zoneId);
 
-        const rule = yield* stack.deploy(
-          Effect.gen(function* () {
-            const routing = yield* Cloudflare.Email.Routing("Routing", {
-              zone: zoneName,
-            });
-            return yield* Cloudflare.Email.Rule("ListRule", {
-              zone: { zoneId: routing.zoneId },
-              name: "alchemy list test",
-              matchers: [
-                {
-                  type: "literal",
-                  field: "to",
-                  value: "list@alchemy-test-2.us",
-                },
-              ],
-              actions: [{ type: "drop" }],
-            });
-          }),
-        );
+          const rule = yield* stack.deploy(
+            Effect.gen(function* () {
+              const routing = yield* Cloudflare.Email.Routing("Routing", {
+                zone: zoneName,
+              });
+              return yield* Cloudflare.Email.Rule("ListRule", {
+                zone: { zoneId: routing.zoneId },
+                name: "alchemy list test",
+                matchers: [
+                  {
+                    type: "literal",
+                    field: "to",
+                    value: "list@alchemy-test-2.us",
+                  },
+                ],
+                actions: [{ type: "drop" }],
+              });
+            }),
+          );
 
-        expect(rule.zoneId).toEqual(zoneId);
-        expect(rule.ruleId).not.toEqual("");
+          expect(rule.zoneId).toEqual(zoneId);
+          expect(rule.ruleId).not.toEqual("");
 
-        const provider = yield* Provider.findProvider(Cloudflare.Email.Rule);
-        // The freshly-minted scoped token propagates eventually-consistently,
-        // so the account-wide enumeration intermittently 401s (`Unauthorized`,
-        // code 10000) or 403s (`Forbidden`). Both are transient here — ride
-        // out the blip like every other out-of-band call in this suite.
-        const all = yield* provider.list().pipe(
-          Effect.retry({
-            while: (e) => e._tag === "Forbidden" || e._tag === "Unauthorized",
-            schedule: forbiddenRetrySchedule,
-            times: 8,
-          }),
-        );
+          const provider = yield* Provider.findProvider(Cloudflare.Email.Rule);
+          // The freshly-minted scoped token propagates eventually-consistently,
+          // so the account-wide enumeration intermittently 401s (`Unauthorized`,
+          // code 10000) or 403s (`Forbidden`). Both are transient here — ride
+          // out the blip like every other out-of-band call in this suite.
+          const all = yield* provider.list().pipe(
+            Effect.retry({
+              while: (e) => e._tag === "Forbidden" || e._tag === "Unauthorized",
+              schedule: forbiddenRetrySchedule,
+              times: 8,
+            }),
+          );
 
-        const row = all.find((r) => r.ruleId === rule.ruleId);
-        expect(row).toBeDefined();
-        expect(row!.zoneId).toEqual(zoneId);
-        expect(row!.name).toEqual("alchemy list test");
-        expect(Array.isArray(row!.matchers)).toBe(true);
-        expect(row!.actions).toEqual([{ type: "drop" }]);
+          const row = all.find((r) => r.ruleId === rule.ruleId);
+          expect(row).toBeDefined();
+          expect(row!.zoneId).toEqual(zoneId);
+          expect(row!.name).toEqual("alchemy list test");
+          expect(Array.isArray(row!.matchers)).toBe(true);
+          expect(row!.actions).toEqual([{ type: "drop" }]);
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+    );
+  },
+);

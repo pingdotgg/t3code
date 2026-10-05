@@ -24,6 +24,7 @@ export interface RetrieveTerminalLocationRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Terminal
  */
 export interface RetrieveTerminalLocation extends Binding.Service<
   RetrieveTerminalLocation,

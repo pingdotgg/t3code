@@ -18,7 +18,7 @@
  */
 import * as Credentials from "@distilled.cloud/aws/Credentials";
 import * as Region from "@distilled.cloud/aws/Region";
-import { AwsV4Signer } from "aws4fetch";
+import * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -217,28 +217,26 @@ export const makeOsisIngestBinding = Effect.gen(function* () {
         return { credentials, region };
       }).pipe(Effect.provideContext(services));
 
-      const signer = new AwsV4Signer({
+      const body = JSON.stringify(request.events);
+      const signed = yield* SigV4.sign({
         method: "POST",
         url: url.toString(),
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(request.events),
+        body,
         accessKeyId: Redacted.value(credentials.accessKeyId),
-        secretAccessKey: Redacted.value(credentials.secretAccessKey),
-        sessionToken: credentials.sessionToken
-          ? Redacted.value(credentials.sessionToken)
-          : undefined,
+        secretAccessKey: credentials.secretAccessKey,
+        sessionToken: credentials.sessionToken,
         service: "osis",
         region,
         allHeaders: true,
       });
-      const signed = yield* Effect.promise(() => signer.sign());
 
       const response = yield* Effect.tryPromise({
         try: () =>
-          fetch(signed.url.toString(), {
+          fetch(signed.url, {
             method: signed.method,
             headers: signed.headers,
-            body: signed.body as BodyInit | undefined,
+            body,
           }),
         catch: (cause) =>
           new PipelineIngestError({

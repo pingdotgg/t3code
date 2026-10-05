@@ -1,8 +1,8 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker"
 import { describe } from "@effect/vitest"
 import * as Layer from "effect/Layer"
-import * as RpcClient from "effect/unstable/rpc/RpcClient"
-import * as RpcServer from "effect/unstable/rpc/RpcServer"
+import * as RpcClient from "effect/rpc/RpcClient"
+import * as RpcServer from "effect/rpc/RpcServer"
 import { e2eSuite, UsersClient } from "./fixtures/rpc-e2e.ts"
 
 describe("RpcWorker", () => {

@@ -24,6 +24,7 @@ export interface RetrieveBillingMeterRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Billing
  */
 export interface RetrieveBillingMeter extends Binding.Service<
   RetrieveBillingMeter,

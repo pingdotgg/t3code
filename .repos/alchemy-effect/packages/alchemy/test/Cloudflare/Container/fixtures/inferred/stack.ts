@@ -26,11 +26,12 @@ export const InferredClassWorker = Cloudflare.Worker("InferredClassWorker", {
   },
 });
 
-export default Alchemy.Stack(
-  "InferredClassContainerStack",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
-  Effect.gen(function* () {
-    const worker = yield* InferredClassWorker;
-    return { url: worker.url.as<string>() };
-  }),
-);
+export default (state = Cloudflare.state()) =>
+  Alchemy.Stack(
+    "InferredClassContainerStack",
+    { providers: Cloudflare.providers(), state },
+    Effect.gen(function* () {
+      const worker = yield* InferredClassWorker;
+      return { url: worker.url.as<string>() };
+    }),
+  );

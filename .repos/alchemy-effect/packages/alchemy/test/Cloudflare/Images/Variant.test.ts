@@ -170,7 +170,10 @@ test.provider.skipIf(!!process.env.FAST)(
   // Two sequential out-of-band verifies (post-create, post-update) each ride
   // out a read-replica lag that can run ~90s under full-suite parallel load;
   // the 120s default can't hold both plus the deploys/destroys.
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:images", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -213,7 +216,10 @@ test.provider(
     }).pipe(logLevel),
   // Same eventual-consistency budget as above: the post-replace verify plus
   // two gone-assertions can exceed the 120s default under parallel load.
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:images", "live"],
+    timeout: 240_000,
+  },
 );
 
 // Canonical `list()` test (account collection): deploy a variant, resolve the
@@ -253,4 +259,5 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_IMAGES_LIST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:images", "live"] },
 );

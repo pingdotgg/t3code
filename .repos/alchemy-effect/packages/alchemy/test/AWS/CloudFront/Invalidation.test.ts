@@ -112,7 +112,16 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* stack.destroy();
       yield* assertDistributionDeleted(deployed.distribution.distributionId);
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudfront",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );
 
 test.provider(
@@ -125,6 +134,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
 );
 
 const assertDistributionDeleted = (distributionId: string) =>

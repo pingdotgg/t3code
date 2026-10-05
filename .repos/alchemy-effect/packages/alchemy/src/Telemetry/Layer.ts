@@ -1,10 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
-import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as OtlpLogger from "effect/observability/OtlpLogger";
+import * as OtlpMetrics from "effect/observability/OtlpMetrics";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 
 import packageJson from "../../package.json" with { type: "json" };
 

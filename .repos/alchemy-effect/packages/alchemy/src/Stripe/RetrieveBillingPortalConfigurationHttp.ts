@@ -7,6 +7,7 @@ import { makeHttpStripeIdBinding } from "./StripeHttp.ts";
  * HTTP implementation of {@link RetrieveBillingPortalConfiguration}.
  *
  * @layer
+ * @product Billing
  * @provides Stripe.RetrieveBillingPortalConfiguration
  */
 export const RetrieveBillingPortalConfigurationHttp = Layer.effect(

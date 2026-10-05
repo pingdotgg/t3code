@@ -90,6 +90,108 @@ describe("PartitionedSemaphore", () => {
       yield* PartitionedSemaphore.take(sem, "c", 4)
     }))
 
+  it.effect("interrupting an immediately satisfied take before completion restores permits", () =>
+    Effect.gen(function*() {
+      const sem = yield* PartitionedSemaphore.make<string>({ permits: 1 })
+      const tasks: Array<() => void> = []
+      let paused = false
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: "async",
+        makeDispatcher: () => ({
+          scheduleTask: (task) => {
+            tasks.push(task)
+          },
+          flush() {}
+        }),
+        shouldYield: () => !paused && (paused = Effect.runSync(sem.available) === 0)
+      }
+
+      const taker = yield* sem.take("a", 1).pipe(
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+        Effect.forkChild({ startImmediately: true })
+      )
+      assert.isTrue(paused)
+      taker.interruptUnsafe()
+      while (tasks.length > 0) tasks.shift()!()
+      const exit = yield* Fiber.await(taker)
+
+      assert.isTrue(Exit.isFailure(exit))
+      assert.strictEqual(yield* sem.available, 1)
+    }))
+
+  it.effect("competing takes cannot acquire the same permit across scheduler yields", () =>
+    Effect.gen(function*() {
+      for (let yieldPoint = 0; yieldPoint < 20; yieldPoint++) {
+        const sem = yield* PartitionedSemaphore.make<string>({ permits: 1 })
+        const tasks: Array<() => void> = []
+        let checks = 0
+        const scheduler: Scheduler.Scheduler = {
+          executionMode: "async",
+          makeDispatcher: () => ({
+            scheduleTask: (task) => {
+              tasks.push(task)
+            },
+            flush() {}
+          }),
+          shouldYield: () => ++checks === yieldPoint
+        }
+
+        const first = yield* sem.take("first", 1).pipe(
+          Effect.provideService(Scheduler.Scheduler, scheduler),
+          Effect.forkChild({ startImmediately: true })
+        )
+        const second = yield* sem.take("second", 1).pipe(Effect.forkChild({ startImmediately: true }))
+        assert.isAtLeast(yield* sem.available, 0)
+        while (tasks.length > 0) tasks.shift()!()
+
+        const firstExit = first.pollUnsafe()
+        const secondExit = second.pollUnsafe()
+        const firstSucceeded = firstExit !== undefined && Exit.isSuccess(firstExit)
+        const secondSucceeded = secondExit !== undefined && Exit.isSuccess(secondExit)
+        assert.isFalse(firstSucceeded && secondSucceeded, "yield point " + yieldPoint)
+        assert.isAtLeast(yield* sem.available, 0, "yield point " + yieldPoint)
+
+        yield* Fiber.interrupt(first)
+        yield* Fiber.interrupt(second)
+        yield* sem.release(Number(firstSucceeded) + Number(secondSucceeded))
+        assert.strictEqual(yield* sem.available, 1, "yield point " + yieldPoint)
+      }
+    }))
+
+  it.effect("interrupting withPermitsIfAvailable before cleanup is installed restores permits", () =>
+    Effect.gen(function*() {
+      const sem = yield* PartitionedSemaphore.make<string>({ permits: 1 })
+      const tasks: Array<() => void> = []
+      let paused = false
+      let ran = false
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: "async",
+        makeDispatcher: () => ({
+          scheduleTask: (task) => {
+            tasks.push(task)
+          },
+          flush() {}
+        }),
+        shouldYield: () => !paused && (paused = Effect.runSync(sem.available) === 0)
+      }
+
+      const user = Effect.sync(() => {
+        ran = true
+      })
+      const fiber = yield* sem.withPermitsIfAvailable(1)(user).pipe(
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+        Effect.forkChild({ startImmediately: true })
+      )
+      assert.isTrue(paused)
+      fiber.interruptUnsafe()
+      while (tasks.length > 0) tasks.shift()!()
+      const exit = yield* Fiber.await(fiber)
+
+      assert.isTrue(Exit.isFailure(exit))
+      assert.isFalse(ran)
+      assert.strictEqual(yield* sem.available, 1)
+    }))
+
   for (const key of ["other", "same"]) {
     it.effect(`interrupting a resumed waiter preserves the next ${key}-key waiter`, () =>
       Effect.gen(function*() {

@@ -2,12 +2,11 @@
  * `@alchemy.run/frontend-frameworks/octane/node` — the Node container deploy
  * target for the Octane integration.
  *
- * Octane's Node story is its default (adapter-less) node server build:
- * with the marker adapter from
- * `@alchemy.run/frontend-frameworks/octane/node-adapter` selected in
- * `octane.config.ts` (`adapter: node()`, `serverTarget: "node"`), the
- * project's own `vite build` emits `dist/server/entry.js` — a
- * self-contained Node ESM bundle exporting a web-standard fetch `handler`.
+ * Node-hosted `Website.Octane` resources select this target, which
+ * automatically wraps Octane's default native Node output. No adapter is
+ * required in `octane.config.ts`: the project's own `vite build` emits
+ * `dist/server/entry.js`, a self-contained Node ESM bundle exporting a
+ * web-standard fetch `handler`.
  * The finishing pass writes a Node HTTP program that serves
  * `clientDirectory` first, then falls through to that handler on `PORT`
  * (default 3000), and answers `GET /health`. It re-reads `dist/server`
@@ -19,9 +18,8 @@
  * Octane's `isMainModule` auto-listen so rolldown flattening `entry.js`
  * into `index.mjs` cannot bind `PORT` before the generated serve entry.
  *
- * - **`adapterName` / `adapterPackage`** — the project's `octane.config.ts`
- *   must select `adapter: node()` from
- *   `@alchemy.run/frontend-frameworks/octane/node-adapter`.
+ * - **`adapterName` / `adapterPackage`** — identify the optional legacy Node
+ *   marker adapter, still accepted for existing projects.
  * - **`serverEntryFileName`** — `entry.js`, Octane's emitted node entry.
  * - **`bundle`** — Node resolve conditions (no `workerd`, no `@aws-sdk/`).
  */
@@ -46,7 +44,7 @@ import { make, type OctaneTarget, type OctaneTargetConfig } from "./Octane.ts";
 /** The `adapter.name` the Node marker adapter declares. */
 export const ADAPTER_NAME = "node";
 
-/** The module providing the Node marker adapter for `octane.config.ts`. */
+/** The optional legacy Node marker adapter module for existing configs. */
 export const ADAPTER_PACKAGE =
   "@alchemy.run/frontend-frameworks/octane/node-adapter";
 

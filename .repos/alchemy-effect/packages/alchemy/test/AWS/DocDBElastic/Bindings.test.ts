@@ -7,7 +7,7 @@ import * as EC2 from "@distilled.cloud/aws/ec2";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 
 import DocDBElasticTestFunctionLive, {
@@ -60,160 +60,175 @@ const getJson = (path: string) =>
     Effect.flatMap((r) => r.json),
   );
 
-describe.sequential("DocDBElastic Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "DocDBElastic test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+describe.sequential(
+  "DocDBElastic Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:docdbelastic",
+      "provider:aws:lambda",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "DocDBElastic test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("DocDBElastic test setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
+        yield* Effect.logInfo("DocDBElastic test setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* DocDBElasticTestFunction;
+          }).pipe(Effect.provide(DocDBElasticTestFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
+
+    describe("binding registration", () => {
+      test.provider("all eight capabilities initialize in the runtime", () =>
         Effect.gen(function* () {
-          return yield* DocDBElasticTestFunction;
-        }).pipe(Effect.provide(DocDBElasticTestFunctionLive)),
+          const response = yield* getJson("/bindings");
+          expect((response as any).bound).toHaveLength(8);
+        }),
       );
+    });
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+    describe("ListClusterSnapshots", () => {
+      test.provider("lists the account's snapshots", () =>
+        Effect.gen(function* () {
+          const response = yield* getJson("/snapshots");
+          expect((response as any).count).toBeGreaterThanOrEqual(0);
+        }),
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
+    describe("ListPendingMaintenanceActions", () => {
+      test.provider("lists the account's pending maintenance", () =>
+        Effect.gen(function* () {
+          const response = yield* getJson("/maintenance");
+          expect((response as any).count).toBeGreaterThanOrEqual(0);
+        }),
+      );
+    });
 
-  describe("binding registration", () => {
-    test.provider("all eight capabilities initialize in the runtime", () =>
-      Effect.gen(function* () {
-        const response = yield* getJson("/bindings");
-        expect((response as any).bound).toHaveLength(8);
-      }),
-    );
-  });
-
-  describe("ListClusterSnapshots", () => {
-    test.provider("lists the account's snapshots", () =>
-      Effect.gen(function* () {
-        const response = yield* getJson("/snapshots");
-        expect((response as any).count).toBeGreaterThanOrEqual(0);
-      }),
-    );
-  });
-
-  describe("ListPendingMaintenanceActions", () => {
-    test.provider("lists the account's pending maintenance", () =>
-      Effect.gen(function* () {
-        const response = yield* getJson("/maintenance");
-        expect((response as any).count).toBeGreaterThanOrEqual(0);
-      }),
-    );
-  });
-
-  describe("GetClusterSnapshot", () => {
-    test.provider("surfaces the typed not-found tag", () =>
-      Effect.gen(function* () {
-        const arns = yield* probeArns;
-        const response = yield* getJson(
-          `/snapshot-probe?arn=${encodeURIComponent(arns.snapshot)}`,
-        );
-        expect((response as any).tag).toBe("ResourceNotFoundException");
-      }),
-    );
-  });
-
-  describe("DeleteClusterSnapshot", () => {
-    test.provider("surfaces the typed not-found tag", () =>
-      Effect.gen(function* () {
-        const arns = yield* probeArns;
-        const response = yield* getJson(
-          `/delete-probe?arn=${encodeURIComponent(arns.snapshot)}`,
-        );
-        expect((response as any).tag).toBe("ResourceNotFoundException");
-      }),
-    );
-  });
-
-  describe("CopyClusterSnapshot", () => {
-    test.provider(
-      "rejects a nonexistent source snapshot with a typed tag",
-      () =>
+    describe("GetClusterSnapshot", () => {
+      test.provider("surfaces the typed not-found tag", () =>
         Effect.gen(function* () {
           const arns = yield* probeArns;
           const response = yield* getJson(
-            `/copy-probe?arn=${encodeURIComponent(arns.snapshot)}`,
+            `/snapshot-probe?arn=${encodeURIComponent(arns.snapshot)}`,
           );
-          // Copy authorizes against the source-snapshot resource; a
-          // nonexistent snapshot is reported as AccessDeniedException
-          // (existence non-disclosure) rather than not-found.
-          expect([
-            "ResourceNotFoundException",
-            "ValidationException",
-            "AccessDeniedException",
-          ]).toContain((response as any).tag);
+          expect((response as any).tag).toBe("ResourceNotFoundException");
         }),
-    );
-  });
+      );
+    });
 
-  describe("RestoreClusterFromSnapshot", () => {
-    test.provider(
-      "rejects a nonexistent source snapshot with a typed tag",
-      () =>
+    describe("DeleteClusterSnapshot", () => {
+      test.provider("surfaces the typed not-found tag", () =>
         Effect.gen(function* () {
           const arns = yield* probeArns;
           const response = yield* getJson(
-            `/restore-probe?arn=${encodeURIComponent(arns.snapshot)}`,
+            `/delete-probe?arn=${encodeURIComponent(arns.snapshot)}`,
           );
-          // Restore authorizes against the source-snapshot resource; a
-          // nonexistent snapshot is reported as AccessDeniedException
-          // (existence non-disclosure) rather than not-found.
+          expect((response as any).tag).toBe("ResourceNotFoundException");
+        }),
+      );
+    });
+
+    describe("CopyClusterSnapshot", () => {
+      test.provider(
+        "rejects a nonexistent source snapshot with a typed tag",
+        () =>
+          Effect.gen(function* () {
+            const arns = yield* probeArns;
+            const response = yield* getJson(
+              `/copy-probe?arn=${encodeURIComponent(arns.snapshot)}`,
+            );
+            // Copy authorizes against the source-snapshot resource; a
+            // nonexistent snapshot is reported as AccessDeniedException
+            // (existence non-disclosure) rather than not-found.
+            expect([
+              "ResourceNotFoundException",
+              "ValidationException",
+              "AccessDeniedException",
+            ]).toContain((response as any).tag);
+          }),
+      );
+    });
+
+    describe("RestoreClusterFromSnapshot", () => {
+      test.provider(
+        "rejects a nonexistent source snapshot with a typed tag",
+        () =>
+          Effect.gen(function* () {
+            const arns = yield* probeArns;
+            const response = yield* getJson(
+              `/restore-probe?arn=${encodeURIComponent(arns.snapshot)}`,
+            );
+            // Restore authorizes against the source-snapshot resource; a
+            // nonexistent snapshot is reported as AccessDeniedException
+            // (existence non-disclosure) rather than not-found.
+            expect([
+              "ResourceNotFoundException",
+              "ValidationException",
+              "AccessDeniedException",
+            ]).toContain((response as any).tag);
+          }),
+      );
+    });
+
+    describe("GetPendingMaintenanceAction", () => {
+      test.provider("surfaces a typed tag for a nonexistent cluster", () =>
+        Effect.gen(function* () {
+          const arns = yield* probeArns;
+          const response = yield* getJson(
+            `/pending-probe?arn=${encodeURIComponent(arns.cluster)}`,
+          );
           expect([
             "ResourceNotFoundException",
             "ValidationException",
-            "AccessDeniedException",
           ]).toContain((response as any).tag);
         }),
-    );
-  });
+      );
+    });
 
-  describe("GetPendingMaintenanceAction", () => {
-    test.provider("surfaces a typed tag for a nonexistent cluster", () =>
-      Effect.gen(function* () {
-        const arns = yield* probeArns;
-        const response = yield* getJson(
-          `/pending-probe?arn=${encodeURIComponent(arns.cluster)}`,
-        );
-        expect(["ResourceNotFoundException", "ValidationException"]).toContain(
-          (response as any).tag,
-        );
-      }),
-    );
-  });
-
-  describe("ApplyPendingMaintenanceAction", () => {
-    test.provider("surfaces a typed tag for a nonexistent cluster", () =>
-      Effect.gen(function* () {
-        const arns = yield* probeArns;
-        const response = yield* getJson(
-          `/apply-probe?arn=${encodeURIComponent(arns.cluster)}`,
-        );
-        expect(["ResourceNotFoundException", "ValidationException"]).toContain(
-          (response as any).tag,
-        );
-      }),
-    );
-  });
-});
+    describe("ApplyPendingMaintenanceAction", () => {
+      test.provider("surfaces a typed tag for a nonexistent cluster", () =>
+        Effect.gen(function* () {
+          const arns = yield* probeArns;
+          const response = yield* getJson(
+            `/apply-probe?arn=${encodeURIComponent(arns.cluster)}`,
+          );
+          expect([
+            "ResourceNotFoundException",
+            "ValidationException",
+          ]).toContain((response as any).tag);
+        }),
+      );
+    });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Cluster-scoped bindings (CreateClusterSnapshot, StopCluster, StartCluster)
@@ -350,5 +365,14 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       );
     }),
   // cluster create (~10 min) + snapshot + stop + destroy in one test.
-  { timeout: 2_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:docdbelastic",
+      "provider:aws:ec2",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 2_400_000,
+  },
 );

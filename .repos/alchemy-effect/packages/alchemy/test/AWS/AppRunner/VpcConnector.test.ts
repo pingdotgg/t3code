@@ -85,5 +85,13 @@ test.provider(
       yield* assertSecurityGroupGone(securityGroup.groupId);
       yield* assertVpcGone(vpc.vpcId);
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apprunner",
+      "provider:aws:ec2",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

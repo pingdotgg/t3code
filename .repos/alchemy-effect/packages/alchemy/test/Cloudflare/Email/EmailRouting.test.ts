@@ -58,33 +58,44 @@ const setEnabled = (zoneId: string, enabled: boolean) =>
     }),
   );
 
-describe.sequential.skipIf(!emailRoutingScoped)("EmailRouting", () => {
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for these per-zone settings, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone. Capture-and-restore the
-  // zone's `enabled` state so the run leaves no residue.
-  test.provider("list enumerates email routing across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
+describe.sequential.skipIf(!emailRoutingScoped)(
+  "EmailRouting",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:email",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for these per-zone settings, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone. Capture-and-restore the
+    // zone's `enabled` state so the run leaves no residue.
+    test.provider("list enumerates email routing across all zones", (stack) =>
+      Effect.gen(function* () {
+        const zoneId = yield* resolveZoneId;
 
-      yield* stack.destroy();
+        yield* stack.destroy();
 
-      // Capture the pre-test enabled state to restore at the end.
-      const before = yield* getEmailRouting(zoneId);
+        // Capture the pre-test enabled state to restore at the end.
+        const before = yield* getEmailRouting(zoneId);
 
-      const provider = yield* Provider.findProvider(Cloudflare.Email.Routing);
-      const all = yield* provider.list();
+        const provider = yield* Provider.findProvider(Cloudflare.Email.Routing);
+        const all = yield* provider.list();
 
-      expect(all.length).toBeGreaterThan(0);
-      const entry = all.find((r) => r.zoneId === zoneId);
-      expect(entry).toBeDefined();
-      expect(entry!.name).toEqual(zoneName);
+        expect(all.length).toBeGreaterThan(0);
+        const entry = all.find((r) => r.zoneId === zoneId);
+        expect(entry).toBeDefined();
+        expect(entry!.name).toEqual(zoneName);
 
-      // Restore the captured state.
-      yield* setEnabled(zoneId, before.enabled);
+        // Restore the captured state.
+        yield* setEnabled(zoneId, before.enabled);
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+        yield* stack.destroy();
+      }).pipe(logLevel),
+    );
+  },
+);

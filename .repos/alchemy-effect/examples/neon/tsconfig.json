@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["alchemy*.ts", "src/**/*.ts", "test/**/*.ts", "web/src/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "types": ["bun", "vite/client"]
+  },
+  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+}

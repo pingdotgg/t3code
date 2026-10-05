@@ -27,7 +27,7 @@ const alchemyBin = path.join(
   "node_modules",
   "alchemy",
   "bin",
-  "alchemy.ts",
+  "alchemy.js",
 );
 // Isolated stage so this suite never fights integ.test.ts (same stack
 // name) over state rows.

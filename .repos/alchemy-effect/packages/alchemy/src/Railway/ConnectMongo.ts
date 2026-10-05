@@ -42,7 +42,7 @@ import type { Mongo } from "./Mongo.ts";
  * ```
  *
  * @binding
- * @product Railway
+ * @product MongoDB
  * @category Storage & Databases
  */
 export interface ConnectMongo extends Binding.Service<

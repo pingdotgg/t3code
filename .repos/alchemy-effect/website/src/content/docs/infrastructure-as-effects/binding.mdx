@@ -11,7 +11,7 @@ constructor, you yield the resource and get back a typed client:
 ```typescript
 import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const Jobs = AWS.DynamoDB.Table("Jobs", { partitionKey: "pk" });
 

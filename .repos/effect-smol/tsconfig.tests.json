@@ -26,13 +26,18 @@
       // that would otherwise be considered cyclic dependencies (e.g. loading `@effect/sql-sqlite-node` in the test
       // suite of `@effect/platform-node` which itself depends on `@effect/platform-node`).
       "effect": ["./packages/effect/src/index.ts"],
+      "effect/schema": ["./packages/effect/src/schema/index.ts"],
       "effect/*": ["./packages/effect/src/*.ts"],
       "@effect/ai-anthropic": ["./packages/ai/anthropic/src/index.ts"],
       "@effect/ai-anthropic/*": ["./packages/ai/anthropic/src/*.ts"],
+      "@effect/ai-cloudflare": ["./packages/ai/cloudflare/src/index.ts"],
+      "@effect/ai-cloudflare/*": ["./packages/ai/cloudflare/src/*.ts"],
       "@effect/ai-openai-compat": ["./packages/ai/openai-compat/src/index.ts"],
       "@effect/ai-openai-compat/*": ["./packages/ai/openai-compat/src/*.ts"],
       "@effect/ai-openai": ["./packages/ai/openai/src/index.ts"],
       "@effect/ai-openai/*": ["./packages/ai/openai/src/*.ts"],
+      "@effect/ai-typesafe": ["./packages/ai/typesafe/src/index.ts"],
+      "@effect/ai-typesafe/*": ["./packages/ai/typesafe/src/*.ts"],
       "@effect/ai-openrouter": ["./packages/ai/openrouter/src/index.ts"],
       "@effect/ai-openrouter/*": ["./packages/ai/openrouter/src/*.ts"],
       "@effect/atom-react": ["./packages/atom/react/src/index.ts"],

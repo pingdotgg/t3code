@@ -17,6 +17,11 @@ export * from "./CustomDomain.ts";
 export * from "./Database.ts";
 export * from "./EnvironmentVariable.ts";
 export * from "./Operations.ts";
+// The authoring entrypoint loads Prisma's optional peer; provider imports do not.
+export * from "./ORM/Contract.ts";
+export * from "./ORM/Errors.ts";
+export * from "./ORM/Migrate.ts";
+export { CliError } from "./ORM/internal.ts";
 export * from "./PrismaEnvironment.ts";
 export * from "./PrismaLogs.ts";
 export * from "./Postgres.ts";
@@ -26,5 +31,6 @@ export * from "./ReadWriteBucket.ts";
 export * from "./Providers.ts";
 export * from "./SourceRepository.ts";
 export * from "./WriteBucket.ts";
+export * as Website from "./Website/index.ts";
 export { KNOWN_REGION_IDS, REGIONS } from "./Types.ts";
 export type * as Types from "./Types.ts";

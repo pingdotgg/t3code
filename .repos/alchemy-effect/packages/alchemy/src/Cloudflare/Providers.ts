@@ -17,6 +17,7 @@ import * as AccessIdp from "./Access/IdentityProvider.ts";
 import * as AccessInfraTarget from "./Access/InfrastructureTarget.ts";
 import * as AccessKeyConfig from "./Access/KeyConfiguration.ts";
 import * as McpPortal from "./Access/McpPortal.ts";
+import * as McpServer from "./Access/McpServer.ts";
 import * as AccessOrg from "./Access/Organization.ts";
 import * as AccessPol from "./Access/Policy.ts";
 import * as AccessSvcToken from "./Access/ServiceToken.ts";
@@ -157,6 +158,7 @@ export const providers = () =>
       Addressing.ServiceBinding,
       AI.CustomTopics,
       AI.Dataset,
+      AI.Model,
       AI.Evaluation,
       AI.Gateway,
       AI.GatewayDynamicRouting,
@@ -285,6 +287,7 @@ export const providers = () =>
       MagicTransit.MagicStaticRoute,
       ManagedTransforms.ManagedTransforms,
       McpPortal.McpPortal,
+      McpServer.McpServer,
       MtlsCertificate.MtlsCertificate,
       NetworkInterconnects.NetworkInterconnectSettings,
       Organization.Organization,
@@ -312,6 +315,7 @@ export const providers = () =>
       R2.BucketEventNotification,
       R2.BucketSippy,
       R2.DataCatalog,
+      R2.SuperSlurperJob,
       Random,
       RealtimeKit.App,
       RealtimeKit.Preset,
@@ -404,6 +408,7 @@ export const providers = () =>
         Addressing.ServiceBindingProvider(),
         AI.CustomTopicsProvider(),
         AI.DatasetProvider(),
+        AI.ModelProvider(),
         AI.DynamicRoutingProvider(),
         AI.EvaluationProvider(),
         AI.GatewayProviderProvider(),
@@ -534,6 +539,7 @@ export const providers = () =>
           MagicTransit.MagicStaticRouteProvider(),
           ManagedTransforms.ManagedTransformsProvider(),
           McpPortal.McpPortalProvider(),
+          McpServer.McpServerProvider(),
           MtlsCertificate.MtlsCertificateProvider(),
           NetworkInterconnects.NetworkInterconnectSettingsProvider(),
           Organization.OrganizationProvider(),
@@ -561,6 +567,7 @@ export const providers = () =>
           R2.BucketProvider(),
           R2.BucketSippyProvider(),
           R2.DataCatalogProvider(),
+          R2.SuperSlurperJobProvider(),
           RealtimeKit.AppProvider(),
           RealtimeKit.PresetProvider(),
           RealtimeKit.WebhookProvider(),
@@ -643,6 +650,8 @@ export const providers = () =>
         Command.providers(),
         KeyPairProvider(),
         RandomProvider(),
+        // DNS-01 solver for `ACME.Certificate` over this account's zones.
+        Dns.AcmeDnsSolverLive,
       ),
     ),
     // Plan-executable data-source capabilities (`Binding.Service.execute`).

@@ -131,5 +131,13 @@ test.provider(
         );
       expect(groupsLeft).toBe(0);
     }).pipe(Effect.ensuring(cleanupAsg)),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:autoscaling",
+      "provider:aws:ec2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

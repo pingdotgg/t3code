@@ -6,8 +6,25 @@ import * as SchemaParser from "../../SchemaParser.ts"
 /** @internal */
 export const TypeId = "~effect/Schema/Schema"
 
+const RebuildOptions = Symbol()
+
 const SchemaProto = {
   [TypeId]: TypeId,
+  get make() {
+    const value = SchemaParser.make(this as any)
+    Object.defineProperty(this, "make", { value, enumerable: true })
+    return value
+  },
+  get makeEffect() {
+    const value = SchemaParser.makeEffect(this as any)
+    Object.defineProperty(this, "makeEffect", { value, enumerable: true })
+    return value
+  },
+  get makeOption() {
+    const value = SchemaParser.makeOption(this as any)
+    Object.defineProperty(this, "makeOption", { value, enumerable: true })
+    return value
+  },
   pipe() {
     return Pipeable.pipeArguments(this, arguments)
   },
@@ -19,6 +36,9 @@ const SchemaProto = {
   },
   check(this: Schema.Top, ...checks: readonly [SchemaAST.Check<unknown>, ...Array<SchemaAST.Check<unknown>>]) {
     return this.rebuild(SchemaAST.appendChecks(this.ast, checks))
+  },
+  rebuild(this: Schema.Top, ast: SchemaAST.AST) {
+    return make(ast, (this as any)[RebuildOptions])
   }
 }
 
@@ -34,10 +54,7 @@ export function make<S extends Schema.Constraint>(ast: S["ast"], options?: objec
   } else {
     Object.assign(self, options)
   }
+  self[RebuildOptions] = options
   self.ast = ast
-  self.rebuild = (ast: SchemaAST.AST) => make(ast, options)
-  self.makeEffect = SchemaParser.makeEffect(self)
-  self.make = SchemaParser.make(self)
-  self.makeOption = SchemaParser.makeOption(self)
   return self
 }

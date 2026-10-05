@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/frontend-frameworks",
-  "version": "2.0.0-beta.78",
+  "version": "2.0.0-beta.80",
   "description": "Framework build and development integrations for Alchemy.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -44,16 +44,19 @@
     "test:sveltekit": "vitest run src/sveltekit/test",
     "test:tanstack-start": "vitest run src/tanstack-start/test",
     "test:vite": "vitest run src/vite/test",
+    "test:vinext": "vitest run src/vinext/test",
     "test:waku": "vitest run src/waku/test",
     "test:vocs": "vitest run src/vocs/test",
     "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@distilled.cloud/aws": "workspace:*",
     "@distilled.cloud/cloudflare": "workspace:*",
     "@effect/platform-node": "catalog:",
     "esbuild": "catalog:",
     "rolldown": "catalog:",
+    "srvx": "catalog:",
     "tinyglobby": "catalog:"
   },
   "devDependencies": {
@@ -64,6 +67,7 @@
     "@octanejs/vite-plugin": "catalog:",
     "@opennextjs/cloudflare": "catalog:",
     "@sveltejs/kit": "catalog:",
+    "@tailwindcss/vite": "catalog:",
     "@types/node": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "astro": "catalog:",
@@ -71,6 +75,8 @@
     "hono": "catalog:",
     "nitropack": "catalog:",
     "nuxt": "catalog:",
+    "octane": "catalog:",
+    "tailwindcss": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
@@ -132,6 +138,12 @@
     }
   },
   "exports": {
+    "./*/neon": {
+      "types": "./dist/*/neon.d.ts",
+      "bun": "./dist/*/neon.js",
+      "worker": "./dist/*/neon.js",
+      "import": "./dist/*/neon.js"
+    },
     "./aws-lambda": {
       "types": "./dist/aws-lambda/index.d.ts",
       "bun": "./dist/aws-lambda/index.js",
@@ -384,6 +396,60 @@
       "bun": "./dist/tanstack-start/node.js",
       "worker": "./dist/tanstack-start/node.js",
       "import": "./dist/tanstack-start/node.js"
+    },
+    "./vinext": {
+      "types": "./dist/vinext/index.d.ts",
+      "bun": "./dist/vinext/index.js",
+      "worker": "./dist/vinext/index.js",
+      "import": "./dist/vinext/index.js"
+    },
+    "./vinext/aws": {
+      "types": "./dist/vinext/aws.d.ts",
+      "bun": "./dist/vinext/aws.js",
+      "worker": "./dist/vinext/aws.js",
+      "import": "./dist/vinext/aws.js"
+    },
+    "./vinext/node": {
+      "types": "./dist/vinext/node.d.ts",
+      "bun": "./dist/vinext/node.js",
+      "worker": "./dist/vinext/node.js",
+      "import": "./dist/vinext/node.js"
+    },
+    "./vinext/cloudflare": {
+      "types": "./dist/vinext/cloudflare.d.ts",
+      "bun": "./dist/vinext/cloudflare.js",
+      "worker": "./dist/vinext/cloudflare.js",
+      "import": "./dist/vinext/cloudflare.js"
+    },
+    "./vinext/source": {
+      "types": "./dist/vinext/source.d.ts",
+      "bun": "./dist/vinext/source.js",
+      "worker": "./dist/vinext/source.js",
+      "import": "./dist/vinext/source.js"
+    },
+    "./vinext/cache": {
+      "types": "./dist/vinext/cache/index.d.ts",
+      "bun": "./dist/vinext/cache/index.js",
+      "worker": "./dist/vinext/cache/index.js",
+      "import": "./dist/vinext/cache/index.js"
+    },
+    "./vinext/cache/kv": {
+      "types": "./dist/vinext/cache/kv.d.ts",
+      "bun": "./dist/vinext/cache/kv.js",
+      "worker": "./dist/vinext/cache/kv.js",
+      "import": "./dist/vinext/cache/kv.js"
+    },
+    "./vinext/cache/redis": {
+      "types": "./dist/vinext/cache/redis.d.ts",
+      "bun": "./dist/vinext/cache/redis.js",
+      "worker": "./dist/vinext/cache/redis.js",
+      "import": "./dist/vinext/cache/redis.js"
+    },
+    "./vinext/cache/s3": {
+      "types": "./dist/vinext/cache/s3.d.ts",
+      "bun": "./dist/vinext/cache/s3.js",
+      "worker": "./dist/vinext/cache/s3.js",
+      "import": "./dist/vinext/cache/s3.js"
     },
     "./vite": {
       "types": "./dist/vite/index.d.ts",

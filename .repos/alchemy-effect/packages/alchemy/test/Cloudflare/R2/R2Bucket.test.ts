@@ -45,5 +45,8 @@ test.provider(
   // parallel suite is concurrently deleting, but a heavily-populated shared
   // account can still take a while — keep a modest margin over the 120s
   // default for the genuine enumeration cost.
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 180_000,
+  },
 );

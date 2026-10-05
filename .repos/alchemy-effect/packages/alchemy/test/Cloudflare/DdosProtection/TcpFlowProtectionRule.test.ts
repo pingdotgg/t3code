@@ -90,7 +90,10 @@ test.provider.skipIf(!magicTransit)(
         .pipe(Effect.flip);
       expect(error._tag).toEqual("TcpFlowProtectionRuleNotFound");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Account-scoped collection `list()` (pattern (b)): enumerate every TCP flow
@@ -117,6 +120,9 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+  },
 );
 
 // Entitled accounts (CLOUDFLARE_TEST_MAGIC_TRANSIT set): deploy a rule and
@@ -154,5 +160,8 @@ test.provider.skipIf(!magicTransit)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ddosprotection", "live"],
+    timeout: 120_000,
+  },
 );

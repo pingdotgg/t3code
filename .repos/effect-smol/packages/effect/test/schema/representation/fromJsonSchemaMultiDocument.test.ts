@@ -158,7 +158,7 @@ describe("SchemaRepresentation.fromJsonSchemaMultiDocument", () => {
         nonRecursives: [{
           $ref: "A",
           code: makeCode(
-            `Schema.String.check(Schema.isPattern(new RegExp("^a+$")).annotate({ "expected": "a string matching the RegExp ^a+$", "identifier": "A" }))`,
+            `Schema.String.check(Schema.isPattern(new RegExp("^a+$", "u")).annotate({ "expected": "a string matching the RegExp ^a+$", "identifier": "A" }))`,
             `string`
           )
         }]

@@ -8,12 +8,12 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner";
 import type * as rolldown from "rolldown";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import { Unowned } from "../AdoptPolicy.ts";
@@ -788,6 +788,7 @@ const isEffectNativeCompute = (props: ComputeProps) =>
  * ```
  *
  * @resource
+ * @product Compute
  */
 export const Compute: Platform<
   Compute,
@@ -2219,6 +2220,7 @@ const startDev = Effect.fn(function* (id: string, props: ComputeProps) {
 
   const cwd = dev.cwd ? path.resolve(dev.cwd) : path.resolve(props.path ?? ".");
   const env = {
+    NODE_ENV: "development",
     ...processEnv(props.env),
     ...processEnv(dev.env),
     ...((dev.port ?? props.port)

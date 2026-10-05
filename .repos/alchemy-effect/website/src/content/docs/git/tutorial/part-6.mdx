@@ -51,7 +51,7 @@ Create `src/protocol.ts`:
 import * as Git from "alchemy/Git";
 import * as GitHttp from "alchemy/Git/Http";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { checkRefChanges } from "./branch-policy.ts";
 
 export const ProtocolLive = HttpApiBuilder.group(Git.Api, "protocol", (h) => Effect.gen(function* () {
@@ -97,7 +97,7 @@ same function so it cannot bypass the push policy. Create `src/ref-writes.ts`:
 // src/ref-writes.ts
 import * as Git from "alchemy/Git";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { checkRefChanges } from "./branch-policy.ts";
 
 export const RefsLive = HttpApiBuilder.group(Git.Api, "refs", (h) => Effect.gen(function* () {
@@ -137,7 +137,7 @@ Add these imports to `src/git.ts`:
 
 ```typescript
 // src/git.ts (additional imports)
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { ProtocolLive } from "./protocol.ts";
 import { RefsLive } from "./ref-writes.ts";
 ```

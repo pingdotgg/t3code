@@ -3,7 +3,7 @@
 import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
-import type { LanguageModel } from "effect/unstable/ai/LanguageModel";
+import type { LanguageModel } from "effect/ai/LanguageModel";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { LanguageModelOptions } from "../AI/LanguageModel.ts";
 import type { AIBinding } from "./AIBinding.ts";
@@ -121,7 +121,7 @@ export const isAI = (value: unknown): value is AIBinding =>
  * Effect-native client for a Cloudflare Workers AI binding. Wraps the runtime
  * `Ai` handle so each operation returns an Effect tagged with
  * {@link WorkersAIError}, and provides a `model(options)` factory that
- * produces an `effect/unstable/ai` `LanguageModel` `Layer`.
+ * produces an `effect/ai` `LanguageModel` `Layer`.
  */
 export interface AIClient {
   /**
@@ -149,7 +149,7 @@ export interface AIClient {
     params?: AiModelsSearchParams,
   ): Effect.Effect<AiModelsSearchObject[], WorkersAIError, RuntimeContext>;
   /**
-   * Provide an `effect/unstable/ai` `LanguageModel` layer backed by this
+   * Provide an `effect/ai` `LanguageModel` layer backed by this
    * binding and the given Workers AI model.
    */
   model(

@@ -170,5 +170,13 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:stepfunctions",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

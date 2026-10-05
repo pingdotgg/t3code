@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { Runner, RunnerAddress, RunnerStorage, ShardId } from "effect/unstable/cluster"
+import { Runner, RunnerAddress, RunnerStorage, ShardId } from "effect/cluster"
 
 describe("RunnerStorage", () => {
   it.effect("tracks runner health in memory", () =>

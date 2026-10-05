@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { PrometheusApiError } from "./PrometheusTypes.ts";
@@ -74,7 +75,10 @@ export interface RemoteWrite extends Binding.Service<
   ) => Effect.Effect<
     (
       request: RemoteWriteRequest,
-    ) => Effect.Effect<void, PrometheusApiError | Credentials.CredentialsError>
+    ) => Effect.Effect<
+      void,
+      PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
+    >
   >
 > {}
 export const RemoteWrite = Binding.Service<RemoteWrite>("AWS.AMP.RemoteWrite");

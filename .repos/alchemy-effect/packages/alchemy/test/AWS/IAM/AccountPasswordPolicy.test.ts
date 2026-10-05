@@ -14,19 +14,22 @@ const { test } = Test.make({ providers: AWS.providers() });
 // exercises `list()` and asserts the result is well-formed: the singleton get
 // returns either the one configured policy or `[]` (typed `NoSuchEntityException`
 // when no policy is set on the account).
-test.provider("list returns the account password policy singleton", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(AccountPasswordPolicy);
-    const all = yield* provider.list();
+test.provider(
+  "list returns the account password policy singleton",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(AccountPasswordPolicy);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    // Account singleton: 0 (no policy set) or 1 (policy configured).
-    expect(all.length).toBeLessThanOrEqual(1);
-    for (const policy of all) {
-      expect(typeof policy).toBe("object");
-      expect(policy).not.toBeNull();
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      // Account singleton: 0 (no policy set) or 1 (policy configured).
+      expect(all.length).toBeLessThanOrEqual(1);
+      for (const policy of all) {
+        expect(typeof policy).toBe("object");
+        expect(policy).not.toBeNull();
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:iam", "live"] },
 );
 
 // Full lifecycle against the dedicated testing account. The policy values are
@@ -63,4 +66,5 @@ test.provider(
       );
       expect(afterDestroy._tag).toBe("None");
     }),
+  { tags: ["provider:aws", "provider:aws:iam", "live"] },
 );

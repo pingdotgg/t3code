@@ -123,7 +123,7 @@ wired to an HTTP server listening on the Service's port:
 // src/api.ts
 import * as Hetzner from "alchemy/Hetzner";
 import * as Effect from "effect/Effect";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Box } from "./server.ts";
 
 export default class Api extends Hetzner.Service<Api>()(
@@ -138,7 +138,7 @@ export default class Api extends Hetzner.Service<Api>()(
 ) {}
 ```
 
-`HttpServerResponse` is the same `effect/unstable/http` API used on
+`HttpServerResponse` is the same `effect/http` API used on
 every other Alchemy runtime — the handler you write here would run
 unchanged on Cloudflare Workers or AWS Lambda.
 
@@ -172,7 +172,7 @@ journal in the output) if it never does. Add the route:
 
 ```diff lang="typescript"
 // src/api.ts
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
 // ...
     return {
 -      fetch: Effect.succeed(HttpServerResponse.text("Hello from Hetzner!")),
@@ -180,7 +180,7 @@ journal in the output) if it never does. Add the route:
 +        const request = yield* HttpServerRequest;
 +        const url = new URL(request.url, "http://service");
 +        if (url.pathname === "/health") {
-+          return HttpServerResponse.json({ ok: true });
++          return yield* HttpServerResponse.json({ ok: true });
 +        }
 +        return HttpServerResponse.text("Hello from Hetzner!");
 +      }),

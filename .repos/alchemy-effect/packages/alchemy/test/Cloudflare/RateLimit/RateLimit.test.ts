@@ -4,7 +4,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "./fixtures/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -44,45 +44,49 @@ const freshKey = () => `fresh-${Math.random().toString(36).slice(2)}`;
 // and expose the identical `/burst` contract, so they share one behavioral
 // suite parameterized by which deployed URL to hit.
 const behaviorSuite = (label: string, getUrl: () => Effect.Effect<string>) =>
-  describe(label, () => {
-    test(
-      "throttles requests past the configured limit",
-      Effect.gen(function* () {
-        const url = yield* getUrl();
-        expect(url).toBeTypeOf("string");
+  describe(
+    label,
+    { tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"] },
+    () => {
+      test(
+        "throttles requests past the configured limit",
+        Effect.gen(function* () {
+          const url = yield* getUrl();
+          expect(url).toBeTypeOf("string");
 
-        // Limit is 2 over a 10s window. Cloudflare's limiter is best-effort
-        // (per-colo, approximate counting), so we don't assert an exact
-        // allowed count — only the observable contract: the first call is
-        // allowed, the burst is eventually throttled, and once the budget is
-        // exhausted later calls stay denied.
-        const n = 10;
-        const { results } = yield* burst(url, freshKey(), n);
+          // Limit is 2 over a 10s window. Cloudflare's limiter is best-effort
+          // (per-colo, approximate counting), so we don't assert an exact
+          // allowed count — only the observable contract: the first call is
+          // allowed, the burst is eventually throttled, and once the budget is
+          // exhausted later calls stay denied.
+          const n = 10;
+          const { results } = yield* burst(url, freshKey(), n);
 
-        expect(results).toHaveLength(n);
-        expect(results[0]).toBe(true);
-        expect(results.at(-1)).toBe(false);
-        // Some calls were allowed, some denied.
-        const allowed = results.filter(Boolean).length;
-        expect(allowed).toBeGreaterThan(0);
-        expect(allowed).toBeLessThan(n);
-      }).pipe(logLevel),
-      { timeout: 180_000 },
-    );
+          expect(results).toHaveLength(n);
+          expect(results[0]).toBe(true);
+          expect(results.at(-1)).toBe(false);
+          // Some calls were allowed, some denied.
+          const allowed = results.filter(Boolean).length;
+          expect(allowed).toBeGreaterThan(0);
+          expect(allowed).toBeLessThan(n);
+        }).pipe(logLevel),
+        { timeout: 180_000 },
+      );
 
-    test(
-      "tracks each key independently",
-      Effect.gen(function* () {
-        const url = yield* getUrl();
+      test(
+        "tracks each key independently",
+        Effect.gen(function* () {
+          const url = yield* getUrl();
 
-        // A distinct key gets its own fresh budget regardless of how much a
-        // previous key was throttled.
-        const fresh = yield* burst(url, freshKey(), 1);
-        expect(fresh.results).toEqual([true]);
-      }).pipe(logLevel),
-      { timeout: 180_000 },
-    );
-  });
+          // A distinct key gets its own fresh budget regardless of how much a
+          // previous key was throttled.
+          const fresh = yield* burst(url, freshKey(), 1);
+          expect(fresh.results).toEqual([true]);
+        }).pipe(logLevel),
+        { timeout: 180_000 },
+      );
+    },
+  );
 
 behaviorSuite("async worker (env binding)", () =>
   stack.pipe(Effect.map((s) => s.asyncUrl)),

@@ -125,5 +125,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertAuthorizationDeleted(AGGREGATOR_ACCOUNT, "us-west-2");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:config", "live"], timeout: 120_000 },
 );

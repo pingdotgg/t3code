@@ -367,13 +367,33 @@ const {
 
     let raf = 0;
     let visible = true;
+    // The page's "Pause motion" control (WCAG 2.2.2) sets this class.
+    const isPaused = () =>
+      document.documentElement.classList.contains("alc-motion-paused");
+    // Playback rate for every motion in the graph (zoom and ring spin).
+    const SPEED = 0.5;
+    // Own clock, advanced only while running, so pausing freezes the frame
+    // and resuming continues from it without a jump.
+    let clock = 0;
+    let last: number | null = null;
     const loop = (t: number) => {
-      draw(t);
-      if (visible && !reduced) raf = requestAnimationFrame(loop);
+      if (last !== null) clock += t - last;
+      last = t;
+      draw(clock * SPEED);
+      if (visible && !reduced && !isPaused()) {
+        raf = requestAnimationFrame(loop);
+      } else {
+        last = null;
+      }
     };
+    window.addEventListener("alc-motion-change", () => {
+      cancelAnimationFrame(raf);
+      last = null;
+      if (!isPaused() && visible && !reduced) raf = requestAnimationFrame(loop);
+    });
 
     resize();
-    if (reduced) {
+    if (reduced || isPaused()) {
       draw(0);
     } else {
       raf = requestAnimationFrame(loop);
@@ -419,7 +439,7 @@ const {
       cancelAnimationFrame(raf);
       if (reduced) {
         draw(0);
-      } else if (visible) {
+      } else if (visible && !isPaused()) {
         raf = requestAnimationFrame(loop);
       }
     };
@@ -444,7 +464,7 @@ const {
           // — in reduced-motion mode — redraw the single static frame
           // (it may have been cleared / sized while off-screen).
           if (reduced) draw(0);
-          else raf = requestAnimationFrame(loop);
+          else if (!isPaused()) raf = requestAnimationFrame(loop);
         } else if (!visible) {
           cancelAnimationFrame(raf);
         }

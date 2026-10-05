@@ -110,7 +110,15 @@ test.provider(
         expect(deactivated.active).toEqual(false);
       }
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:coupon",
+      "provider:stripe:promotioncode",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -141,5 +149,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:coupon",
+      "provider:stripe:promotioncode",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

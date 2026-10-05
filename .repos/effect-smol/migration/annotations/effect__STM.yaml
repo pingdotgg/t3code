@@ -246,7 +246,7 @@ effect/STM#orTry:
   note: "V4 exposes no recoverable retry signal or public transactional savepoint; restructure branch selection before Effect.txRetry."
 effect/STM#partition:
   replacement: "Effect.partition"
-  note: "The combinator keeps its name, but STM values are now ordinary Effects. Run the complete transaction with Effect.tx. V4 Tx operations return ordinary Effects; compose multiple operations under one outer Effect.tx to keep them atomic."
+  note: "STM values are now ordinary Effects. Run the complete transaction with Effect.tx. The tuple is [passes, fails], the reverse of v3 [failures, successes]."
 effect/STM#provideServiceSTM:
   replacement: "Effect.provideServiceEffect"
   note: "The effectful service provider was renamed on Effect."

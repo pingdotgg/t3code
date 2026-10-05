@@ -17,117 +17,126 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create, verify out-of-band, and destroy tag", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, verify out-of-band, and destroy tag",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const tag = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Tag("BasicTag", {});
-      }),
-    );
-
-    expect(tag.name).toBeDefined();
-    expect(tag.accountId).toEqual(accountId);
-
-    const actual = yield* zeroTrust.getAccessTag({
-      accountId,
-      tagName: tag.name,
-    });
-    expect(actual.name).toEqual(tag.name);
-
-    // Reconcile again with no changes — existence-only resource converges
-    // without churn.
-    const again = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Tag("BasicTag", {});
-      }),
-    );
-    expect(again.name).toEqual(tag.name);
-
-    yield* stack.destroy();
-
-    const afterDestroy = yield* zeroTrust
-      .getAccessTag({ accountId, tagName: tag.name })
-      .pipe(
-        Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+      const tag = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Tag("BasicTag", {});
+        }),
       );
-    expect(afterDestroy).toBeUndefined();
-  }).pipe(logLevel),
+
+      expect(tag.name).toBeDefined();
+      expect(tag.accountId).toEqual(accountId);
+
+      const actual = yield* zeroTrust.getAccessTag({
+        accountId,
+        tagName: tag.name,
+      });
+      expect(actual.name).toEqual(tag.name);
+
+      // Reconcile again with no changes — existence-only resource converges
+      // without churn.
+      const again = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Tag("BasicTag", {});
+        }),
+      );
+      expect(again.name).toEqual(tag.name);
+
+      yield* stack.destroy();
+
+      const afterDestroy = yield* zeroTrust
+        .getAccessTag({ accountId, tagName: tag.name })
+        .pipe(
+          Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+        );
+      expect(afterDestroy).toBeUndefined();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("rename replaces the tag", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "rename replaces the tag",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const tag = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Tag("RenameTag", {
-          name: "alchemy-test-access-tag-a",
-        });
-      }),
-    );
-    expect(tag.name).toEqual("alchemy-test-access-tag-a");
-
-    const renamed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Tag("RenameTag", {
-          name: "alchemy-test-access-tag-b",
-        });
-      }),
-    );
-    expect(renamed.name).toEqual("alchemy-test-access-tag-b");
-
-    // The new identity exists and the old one is gone (replacement).
-    const current = yield* zeroTrust.getAccessTag({
-      accountId,
-      tagName: "alchemy-test-access-tag-b",
-    });
-    expect(current.name).toEqual("alchemy-test-access-tag-b");
-
-    const old = yield* zeroTrust
-      .getAccessTag({ accountId, tagName: "alchemy-test-access-tag-a" })
-      .pipe(
-        Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+      const tag = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Tag("RenameTag", {
+            name: "alchemy-test-access-tag-a",
+          });
+        }),
       );
-    expect(old).toBeUndefined();
+      expect(tag.name).toEqual("alchemy-test-access-tag-a");
 
-    yield* stack.destroy();
-
-    const afterDestroy = yield* zeroTrust
-      .getAccessTag({ accountId, tagName: "alchemy-test-access-tag-b" })
-      .pipe(
-        Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+      const renamed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Tag("RenameTag", {
+            name: "alchemy-test-access-tag-b",
+          });
+        }),
       );
-    expect(afterDestroy).toBeUndefined();
-  }).pipe(logLevel),
+      expect(renamed.name).toEqual("alchemy-test-access-tag-b");
+
+      // The new identity exists and the old one is gone (replacement).
+      const current = yield* zeroTrust.getAccessTag({
+        accountId,
+        tagName: "alchemy-test-access-tag-b",
+      });
+      expect(current.name).toEqual("alchemy-test-access-tag-b");
+
+      const old = yield* zeroTrust
+        .getAccessTag({ accountId, tagName: "alchemy-test-access-tag-a" })
+        .pipe(
+          Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+        );
+      expect(old).toBeUndefined();
+
+      yield* stack.destroy();
+
+      const afterDestroy = yield* zeroTrust
+        .getAccessTag({ accountId, tagName: "alchemy-test-access-tag-b" })
+        .pipe(
+          Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
+        );
+      expect(afterDestroy).toBeUndefined();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("list enumerates the deployed access tag", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed access tag",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const tag = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.Tag("ListTag", {
-          name: "alchemy-test-access-tag-list",
-        });
-      }),
-    );
+      const tag = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.Tag("ListTag", {
+            name: "alchemy-test-access-tag-list",
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Access.Tag);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Access.Tag);
+      const all = yield* provider.list();
 
-    const found = all.find((t) => t.name === tag.name);
-    expect(found).toBeDefined();
-    expect(found?.accountId).toEqual(accountId);
+      const found = all.find((t) => t.name === tag.name);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(accountId);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );

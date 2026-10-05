@@ -78,7 +78,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertTemplateDeleted(template.templateName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -113,5 +113,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertTemplateDeleted("alchemy-test-ses-template-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

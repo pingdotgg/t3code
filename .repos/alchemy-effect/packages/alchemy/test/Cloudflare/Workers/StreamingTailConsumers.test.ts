@@ -94,7 +94,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 240_000,
+  },
 );
 
 /**
@@ -210,5 +213,13 @@ test.provider(
       yield* waitForWorkerToBeDeleted(v1.producer.workerName, accountId);
       yield* waitForWorkerToBeDeleted(v1.consumer.workerName, accountId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

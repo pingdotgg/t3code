@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, test } from "alchemy-test";
 
-describe("data utilities", () => {
+describe("data utilities", { tags: ["unit", "local"] }, () => {
   test("isPlainObject accepts object literals", () => {
     expect(isPlainObject({})).toBe(true);
   });
@@ -71,7 +71,7 @@ describe("data utilities", () => {
 // The engine's traversal rule (#1082): plain data is walked; every class
 // instance is a leaf. isPlainData is the single gate, mapPlainData the
 // single cycle-guarded rebuild — pin their exact semantics here.
-describe("isPlainData", () => {
+describe("isPlainData", { tags: ["unit", "local"] }, () => {
   test("accepts arrays, object literals, and null-prototype objects", () => {
     expect(isPlainData([])).toBe(true);
     expect(isPlainData([1, 2, 3])).toBe(true);
@@ -108,7 +108,7 @@ describe("isPlainData", () => {
   });
 });
 
-describe("mapPlainData", () => {
+describe("mapPlainData", { tags: ["unit", "local"] }, () => {
   const identity = (ancestors: WeakSet<object>) => {
     const walk = (child: unknown): unknown =>
       isPlainData(child) ? mapPlainData(child, ancestors, walk) : child;

@@ -5,7 +5,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "./fixtures/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -41,78 +41,100 @@ const hit = Effect.fn(function* (path: string) {
 const writeName = "alchemy-tunnel-test-write";
 const readWriteName = "alchemy-tunnel-test-readwrite";
 
-describe("Tunnel runtime bindings", () => {
-  test(
-    "TunnelRead lists tunnels with a read-scoped token",
-    Effect.gen(function* () {
-      const { effectUrl } = yield* stack;
-      const body = (yield* hit(`${effectUrl}/read`)) as { count: number };
-      expect(body.count).toBeTypeOf("number");
-    }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
+describe(
+  "Tunnel runtime bindings",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    test(
+      "TunnelRead lists tunnels with a read-scoped token",
+      Effect.gen(function* () {
+        const { effectUrl } = yield* stack;
+        const body = (yield* hit(`${effectUrl}/read`)) as { count: number };
+        expect(body.count).toBeTypeOf("number");
+      }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
 
-  test(
-    "TunnelWrite creates and deletes a tunnel with a write-scoped token",
-    Effect.gen(function* () {
-      const { effectUrl } = yield* stack;
-      const body = (yield* hit(
-        `${effectUrl}/write?name=${encodeURIComponent(writeName)}`,
-      )) as { id: string; deleted: boolean };
-      expect(body.id).toBeTypeOf("string");
-      expect(body.id.length).toBeGreaterThan(0);
-      expect(body.deleted).toBe(true);
-    }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
+    test(
+      "TunnelWrite creates and deletes a tunnel with a write-scoped token",
+      Effect.gen(function* () {
+        const { effectUrl } = yield* stack;
+        const body = (yield* hit(
+          `${effectUrl}/write?name=${encodeURIComponent(writeName)}`,
+        )) as { id: string; deleted: boolean };
+        expect(body.id).toBeTypeOf("string");
+        expect(body.id.length).toBeGreaterThan(0);
+        expect(body.deleted).toBe(true);
+      }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
 
-  test(
-    "TunnelReadWrite drives the full CRUD surface",
-    Effect.gen(function* () {
-      const { effectUrl } = yield* stack;
-      const name = readWriteName;
-      const body = (yield* hit(
-        `${effectUrl}/readwrite?name=${encodeURIComponent(name)}`,
-      )) as {
-        id: string;
-        getName: string;
-        count: number;
-        updatedName: string;
-        hasToken: boolean;
-        deleted: boolean;
-      };
-      expect(body.id.length).toBeGreaterThan(0);
-      expect(body.getName).toBe(name);
-      expect(body.count).toBeGreaterThan(0);
-      expect(body.updatedName).toBe(`${name}-renamed`);
-      expect(body.hasToken).toBe(true);
-      expect(body.deleted).toBe(true);
-    }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
-});
+    test(
+      "TunnelReadWrite drives the full CRUD surface",
+      Effect.gen(function* () {
+        const { effectUrl } = yield* stack;
+        const name = readWriteName;
+        const body = (yield* hit(
+          `${effectUrl}/readwrite?name=${encodeURIComponent(name)}`,
+        )) as {
+          id: string;
+          getName: string;
+          count: number;
+          updatedName: string;
+          hasToken: boolean;
+          deleted: boolean;
+        };
+        expect(body.id.length).toBeGreaterThan(0);
+        expect(body.getName).toBe(name);
+        expect(body.count).toBeGreaterThan(0);
+        expect(body.updatedName).toBe(`${name}-renamed`);
+        expect(body.hasToken).toBe(true);
+        expect(body.deleted).toBe(true);
+      }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
+  },
+);
 
 // Canonical `list()` test (account collection): deploy a tunnel, resolve the
 // provider with the typed `Provider.findProvider`, enumerate every cfd_tunnel
 // in the account, and assert the deployed tunnel is present. Bracket with
 // `stack.destroy()` so the test is isolated and leaves no cloud residue.
-describe("Tunnel.list", () => {
-  test.provider("list enumerates the deployed tunnel", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.destroy();
+describe(
+  "Tunnel.list",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:tunnel",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    test.provider("list enumerates the deployed tunnel", (stack) =>
+      Effect.gen(function* () {
+        yield* stack.destroy();
 
-      const deployed = yield* stack.deploy(
-        Effect.gen(function* () {
-          return yield* Cloudflare.Tunnel.Tunnel("ListTunnel");
-        }),
-      );
+        const deployed = yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* Cloudflare.Tunnel.Tunnel("ListTunnel");
+          }),
+        );
 
-      const provider = yield* Provider.findProvider(Cloudflare.Tunnel.Tunnel);
-      const all = yield* provider.list();
+        const provider = yield* Provider.findProvider(Cloudflare.Tunnel.Tunnel);
+        const all = yield* provider.list();
 
-      expect(all.some((t) => t.tunnelId === deployed.tunnelId)).toBe(true);
+        expect(all.some((t) => t.tunnelId === deployed.tunnelId)).toBe(true);
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+        yield* stack.destroy();
+      }).pipe(logLevel),
+    );
+  },
+);

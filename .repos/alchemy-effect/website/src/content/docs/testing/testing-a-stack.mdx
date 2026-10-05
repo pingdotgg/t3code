@@ -87,8 +87,8 @@ Every assertion below works unchanged against the local stack. To keep one file 
 `HttpClient` is already in scope in every test Effect:
 
 ```typescript
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 
 test(
   "PUT and GET round-trip an object",

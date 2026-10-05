@@ -69,10 +69,10 @@
   note: "List was removed; use Array.of. It preserves ordering but returns arrays rather than persistent linked lists."
 "effect/List#partition":
   replacement: "Array.partition"
-  note: "Use a Result-returning callback: failure values form the first array and success values the second."
+  note: "Use a Result-returning callback: success values form the first array and failure values the second."
 "effect/List#partitionMap":
   replacement: "Array.partition"
-  note: "Migrate the Either-returning mapper to Result; failures form the first array and successes the second."
+  note: "Migrate the Either-returning mapper to Result; successes form the first array and failures the second."
 "effect/List#prependAll":
   replacement: "Array.prependAll"
   note: "List was removed; use Array.prependAll. It preserves ordering but returns arrays rather than persistent linked lists."

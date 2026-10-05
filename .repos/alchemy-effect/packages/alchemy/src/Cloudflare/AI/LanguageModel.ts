@@ -10,8 +10,8 @@ import {
   Prompt,
   Response,
   Tool,
-} from "effect/unstable/ai";
-import * as Sse from "effect/unstable/encoding/Sse";
+} from "effect/ai";
+import * as Sse from "effect/encoding/Sse";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 
 /**

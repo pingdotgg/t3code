@@ -1,8 +1,8 @@
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai-compat"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Redacted, Ref, Schema, Stream } from "effect"
-import { type AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
-import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { type AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
+import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("OpenAiLanguageModel", () => {
   describe("generateText", () => {
@@ -454,6 +454,93 @@ describe("OpenAiLanguageModel", () => {
           return
         }
         assert.deepStrictEqual(toolCall.params, { env: { PATH: "/usr/bin" } })
+      }))
+
+    it.effect("preserves raw JSON Schema dynamic tool call params", () =>
+      Effect.gen(function*() {
+        const params = { query: "effect" }
+        const client = makeHttpClient((request) =>
+          Effect.succeed(jsonResponse(
+            request,
+            makeChatCompletion({
+              choices: [{
+                index: 0,
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [{
+                    id: "call_dynamic_1",
+                    type: "function",
+                    function: { name: "DynamicTool", arguments: JSON.stringify(params) }
+                  }]
+                }
+              }]
+            })
+          ))
+        )
+        const DynamicTool = Tool.dynamic("DynamicTool", {
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            additionalProperties: false
+          } as const
+        })
+        const result = yield* LanguageModel.generateText({
+          prompt: "use the dynamic tool",
+          toolkit: Toolkit.make(DynamicTool),
+          disableToolCallResolution: true
+        }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") })),
+          Effect.provideService(HttpClient.HttpClient, client)
+        )
+
+        assert.deepStrictEqual(result.toolCalls[0]?.params, params)
+      }))
+
+    it.effect("decodes Effect Schema dynamic tool call params with the OpenAI codec", () =>
+      Effect.gen(function*() {
+        const DynamicTool = Tool.dynamic("DynamicTool", {
+          parameters: Schema.Struct({
+            env: Schema.Record(Schema.String, Schema.String)
+          })
+        })
+        const client = makeHttpClient((request) =>
+          Effect.succeed(jsonResponse(
+            request,
+            makeChatCompletion({
+              choices: [{
+                index: 0,
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [{
+                    id: "call_dynamic_1",
+                    type: "function",
+                    function: {
+                      name: "DynamicTool",
+                      arguments: JSON.stringify({ env: [{ 0: "PATH", 1: "/usr/bin" }] })
+                    }
+                  }]
+                }
+              }]
+            })
+          ))
+        )
+        const result = yield* LanguageModel.generateText({
+          prompt: "use the dynamic tool",
+          toolkit: Toolkit.make(DynamicTool),
+          disableToolCallResolution: true
+        }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") })),
+          Effect.provideService(HttpClient.HttpClient, client)
+        )
+
+        assert.deepStrictEqual(result.toolCalls[0]?.params, { env: { PATH: "/usr/bin" } })
       }))
 
     it.effect("groups parallel tool calls into one assistant message", () =>
@@ -1019,6 +1106,79 @@ describe("OpenAiLanguageModel", () => {
           .join("")
 
         assert.strictEqual(text, "Hello")
+      }))
+
+    it.effect("preserves streamed text and tool args with nullable delta fields", () =>
+      Effect.gen(function*() {
+        const chunk = (delta: Record<string, unknown>) => ({
+          id: "chatcmpl_nullable_delta_fields",
+          object: "chat.completion.chunk",
+          model: "gpt-4o-mini",
+          created: 1,
+          choices: [{ index: 0, delta, finish_reason: null }]
+        })
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                chunk({ content: "Hello", role: null }),
+                chunk({
+                  tool_calls: [{
+                    index: 0,
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "TestTool", arguments: "" }
+                  }]
+                }),
+                chunk({
+                  tool_calls: [{ index: 0, id: null, function: { name: null, arguments: "{\"in" } }]
+                }),
+                chunk({
+                  tool_calls: [{ index: 0, id: null, function: { name: null, arguments: "put\":\"hel" } }]
+                }),
+                chunk({
+                  tool_calls: [{ index: 0, id: null, function: { name: null, arguments: "lo\"}" } }]
+                }),
+                {
+                  id: "chatcmpl_nullable_delta_fields",
+                  object: "chat.completion.chunk",
+                  model: "gpt-4o-mini",
+                  created: 1,
+                  choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }]
+                },
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const partsChunk = yield* LanguageModel.streamText({
+          prompt: "use the tool",
+          toolkit: TestToolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(TestToolkitLayer),
+          Effect.provide(layer)
+        )
+
+        const parts = globalThis.Array.from(partsChunk)
+        const text = parts
+          .filter((part) => part.type === "text-delta")
+          .map((part) => part.delta)
+          .join("")
+        const toolCall = parts.find((part) => part.type === "tool-call")
+
+        assert.strictEqual(text, "Hello")
+        assert.isDefined(toolCall)
+        if (toolCall?.type !== "tool-call") {
+          return
+        }
+        assert.strictEqual(toolCall.id, "call_1")
+        assert.deepStrictEqual(toolCall.params, { input: "hello" })
       }))
 
     it.effect("decodes streamed tool call params with the OpenAI codec", () =>

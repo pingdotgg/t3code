@@ -4,7 +4,7 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
+import * as Reactivity from "effect/reactivity/Reactivity";
 
 const services = Layer.mergeAll(
   ConfigProvider.layer(Effect.sync(() => ConfigProvider.fromUnknown(env))),

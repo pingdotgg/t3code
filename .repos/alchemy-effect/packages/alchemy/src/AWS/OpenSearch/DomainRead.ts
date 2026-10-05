@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type {
@@ -22,14 +23,14 @@ export interface ReadDomainClient {
     request?: SearchRequest,
   ): Effect.Effect<
     SearchResponse<TDoc>,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /** Count documents matching a Query-DSL body (`GET …/_count`). */
   count(
     request?: CountRequest,
   ): Effect.Effect<
     CountResponse,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /**
    * Fetch one document by id (`GET /{index}/_doc/{id}`). A missing document
@@ -40,13 +41,16 @@ export interface ReadDomainClient {
     id: string,
   ): Effect.Effect<
     GetDocumentResponse<TDoc>,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /** Check whether a document exists (`HEAD /{index}/_doc/{id}`). */
   existsDocument(
     index: string,
     id: string,
-  ): Effect.Effect<boolean, OpenSearchApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    boolean,
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
   /**
    * Raw read-only escape hatch — a SigV4-signed `GET` against any data-plane
    * path (e.g. `_cluster/health`, `_cat/indices?format=json`).
@@ -54,7 +58,10 @@ export interface ReadDomainClient {
   get(
     path: string,
     query?: Record<string, string | undefined>,
-  ): Effect.Effect<unknown, OpenSearchApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    unknown,
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
 }
 
 /**

@@ -1,7 +1,7 @@
 import type { HyperdriveOrigin } from "./HyperdriveOrigin.shared.ts";
-
-// For some reason, this only works as a dynamic import; otherwise the module is not found.
-const { connect } = await import("cloudflare:sockets");
+// Internal extensions resolve internal built-ins. The public wrapper is not
+// visible from this registry under `new_module_registry`.
+import sockets from "cloudflare-internal:sockets";
 
 export default function makeBinding(env: { ORIGIN: HyperdriveOrigin }) {
   let connectionString = `${env.ORIGIN.scheme}://${env.ORIGIN.user}:${env.ORIGIN.password}@${env.ORIGIN.host}:${env.ORIGIN.port}/${env.ORIGIN.database}`;
@@ -10,7 +10,7 @@ export default function makeBinding(env: { ORIGIN: HyperdriveOrigin }) {
   }
   return {
     connect: () =>
-      connect({ hostname: env.ORIGIN.host, port: env.ORIGIN.port }),
+      sockets.connect({ hostname: env.ORIGIN.host, port: env.ORIGIN.port }),
     connectionString,
     database: env.ORIGIN.database,
     user: env.ORIGIN.user,

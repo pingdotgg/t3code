@@ -3,6 +3,38 @@ import { Cause, Effect, Exit, Fiber, Option, Queue, Stream } from "effect"
 import * as Scheduler from "effect/Scheduler"
 
 describe("Queue", () => {
+  describe("waiter registration after a yield", () => {
+    // Budget 3 yields after the first queue check but before the old waiter registration.
+    const withYield = <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.provideService(effect, Scheduler.MaxOpsBeforeYield, 3)
+
+    const assertCompletes = (fiber: Fiber.Fiber<unknown, unknown>) =>
+      Effect.gen(function*() {
+        for (let i = 0; i < 200 && fiber.pollUnsafe() === undefined; i++) yield* Effect.yieldNow
+        const done = fiber.pollUnsafe() !== undefined
+        yield* Fiber.interrupt(fiber)
+        assert.isTrue(done, "lost wake-up")
+      })
+
+    it.effect("offerAll does not park beside available capacity", () =>
+      Effect.gen(function*() {
+        const queue = yield* Queue.bounded<number>(1)
+        yield* Queue.offer(queue, 0)
+        const fiber = yield* Effect.forkChild(withYield(Queue.offerAll(queue, [1])), { startImmediately: true })
+        yield* Queue.take(queue)
+        yield* assertCompletes(fiber)
+      }))
+
+    it.effect("zero-capacity offer and take can rendezvous", () =>
+      Effect.gen(function*() {
+        const queue = yield* Queue.bounded<number>(0)
+        const offerer = yield* Effect.forkChild(withYield(Queue.offer(queue, 1)), { startImmediately: true })
+        const taker = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+        yield* assertCompletes(offerer)
+        yield* assertCompletes(taker)
+      }))
+  })
+
   it.effect("isEnqueue type guard", () =>
     Effect.gen(function*() {
       const queue = yield* Queue.bounded<number>(10)
@@ -68,6 +100,34 @@ describe("Queue", () => {
 
       yield* Effect.yieldNow
       assert.deepStrictEqual(fiber.pollUnsafe(), Exit.succeed([]))
+    }))
+
+  it.effect("interrupting a suspended offer after end withdraws its message", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.bounded<number, Cause.Done>(1)
+      yield* Queue.offer(queue, 1)
+      const producer = yield* Effect.forkChild(Queue.offer(queue, 2), { startImmediately: true })
+      assert.isUndefined(producer.pollUnsafe(), "offer must be suspended before end")
+
+      yield* Queue.end(queue)
+      yield* Fiber.interrupt(producer)
+
+      assert.deepStrictEqual(yield* Queue.collect(queue), [1])
+    }))
+
+  it.effect("interrupting a suspended offerAll after end completes an empty queue", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.bounded<number, Cause.Done>(0)
+      const producer = yield* Effect.forkChild(Queue.offerAll(queue, [1, 2]), { startImmediately: true })
+      assert.isUndefined(producer.pollUnsafe(), "offerAll must be suspended before end")
+
+      yield* Queue.end(queue)
+      const awaiter = yield* Effect.forkChild(Queue.await(queue), { startImmediately: true })
+      assert.isUndefined(awaiter.pollUnsafe(), "await must wait for the pending offer")
+
+      yield* Fiber.interrupt(producer)
+      yield* Fiber.join(awaiter)
+      assert.deepStrictEqual(yield* Effect.exit(Queue.take(queue)), Exit.fail(Cause.Done()))
     }))
 
   it.effect("resuming a blocked producer does not enqueue its message twice", () =>
@@ -167,6 +227,153 @@ describe("Queue", () => {
       const b = yield* Queue.takeN(queue, 2)
       assert.deepEqual(a, [1, 2])
       assert.deepEqual(b, [3, 4])
+    }))
+
+  it("takeN on a partial batch does not wake its taker", () => {
+    // Drive the queue's scheduler by hand so every taker release runs
+    // synchronously inside the test instead of on a host timer.
+    const tasks: Array<() => void> = []
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: "async",
+      shouldYield: () => false,
+      makeDispatcher: () => ({
+        scheduleTask: (task) => {
+          tasks.push(task)
+        },
+        flush() {}
+      })
+    }
+    const queue = Effect.runSync(
+      Queue.unbounded<number>().pipe(Effect.provideService(Scheduler.Scheduler, scheduler))
+    )
+    const taker = Effect.runFork(Queue.takeN(queue, 2), { scheduler })
+    assert(queue.state._tag === "Open")
+    const takers = queue.state.takers
+    assert.strictEqual(takers.size, 1)
+    // Releasing a taker deletes it first, so the old wake/retry loop trips
+    // this on its first turn instead of spinning forever.
+    takers.delete = () => {
+      throw new Error("partial batch woke its taker")
+    }
+
+    Queue.offerUnsafe(queue, 1)
+    assert.strictEqual(tasks.length, 1)
+    tasks.shift()!()
+
+    assert.isUndefined(taker.pollUnsafe())
+    assert.strictEqual(takers.size, 1)
+    assert.isEmpty(tasks)
+  })
+
+  const lostWakeupCases: ReadonlyArray<readonly [string, (queue: Queue.Queue<number>) => Effect.Effect<unknown>]> = [
+    ["take", Queue.take],
+    ["takeN", (queue) => Queue.takeN(queue, 1)],
+    ["takeAll", Queue.takeAll],
+    ["takeBetween", (queue) => Queue.takeBetween(queue, 1, 5)],
+    ["peek", Queue.peek]
+  ]
+  for (const [name, receive] of lostWakeupCases) {
+    it.effect(`${name} does not miss an offer during the check-to-registration yield`, () =>
+      Effect.gen(function*() {
+        const queue = yield* Queue.unbounded<number>()
+        // At a budget of 8, this padding exhausts the taker budget after
+        // checking the empty queue but before registering in awaitTake.
+        let pad: Effect.Effect<void> = Effect.void
+        for (let i = 0; i < 5; i++) pad = Effect.andThen(pad, Effect.void)
+        const taker = yield* Effect.forkDetach(Effect.andThen(pad, receive(queue)))
+        const offerer = yield* Effect.forkDetach(Queue.offer(queue, 1))
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow
+
+        const exit = taker.pollUnsafe()
+        const size = yield* Queue.size(queue)
+        yield* Queue.shutdown(queue)
+        assert.deepStrictEqual(offerer.pollUnsafe(), Exit.succeed(true))
+        // Without the fix the taker stays suspended with no future wakeup, and
+        // the offered message remains in the queue.
+        assert.deepStrictEqual(exit, Exit.succeed(name === "take" || name === "peek" ? 1 : [1]))
+        assert.strictEqual(size, name === "peek" ? 1 : 0)
+      }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8)))
+  }
+
+  it.effect("takeN and takeBetween keep waiting on a partial batch", () =>
+    Effect.gen(function*() {
+      const takeNQueue = yield* Queue.unbounded<number>()
+      yield* Queue.offer(takeNQueue, 1)
+      const takeN = yield* Effect.forkDetach(Queue.takeN(takeNQueue, 3))
+
+      const takeBetweenQueue = yield* Queue.unbounded<number>()
+      yield* Queue.offer(takeBetweenQueue, 1)
+      const takeBetween = yield* Effect.forkDetach(Queue.takeBetween(takeBetweenQueue, 2, 5))
+
+      for (let i = 0; i < 20; i++) yield* Effect.yieldNow
+      // A buffered message below the minimum must not resume the taker.
+      assert.strictEqual(takeN.pollUnsafe(), undefined)
+      assert.strictEqual(takeBetween.pollUnsafe(), undefined)
+
+      yield* Queue.offerAll(takeNQueue, [2, 3])
+      yield* Queue.offerAll(takeBetweenQueue, [2, 3])
+      assert.deepStrictEqual(yield* Fiber.await(takeN), Exit.succeed([1, 2, 3]))
+      assert.deepStrictEqual(yield* Fiber.await(takeBetween), Exit.succeed([1, 2, 3]))
+    }))
+
+  it.effect("takeN drains an insufficient batch after end", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, Cause.Done>()
+      yield* Queue.offerAll(queue, [1, 2])
+      yield* Queue.end(queue)
+
+      assert.deepStrictEqual(yield* Queue.takeN(queue, 5), [1, 2])
+      assert.strictEqual(queue.state._tag, "Done")
+      assert.deepStrictEqual(yield* Effect.exit(Queue.takeN(queue, 5)), Exit.fail(Cause.Done()))
+    }))
+
+  it.effect("takeBetween drains a waiting batch on failure", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, string>()
+      yield* Queue.offerAll(queue, [1, 2])
+      const taker = yield* Effect.forkChild(Queue.takeBetween(queue, 5, 8), { startImmediately: true })
+      assert.strictEqual(taker.pollUnsafe(), undefined)
+
+      yield* Queue.fail(queue, "boom")
+      assert.deepStrictEqual(yield* Fiber.join(taker), [1, 2])
+      assert.strictEqual(queue.state._tag, "Done")
+      assert.deepStrictEqual(yield* Effect.exit(Queue.takeBetween(queue, 5, 8)), Exit.fail("boom"))
+    }))
+
+  it.effect("takeN drains on failure between the batch check and waiter registration", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, string>()
+      yield* Queue.offerAll(queue, [1, 2])
+      // At a budget of 8, this padding exhausts the taker budget after the
+      // first batch check but before registering in awaitTake.
+      const pad = Effect.andThen(Effect.void, Effect.void)
+      const taker = yield* Effect.forkDetach(Effect.andThen(pad, Effect.exit(Queue.takeN(queue, 5))))
+      let takersAtFail = -1
+      yield* Effect.forkDetach(Effect.suspend(() => {
+        takersAtFail = queue.state._tag === "Done" ? -1 : queue.state.takers.size
+        return Queue.fail(queue, "boom")
+      }))
+
+      assert.deepStrictEqual(yield* Fiber.join(taker), Exit.succeed([1, 2]))
+      // The taker yielded after its check and before registering, so the
+      // termination could not wake it.
+      assert.strictEqual(takersAtFail, 0)
+      assert.strictEqual(queue.state._tag, "Done")
+      assert.deepStrictEqual(yield* Effect.exit(Queue.takeN(queue, 5)), Exit.fail("boom"))
+    }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8)))
+
+  it.effect("takeN ending at an offerAll boundary keeps the next message", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number>()
+      yield* Queue.offerAll(queue, [1, 2])
+      yield* Queue.offerAll(queue, [3])
+      assert.deepStrictEqual(yield* Queue.takeN(queue, 2), [1, 2])
+      assert.strictEqual(yield* Queue.size(queue), 1)
+      assert.strictEqual(yield* Queue.peek(queue), 3)
+      assert.strictEqual(yield* Queue.take(queue), 3)
+      yield* Queue.offer(queue, 99)
+      assert.strictEqual(yield* Queue.take(queue), 99)
+      assert.strictEqual(yield* Queue.size(queue), 0)
     }))
 
   it.effect("takeN and takeBetween normalize element counts before waiting", () =>
@@ -391,6 +598,70 @@ describe("Queue", () => {
       assert.isTrue(Exit.hasInterrupts(exit))
       assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(Queue.await(queue))))
       assert.strictEqual(yield* Queue.offer(queue, 10), false)
+    }))
+
+  it.effect("shutdownUnsafe interrupts waiting takers synchronously", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number>()
+      const taker = yield* Queue.take(queue).pipe(Effect.forkChild({ startImmediately: true }))
+
+      Queue.shutdownUnsafe(queue)
+
+      assert.isTrue(Exit.hasInterrupts(taker.pollUnsafe()!))
+    }))
+
+  it.effect("shutdownUnsafe clears buffered messages and settles pending offers synchronously", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.bounded<number>(1)
+      Queue.offerUnsafe(queue, 1)
+      const offerer = yield* Queue.offer(queue, 2).pipe(Effect.forkChild({ startImmediately: true }))
+
+      Queue.shutdownUnsafe(queue)
+
+      assert.strictEqual(queue.messages.length, 0)
+      assert.deepStrictEqual(offerer.pollUnsafe(), Exit.succeed(false))
+    }))
+
+  it.effect("shutdownUnsafe resumes batch offers with their unaccepted suffix", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.bounded<number>(1)
+      const producer = yield* Queue.offerAll(queue, [1, 2, 3]).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      assert.strictEqual(yield* Queue.take(queue), 1)
+
+      Queue.shutdownUnsafe(queue)
+
+      assert.deepStrictEqual(producer.pollUnsafe(), Exit.succeed([3]))
+    }))
+
+  it.effect("shutdownUnsafe returns true and preserves an existing failure", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, string>()
+      Queue.offerUnsafe(queue, 1)
+      Queue.failCauseUnsafe(queue, Cause.fail("boom"))
+
+      assert.isTrue(Queue.shutdownUnsafe(queue))
+
+      assert.strictEqual(yield* Queue.take(queue).pipe(Effect.flip), "boom")
+    }))
+
+  it.effect("shutdownUnsafe returns false when already shut down", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number>()
+
+      assert.isTrue(Queue.shutdownUnsafe(queue))
+      assert.isFalse(Queue.shutdownUnsafe(queue))
+      assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(Queue.await(queue))))
+    }))
+
+  it.effect("shutdown returns false and preserves a completed queue's failure", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, string>()
+      Queue.failCauseUnsafe(queue, Cause.fail("boom"))
+
+      assert.isFalse(yield* Queue.shutdown(queue))
+      assert.strictEqual(yield* Queue.take(queue).pipe(Effect.flip), "boom")
     }))
 
   it.effect("fail doesnt drop items", () =>

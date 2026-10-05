@@ -22,198 +22,205 @@ HQIDAQAB
 -----END PUBLIC KEY-----
 `;
 
-describe("AWS.CloudFront.PublicKey", () => {
-  test.provider(
-    "create, update comment, and delete a public key",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.CloudFront.PublicKey",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    test.provider(
+      "create, update comment, and delete a public key",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const created = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* PublicKey("SignedUrlKey", {
-              encodedKey: TEST_PUBLIC_KEY,
-              comment: "initial",
-            });
-          }),
-        );
-
-        const initial = yield* cloudfront.getPublicKey({
-          Id: created.publicKeyId,
-        });
-        expect(initial.PublicKey?.Id).toEqual(created.publicKeyId);
-        expect(initial.PublicKey?.PublicKeyConfig?.Comment).toEqual("initial");
-        // CloudFront normalizes the stored key (trailing newline stripped).
-        expect(initial.PublicKey?.PublicKeyConfig?.EncodedKey?.trim()).toEqual(
-          TEST_PUBLIC_KEY.trim(),
-        );
-
-        // Update with the SAME key wrapped in Redacted — the provider's
-        // `extractValue` must unwrap it so diff sees no key change (update in
-        // place, not replacement) and the wire value round-trips unredacted.
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* PublicKey("SignedUrlKey", {
-              encodedKey: Redacted.make(TEST_PUBLIC_KEY),
-              comment: "updated",
-            });
-          }),
-        );
-
-        expect(updated.publicKeyId).toEqual(created.publicKeyId);
-        expect(updated.callerReference).toEqual(created.callerReference);
-
-        // Control-plane reads are eventually consistent — poll until the
-        // update is visible, then assert.
-        const after = yield* cloudfront
-          .getPublicKey({ Id: updated.publicKeyId })
-          .pipe(
-            Effect.repeat({
-              schedule: Schedule.fixed("2 seconds"),
-              until: (r) => r.PublicKey?.PublicKeyConfig?.Comment === "updated",
-              times: 15,
-            }),
-          );
-        expect(after.PublicKey?.PublicKeyConfig?.Comment).toEqual("updated");
-        // The Redacted-wrapped key reached the wire as the plain PEM.
-        expect(after.PublicKey?.PublicKeyConfig?.EncodedKey?.trim()).toEqual(
-          TEST_PUBLIC_KEY.trim(),
-        );
-
-        yield* stack.destroy();
-        yield* assertPublicKeyDeleted(updated.publicKeyId);
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider(
-    "list enumerates the deployed public key",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* PublicKey("ListResource", {
-              encodedKey: TEST_PUBLIC_KEY,
-              comment: "list test",
-            });
-          }),
-        );
-
-        const provider = yield* Provider.findProvider(PublicKey);
-        const all = yield* provider.list();
-
-        expect(all.some((x) => x.publicKeyId === deployed.publicKeyId)).toBe(
-          true,
-        );
-
-        yield* stack.destroy();
-        yield* assertPublicKeyDeleted(deployed.publicKeyId);
-      }),
-    { timeout: 300_000 },
-  );
-
-  test.provider(
-    "recovers a wedged creating-state row that lost its Output-valued encodedKey (#736)",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const deployKey = () =>
-          stack.deploy(
+          const created = yield* stack.deploy(
             Effect.gen(function* () {
-              return yield* PublicKey("WedgedKey", {
+              return yield* PublicKey("SignedUrlKey", {
                 encodedKey: TEST_PUBLIC_KEY,
-                comment: "wedged recovery test",
+                comment: "initial",
               });
             }),
           );
 
-        const created = yield* deployKey();
-
-        // Rewrite the persisted row into the wedged shape an interrupted
-        // deploy leaves behind: `creating`, no attributes, and the
-        // Output-valued `encodedKey` lost in the round-trip (#736).
-        const state = yield* yield* State;
-        const stage = stack.stage;
-        const fqns = yield* state.list({ stack: stack.name, stage });
-        const rows = yield* Effect.forEach(fqns, (fqn) =>
-          state
-            .get({ stack: stack.name, stage, fqn })
-            .pipe(Effect.map((row) => ({ fqn, row }))),
-        );
-        const wedged = rows.find(
-          (r): r is { fqn: string; row: ResourceState } =>
-            isResourceState(r.row) &&
-            r.row.resourceType === "AWS.CloudFront.PublicKey",
-        );
-        if (!wedged) {
-          return yield* Effect.die(
-            new Error(
-              "no AWS.CloudFront.PublicKey state row found after deploy",
-            ),
-          );
-        }
-        // Delete the public key out-of-band FIRST — while the state row is
-        // still intact — so the recovery `read` misses and the engine falls
-        // through to `diff` with the junk olds. Ordering matters for
-        // orphan-safety: CloudFront assigns the key Id (no user-controlled
-        // name), so if this test were killed after wedging the state row
-        // (attr: undefined) but before this delete, the ensuring
-        // stack.destroy could no longer identify the live key and it would
-        // orphan forever. Deleting before the state rewrite means every
-        // interruption point leaves either an intact row (destroy reclaims
-        // it) or an already-deleted key.
-        const current = yield* cloudfront.getPublicKey({
-          Id: created.publicKeyId,
-        });
-        yield* cloudfront
-          .deletePublicKey({
+          const initial = yield* cloudfront.getPublicKey({
             Id: created.publicKeyId,
-            IfMatch: current.ETag,
-          })
-          .pipe(Effect.catchTag("NoSuchPublicKey", () => Effect.void));
-        yield* assertPublicKeyDeleted(created.publicKeyId);
+          });
+          expect(initial.PublicKey?.Id).toEqual(created.publicKeyId);
+          expect(initial.PublicKey?.PublicKeyConfig?.Comment).toEqual(
+            "initial",
+          );
+          // CloudFront normalizes the stored key (trailing newline stripped).
+          expect(
+            initial.PublicKey?.PublicKeyConfig?.EncodedKey?.trim(),
+          ).toEqual(TEST_PUBLIC_KEY.trim());
 
-        // Now rewrite the persisted row into the wedged shape.
-        yield* state.set({
-          stack: stack.name,
-          stage,
-          fqn: wedged.fqn,
-          value: {
-            ...wedged.row,
-            status: "creating",
-            attr: undefined,
-            props: {
-              ...wedged.row.props,
-              encodedKey: undefined,
+          // Update with the SAME key wrapped in Redacted — the provider's
+          // `extractValue` must unwrap it so diff sees no key change (update in
+          // place, not replacement) and the wire value round-trips unredacted.
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* PublicKey("SignedUrlKey", {
+                encodedKey: Redacted.make(TEST_PUBLIC_KEY),
+                comment: "updated",
+              });
+            }),
+          );
+
+          expect(updated.publicKeyId).toEqual(created.publicKeyId);
+          expect(updated.callerReference).toEqual(created.callerReference);
+
+          // Control-plane reads are eventually consistent — poll until the
+          // update is visible, then assert.
+          const after = yield* cloudfront
+            .getPublicKey({ Id: updated.publicKeyId })
+            .pipe(
+              Effect.repeat({
+                schedule: Schedule.fixed("2 seconds"),
+                until: (r) =>
+                  r.PublicKey?.PublicKeyConfig?.Comment === "updated",
+                times: 15,
+              }),
+            );
+          expect(after.PublicKey?.PublicKeyConfig?.Comment).toEqual("updated");
+          // The Redacted-wrapped key reached the wire as the plain PEM.
+          expect(after.PublicKey?.PublicKeyConfig?.EncodedKey?.trim()).toEqual(
+            TEST_PUBLIC_KEY.trim(),
+          );
+
+          yield* stack.destroy();
+          yield* assertPublicKeyDeleted(updated.publicKeyId);
+        }),
+      { timeout: 300_000 },
+    );
+
+    test.provider(
+      "list enumerates the deployed public key",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* PublicKey("ListResource", {
+                encodedKey: TEST_PUBLIC_KEY,
+                comment: "list test",
+              });
+            }),
+          );
+
+          const provider = yield* Provider.findProvider(PublicKey);
+          const all = yield* provider.list();
+
+          expect(all.some((x) => x.publicKeyId === deployed.publicKeyId)).toBe(
+            true,
+          );
+
+          yield* stack.destroy();
+          yield* assertPublicKeyDeleted(deployed.publicKeyId);
+        }),
+      { timeout: 300_000 },
+    );
+
+    test.provider(
+      "recovers a wedged creating-state row that lost its Output-valued encodedKey (#736)",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const deployKey = () =>
+            stack.deploy(
+              Effect.gen(function* () {
+                return yield* PublicKey("WedgedKey", {
+                  encodedKey: TEST_PUBLIC_KEY,
+                  comment: "wedged recovery test",
+                });
+              }),
+            );
+
+          const created = yield* deployKey();
+
+          // Rewrite the persisted row into the wedged shape an interrupted
+          // deploy leaves behind: `creating`, no attributes, and the
+          // Output-valued `encodedKey` lost in the round-trip (#736).
+          const state = yield* yield* State;
+          const stage = stack.stage;
+          const fqns = yield* state.list({ stack: stack.name, stage });
+          const rows = yield* Effect.forEach(fqns, (fqn) =>
+            state
+              .get({ stack: stack.name, stage, fqn })
+              .pipe(Effect.map((row) => ({ fqn, row }))),
+          );
+          const wedged = rows.find(
+            (r): r is { fqn: string; row: ResourceState } =>
+              isResourceState(r.row) &&
+              r.row.resourceType === "AWS.CloudFront.PublicKey",
+          );
+          if (!wedged) {
+            return yield* Effect.die(
+              new Error(
+                "no AWS.CloudFront.PublicKey state row found after deploy",
+              ),
+            );
+          }
+          // Delete the public key out-of-band FIRST — while the state row is
+          // still intact — so the recovery `read` misses and the engine falls
+          // through to `diff` with the junk olds. Ordering matters for
+          // orphan-safety: CloudFront assigns the key Id (no user-controlled
+          // name), so if this test were killed after wedging the state row
+          // (attr: undefined) but before this delete, the ensuring
+          // stack.destroy could no longer identify the live key and it would
+          // orphan forever. Deleting before the state rewrite means every
+          // interruption point leaves either an intact row (destroy reclaims
+          // it) or an already-deleted key.
+          const current = yield* cloudfront.getPublicKey({
+            Id: created.publicKeyId,
+          });
+          yield* cloudfront
+            .deletePublicKey({
+              Id: created.publicKeyId,
+              IfMatch: current.ETag,
+            })
+            .pipe(Effect.catchTag("NoSuchPublicKey", () => Effect.void));
+          yield* assertPublicKeyDeleted(created.publicKeyId);
+
+          // Now rewrite the persisted row into the wedged shape.
+          yield* state.set({
+            stack: stack.name,
+            stage,
+            fqn: wedged.fqn,
+            value: {
+              ...wedged.row,
+              status: "creating",
+              attr: undefined,
+              props: {
+                ...wedged.row.props,
+                encodedKey: undefined,
+              },
             },
-          },
-        });
+          });
 
-        // Before the fix this crashed in `diff`: `extractValue(undefined)`
-        // called `Redacted.value(undefined)` on the lost `olds.encodedKey`.
-        // After the fix, diff skips the comparison and the engine recreates
-        // the key cleanly.
-        const recovered = yield* deployKey();
-        expect(recovered.publicKeyId).not.toEqual(created.publicKeyId);
+          // Before the fix this crashed in `diff`: `extractValue(undefined)`
+          // called `Redacted.value(undefined)` on the lost `olds.encodedKey`.
+          // After the fix, diff skips the comparison and the engine recreates
+          // the key cleanly.
+          const recovered = yield* deployKey();
+          expect(recovered.publicKeyId).not.toEqual(created.publicKeyId);
 
-        const after = yield* cloudfront.getPublicKey({
-          Id: recovered.publicKeyId,
-        });
-        expect(after.PublicKey?.Id).toEqual(recovered.publicKeyId);
-        // CloudFront normalizes the stored key (trailing newline stripped).
-        expect(after.PublicKey?.PublicKeyConfig?.EncodedKey?.trim()).toEqual(
-          TEST_PUBLIC_KEY.trim(),
-        );
+          const after = yield* cloudfront.getPublicKey({
+            Id: recovered.publicKeyId,
+          });
+          expect(after.PublicKey?.Id).toEqual(recovered.publicKeyId);
+          // CloudFront normalizes the stored key (trailing newline stripped).
+          expect(after.PublicKey?.PublicKeyConfig?.EncodedKey?.trim()).toEqual(
+            TEST_PUBLIC_KEY.trim(),
+          );
 
-        yield* stack.destroy();
-        yield* assertPublicKeyDeleted(recovered.publicKeyId);
-      }),
-    { timeout: 240_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertPublicKeyDeleted(recovered.publicKeyId);
+        }),
+      { timeout: 240_000 },
+    );
+  },
+);
 
 const assertPublicKeyDeleted = (id: string) =>
   cloudfront.getPublicKey({ Id: id }).pipe(

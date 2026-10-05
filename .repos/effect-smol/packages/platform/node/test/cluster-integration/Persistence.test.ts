@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Clock, DateTime, Effect, Exit, Fiber, Latch, Option, PrimaryKey, Schema, Stream } from "effect"
-import { ClusterSchema, DeliverAt, Entity, EntityId, ShardId } from "effect/unstable/cluster"
-import { Rpc, RpcSchema } from "effect/unstable/rpc"
+import { ClusterSchema, DeliverAt, Entity, EntityId, ShardId } from "effect/cluster"
+import { Rpc, RpcSchema } from "effect/rpc"
 import { type Backend, make } from "./harness.ts"
 
 class KeyedPayload extends Schema.Class<KeyedPayload>("ClusterPersistenceKeyedPayload")({

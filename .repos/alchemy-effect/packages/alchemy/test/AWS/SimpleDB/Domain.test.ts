@@ -67,7 +67,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertDomainDeleted(domain.domainName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:simpledb", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -101,7 +101,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertDomainDeleted(second.domainName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:simpledb", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -113,5 +113,5 @@ test.provider(
         .pipe(Effect.flip);
       expect(error._tag).toBe("NoSuchDomain");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:simpledb", "live"], timeout: 60_000 },
 );

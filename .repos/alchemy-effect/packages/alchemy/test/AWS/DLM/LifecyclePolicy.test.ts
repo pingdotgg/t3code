@@ -161,7 +161,10 @@ test.provider(
       yield* assertPolicyDeleted(policy.policyId);
       yield* assertRoleDeleted(policy.roleName!);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dlm", "provider:aws:iam", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -236,5 +239,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertPolicyDeleted(second.policy.policyId);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dlm", "provider:aws:iam", "live"],
+    timeout: 180_000,
+  },
 );

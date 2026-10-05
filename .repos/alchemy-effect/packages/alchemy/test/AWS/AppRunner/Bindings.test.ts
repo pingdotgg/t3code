@@ -4,8 +4,8 @@ import * as apprunner from "@distilled.cloud/aws/apprunner";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import AppRunnerTestFunctionLive, {
   AppRunnerTestFunction,
 } from "./fixtures/handler";
@@ -208,5 +208,13 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
     }),
   // create (~3-5 min) + pause (~1-2 min) + resume (~1-2 min) + delete
   // (~2-3 min), one sequential test.
-  { timeout: 1_200_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apprunner",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 1_200_000,
+  },
 );

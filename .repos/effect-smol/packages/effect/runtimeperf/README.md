@@ -42,6 +42,7 @@ pnpm runtimeperf object-32-valid
 pnpm runtimeperf schema/object-32-valid-effect
 pnpm runtimeperf --family arrays
 pnpm runtimeperf --implementation zod4
+pnpm runtimeperf --implementation zod4-compiled
 ```
 
 Override measurement settings:
@@ -54,6 +55,13 @@ Compare Effect `HEAD` with the working tree:
 
 ```sh
 pnpm runtimeperf-compare schema/object-32-valid-effect
+```
+
+Measure excess-property checking and symbol enumeration in interpreted and JIT parsers:
+
+```sh
+pnpm runtimeperf-compare schema-excess-properties
+pnpm runtimeperf-compare schema-excess-properties --family jit
 ```
 
 Compare explicit refs:
@@ -86,6 +94,13 @@ adapters, recursion and cold paths. The `schema-benchmarks` suite contains the
 complete timing matrices exposed by the upstream Effect, Valibot and Zod
 adapters.
 
+The `moltar-parse-safe` and `moltar-assert-loose` suites preserve Moltar's
+object shape. Their valid cases reproduce the upstream timed operation; the
+extra-property and invalid cases are Effect extensions. They compare
+interpreted Effect, Effect JIT and AOT, Valibot, ordinary and jitless Zod where
+applicable, and Zod `compile`, using the dependency versions recorded in each
+report.
+
 The `arbitrary` suite compares the native public API with direct fast-check v4 arbitraries in separate processes. It
 measures derivation through the first recursive sample, steady-state recursive
 sampling, optional-Struct sampling, fixed-length string generation to exercise constraint pushdown,
@@ -103,6 +118,11 @@ end-to-end public API comparison, but the work is not identical: native replay
 verifies the original failure and its full shrink path, while fast-check can
 start directly from its recorded path.
 
+Array cases cover passing checks and shrinking a four-command sequence while preserving an ordered pair. The latter
+starts from the same explicit sequence in both engines, using a fixed seed for native generation and an example for
+fast-check. Base/head validation preserves the failure without requiring identical shrunk outputs, so its timing also
+reflects changes in how much of the shrink tree is explored. The runtime regression tests assert the smaller result.
+
 The regular-expression fixtures validate the same language, and both fixed-seed warm fixtures must reach multiple
 lengths and every alternative family. Their exact distributions remain implementation-defined, so cross-library
 timings are diagnostic while base/head comparisons protect the cost of each implementation's established behavior.
@@ -118,13 +138,18 @@ Zod parsing cases import `zod/v4` and call `safeParse` with `{ jitless: true }`;
 its Standard Schema and codec cases use their native APIs. Valibot uses the
 corresponding `is`, `safeParse` and Standard Schema APIs. The focused Effect
 adapter family measures the overhead of public APIs that wrap parser issues.
+The compiler comparison calls `z.compile(schema, { strict: true })` and uses
+Zod's `validate` API for boolean checks. Ten representative scenarios also run
+against equivalent Valibot schemas using `parse` and `is`.
 
 ## Measurement model
 
-Each worker validates the fixture before and after measuring. Calibration finds
-a batch large enough for the configured target duration. Each implementation
-uses its own calibrated batch and executes in a separate process, with rotating
-order within the scenario.
+Each worker validates the fixture before and after measuring. The Effect
+fixture calibrates one batch size that every implementation in the same
+scenario uses. This keeps the enclosing loop identical across implementations;
+V8 can otherwise optimize sub-10 ns callbacks differently at different batch
+sizes. Each implementation executes in a separate process, with rotating order
+within the scenario.
 
 Tinybench measures one synchronous batched task. The primary process result is:
 

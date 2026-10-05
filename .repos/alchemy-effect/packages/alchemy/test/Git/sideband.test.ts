@@ -51,31 +51,35 @@ const deframe = (framed: Uint8Array) => {
   return { data: out, frames: pieces.map((p) => p.length) };
 };
 
-describe("sidebandFrame / sidebandFrameAll", () => {
-  test("sidebandFrame is header + data in one buffer", () => {
-    const data = bytes(10);
-    const frame = sidebandFrame(1, data);
-    expect(frame.length).toBe(15);
-    expect(new TextDecoder().decode(frame.subarray(0, 4))).toBe("000f");
-    expect(frame[4]).toBe(1);
-    expect(Array.from(frame.subarray(5))).toEqual(Array.from(data));
-  });
+describe(
+  "sidebandFrame / sidebandFrameAll",
+  { tags: ["unit", "local"] },
+  () => {
+    test("sidebandFrame is header + data in one buffer", () => {
+      const data = bytes(10);
+      const frame = sidebandFrame(1, data);
+      expect(frame.length).toBe(15);
+      expect(new TextDecoder().decode(frame.subarray(0, 4))).toBe("000f");
+      expect(frame[4]).toBe(1);
+      expect(Array.from(frame.subarray(5))).toEqual(Array.from(data));
+    });
 
-  test("sidebandFrameAll cuts exactly at SIDEBAND_DATA_MAX and round-trips", () => {
-    const data = bytes(SIDEBAND_DATA_MAX * 2 + 123);
-    const framed = sidebandFrameAll(1, data);
-    expect(framed.length).toBe(sidebandFramedLength(data.length));
-    const back = deframe(framed);
-    expect(back.frames).toEqual([SIDEBAND_DATA_MAX, SIDEBAND_DATA_MAX, 123]);
-    expect(Array.from(back.data)).toEqual(Array.from(data));
-  });
+    test("sidebandFrameAll cuts exactly at SIDEBAND_DATA_MAX and round-trips", () => {
+      const data = bytes(SIDEBAND_DATA_MAX * 2 + 123);
+      const framed = sidebandFrameAll(1, data);
+      expect(framed.length).toBe(sidebandFramedLength(data.length));
+      const back = deframe(framed);
+      expect(back.frames).toEqual([SIDEBAND_DATA_MAX, SIDEBAND_DATA_MAX, 123]);
+      expect(Array.from(back.data)).toEqual(Array.from(data));
+    });
 
-  test("sidebandFrameAll of an empty chunk is empty", () => {
-    expect(sidebandFrameAll(1, new Uint8Array(0)).length).toBe(0);
-  });
-});
+    test("sidebandFrameAll of an empty chunk is empty", () => {
+      expect(sidebandFrameAll(1, new Uint8Array(0)).length).toBe(0);
+    });
+  },
+);
 
-describe("sidebandRechunk", () => {
+describe("sidebandRechunk", { tags: ["unit", "local"] }, () => {
   const run = (chunks: ReadonlyArray<Uint8Array>) =>
     Effect.runPromise(
       Stream.fromIterable(chunks).pipe(

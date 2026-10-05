@@ -48,6 +48,40 @@ export declare function merged(value: string): string
 `
 
 describe("canonical snapshot", () => {
+  it.effect("preserves stability from both current and historical JSDoc tags", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const snapshotter = yield* Snapshotter
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "api-diff-snapshot-" })
+      yield* writeFixturePackage(root, {
+        "Stability.d.ts": `/** @stability unstable */
+export declare const current: string
+/** @stability experimental */
+export declare const experimental: string
+/** @unstable */
+export declare const legacy: string
+/** A stable declaration. */
+export declare const stable: string
+`
+      })
+      const snapshot = yield* snapshotter.extract({
+        repoRoot: root,
+        ref: "fixture",
+        sha: "0000000000000000000000000000000000000000",
+        modules: ["@fixture/sample/Stability"]
+      })
+      const stability = Object.fromEntries(snapshot.entities.map((entity) => [
+        entity.path.join("."),
+        entity.documentation.stability
+      ]))
+      assert.deepStrictEqual(stability, {
+        current: "unstable",
+        experimental: "experimental",
+        legacy: "unstable",
+        stable: "stable"
+      })
+    }).pipe(Effect.provide(MainLayer)))
+
   it.effect("extracts declarations, overloads, namespaces, re-exports, and canonical types deterministically", () =>
     Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem

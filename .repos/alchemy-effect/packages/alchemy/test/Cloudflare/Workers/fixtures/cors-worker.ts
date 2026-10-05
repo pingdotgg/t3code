@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Effect from "effect/Effect";
-import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Plain Cloudflare.Worker whose `fetch` is piped through

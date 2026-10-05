@@ -171,5 +171,8 @@ test.provider(
       const after = yield* guardduty.listDetectors({});
       expect(after.DetectorIds ?? []).toHaveLength(0);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:guardduty", "provider:aws:s3", "live"],
+    timeout: 240_000,
+  },
 );

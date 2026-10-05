@@ -5,8 +5,9 @@
  * find files annotated with `@barrel` comments and rewrite the generated export
  * section beneath each annotation. The generator resolves matching modules
  * relative to each annotated barrel file, copies each module's top-level
- * `@since` tag into a minimal JSDoc block, and normalizes export paths so the
- * produced TypeScript is stable across platforms.
+ * `@since` tag into a minimal JSDoc block, and copies `@stability` unless the module
+ * lives under `internal/` or its header is `@internal`. Export paths are normalized
+ * so the produced TypeScript is stable across platforms.
  *
  * @since 4.0.0
  */
@@ -65,7 +66,12 @@ const parseAnnotation = (line: string): string | undefined => {
   return match[1] ?? "*.ts"
 }
 
-const extractModuleSince = (file: string, content: string): Effect.Effect<string, BarrelCodegenError> => {
+interface ModuleMetadata {
+  readonly since: string
+  readonly stability: "unstable" | "experimental" | undefined
+}
+
+const extractModuleMetadata = (file: string, content: string): Effect.Effect<ModuleMetadata, BarrelCodegenError> => {
   const block = content.match(/^\s*(\/\*\*[\s\S]*?\*\/)/)?.[1]
   if (block === undefined) {
     return Effect.fail(
@@ -95,12 +101,23 @@ const extractModuleSince = (file: string, content: string): Effect.Effect<string
       })
     )
   }
-  return Effect.succeed(since)
+  return Effect.succeed({
+    since,
+    stability: isInternalModule(file, block) ?
+      undefined :
+      /^\s*\*\s*@stability\s+(unstable|experimental)\s*$/m.exec(block)?.[1] as
+        | "unstable"
+        | "experimental"
+        | undefined
+  })
 }
 
-const renderExportJSDoc = (since: string): string =>
+const isInternalModule = (file: string, block: string): boolean =>
+  file.split(/[/\\]/).includes("internal") || /^\s*\*\s*@internal\s*$/m.test(block)
+
+const renderExportJSDoc = ({ since, stability }: ModuleMetadata): string =>
   `/**
- * @since ${since}
+${stability ? ` * @stability ${stability}\n` : ""} * @since ${since}
  */`
 
 /**
@@ -163,9 +180,9 @@ export const layer: Layer.Layer<BarrelGenerator, never, FileSystem.FileSystem | 
       const fullPath = path.join(directory, file)
       const posixPath = toPosix(file)
       const content = yield* fs.readFileString(fullPath)
-      const since = yield* extractModuleSince(fullPath, content)
+      const metadata = yield* extractModuleMetadata(fullPath, content)
       const moduleName = fileToModuleName(posixPath)
-      return `${renderExportJSDoc(since)}\nexport * as ${moduleName} from "./${posixPath}"`
+      return `${renderExportJSDoc(metadata)}\nexport * as ${moduleName} from "./${posixPath}"`
     })
 
     const discoverFile = Effect.fn("discoverFile")(function*(file: string) {

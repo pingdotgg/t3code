@@ -11,7 +11,7 @@ import { MinimumLogLevel } from "effect/References";
  * the place full Debug detail lives. `--log-level debug` has to lower that
  * floor for the run, or the flag produces zero terminal output (#1231).
  */
-describe("consoleLogFloor", () => {
+describe("consoleLogFloor", { tags: ["unit", "local"] }, () => {
   it("defaults to Info", () => {
     expect(consoleLogFloor(["profile", "list"])).toBe("Info");
   });
@@ -29,7 +29,7 @@ describe("consoleLogFloor", () => {
   });
 });
 
-describe("makeConsoleLogger", () => {
+describe("makeConsoleLogger", { tags: ["unit", "local"] }, () => {
   it.effect("forwards only records at or above the floor", () =>
     Effect.gen(function* () {
       const seen: Array<{ level: string; message: unknown }> = [];

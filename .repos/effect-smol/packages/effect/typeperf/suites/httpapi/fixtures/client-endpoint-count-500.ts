@@ -1,7 +1,7 @@
 // Measures HttpApiClient.endpoint selection from one type-only group with 500 same-shaped endpoints.
 import { Effect, Schema } from "effect"
-import { HttpClient } from "effect/unstable/http"
-import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpClient } from "effect/http"
+import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Api } from "./_endpoint-selection-types.ts"
 
 Schema.String

@@ -1,14 +1,7 @@
 import { assert, describe, expectTypeOf, it } from "@effect/vitest"
 import { type Cause, Deferred, Effect, Layer, Schema } from "effect"
-import { AsyncResult, Atom, AtomRegistry, AtomRpc, Hydration } from "effect/unstable/reactivity"
-import {
-  Rpc,
-  RpcClient,
-  type RpcClientError,
-  RpcGroup,
-  RpcMiddleware,
-  type RpcSerialization
-} from "effect/unstable/rpc"
+import { AsyncResult, Atom, AtomRegistry, AtomRpc, Hydration } from "effect/reactivity"
+import { Rpc, RpcClient, type RpcClientError, RpcGroup, RpcMiddleware, type RpcSerialization } from "effect/rpc"
 
 const Group = RpcGroup.make(
   Rpc.make("getUser", {

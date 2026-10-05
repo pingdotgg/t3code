@@ -35,9 +35,9 @@ import { Queue } from "@/AWS/SQS";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { spawnSync } from "node:child_process";
 
 const FLOCI_ENDPOINT = "http://localhost:4566";
@@ -201,5 +201,14 @@ test.provider.skipIf(!dockerAvailable)(
       const getBucketAfter = yield* rawS3GetBucket(outputs.bucket.bucketName);
       expect(getBucketAfter.status).toBe(404); // NoSuchBucket
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:dynamodb",
+      "provider:aws:s3",
+      "provider:aws:sqs",
+      "local",
+    ],
+    timeout: 240_000,
+  },
 );

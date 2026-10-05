@@ -22,18 +22,21 @@ const { test } = Test.make({ providers: AWS.providers() });
 // single AZ — so there is no reusable VPC to carve a multi-AZ group from. The
 // deploy-backed assertion is gated below behind AWS_TEST_RDS_DBSUBNETGROUP=1 for
 // accounts that have multi-AZ subnets available.
-test.provider("list returns well-typed DBSubnetGroup attributes", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(DBSubnetGroup);
-    const all = yield* provider.list();
+test.provider(
+  "list returns well-typed DBSubnetGroup attributes",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(DBSubnetGroup);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const g of all) {
-      expect(typeof g.dbSubnetGroupName).toBe("string");
-      expect(Array.isArray(g.subnetIds)).toBe(true);
-      expect(typeof g.tags).toBe("object");
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const g of all) {
+        expect(typeof g.dbSubnetGroupName).toBe("string");
+        expect(Array.isArray(g.subnetIds)).toBe(true);
+        expect(typeof g.tags).toBe("object");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
 // Deploy-backed list test. Gated behind AWS_TEST_RDS_DBSUBNETGROUP=1 because a
@@ -113,4 +116,5 @@ test.provider.skipIf(!process.env.AWS_TEST_RDS_DBSUBNETGROUP)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:ec2", "provider:aws:rds", "live"] },
 );

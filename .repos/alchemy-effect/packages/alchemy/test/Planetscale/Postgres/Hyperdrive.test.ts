@@ -7,9 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import HyperdriveWorker from "./fixtures/hyperdrive-worker.ts";
 import type { Widget } from "./fixtures/schema.ts";
 import { Hyperdrive, PlanetscaleDb } from "./fixtures/Stack.ts";
@@ -94,94 +94,107 @@ const expectWidgetRoundTrip = (baseUrl: string, widget: Widget) =>
     expect(finalBody.widgets.some((w) => w.id === widget.id)).toBe(false);
   });
 
-describe.skipIf(!process.env.PLANETSCALE_TEST).sequential("Hyperdrive", () => {
-  /**
-   * End-to-end: deploy a {@link Planetscale.PostgresDatabase} + branch +
-   * role, point a {@link Cloudflare.Hyperdrive.Connection} at the role's origin, and
-   * exercise the Drizzle Effect client over real Postgres via a Worker.
-   *
-   * Validates that:
-   *   - migrations applied from the fixtures dir produce the expected table
-   *   - `Cloudflare.Hyperdrive.Connect(...) + Drizzle.Postgres(...)` produces
-   *     a working Effect-native client at runtime
-   *   - INSERT / SELECT / DELETE round-trip through Hyperdrive to Planetscale
-   */
-  test.provider(
-    "PostgresBranch + Hyperdrive + Drizzle round-trips through a Worker",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.skipIf(!process.env.PLANETSCALE_TEST).sequential(
+  "Hyperdrive",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:planetscale",
+      "provider:planetscale:postgres",
+      "live",
+    ],
+  },
+  () => {
+    /**
+     * End-to-end: deploy a {@link Planetscale.PostgresDatabase} + branch +
+     * role, point a {@link Cloudflare.Hyperdrive.Connection} at the role's origin, and
+     * exercise the Drizzle Effect client over real Postgres via a Worker.
+     *
+     * Validates that:
+     *   - migrations applied from the fixtures dir produce the expected table
+     *   - `Cloudflare.Hyperdrive.Connect(...) + Drizzle.Postgres(...)` produces
+     *     a working Effect-native client at runtime
+     *   - INSERT / SELECT / DELETE round-trip through Hyperdrive to Planetscale
+     */
+    test.provider(
+      "PostgresBranch + Hyperdrive + Drizzle round-trips through a Worker",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const { hyperdrive, worker } = yield* stack.deploy(
-          Effect.gen(function* () {
-            yield* PlanetscaleDb;
-            const hyperdrive = yield* Hyperdrive;
-            const worker = yield* HyperdriveWorker;
-            return { hyperdrive, worker };
-          }),
-        );
+          const { hyperdrive, worker } = yield* stack.deploy(
+            Effect.gen(function* () {
+              yield* PlanetscaleDb;
+              const hyperdrive = yield* Hyperdrive;
+              const worker = yield* HyperdriveWorker;
+              return { hyperdrive, worker };
+            }),
+          );
 
-        expect(worker.url).toBeTypeOf("string");
-        expect(hyperdrive.origin).toMatchObject({ port: 5432 });
-        expect(hyperdrive.dev).toMatchObject({ port: 6432 });
-        const baseUrl = (worker.url as string).replace(/\/+$/, "");
-        yield* expectWidgetRoundTrip(baseUrl, { id: 1, name: "alpha" });
+          expect(worker.url).toBeTypeOf("string");
+          expect(hyperdrive.origin).toMatchObject({ port: 5432 });
+          expect(hyperdrive.dev).toMatchObject({ port: 6432 });
+          const baseUrl = (worker.url as string).replace(/\/+$/, "");
+          yield* expectWidgetRoundTrip(baseUrl, { id: 1, name: "alpha" });
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 600_000 },
-  );
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 600_000 },
+    );
 
-  /**
-   * End-to-end: deploy the same fixture in local-dev mode. Hyperdrive is
-   * bypassed in local dev, so `role.pooledOrigin` must provide a working
-   * direct connection for the Worker runtime binding.
-   */
-  devTest.provider(
-    "PostgresRole pooledOrigin works as the Hyperdrive dev origin",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+    /**
+     * End-to-end: deploy the same fixture in local-dev mode. Hyperdrive is
+     * bypassed in local dev, so `role.pooledOrigin` must provide a working
+     * direct connection for the Worker runtime binding.
+     */
+    devTest.provider(
+      "PostgresRole pooledOrigin works as the Hyperdrive dev origin",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const { hyperdrive, role, worker } = yield* stack.deploy(
-          Effect.gen(function* () {
-            const { role } = yield* PlanetscaleDb;
-            const hyperdrive = yield* Hyperdrive;
-            const worker = yield* HyperdriveWorker;
-            return { hyperdrive, role, worker };
-          }),
-        );
+          const { hyperdrive, role, worker } = yield* stack.deploy(
+            Effect.gen(function* () {
+              const { role } = yield* PlanetscaleDb;
+              const hyperdrive = yield* Hyperdrive;
+              const worker = yield* HyperdriveWorker;
+              return { hyperdrive, role, worker };
+            }),
+          );
 
-        expect(worker.url).toBeTypeOf("string");
-        expect(hyperdrive.origin).toMatchObject({ port: 5432 });
-        expect(hyperdrive.dev).toMatchObject({
-          host: role.pooledOrigin.host,
-          port: 6432,
-          database: role.pooledOrigin.database,
-          user: role.pooledOrigin.user,
-        });
+          expect(worker.url).toBeTypeOf("string");
+          expect(hyperdrive.origin).toMatchObject({ port: 5432 });
+          expect(hyperdrive.dev).toMatchObject({
+            host: role.pooledOrigin.host,
+            port: 6432,
+            database: role.pooledOrigin.database,
+            user: role.pooledOrigin.user,
+          });
 
-        const baseUrl = (worker.url as string).replace(/\/+$/, "");
-        const metadataRes = yield* fetchReady(
-          HttpClient.get(`${baseUrl}/hyperdrive`),
-        );
-        const metadata = (yield* metadataRes.json) as {
-          host: string;
-          port: number;
-          database: string;
-          user: string;
-        };
-        expect(metadata).toMatchObject({
-          host: role.pooledOrigin.host,
-          port: 6432,
-          database: role.pooledOrigin.database,
-          user: role.pooledOrigin.user,
-        });
+          const baseUrl = (worker.url as string).replace(/\/+$/, "");
+          const metadataRes = yield* fetchReady(
+            HttpClient.get(`${baseUrl}/hyperdrive`),
+          );
+          const metadata = (yield* metadataRes.json) as {
+            host: string;
+            port: number;
+            database: string;
+            user: string;
+          };
+          expect(metadata).toMatchObject({
+            host: role.pooledOrigin.host,
+            port: 6432,
+            database: role.pooledOrigin.database,
+            user: role.pooledOrigin.user,
+          });
 
-        yield* expectWidgetRoundTrip(baseUrl, { id: 2, name: "beta" });
+          yield* expectWidgetRoundTrip(baseUrl, { id: 2, name: "beta" });
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 600_000 },
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 600_000 },
+    );
+  },
+);

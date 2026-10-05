@@ -102,6 +102,11 @@ export type Redis = Resource<
     orgSlug: string | undefined;
     /** Whether eviction is enabled. */
     eviction: boolean | undefined;
+    /**
+     * Redacted Upstash connection URL. Bindings transport it to the
+     * runtime automatically. Service attachments also set `REDIS_URL`.
+     */
+    url: Redacted.Redacted<string> | undefined;
   },
   never,
   Providers
@@ -110,9 +115,9 @@ export type Redis = Resource<
 /**
  * Managed Upstash Redis in a Fly org. Bind {@link ReadRedis},
  * {@link WriteRedis}, or {@link ReadWriteRedis} on a {@link Service}.
- * Alchemy writes `REDIS_URL` as an App secret and the runtime client
- * uses it internally. Redis is not reachable from CI — drive it over
- * HTTP.
+ * Alchemy transports the redacted `url` Output to the runtime client
+ * and also writes `REDIS_URL` as an App secret for compatibility.
+ * Redis is not reachable from CI — drive it over HTTP.
  *
  * @see https://fly.io/docs/upstash/redis/
  *
@@ -158,7 +163,7 @@ export type Redis = Resource<
  *
  * **Example:** Read and write
  * ```typescript
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * const Cache = Fly.Redis("Cache");
  *
@@ -216,6 +221,7 @@ export type Redis = Resource<
  * :::
  *
  * @resource
+ * @product Redis
  */
 export const Redis = Resource<Redis>("Fly.Redis");
 
@@ -331,6 +337,15 @@ const resolveName = (id: string, name: string | undefined, existing?: string) =>
     return yield* createFlyAppName(id);
   });
 
+const urlOf = (
+  row: ObservedRedis,
+  previous?: Redacted.Redacted<string>,
+): Redacted.Redacted<string> | undefined => {
+  const raw = unwrapSensitive(row.publicUrl);
+  if (raw !== undefined && raw.length > 0) return Redacted.make(raw);
+  return previous;
+};
+
 const toAttrs = (
   row: ObservedRedis,
   fallback: {
@@ -338,6 +353,7 @@ const toAttrs = (
     primaryRegion: string;
     orgSlug?: string;
     planId?: string;
+    url?: Redacted.Redacted<string>;
   },
 ): Redis["Attributes"] => ({
   redisId: row.id,
@@ -358,6 +374,7 @@ const toAttrs = (
         fallback.orgSlug)
       : fallback.orgSlug,
   eviction: evictionOf(row.options),
+  url: urlOf(row, fallback.url),
 });
 
 export const listRedisAddOns = Effect.fn(function* () {
@@ -549,16 +566,32 @@ const desiredOptions = (
   return options;
 };
 
+class RedisSecretVersionMissing extends Data.TaggedError(
+  "Fly.RedisSecretVersionMissing",
+)<{ appName: string }> {}
+
+const redisSecretVersion = (
+  appName: string,
+  response: machines.AppSecretsUpdateResp | machines.SetAppSecretResponse,
+) => {
+  const version = response.version ?? response.Version;
+  return version !== undefined && Number.isSafeInteger(version) && version >= 0
+    ? Effect.succeed(version)
+    : Effect.fail(new RedisSecretVersionMissing({ appName }));
+};
+
 /**
  * Write `REDIS_URL` onto an App from attached Redis add-on names.
  * Called from {@link Service} reconcile so the secret exists before
- * Machines boot.
+ * Machines boot. Returns the highest accepted secret-version floor, or
+ * `undefined` when no secret was written; this is not a vault snapshot.
  */
 export const attachRedisSecrets = Effect.fn(function* (
   appName: string,
   attached: readonly { name: string; id?: string }[],
 ) {
-  if (appName.length === 0 || attached.length === 0) return;
+  if (appName.length === 0 || attached.length === 0) return undefined;
+  const versions: number[] = [];
   for (const item of attached) {
     const name = item.name;
     const id = item.id;
@@ -581,7 +614,12 @@ export const attachRedisSecrets = Effect.fn(function* (
       }),
       Effect.catchTag("Fly.RedisPending", () => findRedisAddOn({ id, name })),
     );
-    if (row === undefined) continue;
+    if (row === undefined) {
+      return yield* new RedisPending({
+        redisId: id ?? name,
+        status: "missing",
+      });
+    }
     let url = unwrapSensitive(row.publicUrl);
     if ((url === undefined || url.length === 0) && row.id !== undefined) {
       const detail = yield* addons
@@ -591,23 +629,38 @@ export const attachRedisSecrets = Effect.fn(function* (
         );
       url = unwrapSensitive(detail?.publicUrl);
     }
-    if (url === undefined || url.length === 0) continue;
-    const updated = yield* Effect.result(
-      machines.updateSecrets({
-        app_name: appName,
-        values: { [REDIS_URL_ENV]: url },
-      }),
-    );
-    if (Result.isFailure(updated)) {
-      yield* machines
-        .createSecret({
-          app_name: appName,
-          secret_name: REDIS_URL_ENV,
-          value: url,
-        })
-        .pipe(Effect.catchTag("Conflict", () => Effect.void));
+    if (url === undefined || url.length === 0) {
+      return yield* new RedisPending({
+        redisId: row.id ?? id ?? name,
+        status: "credentials missing",
+      });
     }
+    const value = url;
+    const update = machines
+      .updateSecrets({
+        app_name: appName,
+        values: { [REDIS_URL_ENV]: value },
+      })
+      .pipe(
+        Effect.flatMap((response) => redisSecretVersion(appName, response)),
+      );
+    const version = yield* update.pipe(
+      Effect.catchTag("NotFound", () =>
+        machines
+          .createSecret({
+            app_name: appName,
+            secret_name: REDIS_URL_ENV,
+            value,
+          })
+          .pipe(
+            Effect.flatMap((response) => redisSecretVersion(appName, response)),
+            Effect.catchTag("Conflict", () => update),
+          ),
+      ),
+    );
+    versions.push(version);
   }
+  return versions.length > 0 ? Math.max(...versions) : undefined;
 });
 
 export const RedisProvider = () =>
@@ -644,6 +697,7 @@ export const RedisProvider = () =>
         name,
         primaryRegion: olds?.primaryRegion ?? DEFAULT_REDIS_REGION,
         orgSlug: olds?.orgSlug ?? output?.orgSlug,
+        url: output?.url,
       });
       if (output !== undefined) return attrs;
       return isOwnedRedis(found) ? attrs : Unowned(attrs);
@@ -774,13 +828,20 @@ export const RedisProvider = () =>
         }
       }
 
-      const latest =
-        (yield* findRedisAddOn({ id: current.id, name })) ?? current;
+      let latest = (yield* findRedisAddOn({ id: current.id, name })) ?? current;
+      if (
+        unwrapSensitive(latest.publicUrl) === undefined &&
+        latest.id !== undefined
+      ) {
+        const detail = yield* addons.addOn({ id: latest.id });
+        latest = { ...latest, ...detail };
+      }
       return toAttrs(latest, {
         name,
         primaryRegion,
         orgSlug,
         planId: plan.id,
+        url: output?.url,
       });
     }),
 

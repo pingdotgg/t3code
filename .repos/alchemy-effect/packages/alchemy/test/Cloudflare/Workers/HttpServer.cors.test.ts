@@ -1,8 +1,8 @@
 import { makeRequestEffect } from "@/Cloudflare/Workers/HttpServer.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
-import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * In-process pin of #175 / #404: wrapping a plain fetch handler with
@@ -27,33 +27,44 @@ const corsRequest = (method: string, extraHeaders?: Record<string, string>) =>
 const handleCors = (request: Request): Effect.Effect<Response> =>
   makeRequestEffect<never>(request as any, corsHandler);
 
-describe("makeRequestEffect drains HttpMiddleware.cors() pre-response handlers", () => {
-  it.effect("tags GET responses with Access-Control-Allow-Origin", () =>
-    Effect.gen(function* () {
-      const response = yield* handleCors(corsRequest("GET"));
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe("*");
-      expect(yield* Effect.tryPromise(() => response.json())).toEqual({
-        message: "world",
-      });
-    }),
-  );
+describe(
+  "makeRequestEffect drains HttpMiddleware.cors() pre-response handlers",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "local",
+    ],
+  },
+  () => {
+    it.effect("tags GET responses with Access-Control-Allow-Origin", () =>
+      Effect.gen(function* () {
+        const response = yield* handleCors(corsRequest("GET"));
+        expect(response.status).toBe(200);
+        expect(response.headers.get("access-control-allow-origin")).toBe("*");
+        expect(yield* Effect.tryPromise(() => response.json())).toEqual({
+          message: "world",
+        });
+      }),
+    );
 
-  it.effect("tags OPTIONS preflight with Access-Control-Allow-Origin", () =>
-    Effect.gen(function* () {
-      const response = yield* handleCors(
-        corsRequest("OPTIONS", { "Access-Control-Request-Method": "GET" }),
-      );
-      expect(response.status).toBe(204);
-      expect(response.headers.get("access-control-allow-origin")).toBe("*");
-    }),
-  );
+    it.effect("tags OPTIONS preflight with Access-Control-Allow-Origin", () =>
+      Effect.gen(function* () {
+        const response = yield* handleCors(
+          corsRequest("OPTIONS", { "Access-Control-Request-Method": "GET" }),
+        );
+        expect(response.status).toBe(204);
+        expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      }),
+    );
 
-  it.effect("tags POST responses with Access-Control-Allow-Origin", () =>
-    Effect.gen(function* () {
-      const response = yield* handleCors(corsRequest("POST"));
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe("*");
-    }),
-  );
-});
+    it.effect("tags POST responses with Access-Control-Allow-Origin", () =>
+      Effect.gen(function* () {
+        const response = yield* handleCors(corsRequest("POST"));
+        expect(response.status).toBe(200);
+        expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      }),
+    );
+  },
+);

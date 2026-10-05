@@ -79,7 +79,10 @@ test.provider(
 
       yield* expectGone(accountId, key.keyId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:stream", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -101,5 +104,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:stream", "live"],
+    timeout: 120_000,
+  },
 );

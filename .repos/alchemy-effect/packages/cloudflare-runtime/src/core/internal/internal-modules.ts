@@ -41,7 +41,5 @@ export const moduleToWorkerd = (
       return { name: module.name, json: module.content };
     case "PythonModule":
       return { name: module.name, pythonModule: module.content };
-    case "PythonRequirement":
-      return { name: module.name, pythonRequirement: module.content };
   }
 };

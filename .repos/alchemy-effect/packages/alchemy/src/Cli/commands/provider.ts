@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import * as Provider from "../../Alchemist/routes/provider.ts";
 import { CliKit } from "../CliKit/CliKit.ts";

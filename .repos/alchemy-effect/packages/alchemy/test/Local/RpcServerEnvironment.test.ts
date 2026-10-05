@@ -31,7 +31,7 @@ const sampleEnv: RpcServerEnvironment = {
   ...sessionEnv,
 };
 
-describe("Local.RpcServerEnvironment", () => {
+describe("Local.RpcServerEnvironment", { tags: ["unit", "local"] }, () => {
   it.effect("layer() provides Stack, Stage, and AlchemyContext", () =>
     Effect.gen(function* () {
       const observed = yield* Effect.gen(function* () {

@@ -247,7 +247,7 @@ export type Postgres = Resource<
  * **Example:** Bind and query
  * ```typescript
  * import * as Drizzle from "alchemy/Drizzle/Postgres";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * export default class Api extends Fly.Service<Api>()(
  *   "Api",
@@ -291,6 +291,7 @@ export type Postgres = Resource<
  * ```
  *
  * @resource
+ * @product Postgres
  */
 export const Postgres = Resource<Postgres>("Fly.Postgres");
 

@@ -1,0 +1,47 @@
+{
+  "name": "neon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "dev:web": "vite web --host 127.0.0.1 --port 43187 --strictPort",
+    "deploy": "alchemy deploy",
+    "deploy:native": "alchemy deploy --config alchemy.native.ts",
+    "destroy": "alchemy destroy",
+    "destroy:native": "alchemy destroy --config alchemy.native.ts",
+    "preview:deploy": "alchemy deploy --config alchemy.preview.ts",
+    "preview:destroy": "alchemy destroy --config alchemy.preview.ts",
+    "test": "bun test test/policy.test.ts test/EffectApi.test.ts test/composition.test.ts",
+    "test:integ": "bun test test/integ.test.ts",
+    "test:preview": "bun test test/preview.test.ts"
+  },
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@aws-sdk/client-s3": "3.984.0",
+    "@aws-sdk/s3-request-presigner": "3.984.0",
+    "@effect/platform-node": "catalog:",
+    "@neon/ai-sdk-provider": "0.10.0",
+    "@neon/functions": "catalog:",
+    "@neondatabase/neon-js": "0.7.0-beta",
+    "@neondatabase/serverless": "1.1.0",
+    "ai": "7.0.105",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "hono": "catalog:",
+    "jose": "6.2.8",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@distilled.cloud/neon": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@vercel/nft": "catalog:",
+    "typescript": "catalog:",
+    "neonctl": "4.21.1",
+    "vite": "catalog:"
+  },
+  "engines": { "node": ">=24" }
+}

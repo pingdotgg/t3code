@@ -11,7 +11,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { getDefaultVpcNetwork } from "../DefaultVpc.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -260,5 +260,16 @@ test.provider.skipIf(!!process.env.FAST)(
         ),
       ).toBe(false);
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:applicationautoscaling",
+      "provider:aws:ec2",
+      "provider:aws:ecs",
+      "provider:aws:secretsmanager",
+      "provider:aws:ssm",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );

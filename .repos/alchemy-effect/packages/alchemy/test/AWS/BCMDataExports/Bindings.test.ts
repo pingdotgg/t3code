@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import BCMDataExportsTestFunctionLive, {
   BCMDataExportsTestFunction,
   fixtureExportName,
@@ -56,134 +56,148 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
     }),
   );
 
-describe.sequential("BCMDataExports Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "BCMDataExports test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+describe.sequential(
+  "BCMDataExports Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:bcmdataexports",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "BCMDataExports test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("BCMDataExports test setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* BCMDataExportsTestFunction;
-        }).pipe(Effect.provide(BCMDataExportsTestFunctionLive)),
-      );
+        yield* Effect.logInfo("BCMDataExports test setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* BCMDataExportsTestFunction;
+          }).pipe(Effect.provide(BCMDataExportsTestFunctionLive)),
+        );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `BCMDataExports test setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `BCMDataExports test setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `BCMDataExports test setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `BCMDataExports test setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
+
+    describe("binding registration", () => {
+      test.provider("all 6 capabilities initialize in the runtime", (_stack) =>
+        Effect.gen(function* () {
+          const response = yield* send(
+            HttpClientRequest.get(`${baseUrl}/bindings`),
+          ).pipe(Effect.flatMap((r) => r.json));
+          expect((response as any).bound).toHaveLength(6);
+        }),
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
-
-  describe("binding registration", () => {
-    test.provider("all 6 capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/bindings`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).bound).toHaveLength(6);
-      }),
-    );
-  });
-
-  describe("GetExport", () => {
-    test.provider("reads the fixture export's definition", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/export`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).name).toBe(fixtureExportName);
-        expect((response as any).prefix).toBe("bindings");
-        expect((response as any).frequency).toBe("SYNCHRONOUS");
-      }),
-    );
-  });
-
-  describe("ListExports", () => {
-    test.provider(
-      "lists the fixture export among the account's exports",
-      (_stack) =>
+    describe("GetExport", () => {
+      test.provider("reads the fixture export's definition", (_stack) =>
         Effect.gen(function* () {
           const response = yield* send(
-            HttpClientRequest.get(`${baseUrl}/exports`),
+            HttpClientRequest.get(`${baseUrl}/export`),
           ).pipe(Effect.flatMap((r) => r.json));
-          expect((response as any).names).toContain(fixtureExportName);
+          expect((response as any).name).toBe(fixtureExportName);
+          expect((response as any).prefix).toBe("bindings");
+          expect((response as any).frequency).toBe("SYNCHRONOUS");
         }),
-    );
-  });
+      );
+    });
 
-  describe("ListExecutions", () => {
-    test.provider(
-      "lists the export's executions (fresh export: >= 0)",
-      (_stack) =>
+    describe("ListExports", () => {
+      test.provider(
+        "lists the fixture export among the account's exports",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = yield* send(
+              HttpClientRequest.get(`${baseUrl}/exports`),
+            ).pipe(Effect.flatMap((r) => r.json));
+            expect((response as any).names).toContain(fixtureExportName);
+          }),
+      );
+    });
+
+    describe("ListExecutions", () => {
+      test.provider(
+        "lists the export's executions (fresh export: >= 0)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = yield* send(
+              HttpClientRequest.get(`${baseUrl}/executions`),
+            ).pipe(Effect.flatMap((r) => r.json));
+            expect(typeof (response as any).count).toBe("number");
+            expect((response as any).count).toBeGreaterThanOrEqual(0);
+          }),
+      );
+    });
+
+    describe("GetExecution", () => {
+      test.provider(
+        "surfaces a typed error for a nonexistent execution (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = yield* send(
+              HttpClientRequest.get(`${baseUrl}/execution-not-found`),
+            ).pipe(Effect.flatMap((r) => r.json));
+            expect([
+              "ResourceNotFoundException",
+              "ValidationException",
+            ]).toContain((response as any).tag);
+          }),
+      );
+    });
+
+    describe("GetTable", () => {
+      test.provider("reads the COST_AND_USAGE_REPORT table schema", (_stack) =>
         Effect.gen(function* () {
           const response = yield* send(
-            HttpClientRequest.get(`${baseUrl}/executions`),
+            HttpClientRequest.get(`${baseUrl}/table`),
           ).pipe(Effect.flatMap((r) => r.json));
-          expect(typeof (response as any).count).toBe("number");
-          expect((response as any).count).toBeGreaterThanOrEqual(0);
+          expect((response as any).tableName).toBe("COST_AND_USAGE_REPORT");
+          expect((response as any).columnCount).toBeGreaterThan(0);
         }),
-    );
-  });
+      );
+    });
 
-  describe("GetExecution", () => {
-    test.provider(
-      "surfaces a typed error for a nonexistent execution (proving the grant)",
-      (_stack) =>
+    describe("ListTables", () => {
+      test.provider("lists the table dictionary", (_stack) =>
         Effect.gen(function* () {
           const response = yield* send(
-            HttpClientRequest.get(`${baseUrl}/execution-not-found`),
+            HttpClientRequest.get(`${baseUrl}/tables`),
           ).pipe(Effect.flatMap((r) => r.json));
-          expect([
-            "ResourceNotFoundException",
-            "ValidationException",
-          ]).toContain((response as any).tag);
+          expect((response as any).names).toContain("COST_AND_USAGE_REPORT");
         }),
-    );
-  });
-
-  describe("GetTable", () => {
-    test.provider("reads the COST_AND_USAGE_REPORT table schema", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/table`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).tableName).toBe("COST_AND_USAGE_REPORT");
-        expect((response as any).columnCount).toBeGreaterThan(0);
-      }),
-    );
-  });
-
-  describe("ListTables", () => {
-    test.provider("lists the table dictionary", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/tables`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).names).toContain("COST_AND_USAGE_REPORT");
-      }),
-    );
-  });
-});
+      );
+    });
+  },
+);

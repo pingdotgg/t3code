@@ -1,8 +1,8 @@
 import { Compute } from "@/Prisma/Compute.ts";
 import { WriteBucket, WriteBucketBinding } from "@/Prisma/WriteBucket.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { TestBucket, TestProject } from "./bucket.ts";
 import { writeRoutes } from "./write-routes.ts";
 

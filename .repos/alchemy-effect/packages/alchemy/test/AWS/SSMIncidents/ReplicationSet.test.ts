@@ -22,6 +22,7 @@ test.provider(
       const listed = yield* incidents.listReplicationSets({});
       expect(Array.isArray(listed.replicationSetArns)).toBe(true);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -36,6 +37,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -51,6 +53,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 // The replication set is the account/region singleton that ONBOARDS Incident
@@ -217,5 +220,8 @@ test.provider.skipIf(!process.env.AWS_TEST_INCIDENT_MANAGER)(
       expect(after.replicationSetArns).toHaveLength(0);
     }),
   // onboarding (~1-2 min) + updates + offboarding (~1-2 min).
-  { timeout: 900_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ssmincidents", "live"],
+    timeout: 900_000,
+  },
 );

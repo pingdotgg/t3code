@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/pkg",
-  "version": "2.0.0-beta.78",
+  "version": "2.0.0-beta.80",
   "description": "Preview package registry for pull requests: a Cloudflare Worker verified by GitHub Actions runs, plus the pkg CLI that packs and publishes workspace packages.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",

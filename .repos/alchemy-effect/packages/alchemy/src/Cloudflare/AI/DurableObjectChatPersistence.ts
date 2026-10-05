@@ -1,12 +1,12 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Chat from "effect/unstable/ai/Chat";
+import * as Chat from "effect/ai/Chat";
 import {
   BackingPersistence,
   PersistenceError,
   type BackingPersistenceStore,
-} from "effect/unstable/persistence/Persistence";
+} from "effect/persistence/Persistence";
 import { RuntimeContext } from "../../RuntimeContext.ts";
 import { DurableObjectState } from "../Workers/DurableObjectState.ts";
 

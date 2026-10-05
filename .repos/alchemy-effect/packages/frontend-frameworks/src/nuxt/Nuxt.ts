@@ -479,145 +479,179 @@ export const make: (
     },
   );
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const target = yield* resolveTarget(root);
-    // Resolve the project's kit before anything expensive: a root without
-    // a Nuxt install fails fast, without spawning the dev platform.
-    const kit = yield* loadNuxtKit(root);
+  const devInProcess: Framework["Service"]["dev"] = Effect.fn(
+    function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const target = yield* resolveTarget(root);
+      // Resolve the project's kit before anything expensive: a root without
+      // a Nuxt install fails fast, without spawning the dev platform.
+      const kit = yield* loadNuxtKit(root);
 
-    // The dev platform is acquired BEFORE the server so its finalizer
-    // runs LAST (finalizers are LIFO): the platform (e.g. the Cloudflare
-    // target's platform-proxy workerd instance) outlives the last
-    // in-flight request of the closing dev server.
-    const platform =
-      target.devPlatform !== undefined
-        ? yield* target
-            .devPlatform({
-              root,
-              env: options?.dev?.env,
-              bindings: options?.dev?.bindings,
-              services: options?.dev?.services,
-            })
-            .pipe(Effect.mapError((error) => fail(error.message, error.cause)))
-        : undefined;
+      // The dev platform is acquired BEFORE the server so its finalizer
+      // runs LAST (finalizers are LIFO): the platform (e.g. the Cloudflare
+      // target's platform-proxy workerd instance) outlives the last
+      // in-flight request of the closing dev server.
+      const platform =
+        target.devPlatform !== undefined
+          ? yield* target
+              .devPlatform({
+                root,
+                env: options?.dev?.env,
+                bindings: options?.dev?.bindings,
+                services: options?.dev?.services,
+              })
+              .pipe(
+                Effect.mapError((error) => fail(error.message, error.cause)),
+              )
+          : undefined;
 
-    // The user's nuxt.config.ts loads natively; the dev injection rides
-    // the overrides layer. No nitro preset here — nitro's dev flow runs
-    // its own Node dev preset (the SSR worker thread); the deploy preset
-    // only matters for `build`. Telemetry/devtools are disabled: this
-    // dev server runs headless under alchemy / the e2e harness.
-    //
-    // Injected plugins live under node_modules (this package's dist), so
-    // their directories must be forced into `nitro.externals.inline`:
-    // nitro's externals pass would otherwise keep the plugin external and
-    // node would resolve its `nitropack/runtime` import against the raw
-    // package, whose `#nitro-internal-virtual/*` imports only exist
-    // inside the dev bundle.
-    const nitroPlugins = platform?.nitroPlugins;
-    const nuxt = yield* Effect.tryPromise({
-      try: async () =>
-        await kit.loadNuxt({
-          cwd: root,
-          dev: true,
-          ready: false,
-          overrides: makeNuxtOverrides({
-            nuxtConfig: {
-              telemetry: false,
-              devtools: { enabled: false },
-              ...options?.nuxt,
-            },
-            nitroPlugins,
-            nitroExternalsInline: nitroPlugins?.map((plugin) =>
-              path.dirname(plugin),
-            ),
-            runtimeConfig: platform?.runtimeConfig,
+      // The user's nuxt.config.ts loads natively; the dev injection rides
+      // the overrides layer. No nitro preset here — nitro's dev flow runs
+      // its own Node dev preset (the SSR worker thread); the deploy preset
+      // only matters for `build`. Telemetry/devtools are disabled: this
+      // dev server runs headless under alchemy / the e2e harness.
+      //
+      // Injected plugins live under node_modules (this package's dist), so
+      // their directories must be forced into `nitro.externals.inline`:
+      // nitro's externals pass would otherwise keep the plugin external and
+      // node would resolve its `nitropack/runtime` import against the raw
+      // package, whose `#nitro-internal-virtual/*` imports only exist
+      // inside the dev bundle.
+      const nitroPlugins = platform?.nitroPlugins;
+      const nuxt = yield* Effect.tryPromise({
+        try: async () =>
+          await kit.loadNuxt({
+            cwd: root,
+            dev: true,
+            ready: false,
+            overrides: makeNuxtOverrides({
+              nuxtConfig: {
+                telemetry: false,
+                devtools: { enabled: false },
+                ...options?.nuxt,
+              },
+              nitroPlugins,
+              nitroExternalsInline: nitroPlugins?.map((plugin) =>
+                path.dirname(plugin),
+              ),
+              runtimeConfig: platform?.runtimeConfig,
+            }),
           }),
-        }),
-      catch: (error) => fail("Failed to load the Nuxt project", error),
-    });
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        try {
-          await nuxt.close();
-        } catch {
-          // teardown is best-effort
-        }
-      }),
-    );
-
-    yield* Effect.tryPromise({
-      try: () => nuxt.ready(),
-      catch: (error) => fail("Failed to initialize the Nuxt dev server", error),
-    });
-
-    const server = nuxt.server;
-    if (server === undefined || typeof server.listen !== "function") {
-      return yield* Effect.fail(
-        fail(
-          "The loaded Nuxt instance exposes no dev server (`nuxt.server.listen`)",
-        ),
-      );
-    }
-    // `nuxt.server.listen` is listhen-backed. listhen hunts upward from
-    // 3000 when NO port is given — colliding with (or IPv6-shadowing)
-    // user-facing `alchemy dev` proxy ports — while an explicit `port: 0`
-    // resolves to get-port-please's `getRandomPort`, the same
-    // probe-and-release `findEphemeralPort` does. Probe explicitly for
-    // uniformity with the Vite-based frameworks (see DevPort's TODO).
-    const port =
-      (devOptions?.port ?? options?.dev?.port) ||
-      (yield* FrameworkCore.findEphemeralPort());
-    const host = devOptions?.host;
-    const listener = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        // Nitro's dev-server `listen` is listhen-backed; the second
-        // argument merges into listhen's options (older versions ignore
-        // it, degrading to the default host).
-        try: () =>
-          server.listen(
-            port,
-            host !== undefined ? { hostname: host } : undefined,
-          ),
-        catch: (error) =>
-          fail("Failed to start the dev server listener", error),
-      }),
-      (listener) =>
+        catch: (error) => fail("Failed to load the Nuxt project", error),
+      });
+      yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
           try {
-            await listener.close?.();
+            await nuxt.close();
           } catch {
             // teardown is best-effort
           }
         }),
-    );
-    const url = listener.url;
-    if (url === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
+      );
+
+      yield* Effect.tryPromise({
+        try: () => nuxt.ready(),
+        catch: (error) =>
+          fail("Failed to initialize the Nuxt dev server", error),
+      });
+
+      const server = nuxt.server;
+      if (server === undefined || typeof server.listen !== "function") {
+        return yield* Effect.fail(
+          fail(
+            "The loaded Nuxt instance exposes no dev server (`nuxt.server.listen`)",
+          ),
+        );
+      }
+      // `nuxt.server.listen` is listhen-backed. listhen hunts upward from
+      // 3000 when NO port is given — colliding with (or IPv6-shadowing)
+      // user-facing `alchemy dev` proxy ports — while an explicit `port: 0`
+      // resolves to get-port-please's `getRandomPort`, the same
+      // probe-and-release `findEphemeralPort` does. Probe explicitly for
+      // uniformity with the Vite-based frameworks (see DevPort's TODO).
+      const port =
+        (devOptions?.port ?? options?.dev?.port) ||
+        (yield* FrameworkCore.findEphemeralPort());
+      const host = devOptions?.host;
+      const listener = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          // Nitro's dev-server `listen` is listhen-backed; the second
+          // argument merges into listhen's options (older versions ignore
+          // it, degrading to the default host).
+          try: () =>
+            server.listen(
+              port,
+              host !== undefined ? { hostname: host } : undefined,
+            ),
+          catch: (error) =>
+            fail("Failed to start the dev server listener", error),
+        }),
+        (listener) =>
+          Effect.promise(async () => {
+            try {
+              await listener.close?.();
+            } catch {
+              // teardown is best-effort
+            }
+          }),
+      );
+      const url = listener.url;
+      if (url === undefined) {
+        return yield* Effect.fail(
+          fail("Could not determine the dev server URL"),
+        );
+      }
+
+      // The initial dev build — same flow as `nuxi dev` (which awaits
+      // buildNuxt after wiring its listener); the promise resolves once
+      // the dev bundles are ready, watchers keep running in background.
+      yield* Effect.tryPromise({
+        try: () => kit.buildNuxt(nuxt),
+        catch: (error) => fail("Failed to build the dev server", error),
+      });
+
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
+        },
+        catch: (error) =>
+          fail("The dev server did not become reachable", error),
+      }).pipe(
+        Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
+      );
+
+      return { url };
+    },
+  );
+
+  // Nuxt's kit/module caches and Nitro dev runtime are shared within a
+  // process. Concurrent projects can report readiness while serving a
+  // different project's build, so give each dev server its own process.
+  const dev: Framework["Service"]["dev"] = (devOptions) => {
+    if (
+      FrameworkCore.isInsideDevChild() ||
+      !FrameworkCore.isJsonSerializable(options)
+    ) {
+      return devInProcess(devOptions);
     }
-
-    // The initial dev build — same flow as `nuxi dev` (which awaits
-    // buildNuxt after wiring its listener); the promise resolves once
-    // the dev bundles are ready, watchers keep running in background.
-    yield* Effect.tryPromise({
-      try: () => kit.buildNuxt(nuxt),
-      catch: (error) => fail("Failed to build the dev server", error),
-    });
-
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
+    const root = devOptions?.root ?? baseRoot;
+    const port = devOptions?.port ?? options?.dev?.port;
+    return FrameworkCore.runDevChild({
+      framework: "nuxt",
+      module: "@alchemy.run/frontend-frameworks/nuxt",
+      callerUrl: import.meta.url,
+      rootDir: root,
+      makeOptions: { ...options, root },
+      devOptions: {
+        root,
+        ...(port !== undefined ? { port } : {}),
+        ...(devOptions?.host !== undefined ? { host: devOptions.host } : {}),
       },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
-
-    return { url };
-  });
+    });
+  };
 
   return Framework.of({ build, dev });
 });

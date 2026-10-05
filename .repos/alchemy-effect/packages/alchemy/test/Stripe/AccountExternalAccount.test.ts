@@ -113,7 +113,15 @@ test.provider(
       yield* deleteAccount(probe.success.id);
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountexternalaccount",
+      "live",
+    ],
+    timeout: 60_000,
+  },
 );
 
 test.provider.skipIf(!CONNECT_ENABLED)(
@@ -233,7 +241,15 @@ test.provider.skipIf(!CONNECT_ENABLED)(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountexternalaccount",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!CONNECT_ENABLED)(
@@ -286,5 +302,13 @@ test.provider.skipIf(!CONNECT_ENABLED)(
         after.find((ea) => ea.id === deployed.externalAccount.id),
       ).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountexternalaccount",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

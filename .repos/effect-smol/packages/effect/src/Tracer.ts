@@ -10,7 +10,7 @@
  * @since 2.0.0
  */
 import * as Context from "./Context.ts"
-import * as Encoding from "./Encoding.ts"
+import * as Hex from "./encoding/Hex.ts"
 import type * as Exit from "./Exit.ts"
 import type { Fiber } from "./Fiber.ts"
 import { constFalse, type LazyArg } from "./Function.ts"
@@ -709,11 +709,11 @@ export class NativeSpan implements Span {
   }
 
   get traceId(): string {
-    return this._traceId ??= Option.getOrUndefined(this.parent)?.traceId ?? Encoding.randomHex(32)
+    return this._traceId ??= Option.getOrUndefined(this.parent)?.traceId ?? Hex.random(32)
   }
 
   get spanId(): string {
-    return this._spanId ??= Encoding.randomHex(16)
+    return this._spanId ??= Hex.random(16)
   }
 
   get attributes(): Map<string, unknown> {

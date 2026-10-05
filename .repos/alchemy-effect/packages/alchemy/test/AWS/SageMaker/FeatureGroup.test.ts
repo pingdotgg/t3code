@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFound");
     }),
+  { tags: ["provider:aws", "provider:aws:sagemaker", "live"] },
 );
 
 const findFeatureGroup = (name: string) =>
@@ -75,5 +76,8 @@ test.provider(
         yield* findFeatureGroup(featureGroup.featureGroupName),
       ).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:sagemaker", "live"],
+    timeout: 240_000,
+  },
 );

@@ -1,0 +1,338 @@
+---
+title: Setup
+description: Install Alchemy and connect it to a Kubernetes cluster, whether a local cluster on your machine, any cluster in your kubeconfig, or an explicit connection for CI. Then add a registry for images built from your code.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { effectVersion } from "../../../versions";
+
+export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+
+Alchemy deploys to any Kubernetes cluster whose API server it can
+reach. That includes a cluster on your machine, GKE, AKS, EKS,
+DigitalOcean, k3s, or an on-prem fleet. This page covers what you
+need before the first deploy. You need the alchemy package, a
+cluster to deploy to, a registry for images built from your code,
+and permission to manage objects in the cluster.
+
+## Prerequisites
+
+- [Bun](https://bun.sh) or Node.js 22+
+- [Docker](https://docs.docker.com/get-started/get-docker/), to build
+  images from your code and to run a local cluster
+- A cluster. Use [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+  for a local one, or credentials for a hosted one. Hosted
+  credentials are usually a kubeconfig context that already works
+  with `kubectl`.
+- [`helm`](https://helm.sh/docs/intro/install/), only if you install
+  [Helm charts](/kubernetes/objects/helm-charts)
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) is useful for
+  checking access and inspecting what Alchemy deploys. Alchemy talks
+  to the Kubernetes API directly and never runs it.
+
+## Create a project directory
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="mkdir my-cluster && cd my-cluster && bun init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="mkdir my-cluster && cd my-cluster && npm init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="mkdir my-cluster && cd my-cluster && pnpm init" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="mkdir my-cluster && cd my-cluster && yarn init -y" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Install
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${pkgs}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Add the providers
+
+Every Stack that uses Kubernetes resources needs
+`Kubernetes.providers()`:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Kubernetes.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    // Kubernetes resources go here
+  }),
+);
+```
+
+It registers the `LocalCluster`, `Deployment`, `Job`, `Manifest`, and
+`HelmChart` providers, plus authentication for kubeconfig,
+bearer-token, client-certificate, and exec-plugin connections. There is no
+`alchemy profile` step for Kubernetes. Credentials come from the
+connection each resource carries.
+
+## Connect to your cluster
+
+Each resource's `cluster` prop says where it runs and how Alchemy
+authenticates. Find your kind of cluster below.
+
+### A cluster on your machine
+
+If you don't have a cluster yet, let Alchemy create one.
+[`Kubernetes.LocalCluster`](/kubernetes/clusters/local) runs a
+[kind](https://kind.sigs.k8s.io) cluster in Docker with an image
+registry built in:
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+});
+
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  serviceType: "ClusterIP",
+});
+```
+
+Install kind first. On macOS run `brew install kind`, or see
+[kind's install guide](https://kind.sigs.k8s.io/docs/user/quick-start/#installation).
+The [tutorial](/kubernetes/tutorial/part-1) uses a local cluster
+throughout.
+
+### Any cluster with a kubeconfig
+
+If `kubectl` already works against the cluster, Alchemy can use the
+same kubeconfig context. List your contexts and pick the one you
+deploy to:
+
+```sh
+kubectl config get-contexts
+```
+
+Pass its name in your program:
+
+```typescript
+const cluster = Kubernetes.KubeConfig({ context: "prod-us-east" });
+
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  image: "ghcr.io/acme/web:1.4.0",
+  port: 8080,
+});
+```
+
+Alchemy reads the kubeconfig at deploy time. It uses `path` if you
+pass one, otherwise the first entry of `$KUBECONFIG`, otherwise
+`~/.kube/config`. Name the context explicitly, because the file's
+`current-context` changes whenever someone runs
+`kubectl config use-context`.
+
+Contexts created by a cloud CLI call an `exec` credential plugin for
+short-lived tokens. The plugin must be installed and logged in on
+every machine that deploys, including CI runners.
+
+### GKE
+
+Write a context with the Google Cloud CLI:
+
+```sh
+gcloud container clusters get-credentials <cluster> --region <region>
+```
+
+The context is named `gke_<project>_<region>_<cluster>` and calls
+`gke-gcloud-auth-plugin`. Install the plugin with
+`gcloud components install gke-gcloud-auth-plugin`.
+
+### AKS
+
+Write a context with the Azure CLI:
+
+```sh
+az aks get-credentials --name <cluster> --resource-group <group>
+```
+
+The context is named after the cluster. For clusters that use
+Microsoft Entra ID authentication, install
+[`kubelogin`](https://azure.github.io/kubelogin/) and convert the
+context to use your Azure CLI login:
+
+```sh
+kubelogin convert-kubeconfig -l azurecli
+```
+
+### EKS
+
+EKS clusters can be created and targeted from the same Stack, with
+ECR images and AWS bindings built in. See
+[Amazon EKS](/kubernetes/clusters/eks).
+
+### k3s, RKE2, and other distributions
+
+Self-managed distributions write a kubeconfig on the server. k3s
+writes it to `/etc/rancher/k3s/k3s.yaml` and RKE2 writes it to
+`/etc/rancher/rke2/rke2.yaml`. Copy it to the deploying machine and
+change its `server` address from `127.0.0.1` to one your machine can
+reach. Then point `path` at it:
+
+```typescript
+const cluster = Kubernetes.KubeConfig({
+  path: "./k3s.yaml",
+  context: "default",
+});
+```
+
+Hosted Kubernetes services such as DigitalOcean, Linode, and Scaleway
+provide a kubeconfig from their console or CLI. Use it the same way.
+
+### Existing local clusters
+
+A kind, minikube, or Docker Desktop cluster you started yourself adds
+a context to `~/.kube/config`. The context is named `kind-<name>`,
+`minikube`, or `docker-desktop`, and it works like any other
+kubeconfig cluster. Local clusters usually have no load balancer, so
+use `serviceType: "ClusterIP"` or `"NodePort"` for Deployments.
+
+### Without a kubeconfig
+
+Some environments have no kubeconfig, such as a CI job or a
+bootstrap script. There, describe the connection directly with an
+endpoint and an `auth` descriptor:
+
+```typescript
+import * as Config from "effect/Config";
+
+const token = yield* Config.String("K8S_TOKEN");
+
+const cluster: Kubernetes.Connection = {
+  endpoint: "https://k8s.internal.example.com:6443",
+  certificateAuthorityData: "LS0tLS1CRUdJTi…", // base64-encoded PEM
+  auth: { kind: "token", token },
+};
+```
+
+`auth` can also be a client certificate (`kind: "client-cert"`) or an
+exec plugin (`kind: "exec"`). A token or certificate in a raw
+connection is stored in Alchemy's state. Changing it replaces the
+resources that use it, so prefer kubeconfig or exec connections for
+long-lived stacks. See
+[Connecting to clusters](/kubernetes/clusters/connecting) for every
+option.
+
+## Check your permissions
+
+Alchemy needs RBAC permission to `get`, `create`, `patch`, and
+`delete` the objects each resource manages, in the namespaces you
+deploy to:
+
+- `Deployment` writes a ServiceAccount, a Deployment, and a Service.
+- `Job` writes a ServiceAccount and a Job, or a CronJob when it has a
+  `schedule`.
+- `Manifest` writes the one object in its `manifest`.
+- `HelmChart` writes every object the chart renders, often including
+  cluster-scoped ClusterRoles, CRDs, and webhook configurations.
+
+Namespaces, ClusterRoles, CRDs, and other cluster-scoped kinds need
+cluster-level permissions. Workload namespaces must already exist or
+be created in the same Stack with a
+[Manifest](/kubernetes/objects/manifests).
+
+Check before deploying with `kubectl auth can-i`, using the same
+context:
+
+```sh
+kubectl --context prod-us-east auth can-i create deployments --namespace apps
+kubectl --context prod-us-east auth can-i patch services --namespace apps
+```
+
+## Add a registry for your code
+
+Workloads that run a pre-built `image` need nothing else. Workloads
+built from your code, such as an Effect program (`main`) or a
+Dockerfile (`context`), are built on your machine. Alchemy pushes
+them to a registry the cluster's nodes can pull from. Add one to the
+connection:
+
+```typescript
+const cluster = Kubernetes.KubeConfig({
+  context: "prod-us-east",
+  registry: { server: "ghcr.io/acme" },
+});
+```
+
+Alchemy pushes with your machine's Docker login unless you pass
+credentials. `LocalCluster` and EKS provide a registry themselves.
+See [Container registries](/kubernetes/clusters/registries).
+
+## Deploy from CI
+
+A CI runner needs the same things as your laptop. It needs network
+access to the API server, credentials, and any exec plugin your
+context calls. Common setups:
+
+- Authenticate the runner to your cloud, for example with GitHub
+  OIDC. Then create the kubeconfig with the cloud CLI command above.
+- Log the runner's Docker in to your registry (`docker login`) before
+  deploying workloads built from your code.
+- Store a kubeconfig file as a secret, write it to disk, and set
+  `KUBECONFIG` to its path.
+- Pass `path` and `context` from environment variables so the same
+  program targets a different cluster per stage.
+
+Use a remote [state store](/state-store) so CI and your team see the
+same deployments. See [CI](/environments/ci) for running
+`alchemy deploy` in GitHub Actions.
+
+## State storage
+
+Kubernetes has no state backend of its own, so pick one of:
+
+- **`Alchemy.localState()`.** State lives on disk under `.alchemy/`
+  next to your code. This is fine for trying things out alone, but CI
+  and teammates can't see it.
+- **`postgresState()`.** State lives in a Postgres database you
+  already run, such as a managed database from your Kubernetes
+  provider. It locks each stage while a deploy runs. See
+  [Postgres state store](/state-store#postgres-state-store).
+- **`Cloudflare.state()` or `AWS.state()`.** State lives in your
+  Cloudflare or AWS account. See [State Store](/state-store).
+- **Your own store.** Implement the state service over S3-compatible
+  storage, Redis, or anything else. See
+  [Custom state store](/state-store/custom-state-store).
+
+Each resource stores its cluster connection in state so
+`alchemy destroy` can reach the cluster later, even after the code
+that declared it is gone.
+
+## Next steps
+
+- [Tutorial part 1](/kubernetes/tutorial/part-1) deploys a
+  Deployment, step by step.
+- [Connecting to clusters](/kubernetes/clusters/connecting) covers
+  every connection form, multi-cluster stacks, and moving between
+  clusters.
+- [Kubernetes overview](/kubernetes) is the map of resources and
+  guides.

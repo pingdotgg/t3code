@@ -96,7 +96,10 @@ test.provider(
       });
       expect(deactivated.enabled).toEqual(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:paymentmethoddomain", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -128,5 +131,8 @@ test.provider(
       const after = yield* provider.list();
       expect(after.find((domain) => domain.id === deployed.id)).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:paymentmethoddomain", "live"],
+    timeout: 120_000,
+  },
 );

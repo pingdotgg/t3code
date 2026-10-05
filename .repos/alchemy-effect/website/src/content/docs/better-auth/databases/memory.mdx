@@ -1,0 +1,108 @@
+---
+title: Memory
+description: Run a disposable Better Auth Worker with an isolate-local memory store.
+---
+
+Use `Memory` for throwaway development and tests, not production authentication. This complete Worker example keeps records only for the lifetime of each isolate.
+
+## Install
+
+```sh
+bun add @alchemy.run/better-auth better-auth@^1.7.5
+```
+
+No optional database driver or `kysely` peer is required by the memory adapter.
+
+## Define the database layer
+
+```typescript title="src/auth-database.ts"
+import { Memory } from "@alchemy.run/better-auth/Memory";
+
+export const AuthDatabase = Memory();
+```
+
+Construct the layer once for the host, not inside `fetch`, so requests in the same isolate share its store.
+
+## Define the auth Worker
+
+```typescript title="src/worker.ts"
+import { BetterAuth } from "@alchemy.run/better-auth";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { AuthDatabase } from "./auth-database.ts";
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"] },
+  },
+  Effect.gen(function* () {
+    const auth = yield* BetterAuth({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+      migrate: false,
+    });
+    return { fetch: auth.fetch };
+  }).pipe(Effect.provide(AuthDatabase)),
+) {}
+```
+
+Better Auth instances remain request-scoped, while the layer retains the backing records across requests. Separate Worker isolates or Lambda instances never share these records.
+
+## Define the stack
+
+```typescript title="alchemy.run.ts"
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "BetterAuthMemory",
+  {
+    providers: Cloudflare.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url.as<string>() };
+  }),
+);
+```
+
+Alchemy generates and binds a stable signing secret, persisted in local stack state. That secret does not make the memory store persistent.
+
+## Run locally
+
+```sh
+bunx alchemy dev
+```
+
+Use the printed URL rather than assuming a local port. Set `AUTH_ORIGIN` to that URL to check the auth endpoint:
+
+```sh
+curl -i "$AUTH_ORIGIN/api/auth/get-session"
+```
+
+A restart or isolate replacement loses users and sessions. Even without a restart, a deployed request routed to a different isolate may not find a previously created user.
+
+## Inspect records in tests
+
+When an in-process test needs access to the backing store, replace `src/auth-database.ts` with this file:
+
+```typescript title="src/auth-database.ts"
+import { Memory } from "@alchemy.run/better-auth/Memory";
+import type { MemoryDB } from "better-auth/adapters/memory";
+
+export const records: MemoryDB = {};
+export const AuthDatabase = Memory(records);
+```
+
+The adapter initializes missing model arrays from the auth schema, including plugins. Give independent tests independent stores; importing this module in the test process does not expose a separate Worker's in-memory records.
+
+## Migration behavior
+
+Memory has no migration support and needs no schema command. Leave `migrate` unset or false; explicitly setting it to true fails rather than pretending to migrate.
+
+Choose [D1](/better-auth/databases/cloudflare-d1) or another durable database before serving real users. See [configuration](/better-auth/guides/configuration), [migrations](/better-auth/guides/migrations), and the [`Memory` reference](/providers/betterauth/memory).

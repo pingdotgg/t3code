@@ -106,7 +106,11 @@ test.provider(
         "reader@alchemy-test.example.com",
       );
     }),
-  { timeout: 120_000, exclusive: true },
+  {
+    tags: ["provider:aws", "provider:aws:ses", "live"],
+    timeout: 120_000,
+    exclusive: true,
+  },
 );
 
 test.provider(
@@ -157,5 +161,9 @@ test.provider(
         "second@alchemy-test.example.com",
       );
     }),
-  { timeout: 120_000, exclusive: true },
+  {
+    tags: ["provider:aws", "provider:aws:ses", "live"],
+    timeout: 120_000,
+    exclusive: true,
+  },
 );

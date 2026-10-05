@@ -15,7 +15,7 @@ import * as Data from "./Data.ts"
 import * as Effect from "./Effect.ts"
 import * as FileSystem from "./FileSystem.ts"
 import { format } from "./Formatter.ts"
-import { dual, flow } from "./Function.ts"
+import { dual } from "./Function.ts"
 import { PipeInspectableProto } from "./internal/core.ts"
 import * as Layer from "./Layer.ts"
 import * as Path_ from "./Path.ts"
@@ -371,7 +371,7 @@ function makeSource(
 ): ConfigProvider {
   return makeProvider(
     (path) => get(transform(path)),
-    (f) => makeSource(get, flow(transform, f))
+    (f) => makeSource(get, (path) => f(transform(path)))
   )
 }
 

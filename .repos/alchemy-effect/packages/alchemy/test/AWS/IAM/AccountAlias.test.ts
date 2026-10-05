@@ -14,16 +14,19 @@ const { test } = Test.make({ providers: AWS.providers() });
 // clobber whatever alias the account already has — so this is an UNGATED probe
 // that only observes: it calls `list()` and asserts a well-formed result
 // (length 0 or 1, with the full `{ accountAlias }` Attributes shape when set).
-test.provider("list enumerates the account alias singleton", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(AccountAlias);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates the account alias singleton",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(AccountAlias);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    expect(all.length).toBeLessThanOrEqual(1);
-    for (const item of all) {
-      expect(typeof item.accountAlias).toBe("string");
-      expect(item.accountAlias.length).toBeGreaterThan(0);
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      expect(all.length).toBeLessThanOrEqual(1);
+      for (const item of all) {
+        expect(typeof item.accountAlias).toBe("string");
+        expect(item.accountAlias.length).toBeGreaterThan(0);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:iam", "live"] },
 );

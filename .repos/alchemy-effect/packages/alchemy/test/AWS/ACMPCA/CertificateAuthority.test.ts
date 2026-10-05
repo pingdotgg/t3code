@@ -28,6 +28,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:acmpca", "live"] },
 );
 
 test.provider(
@@ -44,6 +45,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:acmpca", "live"] },
 );
 
 test.provider(
@@ -60,6 +62,7 @@ test.provider(
       );
       expect(error._tag).toBe("InvalidArnException");
     }),
+  { tags: ["provider:aws", "provider:aws:acmpca", "live"] },
 );
 
 // Deletion leaves the CA in the DELETED state for its 7-day restoration
@@ -221,5 +224,5 @@ test.provider.skipIf(!process.env.AWS_TEST_ACMPCA)(
       yield* stack.destroy();
       yield* assertCaDeleted(third.ca.certificateAuthorityArn);
     }),
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:acmpca", "live"], timeout: 300_000 },
 );

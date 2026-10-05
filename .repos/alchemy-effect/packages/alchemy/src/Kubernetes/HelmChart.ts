@@ -119,11 +119,12 @@ export interface HelmChart extends Resource<
  * The chart is rendered locally with the `helm` CLI (`helm template` —
  * install helm on the deploying machine, like Docker for image builds);
  * the rendered objects then flow through the same apply machinery as
- * `Kubernetes.Manifest`: Alchemy owns the object lifecycle, corrects drift
- * on every deploy, prunes objects that drop out of the render, and deletes
- * everything on destroy. There is no in-cluster Helm release record; the
- * target `cluster` can be a managed cluster resource (e.g.
- * `AWS.EKS.Cluster`) or any cluster your kubeconfig can reach.
+ * `Kubernetes.Manifest`: Alchemy owns the object lifecycle, re-applies the
+ * full render whenever the chart's inputs change, prunes objects that drop
+ * out of the render, and deletes everything on destroy. There is no
+ * in-cluster Helm release record; the target `cluster` can be a managed
+ * cluster resource (e.g. `AWS.EKS.Cluster`) or any cluster your kubeconfig
+ * can reach.
  *
  * Helm lifecycle hooks (`helm.sh/hook`-annotated objects: install/upgrade/
  * delete hooks, tests) are neither executed nor applied — the chart is
@@ -166,6 +167,7 @@ export interface HelmChart extends Resource<
  * ```
  *
  * @resource
+ * @product Helm
  */
 export const HelmChart = Resource<HelmChart>("Kubernetes.HelmChart", {
   aliases: ["AWS.EKS.HelmChart"],
@@ -206,7 +208,8 @@ const resolveReleaseName = (
   Effect.suspend(() => {
     if (news.releaseName) return Effect.succeed(news.releaseName);
     if (output?.releaseName) return Effect.succeed(output.releaseName);
-    return createPhysicalName({ id, lowercase: true });
+    // Helm rejects release names longer than 53 characters.
+    return createPhysicalName({ id, maxLength: 53, lowercase: true });
   });
 
 /**

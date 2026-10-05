@@ -1,7 +1,7 @@
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import { describe, expect, it } from "tstyche"
 
-declare module "effect/unstable/ai/AiError" {
+declare module "effect/ai/AiError" {
   interface RateLimitErrorMetadata {
     readonly providerA?: {
       readonly retryId: string
@@ -15,7 +15,7 @@ declare module "effect/unstable/ai/AiError" {
   }
 }
 
-declare module "effect/unstable/ai/AiError" {
+declare module "effect/ai/AiError" {
   interface RateLimitErrorMetadata {
     readonly providerB?: {
       readonly resetAt: string

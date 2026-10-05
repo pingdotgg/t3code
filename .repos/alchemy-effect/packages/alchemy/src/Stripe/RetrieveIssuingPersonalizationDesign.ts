@@ -24,6 +24,7 @@ export interface RetrieveIssuingPersonalizationDesignRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Issuing
  */
 export interface RetrieveIssuingPersonalizationDesign extends Binding.Service<
   RetrieveIssuingPersonalizationDesign,

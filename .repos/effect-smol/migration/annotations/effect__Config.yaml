@@ -1,6 +1,6 @@
 "effect/Config#all":
   replacement: "Config.all"
-  note: "Combine an iterable or record of Config values. A wholly absent product can use Config.withDefault or Config.option, while a partially supplied product fails."
+  note: "Combine an iterable or record of Config values. If any child is absent and none fail, Config.withDefault replaces the whole group and Config.option returns None. Apply defaults to individual children to preserve other supplied values."
 "effect/Config#array":
   replacement: "Config.Array(valueSchema, path)"
   note: "Array parsing is schema-based in v4; rebuild the element Config as a Schema and pass it with the optional path to Config.Array."
@@ -67,6 +67,14 @@
 "effect/Config#number":
   replacement: "Config.Number"
   note: "Direct constructor rename; use Config.Finite when NaN and infinities must be rejected."
+"effect/Config#option":
+  include: true
+  replacement: "Config.option"
+  note: "Returns None for an absent config, including an all group with a missing child and no failed children. Successfully decoded undefined is wrapped in Some; validation and source errors still propagate."
+"effect/Config#orElse":
+  include: true
+  replacement: "Config.orElse"
+  note: "The fallback receives Config.ConfigError and its result replaces the original failure. Unlike v3, failed attempts are not combined: an absent fallback can be handled by a later withDefault or option even if the original input was invalid."
 "effect/Config#orElseIf":
   replacement: "Config.orElse"
   note: "The fallback now receives Config.ConfigError; test it in the callback and re-fail with Config.fail(error.cause) when the predicate is false."
@@ -103,6 +111,10 @@
 "effect/Config#validate":
   replacement: "Config.schema(schema.check(check), path)"
   note: "Validation moved to Schema checks; attach the predicate and message to the Schema used by Config.schema."
+"effect/Config#withDefault":
+  include: true
+  replacement: "Config.withDefault"
+  note: "Defaults absent configs, including all groups with missing children and no failed children. A group default replaces the whole group; use defaults on children to preserve other supplied values. Validation and source errors still propagate."
 "effect/Config#withDescription":
   replacement: "Config.schema(schema.annotate({ description }), path)"
   note: "Config descriptions moved to Schema annotations in v4."

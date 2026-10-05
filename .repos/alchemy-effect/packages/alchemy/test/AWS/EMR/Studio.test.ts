@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("StudioNotFound");
     }),
+  { tags: ["provider:aws", "provider:aws:emr", "live"] },
 );
 
 // Resolve a subnet of the account's default VPC.
@@ -170,5 +171,15 @@ test.provider(
       );
       expect(afterDestroy._tag).toBe("StudioNotFound");
     }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:emr",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );

@@ -11,7 +11,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as pathe from "pathe";
 import { getDefaultVpcNetwork } from "../DefaultVpc.ts";
 import type { OtelSink } from "./fixtures/otel-collector-worker.ts";
@@ -289,5 +289,17 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW || !!process.env.FAST)(
       // Clean-slate proof: a passing run leaves ZERO cloud resources.
       expect(yield* scanTaskE2EOrphans).toEqual([]);
     }),
-  { timeout: 1_200_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:ecr",
+      "provider:aws:ecs",
+      "provider:aws:iam",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 1_200_000,
+  },
 );

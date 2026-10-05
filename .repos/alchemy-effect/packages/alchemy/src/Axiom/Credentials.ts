@@ -3,7 +3,11 @@ import { ConfigError } from "@distilled.cloud/core/errors";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
-import { resolveProviderConfig } from "../Auth/Resolve.ts";
+import {
+  deferUntilFirstUse,
+  orDieCredentialsUnavailable,
+  resolveProviderConfig,
+} from "../Auth/Resolve.ts";
 import {
   AXIOM_AUTH_PROVIDER_NAME,
   type AxiomAuthConfig,
@@ -25,34 +29,41 @@ export const fromAuthProvider = () =>
   Layer.effect(
     Credentials,
     Effect.gen(function* () {
-      const { profileName, resolve } = yield* resolveProviderConfig<
+      // Defer profile lookup and credential resolution until first use, so
+      // building the provider layers never requires a configured profile.
+      const resolve = yield* resolveProviderConfig<
         AxiomAuthConfig,
         AxiomResolvedCredentials
-      >(AXIOM_AUTH_PROVIDER_NAME);
-
-      return yield* resolve.pipe(
-        Effect.map((creds) =>
-          Match.value(creds).pipe(
-            Match.when({ type: "apiToken" }, (c) => ({
-              apiKey: c.apiToken,
-              apiBaseUrl: c.apiBaseUrl,
-              orgId: c.orgId,
-            })),
-            Match.when({ type: "pat" }, (c) => ({
-              apiKey: c.apiToken,
-              apiBaseUrl: c.apiBaseUrl,
-              orgId: c.orgId,
-            })),
-            Match.exhaustive,
+      >(AXIOM_AUTH_PROVIDER_NAME).pipe(
+        Effect.flatMap(({ profileName, resolve }) =>
+          resolve.pipe(
+            Effect.map((creds) =>
+              Match.value(creds).pipe(
+                Match.when({ type: "apiToken" }, (c) => ({
+                  apiKey: c.apiToken,
+                  apiBaseUrl: c.apiBaseUrl,
+                  orgId: c.orgId,
+                })),
+                Match.when({ type: "pat" }, (c) => ({
+                  apiKey: c.apiToken,
+                  apiBaseUrl: c.apiBaseUrl,
+                  orgId: c.orgId,
+                })),
+                Match.exhaustive,
+              ),
+            ),
+            Effect.mapError(
+              (e) =>
+                new ConfigError({
+                  message: `Failed to resolve Axiom credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
+                }),
+            ),
           ),
         ),
-        Effect.mapError(
-          (e) =>
-            new ConfigError({
-              message: `Failed to resolve Axiom credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
-            }),
-        ),
-        Effect.orDie,
+        deferUntilFirstUse,
+      );
+      return yield* resolve.pipe(
+        orDieCredentialsUnavailable(AXIOM_AUTH_PROVIDER_NAME),
         Effect.cached,
       );
     }),
