@@ -441,7 +441,17 @@ export function ArchivedThreadsScreen(props: {
             keyExtractor={(item) => item.key}
             ListEmptyComponent={listEmptyComponent}
             ListHeaderComponent={
-              props.error ? <ArchiveError message={props.error} onRetry={props.onRefresh} /> : null
+              <>
+                {listItems.length > 0 ? (
+                  <Text className="px-1 pb-3 text-sm text-foreground-muted">
+                    Unarchiving leaves any scheduled tasks paused. Re-enable them in Scheduled
+                    tasks.
+                  </Text>
+                ) : null}
+                {props.error ? (
+                  <ArchiveError message={props.error} onRetry={props.onRefresh} />
+                ) : null}
+              </>
             }
             onScrollBeginDrag={() => openSwipeableRef.current?.close()}
             refreshControl={

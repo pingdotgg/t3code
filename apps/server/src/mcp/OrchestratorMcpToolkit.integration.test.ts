@@ -509,6 +509,7 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
     listWebhookDeliveries: () => Effect.die("unused in this test"),
     getWebhookDelivery: () => Effect.die("unused in this test"),
     triggerWebhook: () => Effect.die("unused in this test"),
+    pauseForThread: () => Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
   }),
 );
 
@@ -721,6 +722,8 @@ describe("orchestrator MCP toolkit", () => {
               listWebhookDeliveries: () => Effect.die("unused in this test"),
               getWebhookDelivery: () => Effect.die("unused in this test"),
               triggerWebhook: () => Effect.die("unused in this test"),
+              pauseForThread: () =>
+                Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
             }),
           );
           const layerTest = Layer.merge(

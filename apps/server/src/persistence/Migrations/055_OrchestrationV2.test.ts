@@ -30,6 +30,8 @@ layer("055_OrchestrationV2", (it) => {
         [56, "RemoveRedundantProjectionIndexes"],
         [57, "ScheduledTaskWebhooks"],
         [58, "WebhookRelayDeliveries"],
+        [59, "ScheduledTasksEnabledSeq"],
+        [60, "ArchivedThreadEventsIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -54,6 +56,8 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 56, name: "RemoveRedundantProjectionIndexes" },
         { migration_id: 57, name: "ScheduledTaskWebhooks" },
         { migration_id: 58, name: "WebhookRelayDeliveries" },
+        { migration_id: 59, name: "ScheduledTasksEnabledSeq" },
+        { migration_id: 60, name: "ArchivedThreadEventsIndex" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
