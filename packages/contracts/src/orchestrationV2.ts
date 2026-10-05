@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   CheckpointId,
@@ -1494,6 +1495,65 @@ export const OrchestrationV2TurnItem = Schema.Union([
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
 
+const knownTurnItemTypes: ReadonlySet<unknown> = new Set(
+  OrchestrationV2TurnItem.members.map((member) => member.fields.type.literal),
+);
+
+const isUnknownTurnItem = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  "type" in value &&
+  !knownTurnItemTypes.has(value.type);
+
+/** Matches only a turn item whose type this build does not know. */
+const UnknownTurnItem = Schema.Struct({
+  type: Schema.String.check(
+    Schema.makeFilter(
+      (type: string) =>
+        !knownTurnItemTypes.has(type) || "A known turn item type must decode in full.",
+    ),
+  ),
+});
+
+/**
+ * A turn item array that skips items whose `type` this build does not know.
+ * Newer servers add turn item types; older clients drop those rows instead of
+ * failing the whole snapshot. A known type that does not decode still fails.
+ * Unlike ForwardCompatibleArray, elements keep their own codec, so this holds
+ * under the JSON wire codec too. Encoding is the plain array encoding.
+ */
+const TurnItemArray = <Element extends Schema.Top, Unknown extends Schema.Top>(
+  element: Element,
+  unknownElement: Unknown,
+  isUnknown: (value: unknown) => boolean,
+) =>
+  Schema.Array(Schema.Union([element, unknownElement])).pipe(
+    Schema.decodeTo(
+      Schema.Array(Schema.toType(element)),
+      SchemaTransformation.transform<
+        ReadonlyArray<Element["Type"]>,
+        ReadonlyArray<Element["Type"] | Unknown["Type"]>
+      >({
+        decode: (values) =>
+          values.filter((value) => !isUnknown(value)) as ReadonlyArray<Element["Type"]>,
+        encode: (values) => values,
+      }),
+    ),
+  );
+
+const turnItemArray = <Element extends Schema.Top>(element: Element) =>
+  TurnItemArray(element, UnknownTurnItem, isUnknownTurnItem);
+
+const UnknownProjectedTurnItem = Schema.Struct({ item: UnknownTurnItem });
+
+const projectedTurnItemArray = <Element extends Schema.Top>(element: Element) =>
+  TurnItemArray(
+    element,
+    UnknownProjectedTurnItem,
+    (row) =>
+      typeof row === "object" && row !== null && "item" in row && isUnknownTurnItem(row.item),
+  );
+
 export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
   position: NonNegativeInt,
   visibility: Schema.Literals(["local", "inherited", "synthetic"]),
@@ -1681,12 +1741,12 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   plans: Schema.Array(OrchestrationV2PlanArtifact),
-  turnItems: Schema.Array(OrchestrationV2TurnItem),
+  turnItems: turnItemArray(OrchestrationV2TurnItem),
   checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
   contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
   contextTransfers: Schema.Array(OrchestrationV2ContextTransfer),
-  visibleTurnItems: Schema.Array(OrchestrationV2ProjectedTurnItem),
+  visibleTurnItems: projectedTurnItemArray(OrchestrationV2ProjectedTurnItem),
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -2249,12 +2309,12 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
     messages: Schema.Array(OrchestrationV2ConversationMessageJson),
     plans: Schema.Array(OrchestrationV2PlanArtifact),
-    turnItems: Schema.Array(OrchestrationV2TurnItemJson),
+    turnItems: turnItemArray(OrchestrationV2TurnItemJson),
     checkpointScopes: Schema.Array(OrchestrationV2CheckpointScopeJson),
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
     contextHandoffs: Schema.Array(OrchestrationV2ContextHandoffJson),
     contextTransfers: Schema.Array(OrchestrationV2ContextTransferJson),
-    visibleTurnItems: Schema.Array(OrchestrationV2ProjectedTurnItemJson),
+    visibleTurnItems: projectedTurnItemArray(OrchestrationV2ProjectedTurnItemJson),
     updatedAt: Schema.DateTimeUtcFromString,
   }),
 );
@@ -3129,7 +3189,7 @@ export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadB
 /** Older timeline page for progressive history. Rows are chronological. */
 export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
-  items: Schema.Array(OrchestrationV2ProjectedTurnItem),
+  items: projectedTurnItemArray(OrchestrationV2ProjectedTurnItem),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
 });
@@ -3143,22 +3203,26 @@ const knownDomainEventTypes: ReadonlySet<string> = new Set(
 );
 
 /**
- * A thread event whose type this build does not know. Newer servers add event
- * types; older clients decode them to this case and skip them, still advancing
- * their resume cursor, instead of failing the whole subscription. A known type
- * whose payload does not decode still fails. Decode-only: servers never send it.
+ * A thread event whose type this build does not know, or a turn-item.updated
+ * carrying a turn item type it does not know. Newer servers add both; older
+ * clients decode them to this case and skip them, still advancing their resume
+ * cursor, instead of failing the whole subscription. A known type whose payload
+ * does not decode still fails. Decode-only: servers never send it.
  */
 const OrchestrationV2UnknownThreadStreamEvent = Schema.Struct({
   kind: Schema.Literal("event"),
   sequence: NonNegativeInt,
   event: Schema.Struct({
-    type: Schema.String.check(
-      Schema.makeFilter(
-        (type: string) =>
-          !knownDomainEventTypes.has(type) || "A known event type must decode in full.",
-      ),
+    type: Schema.String,
+    payload: Schema.optional(Schema.Unknown),
+  }).check(
+    Schema.makeFilter(
+      (event) =>
+        !knownDomainEventTypes.has(event.type) ||
+        (event.type === "turn-item.updated" && isUnknownTurnItem(event.payload)) ||
+        "A known event type must decode in full.",
     ),
-  }),
+  ),
 }).pipe(
   Schema.decodeTo(
     Schema.Struct({
