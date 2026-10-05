@@ -4,7 +4,12 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  omitToolOutputImageData,
+  toolOutputImages,
+  toolOutputIndicatesFailure,
+} from "@t3tools/shared/toolOutput";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
@@ -143,8 +148,27 @@ function boundDynamicValue(value: unknown): unknown {
 }
 
 /**
+ * A tool output for a detail read, without image bytes. When the rest is too
+ * large to send whole, its truncated text still comes with the image markers,
+ * in order, so clients can load each image by index.
+ */
+function boundToolOutput(output: unknown): unknown {
+  const omitted = omitToolOutputImageData(output);
+  const bounded = boundDynamicValue(omitted);
+  if (typeof bounded !== "string" || typeof omitted === "string") return bounded;
+  const images = toolOutputImages(omitted);
+  return images.length === 0
+    ? bounded
+    : [
+        { type: "text", text: bounded },
+        ...images.map((image) => ({ type: "image", mimeType: image.mimeType })),
+      ];
+}
+
+/**
  * Projects one item for an on-demand detail read: keeps the input and output
  * the timeline withholds, bounded so a huge result cannot stall the socket.
+ * Image bytes are left out; clients load them as `tool-output-image` assets.
  */
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
@@ -158,7 +182,7 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
       return {
         ...item,
         input: boundDynamicValue(item.input),
-        output: boundDynamicValue(item.output),
+        output: boundToolOutput(item.output),
       };
     case "subagent":
       return {
