@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vite-plus/test";
 // `@media ios { ... }` block, and uniwind's CSS processor used to drop the
 // block's media queries after its first nested rule. Everything past the first
 // utility compiled unguarded and shipped to both platforms. These tests run
-// the installed (patched) uniwind compiler over real Tailwind output, per
+// the installed uniwind compiler over real Tailwind output, per
 // platform, and assert what each bundle receives. The compiler itself runs in
 // a plain Node child process (uniwind-platform-variants.fixture.cjs) so no
 // test-runner module transforms sit between the test and the shipped code.
@@ -215,11 +215,9 @@ describe("uniwind keeps media rules nested inside class rules attached to the cl
   });
 });
 
-// The patch file carries three independent uniwind fixes (state/data selector
-// variants, the Metro native-styles fingerprint, and this media-query scoping
-// fix). Regenerating it for one fix must not silently drop the others — this
-// suite exercises the shipped transformer and compiler for the other two.
-describe("uniwind patch keeps pre-existing selector and transformer behavior", () => {
+// Keep guarding selector variants and the Metro native-styles fingerprint
+// alongside media-query scoping when upgrading the installed Uniwind package.
+describe("uniwind keeps selector and transformer behavior", () => {
   let output: FixtureOutput;
 
   beforeAll(() => {

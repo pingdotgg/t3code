@@ -17,12 +17,11 @@ shutdown, but a supervisor created after its cleanup runs would escape it. A clo
 parent scope also closes late arrivals, preventing interrupted startup or runtime
 replacement from leaving a WebSocket alive outside the new registry.
 
-The [Uniwind patch](../../patches/uniwind@1.11.0.patch) still compiles CSS on Metro
-updates so newly used classes are discovered. It skips global style invalidation
-only when the generated stylesheet and theme list are unchanged. Skipping compilation
-would lose new classes; invalidating every consumer for unchanged output makes an
-ordinary component edit refresh the whole app. The fingerprint is recorded only
-after initialization succeeds.
+Uniwind compiles CSS on Metro updates so newly used classes are discovered. It
+skips global style invalidation only when the generated stylesheet and theme list
+are unchanged. Skipping compilation would lose new classes; invalidating every
+consumer for unchanged output makes an ordinary component edit refresh the whole
+app. The fingerprint is recorded only after initialization succeeds.
 
 The [expo-notifications patch](../../patches/expo-notifications@57.0.15.patch) protects
 `NotificationCenterManager`'s delegates and pending responses with a lock. React runtimes can
