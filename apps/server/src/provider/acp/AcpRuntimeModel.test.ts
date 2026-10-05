@@ -266,6 +266,12 @@ describe("AcpRuntimeModel", () => {
         },
       }),
     ).toBeUndefined();
+    expect(
+      sessionModelStateFromInitialize({
+        protocolVersion: 1,
+        _meta: { modelState: { ...modelState, _meta: "not an object" } },
+      }),
+    ).toBeUndefined();
   });
 
   it("projects typed ACP tool call updates into runtime events", () => {
