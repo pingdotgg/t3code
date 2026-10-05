@@ -1234,7 +1234,8 @@ export function makeClaudeUserMessage(input: {
   // Claude Code expands a skill only from the LAST text block, and only when
   // `/name` is its first character. A `$skill` chip anywhere in the prompt is
   // therefore split into [leading text, "/name trailing text"] so the CLI
-  // runs it natively and the prose around it survives. See ClaudeSkillDispatch.
+  // runs it natively and the prose around it survives, unless the prompt
+  // already opens with a command such as `/goal`. See ClaudeSkillDispatch.
   const dispatch =
     input.skillNames === undefined
       ? undefined
