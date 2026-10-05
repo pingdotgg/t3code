@@ -117,15 +117,15 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
-/** Native commands the provider executes as its own whole-turn task, so they
- *  own the run they start and cannot take steering or a restart. */
+/** A native /compact or /logout turn: provider maintenance, not agent work. It
+ *  owns the run it starts and cannot take steering or a restart. */
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
 }): boolean {
   return (
     message.attachments.length === 0 &&
-    (message.text.trim().toLowerCase() === "/compact" || message.text.trim() === "/logout")
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
   );
 }
 
