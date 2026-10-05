@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 export interface KeyedLock<Key> {
@@ -10,7 +11,7 @@ export interface KeyedLock<Key> {
 
 interface LockEntry {
   readonly semaphore: Semaphore.Semaphore;
-  users: number;
+  readonly users: number;
 }
 
 /**
@@ -22,33 +23,40 @@ interface LockEntry {
  * not tied to a scope, so it keeps working for as long as anyone references it.
  */
 export const make = <Key>(): Effect.Effect<KeyedLock<Key>> =>
-  Effect.sync(() => {
-    const locks = new Map<Key, LockEntry>();
+  Effect.gen(function* () {
+    const locks = yield* Ref.make<ReadonlyMap<Key, LockEntry>>(new Map());
 
     const acquire = (key: Key) =>
-      Effect.sync(() => {
-        let entry = locks.get(key);
-        if (entry === undefined) {
-          entry = { semaphore: Semaphore.makeUnsafe(1), users: 0 };
-          locks.set(key, entry);
-        }
-        entry.users += 1;
-        return entry;
-      });
+      Effect.flatMap(Semaphore.make(1), (candidate) =>
+        Ref.modify(locks, (current) => {
+          const existing = current.get(key);
+          const semaphore = existing?.semaphore ?? candidate;
+          const next = new Map(current);
+          next.set(key, { semaphore, users: (existing?.users ?? 0) + 1 });
+          return [semaphore, next] as const;
+        }),
+      );
 
-    const release = (key: Key, entry: LockEntry) =>
-      Effect.sync(() => {
-        entry.users -= 1;
-        if (entry.users === 0) locks.delete(key);
+    const release = (key: Key) =>
+      Ref.update(locks, (current) => {
+        const existing = current.get(key);
+        if (existing === undefined) return current;
+        const next = new Map(current);
+        if (existing.users === 1) {
+          next.delete(key);
+        } else {
+          next.set(key, { ...existing, users: existing.users - 1 });
+        }
+        return next;
       });
 
     return {
       withLock: (key, effect) =>
         Effect.acquireUseRelease(
           acquire(key),
-          (entry) => entry.semaphore.withPermit(effect),
-          (entry) => release(key, entry),
+          (semaphore) => semaphore.withPermit(effect),
+          () => release(key),
         ),
-      activeKeys: Effect.sync(() => Array.from(locks.keys())),
-    };
+      activeKeys: Effect.map(Ref.get(locks), (current) => Array.from(current.keys())),
+    } satisfies KeyedLock<Key>;
   });
