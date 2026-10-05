@@ -15,6 +15,11 @@ import {
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import {
+  acquirePreviewForward,
+  type PreviewForward,
+  settleOpenedForward,
+} from "~/browser/sshPreviewForwards";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -41,20 +46,30 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  let forward: PreviewForward | null = null;
+  if (input.url !== undefined) {
+    try {
+      forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
+    } catch (error) {
+      return AsyncResult.failure(Cause.die(error));
+    }
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      ...(input.url === undefined ? {} : { url: input.url }),
+      ...(forward === null ? {} : { url: forward.url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
     },
   });
   if (result._tag === "Failure") {
+    settleOpenedForward(input.threadRef, forward, null);
     return result;
   }
   const snapshot = result.value;
   applyPreviewServerSnapshot(input.threadRef, snapshot);
+  settleOpenedForward(input.threadRef, forward, snapshot.tabId);
   if (input.url !== undefined) {
     rememberPreviewUrl(
       input.threadRef,

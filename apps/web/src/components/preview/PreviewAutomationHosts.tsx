@@ -39,6 +39,11 @@ import {
 } from "~/previewMiniPlayerStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
+  acquirePreviewForward,
+  navigateTabThroughForward,
+  settleOpenedForward,
+} from "~/browser/sshPreviewForwards";
+import {
   readActiveBrowserRecordingTargets,
   startBrowserRecording,
   stopBrowserRecording,
@@ -453,11 +458,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             tabId = activeTabId;
             if (!activeTabId) {
               const defaults = await resolveBrowserDefaults();
+              const forward = resolvedInputUrl
+                ? await acquirePreviewForward(environmentId, resolvedInputUrl)
+                : null;
               const result = await open({
                 environmentId,
                 input: {
                   threadId: request.threadId,
-                  ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+                  ...(forward ? { url: forward.url } : {}),
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
                   viewport: browserDefaultOpenViewport(defaults),
@@ -465,10 +473,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 },
               });
               if (result._tag === "Failure") {
+                settleOpenedForward(threadRef, forward, null);
                 return raiseAtomCommandFailure(result);
               }
               const snapshot = result.value;
               applyPreviewServerSnapshot(threadRef, snapshot);
+              settleOpenedForward(threadRef, forward, snapshot.tabId);
               activeTabId = snapshot.tabId;
               activeSnapshot = snapshot;
               tabId = activeTabId;
@@ -557,7 +567,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
-              await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
+              const bridge = previewBridge;
+              await navigateTabThroughForward({
+                threadRef,
+                tabId: activeTabId,
+                url: resolvedInputUrl,
+                navigate: (url) => bridge.navigate(activeRuntimeTabId, url),
+              });
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,
@@ -580,7 +596,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 url: input.url!,
               },
             );
-            await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
+            const loadedUrl = await navigateTabThroughForward({
+              threadRef,
+              tabId: ready.tabId,
+              url: resolution.resolvedUrl,
+              navigate: (url) => ready.bridge.navigate(ready.runtimeTabId, url),
+            });
+            if (loadedUrl === null) {
+              throw new Error("A newer navigation of this preview tab replaced this one.");
+            }
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,

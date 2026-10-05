@@ -24,6 +24,12 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
+  acquirePreviewForward,
+  type PreviewForward,
+  settleOpenedForward,
+} from "./sshPreviewForwards";
+
+import {
   browserDefaultOpenProfileId,
   browserDefaultOpenViewport,
   resolveBrowserDefaults,
@@ -62,11 +68,17 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  let forward: PreviewForward;
+  try {
+    forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
+  } catch (error) {
+    return AsyncResult.failure(Cause.die(error));
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      url: input.url,
+      url: forward.url,
       // Built here rather than via `openPreviewSession` because this path
       // maps the result differently, so the configured defaults have to be
       // applied explicitly or file/link opens would ignore them.
@@ -74,8 +86,10 @@ export async function openUrlInPreview<E>(input: {
       profileId: browserDefaultOpenProfileId(defaults),
     },
   });
+  if (result._tag === "Failure") settleOpenedForward(input.threadRef, forward, null);
   return mapAtomCommandResult(result, (snapshot) => {
     applyPreviewServerSnapshot(input.threadRef, snapshot);
+    settleOpenedForward(input.threadRef, forward, snapshot.tabId);
     rememberPreviewUrl(input.threadRef, input.url);
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });

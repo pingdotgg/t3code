@@ -9,6 +9,11 @@ import {
 } from "~/browser/browserDefaults";
 import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import {
+  acquirePreviewForward,
+  type PreviewForward,
+  settleOpenedForward,
+} from "~/browser/sshPreviewForwards";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -64,11 +69,19 @@ export async function openTerminalLinkInPreview<E>(
   };
 
   const defaults = await resolveBrowserDefaults();
+  let forward: PreviewForward;
+  try {
+    forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
+  } catch (cause) {
+    console.error(new TerminalLinkPreviewOpenError({ ...errorContext, cause }));
+    input.fallbackToBrowser();
+    return;
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      url: input.url,
+      url: forward.url,
       // Same reason as `openUrlInPreview`: this path handles its own result
       // mapping, so the configured defaults are applied explicitly.
       viewport: browserDefaultOpenViewport(defaults),
@@ -76,6 +89,7 @@ export async function openTerminalLinkInPreview<E>(
     },
   });
   if (result._tag === "Failure") {
+    settleOpenedForward(input.threadRef, forward, null);
     if (isAtomCommandInterrupted(result)) {
       return;
     }
@@ -90,5 +104,6 @@ export async function openTerminalLinkInPreview<E>(
   }
   recordVisitForThread(input.threadRef, input.url);
   applyPreviewServerSnapshot(input.threadRef, result.value);
+  settleOpenedForward(input.threadRef, forward, result.value.tabId);
   useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }

@@ -31,6 +31,7 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { navigateTabThroughForward } from "~/browser/sshPreviewForwards";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -187,9 +188,16 @@ export function PreviewView({
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
-      if (runtimeTabId && previewBridge) {
-        // The bridge mirrors the resolved URL back to the server.
-        await previewBridge.navigate(runtimeTabId, resolvedUrl);
+      if (tabId && runtimeTabId && previewBridge) {
+        const bridge = previewBridge;
+        // The bridge mirrors the loaded URL back to the server.
+        const loadedUrl = await navigateTabThroughForward({
+          threadRef,
+          tabId,
+          url: resolvedUrl,
+          navigate: (url) => bridge.navigate(runtimeTabId, url),
+        });
+        if (loadedUrl === null) return false;
         rememberPreviewUrl(threadRef, resolvedUrl);
         return true;
       }
@@ -206,7 +214,7 @@ export function PreviewView({
       }
       return result._tag === "Success";
     },
-    [open, runtimeTabId, threadRef],
+    [open, runtimeTabId, tabId, threadRef],
   );
 
   const handleSubmitUrl = useCallback(
