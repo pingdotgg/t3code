@@ -248,7 +248,7 @@ function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled === true;
+    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">

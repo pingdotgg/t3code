@@ -17,8 +17,8 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
-  // Working section beta: off until the preference loads and is enabled.
-  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  // Default on after preferences load; preserve an explicit opt-out.
+  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
   const snoozedShelfExpandedRef = useRef(snoozedShelfExpanded);
