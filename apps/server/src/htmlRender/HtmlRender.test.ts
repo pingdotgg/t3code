@@ -129,10 +129,20 @@ describe("HtmlRender", () => {
       yield* fileSystem.writeFileString(secret, "API_KEY=abc123");
       const report = path.join(directory, "report.svg");
       yield* fileSystem.writeFileString(report, "<!doctype html><body><svg></svg>API_KEY=abc123");
+      // An <svg> inside a quoted entity, and a prolog shaped to stall a backtracking matcher.
+      const config = path.join(directory, "config.svg");
+      yield* fileSystem.writeFileString(
+        config,
+        '<!DOCTYPE config [<!ENTITY a "a"><!ENTITY b "]><svg/>">]><config>API_KEY=abc123</config>',
+      );
+      const stalling = path.join(directory, "stalling.svg");
+      yield* fileSystem.writeFileString(stalling, `${"<?p?>".repeat(40)}<config><svg/></config>`);
+      const unclosed = path.join(directory, "unclosed.svg");
+      yield* fileSystem.writeFileString(unclosed, '<!DOCTYPE svg [<!ENTITY a "x><svg/>');
 
       const error = yield* htmlRender
         .prepare(
-          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}">`,
+          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}">`,
         )
         .pipe(Effect.flip);
 
@@ -143,6 +153,9 @@ describe("HtmlRender", () => {
         "C:\\nope\\shot.webp",
         secret,
         report,
+        config,
+        stalling,
+        unclosed,
       ]);
     }).pipe(Effect.provide(testLayer)),
   );

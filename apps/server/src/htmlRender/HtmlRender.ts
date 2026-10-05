@@ -178,11 +178,49 @@ const isImageBytes = (bytes: Uint8Array) => {
   ) {
     return true;
   }
-  // An SVG's root element is <svg>, after any XML declaration or processing
-  // instructions, comments, and a doctype with an optional internal subset.
-  return /^\s*(?:(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!doctype[^>[]*(?:\[[\s\S]*?\])?\s*>)\s*)*<svg[\s/>]/i.test(
-    new TextDecoder().decode(bytes.subarray(0, 4096)),
-  );
+  return hasSvgRoot(new TextDecoder().decode(bytes.subarray(0, 4096)));
+};
+
+/** The index just past `token` at or after `from`, or -1 when it never appears. */
+const after = (text: string, token: string, from: number) => {
+  const at = text.indexOf(token, from);
+  return at === -1 ? -1 : at + token.length;
+};
+
+/**
+ * Whether an XML document's root element is <svg>, after any processing
+ * instructions, comments, and a doctype. One forward pass, so no input can
+ * make it slow, and quoted text never counts as markup.
+ */
+const hasSvgRoot = (text: string) => {
+  let at = 0;
+  while (at !== -1) {
+    while (/\s/.test(text.charAt(at))) at += 1;
+    if (text.startsWith("<?", at)) at = after(text, "?>", at + 2);
+    else if (text.startsWith("<!--", at)) at = after(text, "-->", at + 4);
+    else if (text.slice(at, at + 9).toLowerCase() === "<!doctype") at = afterDoctype(text, at + 9);
+    else return /^<svg[\s/>]/i.test(text.slice(at, at + 5));
+  }
+  return false;
+};
+
+/** The index just past a doctype whose body starts at `from`, honoring quotes and its internal subset. */
+const afterDoctype = (text: string, from: number) => {
+  let inSubset = false;
+  let at = from;
+  while (at !== -1 && at < text.length) {
+    const char = text[at];
+    if (char === '"' || char === "'") at = after(text, char, at + 1);
+    else if (inSubset && text.startsWith("<!--", at)) at = after(text, "-->", at + 4);
+    else if (inSubset && text.startsWith("<?", at)) at = after(text, "?>", at + 2);
+    else if (char === ">" && !inSubset) return at + 1;
+    else {
+      if (char === "[") inSubset = true;
+      else if (char === "]") inSubset = false;
+      at += 1;
+    }
+  }
+  return -1;
 };
 
 /** Replaces every local image reference with a data URI; unreadable paths stay as written. */
