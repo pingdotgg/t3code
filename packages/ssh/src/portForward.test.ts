@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -337,6 +338,81 @@ describe("SSH preview port forwards", () => {
       assert.equal(f.kills(), 1);
     }).pipe(Effect.provide(f.layer), Effect.scoped);
   });
+
+  it.effect("child exit fails immediately even while stderr remains open", () =>
+    Effect.gen(function* () {
+      const exitCode = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const drained = yield* Deferred.make<void>();
+      const f = fixture({
+        stderr: Stream.make(
+          bytes("ssh: connect to host devbox port 22: Connection refused\n"),
+        ).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Deferred.succeed(drained, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+          ),
+        ),
+        exitCode: Deferred.await(exitCode),
+      });
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const acquire = yield* Effect.forkChild(
+          manager.acquirePortForward(target, 5173).pipe(Effect.flip),
+        );
+        yield* Deferred.await(drained);
+        yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(255));
+        const error = yield* Fiber.join(acquire);
+        assert.instanceOf(error, SshCommandError);
+        if (error instanceof SshCommandError) {
+          assert.equal(error.exitCode, 255);
+          assert.include(error.stderr, "Connection refused");
+          assert.include(error.message, "Connection refused");
+        }
+        assert.equal(f.kills(), 1);
+      }).pipe(Effect.provide(f.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("readiness timeout includes a bounded tail of the last stderr lines", () =>
+    Effect.gen(function* () {
+      const drained = yield* Deferred.make<void>();
+      const diagnostic =
+        "FIRST-DIAGNOSTIC\n" +
+        "x".repeat(20_000) +
+        "\n" +
+        Array.from(
+          { length: 20 },
+          (_, index) => `debug1: Waiting for authentication ${index}`,
+        ).join("\n") +
+        "\n";
+      const f = fixture({
+        stderr: Stream.make(bytes(diagnostic)).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Deferred.succeed(drained, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+          ),
+        ),
+      });
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const acquire = yield* Effect.forkChild(
+          manager.acquirePortForward(target, 5173).pipe(Effect.flip),
+        );
+        yield* Deferred.await(drained);
+        yield* TestClock.adjust(20_000);
+        const error = yield* Fiber.join(acquire);
+        assert.instanceOf(error, SshReadinessError);
+        assert.include(error.message, "did not become ready");
+        assert.include(error.message, "Waiting for authentication 19");
+        assert.notInclude(error.message, "Waiting for authentication 11");
+        assert.notInclude(error.message, "FIRST-DIAGNOSTIC");
+        assert.isBelow(error.message.length, 16_500);
+        assert.equal(f.kills(), 1);
+      }).pipe(Effect.provide(f.layer), Effect.scoped);
+    }),
+  );
 
   it.effect("manager close rejects future acquisitions", () =>
     Effect.gen(function* () {

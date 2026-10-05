@@ -1254,34 +1254,44 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   // OpenSSH logs "Local forwarding listening" before bind(). The session marker
   // is emitted only after ExitOnForwardFailure has checked all local forwards.
   const forwardReady = yield* Deferred.make<void, SshReadinessError>();
-  const stderr =
-    input.readiness === "forward"
-      ? child.stderr.pipe(
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.tap((line) =>
-            line === "debug1: Entering interactive session."
-              ? Deferred.succeed(forwardReady, undefined)
-              : Effect.void,
+  let stderrTail = "";
+  if (input.readiness === "forward") {
+    // Drain independently: child exit must not wait on a descendant holding stderr open.
+    yield* Effect.forkIn(
+      child.stderr.pipe(
+        Stream.decodeText(),
+        Stream.tap((chunk) =>
+          Effect.sync(() => {
+            stderrTail = (stderrTail + chunk).slice(-16_384);
+          }),
+        ),
+        Stream.splitLines,
+        Stream.tap((line) =>
+          line === "debug1: Entering interactive session."
+            ? Deferred.succeed(forwardReady, undefined)
+            : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.tapError((cause) =>
+          Deferred.fail(
+            forwardReady,
+            new SshReadinessError({
+              message: "Failed to read SSH forward diagnostics.",
+              cause,
+            }),
           ),
-          Stream.map((line) => new TextEncoder().encode(`${line}\n`)),
-        )
-      : child.stderr;
-  const exitFailure = Effect.all(
-    [
-      input.readiness === "forward"
-        ? stderr.pipe(
-            Stream.decodeText(),
-            Stream.runFold(
-              () => "",
-              (tail, chunk) => (tail + chunk).slice(-16_384),
-            ),
-          )
-        : collectProcessOutput(stderr),
-      child.exitCode.pipe(Effect.map(Number)),
-    ],
-    { concurrency: "unbounded" },
-  ).pipe(
+        ),
+      ),
+      scope,
+    );
+  }
+  const exitObservation =
+    input.readiness === "forward"
+      ? child.exitCode.pipe(Effect.map((exitCode) => [stderrTail, Number(exitCode)] as const))
+      : Effect.all([collectProcessOutput(child.stderr), child.exitCode.pipe(Effect.map(Number))], {
+          concurrency: "unbounded",
+        });
+  const exitFailure = exitObservation.pipe(
     Effect.mapError(
       (cause) =>
         new SshCommandError({
@@ -1329,7 +1339,11 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           Effect.timeoutOrElse({
             duration: SSH_READY_TIMEOUT_MS,
             orElse: () =>
-              Effect.fail(new SshReadinessError({ message: "SSH forward did not become ready." })),
+              Effect.fail(
+                new SshReadinessError({
+                  message: `SSH forward on 127.0.0.1:${input.localPort} did not become ready.${stderrTail.trim() ? `\n${stderrTail.trim().split(/\r?\n/u).slice(-8).join("\n")}` : ""}`,
+                }),
+              ),
           }),
           Effect.andThen(
             Effect.gen(function* () {
