@@ -587,8 +587,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const statusLabel =
-    STATUS_LABEL_BY_STATUS[status] ??
+    // A native /goal keeps the agent going across turns until it is met.
+    (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
+      ? { ...workingLabel, label: "Goal" }
+      : workingLabel) ??
     (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.
