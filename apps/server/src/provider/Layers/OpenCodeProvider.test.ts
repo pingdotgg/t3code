@@ -457,6 +457,53 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("omits Reasoning when an OpenCode model advertises no variants", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode"],
+          all: [
+            {
+              id: "opencode",
+              name: "OpenCode",
+              models: {
+                "big-pickle": {
+                  id: "big-pickle",
+                  name: "Big Pickle",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+        ],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const model = snapshot.models.find((entry) => entry.slug === "opencode/big-pickle");
+
+      NodeAssert.ok(model);
+      NodeAssert.deepEqual(model.capabilities, {
+        optionDescriptors: [
+          {
+            id: "agent",
+            label: "Agent",
+            type: "select",
+            options: [
+              { id: "build", label: "Build", isDefault: true },
+              { id: "plan", label: "Plan" },
+            ],
+            currentValue: "build",
+          },
+        ],
+      });
+    }),
+  );
+
   it.effect("includes OpenCode skills in the provider snapshot", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
