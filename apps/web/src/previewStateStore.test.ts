@@ -5,7 +5,10 @@ import {
   type PreviewSessionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const { releaseTabForward } = vi.hoisted(() => ({ releaseTabForward: vi.fn() }));
+vi.mock("./browser/sshPreviewForwards", () => ({ releaseTabForward }));
 
 import {
   __testing,
@@ -225,6 +228,19 @@ describe("previewStateStore (single-tab)", () => {
     const state = readThreadPreviewState(ref);
     expect(state.snapshot).toBeNull();
     expect(state.recentlySeenUrls).toContain("http://localhost:5173/");
+  });
+
+  it("releases the SSH forward of every tab that leaves the sessions", () => {
+    releaseTabForward.mockClear();
+    applyPreviewServerSnapshot(ref, makeSnapshot({ tabId: "tab_a" }));
+    applyPreviewServerSnapshot(ref, makeSnapshot({ tabId: "tab_b" }));
+    beginPreviewSessionClose(ref, "tab_a");
+    expect(releaseTabForward.mock.calls).toEqual([[ref, "tab_a"]]);
+    applyPreviewServerSnapshot(ref, null);
+    expect(releaseTabForward.mock.calls).toEqual([
+      [ref, "tab_a"],
+      [ref, "tab_b"],
+    ]);
   });
 
   it("optimistically removes a session before the server close event arrives", () => {

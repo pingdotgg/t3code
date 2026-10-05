@@ -18,6 +18,7 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
+import { releaseTabForward } from "./browser/sshPreviewForwards";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
@@ -112,12 +113,16 @@ function updateThreadPreviewState(
 ): void {
   const threadKey = scopedThreadKey(ref);
   const atom = previewStateAtom(threadKey);
-  let nextState = appAtomRegistry.get(atom);
+  const previous = appAtomRegistry.get(atom);
+  let nextState = previous;
   const changed = appAtomRegistry.modify(atom, (current) => {
     nextState = update(current);
     return [nextState !== current, nextState];
   });
   if (!changed) return;
+  for (const tabId of Object.keys(previous.sessions)) {
+    if (!nextState.sessions[tabId]) releaseTabForward(ref, tabId);
+  }
   changedPreviewThreadKeys.add(threadKey);
   syncActivePreviewThread(threadKey, nextState);
 }

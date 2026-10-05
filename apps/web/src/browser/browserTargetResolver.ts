@@ -8,6 +8,8 @@ import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostC
 
 import { readPreparedConnection } from "~/state/session";
 
+import { readSshEnvironmentTarget } from "./sshPreviewForwards";
+
 export {
   normalizeHostname,
   isLocalLoopbackHost,
@@ -28,13 +30,25 @@ const resolveEnvironmentPortTarget = (
   requestedUrl?: string,
   sourceUrl?: URL,
 ): PreviewUrlResolution => {
+  const protocol = target.protocol ?? "http";
+  const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
+  const loopbackUrl = requestedUrl ?? `${protocol}://localhost:${target.port}${path}`;
+  // An SSH environment's server URL is itself a local forward, so its host says
+  // nothing about where the port lives. The URL stays remote-loopback and
+  // navigation forwards it (see sshPreviewForwards).
+  if (readSshEnvironmentTarget(environmentId) !== null) {
+    return {
+      requestedUrl: loopbackUrl,
+      resolvedUrl: loopbackUrl,
+      resolutionKind: "ssh-forward",
+      environmentId,
+    };
+  }
   if (!isPrivateNetworkHost(environmentUrl.hostname)) {
     throw new Error(
       "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
     );
   }
-  const protocol = target.protocol ?? "http";
-  const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
   const normalizedEnvironmentHost = environmentUrl.hostname.replace(/^\[|\]$/g, "");
   // Local loopback environments should advertise `localhost` so Chromium
   // dual-stack lookup can reach a Vite server bound only to ::1 or 127.0.0.1.
@@ -51,7 +65,7 @@ const resolveEnvironmentPortTarget = (
     resolved.port = String(target.port);
   }
   return {
-    requestedUrl: requestedUrl ?? `${protocol}://localhost:${target.port}${path}`,
+    requestedUrl: loopbackUrl,
     resolvedUrl: resolved.toString(),
     resolutionKind: isLocalLoopbackHost(normalizedEnvironmentHost)
       ? "direct"
