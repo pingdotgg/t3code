@@ -201,7 +201,8 @@ after 10 wakes in a row that bring only comments, after 8 failed reads in a row,
 Stop on the thread. A rate limit only pauses watching. Settling or archiving a thread also ends all
 its watches. Unsettle the thread before starting a new watch. Subagents cannot watch pull requests;
 the thread that delegated to them does. To start or stop it yourself, use the row menu in the
-**Linked pull requests** panel.
+**Linked pull requests** panel. In the thread details card, a watched pull request shows an eye;
+click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then

@@ -1,4 +1,4 @@
-import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -7,6 +7,8 @@ vi.mock("./ThreadDetailsPrRow", () => ({
   ThreadDetailsPrRow: ({ number }: { number: number }) => <span data-row={String(number)} />,
 }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [] }));
+vi.mock("~/state/threads", () => ({ threadEnvironment: {} }));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/lib/openPullRequestLink", () => ({
   parseChangeRequestUrl: () => null,
   findProjectOnChangeRequestHost: () => undefined,
@@ -55,6 +57,10 @@ function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPull
   act(() => {
     renderer = create(
       <ThreadDetailsPrRows
+        threadRef={{
+          environmentId: EnvironmentId.make("environment"),
+          threadId: ThreadId.make("thread"),
+        }}
         links={links}
         currentLink={current}
         onOpenLink={vi.fn()}
