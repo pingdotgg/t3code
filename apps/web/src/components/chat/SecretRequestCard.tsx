@@ -61,6 +61,7 @@ function PendingSecretRequestForm(props: {
   const { item } = props;
   const inputId = useId();
   const errorId = useId();
+  const privacyId = useId();
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
     // The failure cause holds the request; keep it out of the console.
@@ -103,6 +104,13 @@ function PendingSecretRequestForm(props: {
       className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
       onSubmit={onSubmit}
       autoComplete="off"
+      // A click anywhere on the card targets its field, so a paste that
+      // follows lands here rather than with the composer.
+      onPointerDown={(event) => {
+        if (!(event.target instanceof HTMLElement)) return;
+        if (event.target.closest("input, button, a")) return;
+        document.getElementById(inputId)?.focus();
+      }}
     >
       <div className="flex min-w-0 flex-col gap-1">
         <label htmlFor={inputId} className="text-sm font-medium text-foreground">
@@ -127,7 +135,7 @@ function PendingSecretRequestForm(props: {
             value={secret}
             disabled={submitting}
             aria-invalid={error !== null || undefined}
-            aria-describedby={error !== null ? errorId : undefined}
+            aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
             onChange={(event) => setSecret(event.currentTarget.value)}
           />
         </div>
@@ -141,7 +149,10 @@ function PendingSecretRequestForm(props: {
         </p>
       ) : null}
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <p
+          id={privacyId}
+          className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+        >
           <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
           {SECRET_REQUEST_PRIVACY_NOTE}
         </p>

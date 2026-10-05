@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Tracer from "effect/Tracer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -27,11 +28,13 @@ const withService = <A, E>(
     readonly stored: Map<string, Uint8Array>;
     readonly dispatched: Array<OrchestrationV2ServerCommand>;
   }) => Effect.Effect<A, E>,
+  options: { readonly threadId?: ThreadId; readonly runStatus?: string } = {},
 ) =>
   Effect.gen(function* () {
     const stored = new Map<string, Uint8Array>();
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
     let secretStatus = "pending";
+    const requestThreadId = options.threadId ?? threadId;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Layer.succeed(
@@ -39,8 +42,29 @@ const withService = <A, E>(
         ServerSecretStore.ServerSecretStore.of({
           get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
           set: (name, value) => Effect.sync(() => void stored.set(name, value)),
-          create: (name, value) => Effect.sync(() => void stored.set(name, value)),
-          getOrCreateRandom: () => Effect.die("unused"),
+          create: (name, value) =>
+            stored.has(name)
+              ? Effect.fail(
+                  new ServerSecretStore.SecretStorePersistError({
+                    name,
+                    cause: new PlatformError.PlatformError(
+                      new PlatformError.SystemError({
+                        _tag: "AlreadyExists",
+                        module: "FileSystem",
+                        method: "open",
+                      }),
+                    ),
+                  } as never),
+                )
+              : Effect.sync(() => void stored.set(name, value)),
+          getOrCreateRandom: (name, bytes) =>
+            Effect.sync(() => {
+              const existing = stored.get(name);
+              if (existing) return existing;
+              const value = new Uint8Array(bytes).fill(7);
+              stored.set(name, value);
+              return value;
+            }),
           remove: (name) => Effect.sync(() => void stored.delete(name)),
         }),
       ),
@@ -48,10 +72,11 @@ const withService = <A, E>(
         getThreadRecords: () =>
           Effect.succeed({
             thread: { projectId },
+            runs: [{ id: "run-1", status: options.runStatus ?? "running" }],
             turnItems: [
               {
                 id: turnItemId,
-                threadId,
+                threadId: requestThreadId,
                 runId: "run-1",
                 nodeId: "node-root",
                 type: "secret_request",
@@ -75,8 +100,11 @@ const withService = <A, E>(
     }).pipe(Effect.provide(SecretRequests.layer.pipe(Layer.provide(dependencies))));
   });
 
+/** The secret values in the store, leaving out the server's own salt. */
 const valuesOf = (stored: Map<string, Uint8Array>) =>
-  Array.from(stored.values(), (bytes) => new TextDecoder().decode(bytes));
+  Array.from(stored.entries())
+    .filter(([name]) => name !== "secret-request-salt")
+    .map(([, bytes]) => new TextDecoder().decode(bytes));
 
 it.effect("a saved answer becomes a one-use ref, and the thread only learns it was saved", () =>
   withService(({ service, stored, dispatched }) =>
@@ -126,14 +154,14 @@ it.effect("declining stores nothing, and a request is answered once", () =>
   withService(({ service, stored, dispatched }) =>
     Effect.gen(function* () {
       yield* service.answer({ threadId, turnItemId, answer: { type: "decline" } });
-      assert.equal(stored.size, 0);
+      assert.deepEqual(valuesOf(stored), []);
       assert.isTrue(Option.isNone(yield* service.savedRef({ threadId, turnItemId })));
       const late = yield* service
         .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
         .pipe(Effect.flip);
       assert.include(late.message, "already answered");
       assert.equal(dispatched.length, 1);
-      assert.equal(stored.size, 0);
+      assert.deepEqual(valuesOf(stored), []);
     }),
   ),
 );
@@ -179,4 +207,42 @@ it.effect("traces and counts a saved answer without ever recording the value", (
     assert.include(recorded, "SecretRequests.consume");
     assert.isFalse(recorded.some((value) => value.includes("ghp_secret")));
   }),
+);
+
+it.effect("works in threads with long ids, such as a delegated subagent's", () => {
+  const delegatedThreadId = ThreadId.make(
+    `thread:delegated-task:command%3Amcp%3A${"a".repeat(36)}%3Adelegate-task%3Arelease-notes-v0.2.0-${"b".repeat(40)}`,
+  );
+  return withService(
+    ({ service, stored }) =>
+      Effect.gen(function* () {
+        yield* service.answer({
+          threadId: delegatedThreadId,
+          turnItemId,
+          answer: { type: "save", secret: "ghp_secret" },
+        });
+        // Store names never grow with the thread id, so they fit any filesystem.
+        assert.isTrue(Array.from(stored.keys()).every((name) => name.length < 100));
+        const ref = Option.getOrThrow(
+          yield* service.savedRef({ threadId: delegatedThreadId, turnItemId }),
+        );
+        assert.equal(yield* service.consume({ ref, projectId }), "ghp_secret");
+      }),
+    { threadId: delegatedThreadId },
+  );
+});
+
+it.effect("refuses an answer once the agent that asked has stopped", () =>
+  withService(
+    ({ service, stored, dispatched }) =>
+      Effect.gen(function* () {
+        const late = yield* service
+          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
+          .pipe(Effect.flip);
+        assert.include(late.message, "has stopped");
+        assert.deepEqual(valuesOf(stored), []);
+        assert.equal(dispatched.length, 0);
+      }),
+    { runStatus: "completed" },
+  ),
 );

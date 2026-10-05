@@ -3041,21 +3041,7 @@ export const OrchestrationV2Command = Schema.Union([
     targetThreadId: ThreadId,
     targetRunId: Schema.NullOr(RunId),
   }),
-  // Server-only: written by the T3 MCP secret request tool and the secret
-  // RPC, never by a client dispatch (which would let a client mark a request
-  // saved without storing anything).
-  Schema.Struct({
-    type: Schema.Literal("secret_request.record"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    runId: RunId,
-    nodeId: NodeId,
-    turnItemId: TurnItemId,
-    label: TrimmedNonEmptyString,
-    reason: Schema.String,
-    placeholder: Schema.optional(Schema.String),
-    secretStatus: OrchestrationV2SecretRequestStatus,
-  }),
+
   Schema.Struct({
     type: Schema.Literal("provider.switch"),
     commandId: CommandId,
@@ -3123,6 +3109,22 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
+  }),
+  /**
+   * Records or updates a secret an agent asked the user for. Internal so no
+   * client can mark a request saved without the value being stored.
+   */
+  Schema.Struct({
+    type: Schema.Literal("secret_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    label: TrimmedNonEmptyString,
+    reason: Schema.String,
+    placeholder: Schema.optional(Schema.String),
+    secretStatus: OrchestrationV2SecretRequestStatus,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

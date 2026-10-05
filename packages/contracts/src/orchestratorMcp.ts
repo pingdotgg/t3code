@@ -602,9 +602,9 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
 export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSecretInput.Type;
 
 export const OrchestratorMcpRequestSecretResult = Schema.Struct({
-  status: Schema.Literals(["saved", "declined", "cancelled", "pending"]).annotate({
+  status: Schema.Literals(["saved", "declined", "cancelled", "timed_out"]).annotate({
     description:
-      "saved: secretRef holds the value. declined: the user chose not to. cancelled: the request ended with the run. pending: the wait timed out and the card is still open.",
+      "saved: secretRef holds the value. declined: the user chose not to. cancelled: the request ended with the run. timed_out: the user did not answer in time; the card is closed, so ask again if still needed.",
   }),
   secretRef: Schema.optional(SecretRef).annotate({
     description:

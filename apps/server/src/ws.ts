@@ -1811,44 +1811,34 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-            // Secret request status is only written next to storing the
-            // secret (secrets.answerRequest) or by the requesting tool.
-            command.type === "secret_request.record"
-              ? Effect.fail(
-                  new OrchestrationV2DispatchCommandError({
+            startup
+              .enqueueCommand(
+                // A retry also restarts the preparation work the launch owns.
+                (command.type === "prepared-run.retry"
+                  ? threadLaunch.retryPreparation(command)
+                  : ThreadMessageIntake.dispatchCommand(
+                      ThreadManagementService.withCreationProvenance(command, {
+                        createdBy: "user",
+                        creationSource:
+                          "creationSource" in command ? command.creationSource : "web",
+                      }),
+                    )
+                ).pipe(Effect.provide(intakeContext)),
+              )
+              .pipe(
+                Effect.tap(() => recordClientCommandAnalytics(command)),
+                Effect.map((result) => ({ sequence: result.sequence })),
+                Effect.mapError((cause) => {
+                  const detail = userFacingDispatchErrorMessage(cause);
+                  return new OrchestrationV2DispatchCommandError({
                     commandId: command.commandId,
                     commandType: command.type,
-                    message: "Secret requests are answered through their own request.",
-                  }),
-                )
-              : startup
-                  .enqueueCommand(
-                    // A retry also restarts the preparation work the launch owns.
-                    (command.type === "prepared-run.retry"
-                      ? threadLaunch.retryPreparation(command)
-                      : ThreadMessageIntake.dispatchCommand(
-                          ThreadManagementService.withCreationProvenance(command, {
-                            createdBy: "user",
-                            creationSource:
-                              "creationSource" in command ? command.creationSource : "web",
-                          }),
-                        )
-                    ).pipe(Effect.provide(intakeContext)),
-                  )
-                  .pipe(
-                    Effect.tap(() => recordClientCommandAnalytics(command)),
-                    Effect.map((result) => ({ sequence: result.sequence })),
-                    Effect.mapError((cause) => {
-                      const detail = userFacingDispatchErrorMessage(cause);
-                      return new OrchestrationV2DispatchCommandError({
-                        commandId: command.commandId,
-                        commandType: command.type,
-                        message: detail ?? "Failed to dispatch orchestration V2 command",
-                        ...(detail === undefined ? {} : { detail }),
-                        cause,
-                      });
-                    }),
-                  ),
+                    message: detail ?? "Failed to dispatch orchestration V2 command",
+                    ...(detail === undefined ? {} : { detail }),
+                    cause,
+                  });
+                }),
+              ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.command_id": command.commandId,

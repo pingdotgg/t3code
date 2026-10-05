@@ -6898,7 +6898,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    */
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
-      command: Extract<OrchestrationV2Command, { readonly type: "secret_request.record" }>,
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "secret_request.record" }>,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     ) {
       const projection = yield* projectionStore

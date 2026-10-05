@@ -1583,6 +1583,9 @@ const make = Effect.gen(function* () {
               ),
             );
         yield* record("pending");
+        // Only this call can hand the agent its ref, so the card must not
+        // outlive it: a timeout or an aborted call closes it as cancelled.
+        const closeCard = record("cancelled").pipe(Effect.ignore);
 
         // The user answers the card (secrets.answerRequest), or it ends with
         // the run; poll it like a delegated task.
@@ -1621,12 +1624,28 @@ const make = Effect.gen(function* () {
               Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
             ),
           ),
+          Effect.onInterrupt(() => closeCard),
         );
-        const status = Option.getOrElse(answered, () => "pending" as const);
+        if (Option.isNone(answered)) yield* closeCard;
+        // A save that raced the timeout still wins: the card is answered once.
+        const status = Option.isSome(answered)
+          ? answered.value
+          : yield* threadManagement
+              .getThreadRecords(threadId, ["turnItems"], {
+                turnItemTypes: ["secret_request"],
+                messageRoles: [],
+              })
+              .pipe(
+                Effect.map((records) => {
+                  const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+                  return item?.type === "secret_request" && item.secretStatus === "saved"
+                    ? ("saved" as const)
+                    : ("timed_out" as const);
+                }),
+                Effect.orElseSucceed(() => "timed_out" as const),
+              );
         yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
-        yield* Metrics.increment(Metrics.secretRequestsTotal, {
-          status: status === "pending" ? "timed_out" : status,
-        });
+        yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
         if (status !== "saved") return { status };
         const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
         return Option.match(secretRef, {

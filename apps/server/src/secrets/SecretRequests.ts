@@ -16,8 +16,10 @@ import {
   type SecretRequestAnswerInput,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
+
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,13 +30,29 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const SECRET_REF_PREFIX = "secret-ref:";
-/** Store name for a ref's value; refs are random hex, so they are safe as names. */
+/** Store name for a ref's value; refs are fixed-length hex, so names stay short and safe. */
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
 const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
+/** A value nobody used within this long is dropped; the agent can ask again. */
+const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** A ref's value plus the project it was entered for, stored together. */
+/**
+ * Each request has exactly one ref, derived from where it was asked. Its
+ * length never depends on the thread id, so the store's file names stay
+ * within filesystem limits, and the requesting tool finds it without a
+ * second record. Unguessable without the server's own salt.
+ */
+const refFor = (salt: string, threadId: ThreadId, turnItemId: string) =>
+  SecretRef.make(
+    `${SECRET_REF_PREFIX}${NodeCrypto.createHmac("sha256", salt)
+      .update(`${threadId}\u0000${turnItemId}`)
+      .digest("hex")
+      .slice(0, 32)}`,
+  );
+
+/** A ref's value, the project it was entered for, and when it was saved. */
 const StoredSecret = Schema.fromJsonString(
-  Schema.Struct({ projectId: Schema.String, value: Schema.String }),
+  Schema.Struct({ projectId: Schema.String, value: Schema.String, savedAt: Schema.Number }),
 );
 const encodeStored = Schema.encodeEffect(StoredSecret);
 const decodeStored = Schema.decodeUnknownOption(StoredSecret);
@@ -67,19 +85,11 @@ export class SecretRequests extends Context.Service<
 
 const make = Effect.gen(function* () {
   const store = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
-  /** Which ref each saved request minted; the store holds the value itself. */
-  const refForRequest = (threadId: ThreadId, turnItemId: string) =>
-    `secret-request-ref-${Buffer.from(`${threadId}\u0000${turnItemId}`).toString("base64url")}`;
-
-  const newRef = crypto.randomBytes(16).pipe(
-    Effect.map((bytes) =>
-      SecretRef.make(`${SECRET_REF_PREFIX}${Buffer.from(bytes).toString("hex")}`),
-    ),
-    Effect.orDie,
-  );
+  const salt = Buffer.from(
+    yield* store.getOrCreateRandom("secret-request-salt", 32).pipe(Effect.orDie),
+  ).toString("hex");
 
   const answer: SecretRequests["Service"]["answer"] = (input) =>
     Effect.gen(function* () {
@@ -88,7 +98,7 @@ const make = Effect.gen(function* () {
         "secret_request.answer": input.answer.type,
       });
       const records = yield* threadManagement
-        .getThreadRecords(input.threadId, ["turnItems"], {
+        .getThreadRecords(input.threadId, ["runs", "turnItems"], {
           turnItemTypes: ["secret_request"],
           messageRoles: [],
         })
@@ -100,17 +110,32 @@ const make = Effect.gen(function* () {
       if (item.secretStatus !== "pending") {
         return yield* fail("This secret request was already answered.");
       }
-      // Store first: the card only says saved once the value is kept.
+      // The agent is waiting inside the run that asked; once it has ended,
+      // nobody will ever receive the ref, so a value saved now would be lost.
+      const run = records.runs.find((candidate) => candidate.id === item.runId);
+      if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
+        return yield* fail("The agent that asked has stopped, so this secret can't be used.");
+      }
+      // Store first: the card only says saved once the value is kept. Create,
+      // not set: a second answer racing this one must not replace the value.
       if (input.answer.type === "save") {
-        const ref = yield* newRef;
         const encoded = yield* encodeStored({
           projectId: records.thread.projectId,
           value: input.answer.secret,
+          savedAt: yield* Clock.currentTimeMillis,
         }).pipe(Effect.orDie);
-        yield* Effect.all([
-          store.set(storeName(ref), new TextEncoder().encode(encoded)),
-          store.set(refForRequest(input.threadId, item.id), new TextEncoder().encode(ref)),
-        ]).pipe(Effect.mapError(() => fail("Could not store the secret.")));
+        yield* store
+          .create(
+            storeName(refFor(salt, input.threadId, item.id)),
+            new TextEncoder().encode(encoded),
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              ServerSecretStore.isSecretAlreadyExistsError(error)
+                ? fail("This secret request was already answered.")
+                : fail("Could not store the secret."),
+            ),
+          );
       }
       const secretStatus = input.answer.type === "save" ? "saved" : "declined";
       yield* threadManagement
@@ -130,10 +155,11 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("SecretRequests.answer"));
 
   const savedRef: SecretRequests["Service"]["savedRef"] = (input) =>
-    store.get(refForRequest(input.threadId, input.turnItemId)).pipe(
-      Effect.map(Option.map((bytes) => SecretRef.make(new TextDecoder().decode(bytes)))),
-      Effect.orElseSucceed(() => Option.none()),
-    );
+    Effect.gen(function* () {
+      const ref = refFor(salt, input.threadId, input.turnItemId);
+      const stored = yield* store.get(storeName(ref)).pipe(Effect.orElseSucceed(Option.none));
+      return Option.map(stored, () => ref);
+    });
 
   const consume: SecretRequests["Service"]["consume"] = (input) =>
     consumeRef(input).pipe(
@@ -157,6 +183,10 @@ const make = Effect.gen(function* () {
         return yield* fail(
           "That secretRef was already used or does not exist. Ask the user again with request_secret.",
         );
+      }
+      if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
+        yield* store.remove(storeName(input.ref)).pipe(Effect.ignore);
+        return yield* fail("That secretRef expired. Ask the user again with request_secret.");
       }
       // One use: the value moves into whatever consumed it.
       yield* store.remove(storeName(input.ref)).pipe(Effect.ignore);

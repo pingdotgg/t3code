@@ -485,7 +485,14 @@ const memorySecretStoreLayer = Layer.sync(ServerSecretStore.ServerSecretStore, (
     get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
     set: (name, value) => Effect.sync(() => void stored.set(name, value)),
     create: (name, value) => Effect.sync(() => void stored.set(name, value)),
-    getOrCreateRandom: () => Effect.die("unused in this test"),
+    getOrCreateRandom: (name, bytes) =>
+      Effect.sync(() => {
+        const existing = stored.get(name);
+        if (existing) return existing;
+        const value = new Uint8Array(bytes).fill(7);
+        stored.set(name, value);
+        return value;
+      }),
     remove: (name) => Effect.sync(() => void stored.delete(name)),
   });
 });
@@ -1551,7 +1558,12 @@ describe("orchestrator MCP toolkit", () => {
             };
             expect(secretResult.status).toBe("saved");
             expect(secretResult.secretRef).toMatch(/^secret-ref:[0-9a-f]{32}$/);
-            expect(JSON.stringify(secretCall)).not.toContain("github-webhook-secret");
+            // The value appears nowhere in what the agent received.
+            const received = [
+              ...secretCall.content.map((part) => ("text" in part ? part.text : "")),
+              ...Object.values(secretResult),
+            ];
+            expect(received.some((value) => value.includes("github-webhook-secret"))).toBe(false);
 
             // The ref is the secret for exactly one consumer.
             expect(
