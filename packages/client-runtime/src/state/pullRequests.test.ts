@@ -236,6 +236,267 @@ for (const scenario of [
   );
 }
 
+it.effect("shares active read identity probes while keeping later reads and mutations fresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const probes: string[] = [];
+      const reads: number[] = [];
+      const mutations: string[] = [];
+      let accountId = "123";
+      const clientFor = (local: boolean) =>
+        ({
+          [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+            Effect.yieldNow.pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  probes.push(local ? "local" : "origin");
+                  return { host: "github.com", provider: "github", viewer: "maria", accountId };
+                }),
+              ),
+            ),
+          [WS_METHODS.pullRequestsSummary]: (input: {
+            number: number;
+            expectedAccountId: string;
+          }) =>
+            Effect.sync(() => {
+              expect(local).toBe(true);
+              expect(input.expectedAccountId).toBe(accountId);
+              reads.push(input.number);
+              return null;
+            }),
+          [WS_METHODS.pullRequestsRunAction]: (input: { expectedAccountId: string }) =>
+            Effect.sync(() => mutations.push(input.expectedAccountId)),
+          [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
+        }) as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+        clientFor(false),
+        clientFor(true),
+      );
+      const reference = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 7,
+      };
+      yield* Effect.gen(function* () {
+        yield* Effect.all(
+          Array.from({ length: 4 }, (_, index) =>
+            createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+              ...reference,
+              number: index + 1,
+            }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        expect(probes).toEqual(["origin", "local"]);
+        expect(reads.toSorted()).toEqual([1, 2, 3, 4]);
+        accountId = "456";
+        yield* createPullRequestRouter()(WS_METHODS.pullRequestsSummary, reference);
+        yield* createPullRequestRouter()(WS_METHODS.pullRequestsRunAction, {
+          ...reference,
+          action: "close",
+        });
+        expect(probes).toEqual(["origin", "local", "origin", "local", "origin", "local"]);
+        expect(mutations).toEqual(["456"]);
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+      );
+    }),
+  ),
+);
+
+it.effect.each([
+  { probe: "origin", cancelled: "first" },
+  { probe: "origin", cancelled: "waiter" },
+  { probe: "alternate", cancelled: "first" },
+  { probe: "alternate", cancelled: "waiter" },
+] as const)(
+  "preserves a shared $probe probe's other reader when the $cancelled cancels",
+  ({ probe, cancelled }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let probes = 0;
+        const clientFor = (local: boolean) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local === (probe === "alternate")) {
+                  probes++;
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
+              }),
+            [WS_METHODS.pullRequestsSummary]: () => Effect.succeed(null),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const read = () =>
+          createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number: 7,
+          }).pipe(
+            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          );
+        const first = yield* read().pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const waiter = yield* read().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(cancelled === "first" ? first : waiter);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(cancelled === "first" ? waiter : first)).toBeNull();
+        expect(probes).toBe(cancelled === "first" ? 2 : 1);
+        yield* read();
+        expect(probes).toBe(cancelled === "first" ? 3 : 2);
+      }),
+    ),
+);
+
+it.effect.each(["revoked", "disabled"] as const)(
+  "rechecks routing after an alternate with a shared probe is %s",
+  (change) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const reads: string[] = [];
+        let trusted = true;
+        let probes = 0;
+        const clientFor = (local: boolean) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local) {
+                  probes++;
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
+              }),
+            [WS_METHODS.pullRequestsSummary]: () =>
+              Effect.sync(() => {
+                reads.push(local ? "local" : "origin");
+                return null;
+              }),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const readers = yield* Effect.all(
+          Array.from({ length: 2 }, () =>
+            createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+              projectId: ProjectId.make("project-1"),
+              repository: "acme/web",
+              number: 7,
+            }),
+          ),
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(GitHubRoutingPermissions, {
+            ...trustedRouting,
+            get: () => Effect.sync(() => (trusted ? "read-write" : "off")),
+          }),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        yield* Effect.yieldNow;
+        if (change === "revoked") trusted = false;
+        else
+          yield* SubscriptionRef.update(
+            environmentRegistry.entries,
+            (entries) =>
+              new Map(
+                [...entries].map(([id, entry]) => [
+                  id,
+                  id === TARGET.environmentId ? entry : { ...entry, enabled: false },
+                ]),
+              ),
+          );
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(readers)).toEqual([null, null]);
+        expect(probes).toBe(1);
+        expect(reads).toEqual(["origin", "origin"]);
+      }),
+    ),
+);
+
+it.effect.each(["origin", "alternate"] as const)(
+  "keeps pending metadata from an old %s connection separate from its replacement",
+  (reconnected) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const probes: string[] = [];
+        const clientFor = (local: boolean, replacement = false) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local === (reconnected === "alternate")) {
+                  probes.push(replacement ? "new" : "old");
+                  if (!replacement) {
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+                  }
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
+              }),
+            [WS_METHODS.pullRequestsSummary]: () => Effect.succeed(null),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor, localSupervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const read = () =>
+          createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number: 7,
+          }).pipe(
+            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          );
+        const first = yield* read().pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* SubscriptionRef.set(
+          (reconnected === "origin" ? supervisor : localSupervisor).session,
+          Option.some(session(clientFor(reconnected === "alternate", true))),
+        );
+        expect(yield* read()).toBeNull();
+        expect(probes).toEqual(["old", "new"]);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(first)).toBeNull();
+      }),
+    ),
+);
+
 it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
   "routes %s viewed marks to their storage environment",
   (provider) =>
@@ -417,7 +678,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
     Effect.sync(() => registry.dispose()),
   );
-  return { runtime, atoms, registry, environmentRegistry, supervisor };
+  return { runtime, atoms, registry, environmentRegistry, supervisor, localSupervisor };
 });
 
 it.effect.each(["default", "origin-off", "destination-off", "read-only"] as const)(
