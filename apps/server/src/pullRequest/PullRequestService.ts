@@ -72,10 +72,12 @@ import {
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -635,6 +637,7 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
@@ -1991,35 +1994,61 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
-            return project.api
-              .runAction({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
-                number: input.number,
-                action: input.action,
-                ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
-                ...(input.expectedStackHeads === undefined
-                  ? {}
-                  : { expectedStackHeads: input.expectedStackHeads }),
-                ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
-                ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
-              })
-              .pipe(
-                // Once the authorized provider action starts, a failure may leave partial
-                // remote updates. Validation and permission failures above changed nothing.
-                Effect.ensuring(
-                  input.stackNumber === undefined
-                    ? Effect.void
-                    : refreshAfterTurn(project.project.id),
-                ),
-                Effect.mapError(toPullRequestError("runAction")),
-                Effect.as(
-                  project.api.kind === "azure-devops"
-                    ? input.repository.trim()
-                    : project.repository,
-                ),
-              );
+            const mergeSettings =
+              project.api.kind === "github" &&
+              input.stackNumber === undefined &&
+              (input.action === "merge" || input.action === "enable-auto-merge")
+                ? serverSettings.getSettings.pipe(
+                    Effect.map(
+                      (settings) =>
+                        resolveProjectSettings(settings, project.project.id).settings
+                          .removeAgentCreditsOnMerge,
+                    ),
+                    Effect.mapError(
+                      () =>
+                        new PullRequestOperationError({
+                          operation: "runAction",
+                          detail: "Could not read merge settings.",
+                        }),
+                    ),
+                  )
+                : Effect.succeed(false);
+            return mergeSettings.pipe(
+              Effect.flatMap((removeAgentCreditsOnMerge) =>
+                project.api
+                  .runAction({
+                    cwd: project.project.workspaceRoot,
+                    repository: project.repository,
+                    host: project.host,
+                    number: input.number,
+                    action: input.action,
+                    ...(removeAgentCreditsOnMerge ? { removeAgentCreditsOnMerge: true } : {}),
+                    ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+                    ...(input.expectedStackHeads === undefined
+                      ? {}
+                      : { expectedStackHeads: input.expectedStackHeads }),
+                    ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.updateMethod === undefined
+                      ? {}
+                      : { updateMethod: input.updateMethod }),
+                  })
+                  .pipe(
+                    // Once the authorized provider action starts, a failure may leave partial
+                    // remote updates. Validation and permission failures above changed nothing.
+                    Effect.ensuring(
+                      input.stackNumber === undefined
+                        ? Effect.void
+                        : refreshAfterTurn(project.project.id),
+                    ),
+                    Effect.mapError(toPullRequestError("runAction")),
+                    Effect.as(
+                      project.api.kind === "azure-devops"
+                        ? input.repository.trim()
+                        : project.repository,
+                    ),
+                  ),
+              ),
+            );
           }),
         );
       }),
