@@ -7,20 +7,33 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+// When on, workers run a script that never announces, like a worker stuck opening the file.
+const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
   class RecordedWorker extends actual.Worker {
     constructor(...args: ConstructorParameters<typeof actual.Worker>) {
-      super(...args);
+      super(
+        ...((silentWorkers.on
+          ? ["setInterval(() => {}, 1 << 30);", { eval: true }]
+          : args) as ConstructorParameters<typeof actual.Worker>),
+      );
       startedWorkers.push(this);
+    }
+    override terminate() {
+      // A "ready" already queued when termination starts reaches the parent before "exit".
+      if (silentWorkers.readyOnTerminate) this.emit("message", { type: "ready" });
+      return super.terminate();
     }
   }
   return { ...actual, Worker: RecordedWorker };
@@ -360,6 +373,180 @@ it.effect("keeps a nested transaction inside a read-only transaction on the read
         .pipe(SqliteClient.readOnly);
 
       assert.deepEqual(counts, { outer: 1, nested: 1 });
+    }),
+  ),
+);
+
+const withFileClient = <A, E>(
+  setup: (
+    sql: SqlClient.SqlClient,
+    filename: string,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-reader-off-" });
+    const filename = path.join(directory, "state.sqlite");
+    return yield* Effect.gen(function* () {
+      return yield* setup(yield* SqlClient.SqlClient, filename);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("uses the writer when the reader cannot open the database", () =>
+  withFileClient((sql, filename) =>
+    Effect.gen(function* () {
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO entries VALUES ('kept')`;
+      // The writer keeps its open file; a read-only open of the path now fails.
+      yield* (yield* FileSystem.FileSystem).remove(filename);
+      const startedBefore = startedWorkers.length;
+
+      assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+      assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+      assert.equal(startedWorkers.length, startedBefore + 1);
+    }),
+  ),
+);
+
+it.effect("uses the writer for a database that is not in WAL mode", () =>
+  withFileClient((sql) =>
+    Effect.gen(function* () {
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      const startedBefore = startedWorkers.length;
+
+      // A write inside readOnly only succeeds on the writer: the reader is read-only.
+      yield* sql
+        .withTransaction(sql`INSERT INTO entries VALUES ('on the writer')`)
+        .pipe(SqliteClient.readOnly);
+      assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+      assert.equal(startedWorkers.length, startedBefore + 1);
+    }),
+  ),
+);
+
+const captureWarnings = () => {
+  const warnings: Array<unknown> = [];
+  const logger = Logger.make(({ logLevel, message }) => {
+    if (logLevel === "Warn") warnings.push(message);
+  });
+  return { warnings, layer: Logger.layer([logger], { mergeWithExisting: false }) };
+};
+
+const silently = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      silentWorkers.on = true;
+    }),
+    () => effect,
+    () =>
+      Effect.sync(() => {
+        silentWorkers.on = false;
+        silentWorkers.readyOnTerminate = false;
+      }),
+  );
+
+it.effect("turns the reader off when its worker never opens the database", () => {
+  const { warnings, layer: logs } = captureWarnings();
+  return withFileClient((sql) =>
+    Effect.gen(function* () {
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO entries VALUES ('kept')`;
+      const read = yield* silently(
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(
+            sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("10 seconds");
+          return yield* Fiber.join(fiber);
+        }),
+      );
+
+      assert.equal(read, 1);
+      assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+      assert.lengthOf(warnings, 1);
+    }),
+  ).pipe(Effect.provide(logs));
+});
+
+it.effect("lets a read be cancelled while its worker is still starting", () =>
+  withFileClient((sql) =>
+    Effect.gen(function* () {
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* silently(
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(
+            sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
+          );
+          yield* Effect.yieldNow;
+          // Never returns if the wait for the worker were uninterruptible: the
+          // test clock has not moved, so the startup deadline cannot fire.
+          yield* Fiber.interrupt(fiber);
+        }),
+      );
+
+      // The client stays usable: the next read waits out the deadline, then uses the writer.
+      const next = yield* Effect.forkChild(
+        sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 seconds");
+      assert.equal(yield* Fiber.join(next), 0);
+    }),
+  ),
+);
+
+it.effect("logs one warning when concurrent first reads find the reader unavailable", () => {
+  const { warnings, layer: logs } = captureWarnings();
+  return withFileClient((sql, filename) =>
+    Effect.gen(function* () {
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* (yield* FileSystem.FileSystem).remove(filename);
+      const startedBefore = startedWorkers.length;
+
+      const counts = yield* Effect.all(
+        [
+          sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
+          sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      assert.deepEqual(counts, [0, 0]);
+      assert.equal(startedWorkers.length, startedBefore + 1);
+      assert.lengthOf(warnings, 1);
+    }),
+  ).pipe(Effect.provide(logs));
+});
+
+it.effect("does not hand out a worker that reports ready after another read timed it out", () =>
+  withFileClient((sql) =>
+    Effect.gen(function* () {
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO entries VALUES ('kept')`;
+      const read = () => sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
+      const counts = yield* silently(
+        Effect.gen(function* () {
+          const first = yield* Effect.forkChild(read());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("5 seconds");
+          const second = yield* Effect.forkChild(read());
+          yield* Effect.yieldNow;
+          // The first read reaches its deadline and retires the worker; the second
+          // is still waiting when the worker's "ready" arrives, before it exits.
+          silentWorkers.readyOnTerminate = true;
+          yield* TestClock.adjust("5 seconds");
+          return [yield* Fiber.join(first), yield* Fiber.join(second)];
+        }),
+      );
+
+      assert.deepEqual(counts, [1, 1]);
     }),
   ),
 );
