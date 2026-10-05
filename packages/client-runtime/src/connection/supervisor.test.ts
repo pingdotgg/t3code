@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
+import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -38,6 +38,7 @@ import {
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -156,6 +157,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   readonly ready?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
+  readonly initialConfig?: (attempt: number) => Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
@@ -205,7 +207,9 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     const session = yield* Effect.acquireRelease(
       Effect.succeed({
         client: TEST_RPC_CLIENT,
-        initialConfig: Effect.die(new Error("Initial config is not used by supervisor tests.")),
+        initialConfig:
+          options?.initialConfig?.(attempt) ??
+          Effect.die(new Error("Initial config is not used by supervisor tests.")),
         subscribeServerConfig: (input) => TEST_RPC_CLIENT.subscribeServerConfig(input),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
@@ -1981,6 +1985,68 @@ describe("EnvironmentSupervisor routes", () => {
         phase: "connected",
         generation: 1,
       });
+    }),
+  );
+
+  it.effect("learns the LAN address over T3 Connect and moves to it", () =>
+    Effect.gen(function* () {
+      const relayEntry: ConnectionCatalogEntry = {
+        target: RELAY_TARGET,
+        profile: Option.none(),
+        enabled: true,
+      };
+      const lanAddress = yield* Ref.make("http://192.168.1.10:3773/");
+      const learned = yield* Ref.make<ReadonlyArray<string>>([]);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Effect.succeed("answered")
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        // Only the reported endpoints matter to the supervisor.
+        initialConfig: () =>
+          Ref.get(lanAddress).pipe(
+            Effect.map((httpBaseUrl): Pick<ServerConfig, "directEndpoints"> => ({
+              directEndpoints: [{ kind: "lan", httpBaseUrl }],
+            })),
+            Effect.map((config) => config as ServerConfig),
+          ),
+      });
+      const current = yield* Ref.make(relayEntry);
+      const supervisor = yield* EnvironmentSupervisor.make(relayEntry, {
+        initiallyDesired: true,
+        learnRoutes: ({ activeRoute, reported }) =>
+          Effect.gen(function* () {
+            const entry = yield* Ref.get(current);
+            const routes = mergeLearnedRoutes({
+              entry,
+              activeRoute,
+              reported,
+              allowInsecure: true,
+            });
+            if (routes === null) return Option.none();
+            const next = entryWithRoutes(entry, routes);
+            yield* Ref.set(current, next);
+            yield* Ref.update(learned, (all) => [
+              ...all,
+              ...routes.filter(isLearned).map((route) => connectionRouteId(route.target)),
+            ]);
+            return Option.some(next);
+          }),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      // Connected over T3 Connect, the server reports its LAN address; the
+      // learned route ranks first, answers, and the session moves to it.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      expect(yield* Ref.get(learned)).toEqual([
+        `learned:${TARGET.environmentId}:http://192.168.1.10:3773`,
+      ]);
     }),
   );
 });

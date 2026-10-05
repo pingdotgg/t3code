@@ -1874,4 +1874,23 @@ describe("EnvironmentRegistry routes", () => {
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
+
+  it.effect("drops a learned route whose profile was not saved instead of duplicating it", () =>
+    Effect.gen(function* () {
+      const learnedId = `learned:${LAN_TARGET.environmentId}:100.64.0.9:3773@${LAN_TARGET.connectionId}`;
+      const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
+      // An earlier build saved the learned target twice and never its profile.
+      const harness = yield* makeHarness(
+        [LAN_TARGET, learned, learned],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
+        expect(entry?.target).toEqual(LAN_TARGET);
+        expect(entry?.alternateRoutes ?? []).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
 });

@@ -113,6 +113,15 @@ function exitUnlessInterrupted<A, E, R>(
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
+  /**
+   * Saves the direct addresses the server reports once a session is ready and
+   * returns the entry with its updated routes, which later attempts use. The
+   * live session is left alone: it already works.
+   */
+  readonly learnRoutes?: (input: {
+    readonly activeRoute: ConnectionRoute;
+    readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
+  }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 /**
@@ -279,7 +288,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
-  const routes = connectionRoutes(entry);
+  // Learned routes arrive while a session is live, so the route list is read
+  // fresh by each attempt and check instead of being fixed at creation.
+  const currentEntry = yield* Ref.make(entry);
+  const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   // Set when a better route answered while connected over a worse one; the
   // replacement attempt tries it first. Cleared once an attempt starts.
   const preferredRouteId = yield* Ref.make(Option.none<string>());
@@ -287,19 +299,45 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
 
   const attemptEntry = Effect.gen(function* () {
+    const latest = yield* Ref.get(currentEntry);
+    const routes = connectionRoutes(latest);
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
-    if (Option.isNone(preferred)) return entry;
+    if (Option.isNone(preferred)) return latest;
     const route = routes.find(
       (candidate) => connectionRouteId(candidate.target) === preferred.value,
     );
     return route === undefined
-      ? entry
-      : entryWithRoutes(entry, [route, ...routes.filter((candidate) => candidate !== route)]);
+      ? latest
+      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+  });
+
+  const learnRoutesFrom = Effect.fnUntraced(function* (
+    learn: NonNullable<EnvironmentSupervisorOptions["learnRoutes"]>,
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
+    const config = yield* lease.session.initialConfig.pipe(Effect.option);
+    const reported = Option.getOrUndefined(config)?.directEndpoints;
+    if (reported === undefined) return;
+    const activeId = connectionRouteId(lease.prepared.target);
+    const activeRoute = (yield* currentRoutes).find(
+      (route) => connectionRouteId(route.target) === activeId,
+    );
+    if (activeRoute === undefined) return;
+    const updated = yield* learn({ activeRoute, reported });
+    if (Option.isSome(updated)) {
+      yield* Ref.set(currentEntry, updated.value);
+      // A learned route may rank above the one in use.
+      yield* requestBetterRouteCheck(lease);
+    }
   });
 
   const routeIndex = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
-    routes.findIndex(
-      (route) => connectionRouteId(route.target) === connectionRouteId(lease.prepared.target),
+    currentRoutes.pipe(
+      Effect.map((routes) =>
+        routes.findIndex(
+          (route) => connectionRouteId(route.target) === connectionRouteId(lease.prepared.target),
+        ),
+      ),
     );
 
   /**
@@ -310,16 +348,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const checkBetterRoutes = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
-    const current = routeIndex(lease);
+    const latest = yield* Ref.get(currentEntry);
+    const current = yield* routeIndex(lease);
     if (current <= 0) return;
     const now = yield* Clock.monotonicTimeNanos;
     const cooldowns = yield* Ref.get(routeCooldowns);
-    const better = routes
+    const better = connectionRoutes(latest)
       .slice(0, current)
       .filter((route) => (cooldowns.get(connectionRouteId(route.target)) ?? 0n) <= now);
     const passed = yield* Effect.forEach(
       better,
-      (route: ConnectionRoute) => driver.preflight(entry, route),
+      (route: ConnectionRoute) => driver.preflight(latest, route),
       { concurrency: "unbounded" },
     );
     const index = passed.indexOf(true);
@@ -336,7 +375,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // One check at a time; a trigger during a check is dropped, not queued.
   const betterRouteChecks = yield* Queue.dropping<ConnectionDriver.EnvironmentConnectionLease>(1);
   const requestBetterRouteCheck = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
-    routeIndex(lease) > 0 ? Queue.offer(betterRouteChecks, lease).pipe(Effect.asVoid) : Effect.void;
+    routeIndex(lease).pipe(
+      Effect.flatMap((index) =>
+        index > 0 ? Queue.offer(betterRouteChecks, lease).pipe(Effect.asVoid) : Effect.void,
+      ),
+    );
 
   const clearLease = Effect.all(
     [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
@@ -557,13 +600,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
     );
-    if (routes.length > 1 && routeIndex(lease) > 0) {
-      yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
-        Stream.drop(1),
-        Stream.runForEach(() => requestBetterRouteCheck(lease)),
-        Effect.forkScoped,
-      );
-    }
+    // Ticks always run: the check skips the preferred route itself, and the
+    // route list can grow while connected (learned routes).
+    yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
+      Stream.drop(1),
+      Stream.runForEach(() => requestBetterRouteCheck(lease)),
+      Effect.forkScoped,
+    );
     for (;;) {
       const next = yield* takeSignal;
       const end = yield* connectedLeaseEnd(next, lease);
@@ -652,9 +695,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         })),
       ),
       // Each route may use the full setup time before the next is tried.
-      Effect.sleep(Duration.times(establishmentTimeout, routes.length)).pipe(
-        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
-      ),
+      Effect.sleep(
+        Duration.times(establishmentTimeout, connectionRoutes(yield* Ref.get(currentEntry)).length),
+      ).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
     ]);
 
     if (establishment._tag === "Interrupted") {
@@ -722,6 +765,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    if (options?.learnRoutes !== undefined) {
+      yield* learnRoutesFrom(options.learnRoutes, active.lease).pipe(Effect.forkScoped);
+    }
     yield* setState({
       desired: true,
       network: currentIntent.network,

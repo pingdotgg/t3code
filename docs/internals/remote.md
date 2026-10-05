@@ -39,6 +39,15 @@ Preflight includes authorization so a route that answers but rejects this
 client never costs a working session; a route that still fails afterwards is
 held back for a cooldown so a flaky network cannot bounce the connection.
 
+A connected server reports the LAN and tailnet addresses it is bound to, and the
+client saves them as learned routes. A learned route reuses the credential of
+the route it was learned over: the T3 Connect access token, which is not bound
+to an origin because each DPoP proof names the URL it signs, or the paired
+bearer token. Learned routes the server stops reporting are dropped, which is
+how a changed LAN address replaces the old one; routes the user saved are never
+touched. The reported addresses are hints like any advertised endpoint, so a
+learned route still has to answer as this environment before it is used.
+
 GitHub routing trust covers the whole route list. Adding or changing a route
 revokes it; reordering does not, because the same addresses remain trusted.
 

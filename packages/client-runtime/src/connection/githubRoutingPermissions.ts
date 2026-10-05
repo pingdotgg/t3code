@@ -25,11 +25,17 @@ export type StoredGitHubRoutingPermission = typeof StoredGitHubRoutingPermission
  * reordering keeps trust but adding or changing an address revokes it.
  */
 export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): string | null {
-  const alternates = entry.alternateRoutes ?? [];
-  if (alternates.length === 0) return routeConnectionKey(entry.target, entry.profile);
-  const keys = [{ target: entry.target, profile: entry.profile }, ...alternates].map((route) =>
-    routeConnectionKey(route.target, route.profile),
-  );
+  // Learned routes come and go with the server's addresses and reuse a saved
+  // route's credential, so they leave trust where the user put it.
+  const routes = [
+    { target: entry.target, profile: entry.profile },
+    ...(entry.alternateRoutes ?? []),
+  ].filter((route) => {
+    const profile = Option.getOrNull(route.profile);
+    return !(profile?._tag === "BearerConnectionProfile" && profile.learned === true);
+  });
+  if (routes.length === 1) return routeConnectionKey(routes[0]!.target, routes[0]!.profile);
+  const keys = routes.map((route) => routeConnectionKey(route.target, route.profile));
   return keys.every((key) => key !== null) ? JSON.stringify([...keys].sort()) : null;
 }
 

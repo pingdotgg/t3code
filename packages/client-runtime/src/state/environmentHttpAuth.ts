@@ -152,7 +152,10 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
                 }),
             ),
           );
-        httpBaseUrl = current.httpBaseUrl;
+        // A learned direct route keeps its own origin; only the token renews.
+        if (input.prepared.target._tag === "RelayConnectionTarget") {
+          httpBaseUrl = current.httpBaseUrl;
+        }
         authorization = current.httpAuthorization;
       }
 

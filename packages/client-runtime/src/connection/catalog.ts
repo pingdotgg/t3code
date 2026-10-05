@@ -22,6 +22,17 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
     ...ConnectionProfileBase,
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
+    /**
+     * Set on a route the server reported while this client was connected,
+     * rather than one the user paired. Learned routes are replaced when the
+     * server reports a different address, for example after a DHCP change.
+     */
+    learned: Schema.optionalKey(Schema.Literal(true)),
+    /**
+     * "t3-connect" when the route authenticates with the environment's T3
+     * Connect credential instead of a stored bearer token.
+     */
+    authorization: Schema.optionalKey(Schema.Literal("t3-connect")),
   },
 ) {}
 
