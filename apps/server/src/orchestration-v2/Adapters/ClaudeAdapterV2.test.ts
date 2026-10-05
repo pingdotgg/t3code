@@ -2074,7 +2074,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["interrupt"];
     readonly environment?: NodeJS.ProcessEnv;
   }) =>
     Effect.gen(function* () {
@@ -2634,6 +2634,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("returns the steers an interrupt finds still queued in Claude", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const read = MessageId.make("message-steer-read");
+        const unread = MessageId.make("message-steer-unread");
+        // Claude also lists queued commands T3 never sent; those are ignored.
+        const stillQueued = ["00000000-0000-4000-8000-000000000903"];
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          interrupt: Effect.sync(() => ({ still_queued: stillQueued })),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-unread-steer");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Run the slow command.",
+          attachments: [],
+        });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(input);
+        for (const messageId of [read, unread]) {
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId,
+              text: messageId,
+              attachments: [],
+            },
+          });
+        }
+        // Claude still holds the second steer, under the uuid it was offered with.
+        stillQueued.push(harness.offeredMessages[2]!.uuid!);
+
+        const result = yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+
+        assert.deepEqual(result, { unreadSteerMessageIds: [unread] });
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
@@ -5558,7 +5612,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const harness = yield* makeWakeHarnessWithOptions({
             close: (sdkMessages) =>
               Deferred.await(closeGate).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
-            interrupt: Deferred.succeed(interruptStarted, undefined),
+            interrupt: Deferred.succeed(interruptStarted, undefined).pipe(Effect.asVoid),
           });
           const idAllocator = yield* IdAllocator.IdAllocatorV2;
           const now = yield* DateTime.now;
@@ -5615,7 +5669,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const harness = yield* makeWakeHarnessWithOptions({
           close: (sdkMessages) =>
             Deferred.await(closeGate).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
-          interrupt: Deferred.succeed(interruptStarted, undefined),
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(Effect.asVoid),
         });
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const now = yield* DateTime.now;

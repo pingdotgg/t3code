@@ -41,12 +41,13 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
 
 export interface ProviderTurnControlServiceV2Shape {
+  /** Resolves to the steers the provider still held unread when it stopped. */
   readonly interrupt: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<ReadonlyArray<MessageId>, ProviderTurnControlError>;
   readonly steer: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -61,7 +62,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly interruptedAttemptId: RunAttemptId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<ReadonlyArray<MessageId>, ProviderTurnControlError>;
 }
 
 export class ProviderTurnControlServiceV2 extends Context.Service<
@@ -175,16 +176,17 @@ export const layer: Layer.Layer<
           const session = Option.isSome(loaded.session)
             ? loaded.session
             : yield* sessions.get(input.providerSessionId);
-          if (Option.isNone(session)) return;
+          if (Option.isNone(session)) return [];
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop. Background work
           // the projection still shows is settled by the orchestrator after.
-          yield* session.value.interruptTurn({
+          const result = yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
+          return result ? result.unreadSteerMessageIds : [];
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)
@@ -214,10 +216,10 @@ export const layer: Layer.Layer<
                 },
               );
             }
-            return;
+            return [];
           }
 
-          yield* loaded.session.value.interruptTurn({
+          const result = yield* loaded.session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
           });
@@ -237,7 +239,7 @@ export const layer: Layer.Layer<
               attempt !== undefined &&
               attempt.status !== "running"
             ) {
-              return;
+              return result ? result.unreadSteerMessageIds : [];
             }
             // Provider terminal events are projected on a detached ingestion
             // fiber. Yield through the Node event loop instead of sleeping on

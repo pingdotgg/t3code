@@ -3013,6 +3013,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
   }),
+  /**
+   * Follows an interrupt that ended a turn before its provider read some of
+   * the steers sent into it. Each one becomes a queued message again instead
+   * of being lost, held when the Stop held the queue.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.unread-steers.requeue"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageIds: Schema.Array(MessageId),
+    holdQueue: Schema.Boolean,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 

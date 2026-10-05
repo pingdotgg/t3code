@@ -23,6 +23,7 @@ import {
   type Settings as ClaudeSdkSettings,
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
+  type SDKControlInterruptResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
@@ -43,6 +44,7 @@ import {
   type ChatAttachment,
   ClaudeSettings,
   defaultInstanceIdForDriver,
+  type MessageId,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -331,7 +333,11 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
-  readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** CLIs with the interrupt_receipt_v1 capability name the prompts they still held unread. */
+  readonly interrupt: Effect.Effect<
+    SDKControlInterruptResponse | void,
+    ClaudeAgentSdkQueryRunnerError
+  >;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -702,12 +708,13 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
             try: () => queryRuntime.interrupt(),
             catch: (cause) => queryRunnerError(cause, "interrupt"),
           }).pipe(
-            Effect.tap(() =>
+            Effect.tap((receipt) =>
               logProtocolEvent({
                 direction: "outgoing",
                 stage: "decoded",
                 payload: {
                   type: "query.interrupt",
+                  ...(receipt === undefined ? {} : { stillQueued: receipt.still_queued }),
                 },
               }),
             ),
@@ -1357,12 +1364,23 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   } satisfies SDKUserMessage;
 });
 
+function claudeStableUuid(seed: string): NonNullable<SDKUserMessage["uuid"]> {
+  const hex = NodeCrypto.createHash("sha256").update(seed).digest("hex");
+  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 // Stable per run attempt, so a replayed prompt offer matches its recording.
 // Claude echoes it back as user_message_uuid on the turn that answers it.
 export function claudePromptUuid(attemptId: string): NonNullable<SDKUserMessage["uuid"]> {
-  const hex = NodeCrypto.createHash("sha256").update(`t3-claude-prompt:${attemptId}`).digest("hex");
-  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  return claudeStableUuid(`t3-claude-prompt:${attemptId}`);
+}
+
+// Stable per steer into a turn, so an interrupt receipt that lists it as
+// still queued names the message the provider never read. A message steered
+// again after being returned to the queue gets a new one.
+function claudeSteerUuid(providerTurnId: string, messageId: string) {
+  return claudeStableUuid(`t3-claude-steer:${providerTurnId}:${messageId}`);
 }
 
 type ClaudeAssistantContentBlock = SDKAssistantMessage["message"]["content"][number];
@@ -2687,6 +2705,8 @@ interface ActiveClaudeTurnContext {
   // Root frames seen before the echo; held only when the CLI echoes early.
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // Steers offered into this turn, by their claudeSteerUuid.
+  readonly steerMessageIds: Map<string, MessageId>;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -7175,6 +7195,7 @@ export function makeClaudeAdapterV2(
               promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              steerMessageIds: new Map(),
             };
             // Continuation turns attach to the wake output the CLI already
             // produced instead of prompting it again: drain the buffered wake
@@ -7337,13 +7358,20 @@ export function makeClaudeAdapterV2(
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
+            const receipt = yield* existing.query.interrupt;
+            // A steer Claude still queues behind a running tool dies with the
+            // process closed below, so the thread takes it back.
+            const result: ProviderAdapter.ProviderAdapterV2InterruptResult = {
+              unreadSteerMessageIds: (receipt?.still_queued ?? []).flatMap(
+                (uuid) => currentTurn.steerMessageIds.get(uuid) ?? [],
+              ),
+            };
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
             if (Option.isSome(closed)) {
-              return;
+              return result;
             }
 
             const completedAt = yield* DateTime.now;
@@ -7361,6 +7389,7 @@ export function makeClaudeAdapterV2(
               completedAt,
             });
             yield* Deferred.succeed(existing.closed, undefined);
+            return result;
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -7392,6 +7421,7 @@ export function makeClaudeAdapterV2(
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            const uuid = claudeSteerUuid(turnInput.providerTurnId, turnInput.message.messageId);
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
@@ -7402,12 +7432,14 @@ export function makeClaudeAdapterV2(
               attachmentsDir,
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
+              uuid,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
+            currentTurn.steerMessageIds.set(uuid, turnInput.message.messageId);
             yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>
